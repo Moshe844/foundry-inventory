@@ -244,7 +244,8 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
         if(input.standingAuthority?.kind==='supplier_rfq')await require('../purchasing/agent-supplier-rfqs').deliveryAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='supplier_benefit_claim')await require('../purchasing/agent-supplier-benefit-claims').deliveryAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='supplier_negotiation')await require('../purchasing/negotiation-drafts').deliveryAuthority(database,workspaceId,input.standingAuthority);
-        const attachments=input.standingAuthority?.kind==='supplier_claim'?await require('../purchasing/agent-supplier-claims').attachments(database,workspaceId,input.standingAuthority):undefined;
+        const attachments=input.standingAuthority?.kind==='supplier_claim'?await require('../purchasing/agent-supplier-claims').attachments(database,workspaceId,input.standingAuthority)
+          :input.standingAuthority?.kind==='customer_statement'?await require('../accounting/agent-customer-statements').attachments(database,workspaceId,input.standingAuthority):undefined;
         if(input.standingAuthority?.kind==='customer_statement')await require('../accounting/agent-customer-statements').authority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='invoice_reminder')await require('../accounting/agent-invoice-reminders').sendAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='stock_ready_notice')await require('../sales/agent-stock-ready').authority(database,workspaceId,input.standingAuthority);

@@ -1,0 +1,23 @@
+<% const cf=result.creditForm; %>
+<section class="card section" data-credit-refunds><h2>Refunds to pay or check</h2>
+<p>StockChief never pays money on its own. A refund the payment provider handles is booked when it confirms; any other refund waits here until you pay it and record it.</p>
+<% if(!cf.open.length){ %><p>Nothing is waiting.</p><% }else{ %><ul class="rm-list"><% for(const r of cf.open){ %><li class="list-row" data-credit-refund="<%= r.id %>">
+  <span><strong><%= r.amount %> to <%= r.who %></strong><small><%= r.what %> · back by <%= r.how %></small>
+  <small><%= ({TO_PAY:'Waiting for you to pay it',APPROVED:'Sent to the payment provider',REVIEW:'The provider did not confirm it yet',FAILED:'The provider refused it'})[r.status] %></small></span>
+  <% if(r.status==='TO_PAY'){ %><form method="post" action="/autopilot/customer-credits/refunds/<%= encodeURIComponent(r.id) %>/paid" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="rm-field"><span>How you paid it back</span><input name="reference" required maxlength="120" placeholder="Check 1042"></label><button class="btn btn--primary">Record as paid</button></form><% } %>
+  <% if(r.canVerify){ %><form method="post" action="/autopilot/customer-credits/refunds/<%= encodeURIComponent(r.id) %>/verify"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm">Check with Stripe</button></form><% } %>
+</li><% } %></ul><% } %></section>
+<section class="card"><h2>Prepare a credit or refund</h2><p>For returned goods, use the return itself.</p>
+<form method="post" action="/autopilot/customer-credits/prepare" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label class="rm-field"><span>What happened</span><select name="creditKind" required><option value="price_adjustment">Lower price or overcharged price on an invoice</option><option value="overpayment">Paid more than a shipped order came to</option><option value="cancellation">Order cancelled after payment</option></select></label>
+<label class="rm-field"><span>Invoice or order number</span><input name="recordReference" required maxlength="150"></label>
+<label class="rm-field"><span>New unit prices</span><small>Only for a price change: line number or product code = new price, for example 1=8.00</small><input name="creditLines" maxlength="500" aria-label="New unit prices"></label>
+<label class="rm-field"><span>Why</span><input name="reason" required maxlength="300" placeholder="Agreed 10% lower price"></label>
+<button class="btn btn--primary">Prepare for approval</button></form>
+<% if(cf.due.length){ %><h3>Orders holding money to give back</h3><ul class="rm-list"><% for(const d of cf.due){ %><li class="list-row"><span><strong><%= d.orderNumber %> · <%= d.who %></strong><small><%= d.amount %> · <%= d.cancelled?'Cancelled after payment':'Paid more than it came to' %></small></span></li><% } %></ul><% } %>
+</section>
+<section class="card section"><h2>Recent credits</h2>
+<% if(!cf.recent.length){ %><p>No credits yet.</p><% }else{ %><ul class="rm-list"><% for(const c of cf.recent){ %><li class="list-row"><span><strong><%= c.what %> · <%= c.who %></strong>
+  <small><%= c.kind %><% if(c.credit){ %> · credit <%= c.credit %><% } %><% if(c.refund){ %> · refund <%= c.refund %><% } %> · <%= c.status %></small><small><%= c.reason %></small></span></li><% } %></ul><% } %>
+</section>

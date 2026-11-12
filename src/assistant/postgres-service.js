@@ -2122,7 +2122,7 @@ async function continueApprovedPlans(database,ctx,proposalId,options={}){
   });
 }
 
-async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRoutine=false,invoiceRoutine=false,arrivedStockRoutine=false,pickReleaseRoutine=false,repeatRoutine=false}={}){
+async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRoutine=false,invoiceRoutine=false,arrivedStockRoutine=false,pickReleaseRoutine=false,repeatRoutine=false,statementRoutine=false}={}){
   await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),'ask.prepare_actions');
   const committed=await database.transaction(async(client)=>{
     const proposal=await getProposal(database,ctx.workspaceId,id,true,client);
@@ -2154,7 +2154,11 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
       if(contract.name!=='sales_order.repeat')throw new ValidationError('Repeat order authority cannot run another kind of action.');
       routineAuthority=await require('../sales/agent-repeat-orders').requireRoutineAuthority(client,ctx,proposal.payload);
     }
-    const automatic=Boolean(missionPlanId)||receiptRoutine||invoiceRoutine||arrivedStockRoutine||pickReleaseRoutine||repeatRoutine;
+    if(statementRoutine){
+      if(contract.name!=='customer.statement')throw new ValidationError('Statement request authority cannot run another kind of action.');
+      routineAuthority=await require('../accounting/agent-statement-requests').requireRoutineAuthority(client,ctx,proposal.payload);
+    }
+    const automatic=Boolean(missionPlanId)||receiptRoutine||invoiceRoutine||arrivedStockRoutine||pickReleaseRoutine||repeatRoutine||statementRoutine;
     const stopped=await agentPolicy.stopped(client,ctx.workspaceId,agentAccount,contract.name,automatic,proposal.payload);
     if(stopped)throw new ValidationError(stopped);
     const operation=automatic?'automatic':'draft', job=agentPolicy.actionJob(contract.name,operation,{...proposal.payload,idempotencyKey:proposal.idempotency_key});
@@ -2249,6 +2253,11 @@ async function executeRepeatRoutine(database,ctx,id){
   const committed=await executeProposalCore(database,ctx,id,{repeatRoutine:true});
   return continueRoutineProposal(database,ctx,committed);
 }
+// Job 81: a customer's statement request the owner's authority lets StockChief send alone.
+async function executeStatementRoutine(database,ctx,id){
+  const committed=await executeProposalCore(database,ctx,id,{statementRoutine:true});
+  return continueRoutineProposal(database,ctx,committed);
+}
 async function continueRoutineProposal(database,ctx,committed){
   // Settle only the frozen plan's canonical dependencies. This never creates a
   // human approval or grants a paid model call to the routine worker.
@@ -2317,7 +2326,7 @@ async function ask(database,ctx,message,options={}){
     const english=options.englishReading!==undefined?options.englishReading:await readQuestionInEnglish(database,ctx,message,options);
     if(english){readAs=english;readInEnglish=true;}
   }
-  const direct=options.continueInteractionId?null:await require('./direct-business-reads').run({lookup,prepareAction,executeRepeatRoutine,resolveSku:(db,workspaceId,name)=>resolveOne(db,'skus',workspaceId,name,'i.name,s.position')},database,ctx,readAs,options);
+  const direct=options.continueInteractionId?null:await require('./direct-business-reads').run({lookup,prepareAction,executeRepeatRoutine,executeStatementRoutine,resolveSku:(db,workspaceId,name)=>resolveOne(db,'skus',workspaceId,name,'i.name,s.position')},database,ctx,readAs,options);
   if(direct){const toolMs=Date.now()-directStarted;direct.result.carryForward={...direct.result.carryForward,chatId:options.conversationId||null};
     const preferences=direct.answerPreferences||{};
     const localize=readInEnglish||preferences.answerStyle||preferences.answerLanguage&&!/^en(?:-|$)/i.test(preferences.answerLanguage);
@@ -2357,5 +2366,5 @@ async function ask(database,ctx,message,options={}){
 }
 
 module.exports={lookup,prepareAction,createProposal,ask,readQuestionInEnglish,askLegacy:askCapabilities,listInteractions,capabilityService,recordCapabilityOutcome,
-  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeReceiptRoutine,executeInvoiceRoutine,executeArrivedStockRoutine,executePickReleaseRoutine,executeRepeatRoutine,executeMission,resumeMission,cancelProposal,
+  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeReceiptRoutine,executeInvoiceRoutine,executeArrivedStockRoutine,executePickReleaseRoutine,executeRepeatRoutine,executeStatementRoutine,executeMission,resumeMission,cancelProposal,
   fundedAskProvider,buildReportDefinition,summarizeCustomerOrders};

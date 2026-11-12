@@ -95,7 +95,11 @@ async function capture(database,connection,message,{metadataOnlyReason=message.s
       [id,connection.workspace_id,connection.id,externalId,sender,trimOrNull(message.subject),
         message.receivedAt||at,metadataOnlyReason||(junk?'The provider placed this message in junk.':matches.length?'Sender matches more than one business contact.':'Sender is not a customer or supplier.'),
         at,sorting?.category||null,sorting?.reason||null]);
-      if(inserted.rows.length)return {accepted:false,setAside:true,replayed:false,id};
+      if(inserted.rows.length){
+        // Job 81: a statement request from someone who is not a customer waits for the owner.
+        await require('../accounting/agent-statement-requests').fromSetAside(client,connection.workspace_id,{id,sender,subject:trimOrNull(message.subject)});
+        return {accepted:false,setAside:true,replayed:false,id};
+      }
       const existing=(await client.query(`SELECT id FROM connection_email_set_aside WHERE workspace_id=$1
         AND connector_id=$2 AND external_message_id=$3`,[connection.workspace_id,connection.id,externalId])).rows[0];
       return {accepted:false,setAside:true,replayed:true,id:existing.id};
@@ -151,6 +155,17 @@ async function capture(database,connection,message,{metadataOnlyReason=message.s
       if(policy.usesAgentTerms(state)&&policy.permits(state.plan,53,'draft')){
         const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)};
         await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:require('../sales/agent-repeat-orders').kind,idempotencyKey:'customer-repeat-order:'+id,payload:{messageId:id},priority:55,maxAttempts:3});
+      }
+    }
+    // Job 102: a customer disputing an invoice, or saying it is paid, stops its reminders.
+    if(match.kind==='customer'&&match.id)await require('../accounting/agent-invoice-reminders').fromEmail(client,connection.workspace_id,
+      {messageId:id,customerId:match.id,subject:message.subject,body:message.bodyText||message.body,threadId,connectorId:connection.id});
+    // Job 81: a customer asking for their account statement.
+    if(match.kind==='customer'&&require('../accounting/statement-request').read(message.subject,message.bodyText||message.body)){
+      const policy=require('../commercial/agent-plan'),state=await policy.accountState(client,connection.workspace_id);
+      if(policy.usesAgentTerms(state)&&policy.permits(state.plan,81,'draft')){
+        const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)};
+        await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:require('../accounting/agent-statement-requests').kind,idempotencyKey:'customer-statement-email:'+id,payload:{messageId:id},priority:55,maxAttempts:3});
       }
     }
     if(match.kind==='customer'&&!attachments.length&&require('../sales/customer-return-email-source').isReturnSubject(message.subject)){

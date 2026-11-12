@@ -6,20 +6,37 @@
 <label>Invoice number <input name="invoiceNumber" required maxlength="150"></label>
 <label>Send from <select name="connectorId" required><% for(const m of f.mailboxes){ %><option value="<%= m.id %>"><%= m.display_name %></option><% } %></select></label>
 <button class="btn" <%= f.blocked?'disabled':'' %>>Prepare for approval</button></form><% } %></section>
-<section class="card"><h2>Customer schedules</h2><p>A schedule sends at most one reminder in each selected window. Late setup uses the latest window; it does not send all missed reminders at once. StockChief checks the current invoice again before sending.</p>
-<% for(const r of f.rules){ %><article><h3><%= r.customer_name %></h3><p><%= r.recipient %> · <%= r.days_after_due.join(', ') %> days after due · balances up to <%= r.maximum %></p>
+<section class="card section" data-reminder-disputes><h2>Disputed invoices</h2><p>When a customer disputes an invoice or says it is paid, its reminders stop until you settle it.</p>
+<% if(!f.disputes.length){ %><p>No invoice is disputed.</p><% }else{ %><ul class="rm-list"><% for(const d of f.disputes){ %><li class="list-row" data-reminder-dispute="<%= d.id %>">
+  <span><a href="/money/invoices/<%= d.invoice_id %>"><strong><%= d.invoice_number %> · <%= d.customer_name %></strong></a><small><%= d.balance %> outstanding · <%= d.source==='email'?'From their email':'Marked by you' %></small><small><%= d.reason %></small></span>
+  <form method="post" action="/autopilot/invoice-reminders/disputes"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="invoiceNumber" value="<%= d.invoice_number %>"><input type="hidden" name="resolve" value="1"><button class="btn btn--ghost btn--sm">Settled, resume reminders</button></form>
+</li><% } %></ul><% } %>
+<form method="post" action="/autopilot/invoice-reminders/disputes" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label>Invoice number <input name="invoiceNumber" required maxlength="150"></label><label>What the customer disputes <input name="reason" required maxlength="500"></label>
+<button class="btn secondary">Stop reminders for this invoice</button></form></section>
+<section class="card"><h2>Customer schedules</h2><p>A schedule sends at most one reminder in each window: before the due date, on it, or after it. Late setup uses the latest window; it does not send all missed reminders at once. StockChief checks the current invoice again before sending.</p>
+<% for(const r of f.rules){ %><article><h3><%= r.customer_name %></h3><p><%= r.recipient %> · <%= r.when %> · balances up to <%= r.maximum %></p>
 <% if(r.problem){ %><p class="notice"><%= r.problem %></p><% } %>
 <form method="post" action="/autopilot/invoice-reminders/schedule" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="customerId" value="<%= r.customer_id %>"><input type="hidden" name="revision" value="<%= r.revision %>"><input type="hidden" name="currency" value="<%= r.currency %>">
 <label>Send from <select name="connectorId" required><% for(const m of f.mailboxes){ %><option value="<%= m.id %>" <%= m.id===r.connector_id?'selected':'' %>><%= m.display_name %></option><% } %></select></label>
 <label>Largest balance (<%= r.currency %>) <input name="maximum" required inputmode="decimal" value="<%= r.maximumInput %>"></label>
-<label>Days after due <input name="days" required value="<%= r.days_after_due.join(', ') %>"></label><div class="actions"><button class="btn">Save schedule changes</button><button class="btn secondary" name="remove" value="1" formnovalidate>Stop this schedule</button></div></form></article><% } %>
+<label>Days before due <input name="before" value="<%= r.before %>" placeholder="3"></label>
+<label class="checkbox"><input type="checkbox" name="onDue" value="1" <%= r.onDue?'checked':'' %>><span class="checkbox-text">On the due date</span></label>
+<label>Days after due <input name="days" value="<%= r.after %>" placeholder="7, 14, 30"></label>
+<% for(const s of r.steps){ %><details data-reminder-step="<%= s.offset %>"><summary><%= s.when %> · <%= s.label %><%= s.custom?' · your wording':'' %></summary>
+<label>Subject <input name="subject<%= s.offset %>" value="<%= s.subject %>" maxlength="150"></label>
+<label>Message <textarea name="body<%= s.offset %>" rows="6" maxlength="3000"><%= s.body %></textarea></label>
+<p class="muted">Use {customer}, {invoice}, {amount}, {due} and {days}. Keep {invoice} and {amount}.</p></details><% } %>
+<div class="actions"><button class="btn">Save schedule changes</button><button class="btn secondary" name="remove" value="1" formnovalidate>Stop this schedule</button></div></form></article><% } %>
 <% if(f.mailboxes.length&&f.customers.length){ %><form method="post" action="/autopilot/invoice-reminders/schedule" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="0">
 <label>Customer name or email <input name="customerReference" required list="reminder-customer-options" maxlength="150"></label><datalist id="reminder-customer-options"><% for(const c of f.customers){ %><option value="<%= c.email||c.name %>"><%= c.name %></option><% } %></datalist>
 <label>Send from <select name="connectorId" required><% for(const m of f.mailboxes){ %><option value="<%= m.id %>"><%= m.display_name %></option><% } %></select></label>
-<label>Currency <input name="currency" value="<%= f.currency %>" required minlength="3" maxlength="3"></label><label>Largest invoice balance to remind automatically <input name="maximum" required inputmode="decimal"></label>
-<label>Days after the agreed due date, separated by commas <input name="days" required placeholder="7, 14, 30"></label><button class="btn">Enable this reminder schedule</button></form><% } %>
+<label>Currency <input name="currency" value="<%= f.currency %>" required minlength="3" maxlength="3"></label><label>Largest invoice balance to remind about <input name="maximum" required inputmode="decimal"></label>
+<label>Days before the due date, separated by commas <input name="before" placeholder="3"></label>
+<label class="checkbox"><input type="checkbox" name="onDue" value="1"><span class="checkbox-text">On the due date</span></label>
+<label>Days after the due date, separated by commas <input name="days" placeholder="7, 14, 30"></label><button class="btn">Enable this reminder schedule</button></form><% } %>
 </section>
 <section class="card"><h2>Recent reminder delivery</h2>
 <% if(!f.recent.length){ %><p>No reminder delivery is recorded in this view.</p><% } %>
-<% for(const m of f.recent){ %><article><p><a href="<%= m.href %>"><%= m.invoice_number %></a> · <%= m.recipient %></p><p><strong><%= ({QUEUED:'Queued',SENDING:'Sending',SENT:'Sent',FAILED:'Needs review',PREPARED:'Prepared',REVIEW:'Needs review'})[m.status]||'Review delivery' %></strong><% if(m.sent_at){ %> · <%= helpers.shortDate(m.sent_at) %><% } %></p><% if(m.error_message){ %><p class="notice"><%= m.error_message %></p><% } %></article><% } %>
+<% for(const m of f.recent){ %><article><p><a href="<%= m.href %>"><%= m.invoice_number %></a> · <%= m.recipient %><% if(m.subject){ %> · <%= m.subject %><% } %></p><p><strong><%= ({QUEUED:'Queued',SENDING:'Sending',SENT:'Sent',FAILED:'Needs review',PREPARED:'Prepared',REVIEW:'Needs review'})[m.status]||'Review delivery' %></strong><% if(m.sent_at){ %> · <%= helpers.shortDate(m.sent_at) %><% } %></p><% if(m.error_message){ %><p class="notice"><%= m.error_message %></p><% } %></article><% } %>
 </section>

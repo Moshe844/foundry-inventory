@@ -296,6 +296,7 @@ async function queueCustomerReturnRefund(database,ctx,customerReturnId,input={})
 async function executeRefundEffect(database,workspaceId,effectId,options={}){
   const current=await providerEffects.get(database,workspaceId,effectId);
   if(current.payload.agentRefundPartId)return require('../operations/agent-return-refunds').executeProviderPart(database,current,options);
+  if(current.payload.customerCreditPartId)return require('../accounting/agent-customer-credits').executeProviderPart(database,current,options);
   const claimed=await providerEffects.claim(database,workspaceId,effectId);
   if(claimed.replayed)return {refundId:claimed.effect.result?.refundId||null,replayed:true};
   const effect=claimed.effect;let providerCalled=false;
