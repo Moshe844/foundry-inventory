@@ -66,8 +66,9 @@ async function accounting(db,workspaceId){
 // ---- Runs and flags ------------------------------------------------------
 
 // Keep one run for these facts and open, update or clear the month's flags.
-// `flags` is the full set the run raises: [{key,currency,amount,detail}].
-async function record(c,ctx,{job,period,facts,result,flags=[],automatic,watch=null,problem=null,action}){
+// `flags` is the full set the run raises: [{key,currency,amount,detail}]. A run
+// made only to keep a copy (syncFlags false) leaves the month's flags alone.
+async function record(c,ctx,{job,period,facts,result,flags=[],automatic,watch=null,problem=null,action,syncFlags=true}){
   const outcome=problem?'STOPPED':watch?'WATCHED':'PRODUCED';
   const runKey=hash({job,period,outcome,watch,problem,automatic,facts});
   await storage.reserve(scoped(c),ctx.workspaceId,'agent-report-run:'+runKey.slice(0,48),4096+Buffer.byteLength(JSON.stringify(result||{})),{finished:true});
@@ -81,7 +82,7 @@ async function record(c,ctx,{job,period,facts,result,flags=[],automatic,watch=nu
     return {replayed:true,runId:prior.id,outcome,opened:[],updated:[],cleared:[],result:prior.result};
   }
   const opened=[],updated=[],cleared=[];
-  if(outcome==='PRODUCED'){
+  if(outcome==='PRODUCED'&&syncFlags){
     const current=(await c.query(`SELECT * FROM ${tables.flags} WHERE workspace_id=$1 AND job_id=$2 AND period=$3 AND status IN ('OPEN','DISMISSED') ORDER BY id FOR UPDATE`,
       [ctx.workspaceId,job,period])).rows;
     const byKey=new Map(current.map(f=>[f.flag_key,f])),raised=new Set(flags.map(f=>f.key));

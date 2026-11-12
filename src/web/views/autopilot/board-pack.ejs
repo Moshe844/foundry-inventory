@@ -1,0 +1,42 @@
+<% const p=pack,stamp=v=>helpers.dateTime(v),ready=flags.filter(f=>f.status==='OPEN'); %>
+<div class="page-head"><div class="titles"><h1>Board or investor pack</h1>
+<p>Six months to the month you choose: sales, gross profit and margin, the cash tied up in stock, days of supply and stock turns, your best items and the problems in your records, with a short commentary written only from those numbers. Each currency has its own pages. The PDF has the charts.</p></div></div>
+
+<section class="card section"><form method="get" action="/autopilot/reviews/board-pack" class="form-stack">
+<label class="rm-field"><span>Closing month</span><select name="month" aria-label="Closing month"><% months.forEach(m=>{ %><option value="<%= m %>" <%= m===closing?'selected':'' %>><%= m %></option><% }) %></select></label>
+<button class="btn">Show month</button></form>
+<% if(!p.problem){ %><p><a class="btn btn--primary" href="<%= download %>">Download board pack with charts (PDF)</a></p>
+<form method="post" action="/autopilot/reviews/board-pack/keep"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="month" value="<%= closing %>"><button class="btn btn--ghost">Keep a copy of this pack</button></form><% } %>
+</section>
+
+<% if(p.problem){ %><p class="notice notice--warn"><%= p.problem %> <a href="/accounting">Open accounting</a></p><% } %>
+<% p.currencies.forEach(c=>{ %>
+<section class="card section"><h2><%= p.name %> · <%= c.currency %></h2>
+<% c.commentary.forEach(line=>{ %><p><%= line %></p><% }) %>
+<div class="table-wrap"><table class="table table--stack"><thead><tr><th>Month</th><th>Sales</th><th>Cost of goods</th><th>Gross profit</th><th>Margin</th><th>Stock value</th><th>Days of supply</th><th>Turns a year</th></tr></thead><tbody>
+<% c.points.forEach(m=>{ %><tr><td class="cell-main"><span class="cell-title"><%= m.month %></span><% if(m.coverage!=='Full month'){ %><span class="cell-sub"><%= m.coverage %></span><% } %></td>
+<td data-label="Sales"><%= fmt(m.revenue,c.currency) %></td><td data-label="Cost of goods"><%= fmt(m.cost,c.currency) %></td><td data-label="Gross profit"><%= fmt(m.gross,c.currency) %></td>
+<td data-label="Margin"><%= m.margin===null?'':m.margin+'%' %></td><td data-label="Stock value"><%= fmt(m.stock,c.currency) %></td><td data-label="Days of supply"><%= m.days??'' %></td><td data-label="Turns a year"><%= m.turns??'' %></td></tr><% }) %>
+</tbody></table></div>
+<h3>Best items in <%= p.name %></h3>
+<% if(!c.top.length){ %><p class="cell-sub">No item sales posted this month.</p><% }else{ %><ul class="rm-list"><% c.top.forEach(t=>{ %><li class="list-row"><span><a href="<%= t.href %>"><%= t.code %> · <%= t.name %></a><small>Sales <%= fmt(t.revenue,c.currency) %><%= t.margin===null?'':' · '+t.margin+'% margin' %></small></span><strong><%= fmt(t.gross,c.currency) %></strong></li><% }) %></ul><% } %>
+<h3>Problems to watch</h3>
+<% if(!c.problems.length){ %><p class="cell-sub">No write-offs, count differences, overdue invoices or stockouts recorded.</p><% }else{ %><ul class="rm-list"><% c.problems.forEach(x=>{ %><li class="list-row"><span><span class="badge badge--warn"><%= x.label %></span><% if(x.names){ %><small><%= x.names.join(', ') %></small><% } %></span><strong><%= x.amount!==undefined?fmt(x.amount,c.currency):'' %><%= x.count&&x.amount===undefined?x.count:'' %></strong></li><% }) %></ul><% } %>
+</section><% }) %>
+
+<section class="card section" id="kept-packs"><h2>Kept packs</h2>
+<% if(ready.length){ %><ul class="rm-list"><% ready.forEach(f=>{ %><li class="list-row"><span><strong><%= f.detail.title %></strong><small><%= f.detail.happened %></small></span>
+<form method="post" action="/autopilot/reviews/board-pack/flags/<%= f.id %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm">Mark as seen</button></form></li><% }) %></ul><% } %>
+<% if(!kept.length){ %><p class="cell-sub">No packs kept yet.</p><% }else{ %><ul class="rm-list"><% kept.forEach(run=>{ %><li class="list-row"><span><%= run.period %> · <%= run.authorization_kind==='AUTOMATIC'?(run.outcome==='WATCHED'?'Built while watching':'Built on its own'):'Kept by you' %><small><%= stamp(run.created_at) %><%= run.outcome==='STOPPED'&&run.reason?' · '+run.reason:'' %></small></span>
+<% if(run.outcome!=='STOPPED'){ %><a class="btn btn--ghost btn--sm" href="/autopilot/reviews/board-pack/packs/<%= run.id %>">Download</a><% } %></li><% }) %></ul><% } %>
+</section>
+
+<section class="card section" id="pack-schedule"><h2>Build it each month</h2>
+<% if(shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It builds the pack and does not tell you in Needs you.</p><% }else if(automatic){ %><p class="notice notice--info"><%= automatic %></p><% } %>
+<p class="cell-sub"><%= rule&&rule.enabled?'StockChief builds the pack for the month that just ended on day '+rule.day_of_month+' of each month, keeps it here and tells you in Needs you.':'Choose a day and StockChief builds the pack for the month that just ended, keeps it here and tells you in Needs you.' %></p>
+<form method="post" action="/autopilot/reviews/board-pack/schedule" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule?.revision||0 %>">
+<label class="rm-field"><span>Day of the month (1 to 28)</span><input name="dayOfMonth" inputmode="numeric" maxlength="2" required value="<%= rule?.enabled?rule.day_of_month:'' %>"></label>
+<button class="btn btn--primary">Save schedule</button></form>
+<% if(rule&&rule.enabled){ %><form method="post" action="/autopilot/reviews/board-pack/schedule"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule.revision %>"><button class="btn btn--ghost" name="stop" value="yes">Stop the monthly pack</button></form><% } %>
+<p class="cell-sub">The schedule counts as one of your saved rules. <a href="/autopilot/job-modes">Choose Watch only or Ask me first for this job</a></p>
+</section>

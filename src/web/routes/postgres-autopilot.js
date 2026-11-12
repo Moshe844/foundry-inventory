@@ -648,6 +648,16 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',r.replayed?'Nothing changed since the last check.':r.opened.length?r.opened.length+' big change'+(r.opened.length===1?'':'s')+' flagged.':'No new big changes.');
     res.redirect(303,changes.href+'?'+new URLSearchParams({month:String(req.body.month||'')})+'#monthly-digest');}));
   router.post(changes.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,changes.href+'?'+new URLSearchParams({month:r.period})+'#monthly-digest');}));
+  // Job 159 (Custom): the board or investor pack, on demand or on the owner's monthly day.
+  const boardPack=require('../../reports/agent-board-pack');
+  router.get(boardPack.href,requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/board-pack',{title:'Board or investor pack',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>boardPack.page(database,req.ctx,req.query),402)));
+  router.post(boardPack.href+'/keep',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await boardPack.keep(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'This pack is already kept.':r.outcome==='STOPPED'?r.reason:'Pack kept.');res.redirect(303,boardPack.href+'?'+new URLSearchParams({month:String(req.body.month||'')})+'#kept-packs');}));
+  router.post(boardPack.href+'/schedule',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await boardPack.configure(database,req.ctx,req.body);
+    req.flash('success',r.stopped?'The monthly pack is stopped.':r.unchanged?'Your schedule is unchanged.':'StockChief will build the pack each month.');res.redirect(303,boardPack.href+'#pack-schedule');}));
+  router.get(boardPack.href+'/packs/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const file=await boardPack.kept(database,req.ctx,req.params.id);
+    res.set('Cache-Control','private, no-store').type('application/pdf').attachment(file.filename).send(file.body);}));
+  router.post(boardPack.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,boardPack.href+'#kept-packs');}));
   router.post(monthEndStock.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,monthEndStock.href+'?'+new URLSearchParams({month:r.period})+'#month-end-flags');}));
   router.post('/autopilot/net-contribution/preview',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await contribution.preview(database,req.ctx,req.body);res.redirect(303,'/autopilot/net-contribution/reviews/'+p.id);}));
   router.get('/autopilot/net-contribution/reviews/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const state=await policy.accountState(database,req.ctx.workspaceId);res.page('autopilot/order-cost-review',{title:'Review actual order costs',nav:'autopilot',suppressBack:true,preview:await contribution.review(database,req.ctx,req.params.id),allowed:policy.usesAgentTerms(state)&&policy.permits(state.plan,85,'draft')});}));

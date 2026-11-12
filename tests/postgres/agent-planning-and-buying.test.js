@@ -282,7 +282,7 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
       const first=await document.getPage(1),text=(await first.getTextContent()).items.map(i=>i.str).join(' ');
       for(const figure of ['$22.00','$9.00','$13.00'])assert.ok(text.includes(figure),figure);
       assert.ok((await first.getOperatorList()).fnArray.includes(pdfjs.OPS.constructPath),'PDF contains chart geometry');
-      assert.equal(document.numPages,1);await loading.destroy();
+      assert.equal(document.numPages,2,'Charts and figures, then best items, problems and stock health');await loading.destroy();
     }
     if(tier==='starter')await download('year-end-stocktake').expect(402);
     else{
