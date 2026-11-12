@@ -92,7 +92,7 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   const watched=require('./activity-watches').spec;
   const watchQueries=Object.entries(watched).filter(([job])=>policy.permits(account.plan,Number(job),'automatic'))
     .map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('');
-  const priceChecks=policy.permits(account.plan,87,'automatic')&&(await db.query("SELECT 1 FROM connection_commerce_positions WHERE workspace_id=$1 AND field='price' AND mode<>'off' LIMIT 1",[workspaceId])).rowCount>0;
+  // Job 87's channel price checks run through the worker (agent-channel-price-checks.js).
   const candidates='SELECT 168 AS job,"Type" AS kind,"Reference" AS ref,link,"Due"::date AS due FROM ('+overdue.sql+') x'+
     (policy.permits(account.plan,50,'suggest')?` UNION ALL SELECT 50,'Stock ready',o.order_number,'/autopilot/reviews/stock-ready-updates',$3::date FROM sales_orders o
      WHERE o.workspace_id=$1 AND o.status='CONFIRMED'
@@ -101,7 +101,6 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
     (policy.permits(account.plan,204,'automatic')?` UNION ALL SELECT 204,'Daily work',d.report_date,'/autopilot/reviews/daily-work?filter='||d.report_date,d.report_date::date
      FROM workspace_daily_digests d WHERE d.workspace_id=$1 AND d.summary::jsonb->>'format'='agent-brief' AND (d.summary::jsonb->>'actions')::int>0
       AND d.report_date=(SELECT max(report_date) FROM workspace_daily_digests WHERE workspace_id=$1 AND summary::jsonb->>'format'='agent-brief')`:'')+
-    (priceChecks?` UNION ALL SELECT 87,'Channel price',reference,link,$3::date FROM (`+require('../pricing/channel-price-review').observed+`) prices WHERE "Finding"<>'Matches recorded catalogue price'`:'')+
     (policy.permits(account.plan,209,'automatic')?` UNION ALL SELECT 209,'Correction',reference,link,$3::date FROM (`+require('./repeated-corrections').sql+`) corrections`:'')+
     (policy.permits(account.plan,21,'draft')?` UNION ALL SELECT 21,'Reorder change',c.id,'/planning/reorder-refresh',c.created_at::date
       FROM stockchief_runtime.agent_reorder_refresh_changes c WHERE c.workspace_id=$1 AND c.status='DRAFT'`:'')+

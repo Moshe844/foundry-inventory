@@ -627,7 +627,12 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/return-disposition/rules/:id/configure',requireAuth,owner,asyncRoute(async(req,res)=>{await disposition.configure(database,req.ctx,req.params.id,req.body);req.flash('success',req.body.stop==='yes'?'Disposition rule stopped.':'Routine decision preparation enabled.');res.redirect(303,'/autopilot/return-disposition');}));
   for(const step of ['prepare','apply','stop'])router.post('/autopilot/return-disposition/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{await disposition[step](database,req.ctx,req.params.id,req.body);req.flash('success',step==='apply'?'Approved physical disposition completed. Refunds remain separate.':step==='stop'?'Assessment stopped; stock stays in quarantine.':'Exact disposition prepared for separate physical approval.');res.redirect(303,'/autopilot/return-disposition?id='+req.params.id);}));
   const contribution=require('../../reports/agent-net-contribution');
-  router.get('/autopilot/net-contribution',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/net-contribution',{title:'Sales after fees, shipping and returns',nav:'autopilot',suppressBack:true},()=>contribution.screen(database,req.ctx,req.query))));
+  router.get('/autopilot/net-contribution',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/net-contribution',{title:'Net margin',nav:'autopilot',suppressBack:true},()=>contribution.page(database,req.ctx,req.query))));
+  const netMargin=require('../../reports/agent-net-margin');
+  router.post('/autopilot/net-contribution/fee-terms',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await netMargin.saveFeeRule(database,req.ctx,req.body);req.flash('success',r.removed?'Fee terms removed.':r.unchanged?'Those fee terms are unchanged.':'Fee terms saved.');res.redirect(303,netMargin.href+'#fee-terms');}));
+  router.post('/autopilot/net-contribution/margin-rule',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await netMargin.configure(database,req.ctx,req.body);req.flash('success',r.stopped?'Net margin alerts are off.':r.unchanged?'Your margin rule is unchanged.':'Your margin rule is saved.');res.redirect(303,netMargin.href+'#margin-rule');}));
+  router.post('/autopilot/net-contribution/check',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await netMargin.checkNow(database,req.ctx);req.flash('success',r.replayed?'Nothing changed since the last check.':r.outcome==='STOPPED'?r.reason:(r.opened?.length||0)+' new alert'+((r.opened?.length||0)===1?'':'s')+', '+(r.cleared?.length||0)+' cleared.');res.redirect(303,netMargin.href+'#margin-alerts');}));
+  router.post('/autopilot/net-contribution/alerts/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await netMargin.dismiss(database,req.ctx,req.params.id);req.flash('success','Alert marked as seen.');res.redirect(303,netMargin.href+'#margin-alerts');}));
   router.post('/autopilot/net-contribution/preview',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await contribution.preview(database,req.ctx,req.body);res.redirect(303,'/autopilot/net-contribution/reviews/'+p.id);}));
   router.get('/autopilot/net-contribution/reviews/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const state=await policy.accountState(database,req.ctx.workspaceId);res.page('autopilot/order-cost-review',{title:'Review actual order costs',nav:'autopilot',suppressBack:true,preview:await contribution.review(database,req.ctx,req.params.id),allowed:policy.usesAgentTerms(state)&&policy.permits(state.plan,85,'draft')});}));
   router.post('/autopilot/net-contribution/reviews/:id/apply',requireAuth,owner,asyncRoute(async(req,res)=>{await contribution.apply(database,req.ctx,req.params.id,req.body);req.flash('success','Actual cost facts confirmed for the contribution report.');res.redirect(303,'/autopilot/net-contribution/reviews/'+req.params.id);}));
@@ -1151,6 +1156,11 @@ function createPostgresAutopilotRouter(database,options={}){
       await recurring.configure(database,req.ctx,{...req.body,...source});
     }
     res.redirect(303,'/autopilot/reviews/recurring-customer-orders');
+  }));
+  router.post('/autopilot/channel-prices/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const r=await require('../../pricing/agent-channel-price-checks').checkNow(database,req.ctx);
+    req.flash('success',r.replayed?'Nothing changed since the last check.':r.outcome==='STOPPED'?r.reason:(r.opened?.length||0)+' new flag'+((r.opened?.length||0)===1?'':'s')+', '+(r.cleared?.length||0)+' cleared.');
+    res.redirect(303,'/autopilot/reviews/channel-prices');
   }));
   router.post('/autopilot/map-terms',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../pricing/channel-price-review').save(database,req.ctx,req.body);

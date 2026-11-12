@@ -1,3 +1,8 @@
+<section class="card card-body section" aria-label="Check channel prices">
+ <h2>Check channel prices now</h2>
+ <p class="cell-sub">StockChief also checks every hour on its own. Use this when the job is set to Ask me first.</p>
+ <form method="post" action="/autopilot/channel-prices/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost">Check now</button></form>
+</section>
 <section class="card card-body section" aria-label="Minimum advertised prices">
  <h2>Record supplier MAP terms</h2>
  <form method="post" action="/autopilot/map-terms">

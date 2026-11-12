@@ -550,7 +550,9 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
       +(SELECT count(*) FROM stockchief_runtime.agent_supplier_benefit_programs WHERE workspace_id IN(SELECT id FROM owned) AND enabled AND claim_limit_minor IS NOT NULL)
       +(SELECT count(*) FROM stockchief_runtime.agent_rfq_competition_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_invoice_dispute_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
-      +(SELECT count(*) FROM stockchief_runtime.agent_customer_order_limits WHERE workspace_id IN(SELECT id FROM owned) AND enabled) AS n`,[state.accountId]);
+      +(SELECT count(*) FROM stockchief_runtime.agent_customer_order_limits WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
+      +(SELECT count(*) FROM stockchief_runtime.agent_channel_fee_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
+      +(SELECT count(*) FROM stockchief_runtime.agent_net_margin_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled) AS n`,[state.accountId]);
   if(keys.size+Number(configured.rows[0].n)+additional>limit && keys.size+additional>before) throw new ValidationError(`Your plan includes ${limit} active rules across your inventories. Remove a rule or upgrade to add another.`);
 }
 
