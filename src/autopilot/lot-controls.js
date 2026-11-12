@@ -20,7 +20,10 @@ async function details(db,ctx,input){
   const certificateEvidence=require('./lot-certificate-evidence');
   await certificateEvidence.owner(db,ctx);
   const {coverage,history:certificateHistory,more}=await require('./lot-certificate-coverage').forLot(db,ctx,lot);
-  return {lot,history,certificates:coverage,certificateHistory,moreCertificates:more,canRecall:policy.permits(state.plan,194,'draft'),
+  const today=await require('../lib/business-time').today(db,ctx.workspaceId);
+  const expired=Boolean(lot.expires_at&&String(lot.expires_at).slice(0,10)<today);
+  const holding=lot.recalled_at||expired?await require('../operations/agent-lot-blocks').holding(db,ctx.workspaceId,{lotId:lot.id}):[];
+  return {lot,history,expired,holding,certificates:coverage,certificateHistory,moreCertificates:more,canRecall:policy.permits(state.plan,194,'draft'),
     canCertify:policy.usesAgentTerms(state)&&policy.permits(state.plan,196,'draft')};
 }
 
@@ -38,6 +41,11 @@ async function recall(db,ctx,input){
     await c.query('UPDATE lots SET recalled_at=CASE WHEN $3 THEN now() END,recall_revision=recall_revision+1 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,lot.id,held]);
     await c.query(`INSERT INTO stockchief_runtime.lot_recall_events(id,workspace_id,lot_id,actor_id,revision,held,reason)
       VALUES($1,$2,$3,$4,$5,$6,$7)`,[newId('recall'),ctx.workspaceId,lot.id,ctx.actorId,revision+1,held,reason]);
+    // Job 194: placing and releasing a recall are a person's decisions, kept
+    // in the security history with who, when and why.
+    await require('../operations/postgres-security-audit').record(c,ctx,{action:held?'Lot recall placed':'Lot recall released',reference:lot.id,
+      before:{sku:lot.sku,lot:lot.code,underRecall:!held,revision},after:{sku:lot.sku,lot:lot.code,underRecall:held,revision:revision+1,reason}});
+    return {held,revision:revision+1};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 

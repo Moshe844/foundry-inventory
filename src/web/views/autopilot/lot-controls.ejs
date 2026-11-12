@@ -3,6 +3,8 @@
 <label>Lot number <input name="lot" value="<%= detail?.lot.code||'' %>" required></label><button class="btn">Find lot</button></form>
 <% if(detail){const {lot}=detail; %><section class="card"><h2><%= lot.sku %> &middot; <%= lot.code %></h2>
 <p><%= lot.recalled_at?'Under recall':'No active recall' %> &middot; <a href="/autopilot/reviews/recall-trace?filter=<%= encodeURIComponent(lot.code) %>">Trace affected customers</a></p>
+<% if(lot.recalled_at||detail.expired){ %><p class="notice notice--warn" data-lot-blocked><%= lot.recalled_at?'This batch is under recall.':'This batch has expired.' %> StockChief will not pick, ship, transfer, rent, consign or offer it on a sales channel. You can still write it off or send it back to the supplier.</p>
+<% if(detail.holding.length){ %><h3>Open work that still names it</h3><ul class="rm-list" data-lot-holding><% detail.holding.forEach(h=>{ %><li class="list-row"><span><strong><a href="<%= h.href %>"><%= h.kind %> <%= h.reference %></a></strong><small><%= h.units %> from this batch. Choose other stock, or cancel it.</small></span><span><%= h.reason %></span></li><% }); %></ul><% } %><% } %>
 <% if(detail.canRecall||lot.recalled_at){ %><form method="post" action="/autopilot/lots/recall">
 <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="sku" value="<%= lot.sku %>"><input type="hidden" name="lot" value="<%= lot.code %>">
 <input type="hidden" name="revision" value="<%= lot.recall_revision %>"><label>Reason <input name="reason" minlength="3" maxlength="1000" required></label>
