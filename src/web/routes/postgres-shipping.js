@@ -97,6 +97,11 @@ function createPostgresShippingRouter(database,options={}){
   router.post('/settings/shipping/shipstation-custom/disconnect',requireOwner,asyncRoute(async(req,res)=>{
     await require('../../shipping/shipstation-custom-store').disconnect(database,req.ctx,req.body.connectorId);req.flash('success','ShipStation Custom Store disconnected. Tracking history remains.');return res.redirect(303,'/settings/shipping');
   }));
+  router.post('/fulfilment/:id/delay-notice',requireAuth,requirePermission(permissions.OPERATE,'review delay emails'),asyncRoute(async(req,res)=>{
+    await require('../../shipping/agent-parcel-watch').editNotice(database,req.ctx,req.params.id,req.body);
+    req.flash('success',req.body.action==='send'?'The delay email is queued for delivery.':req.body.action==='cancel'?'The delay email will not be sent.':'Delay email saved.');
+    return res.redirect(303,'/fulfilment/'+req.params.id+'#delay-notice');
+  }));
   router.post('/fulfilment/:id/notice',requireAuth,requirePermission(permissions.OPERATE,'review shipment notices'),asyncRoute(async(req,res)=>{
     await require('../../shipping/agent-shipping-notices').edit(database,req.ctx,req.params.id,req.body);
     req.flash('success',req.body.action==='send'?'The shipping notice is queued for delivery.':'Shipping notice updated.');
