@@ -74,34 +74,8 @@ async function demandScenario(db,ctx,options){
 module.exports=[
   {id:144,key:'seasonal-demand',label:'Forecast sales by SKU',readPage:require('../forecasting/agent-demand-forecast').review},
   {id:146,key:'new-product-forecast',label:'Forecast a new product from similar items',readPage:require('../forecasting/agent-launch-forecast').review},
-  {id:151,key:'stockout-cost',label:'Estimate stockout dates and margin at risk',readPage:stockout},
+  {id:151,key:'stockout-cost',label:'Estimate stockout dates and margin at risk',readPage:(db,ctx,options)=>require('../forecasting/agent-runout').review(db,ctx,options)},
   {id:19,key:'reorder-drafts',label:'Draft reorders grouped by supplier',readPage:async(c,ctx,o)=>({...await reorder(c,ctx,o),reorderForm:true})},
   {id:18,key:'reorder-explanation',label:'Explain what to order and why',readPage:reorder},
   {id:149,key:'demand-scenario',label:'Compare a change in sales demand',readPage:demandScenario,requiresChange:true}
 ];
-
-async function stockout(db,ctx,options){
-  const {items,ids,more}=await positions(db,ctx,options);
-  const values=await db.query(`SELECT s.id,book.base_currency,price.amount_minor AS sale,price.currency AS sale_currency,
-    cost.amount_minor AS cost,cost.currency AS cost_currency FROM skus s
-    LEFT JOIN accounting_settings book ON book.workspace_id=s.workspace_id AND book.enabled=1
-    LEFT JOIN LATERAL (SELECT amount_minor,currency FROM sku_prices p WHERE p.workspace_id=s.workspace_id AND p.sku_id=s.id
-      ORDER BY created_at DESC,id DESC LIMIT 1) price ON true
-    LEFT JOIN LATERAL (SELECT amount_minor,currency FROM sku_purchase_costs p WHERE p.workspace_id=s.workspace_id AND p.sku_id=s.id
-      ORDER BY created_at DESC,id DESC LIMIT 1) cost ON true
-    WHERE s.workspace_id=$1 AND s.id=ANY($2::text[])`,[ctx.workspaceId,ids]);
-  const terms=new Map(values.rows.map(row=>[row.id,row]));
-  const money=require('../domain/currency'),{addDays}=require('../accounting/customer-money');
-  const rows=items.filter(r=>r.location_id).map(row=>{
-    const days=row.dailyRate>0?Math.max(0,Math.floor(row.available/row.dailyRate)):null;
-    const t=terms.get(row.sku_id);
-    const known=t.sale!=null && t.cost!=null && t.sale_currency===t.base_currency && t.cost_currency===t.base_currency;
-    const margin=known?Math.max(0,Number(t.sale)-Number(t.cost)):null;
-    const dailyMargin=margin==null?null:Math.round(row.dailyRate*margin);
-    return {SKU:row.code,Warehouse:row.location_name,'Available now':row.available,'Expected incoming':row.incoming,
-      'Estimated runout':days==null||days>36525?null:addDays(options.today,days),
-      'Estimated daily gross margin at risk':days!=null && Number.isSafeInteger(dailyMargin)?money.format(dailyMargin,t.base_currency):null,
-      Evidence:days==null?'No recorded demand in 90 days':days>36525?'Beyond the 100-year projection window':!known?'Selling price or purchase cost unavailable in the inventory currency':'Current selling price less purchase cost',link:'/inventory/'+row.item_id};
-  });
-  return {rows,more,summary:'Runout uses available stock and the last 90 days of recorded issues. Incoming units are shown separately. Margin at risk estimates a full day of unmet demand at current prices before discounts and fees.'};
-}

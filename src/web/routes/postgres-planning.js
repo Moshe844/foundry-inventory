@@ -22,10 +22,11 @@ function createPostgresPlanningRouter(database) {
     const rules=req.user.role==='owner'?(await database.query('SELECT sku_id,location_id,ceiling,revision,profile_key FROM stockchief_runtime.location_reorder_rules WHERE workspace_id=$1 AND sku_id=ANY($2::text[])',
       [req.ctx.workspaceId,[...new Set(overview.rows.map(r=>r.sku_id))]])).rows:[];
     const safetyStock=agentTerms&&permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)&&agent.permits(state.plan,150,'draft');
+    const runOut=agentTerms&&permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)&&agent.permits(state.plan,151,'automatic');
     const recommendations=agentTerms?overview.recommendations.filter(r=>r.kind!=='reorder_point'||!r.evidence.locationId):overview.recommendations;
     const reorderRefresh=agentTerms&&permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)&&agent.permits(state.plan,21,'suggest');
     const demandForecasts=agentTerms&&permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)&&agent.permits(state.plan,144,'suggest');
-    return res.page('planning/postgres-index',{title:'What happens next',nav:'inventory',room:true,...overview,recommendations,agentTerms,manageRules,rules,safetyStock,reorderRefresh,demandForecasts,planLocksReorder:agentTerms&&state.plan==='starter',
+    return res.page('planning/postgres-index',{title:'What happens next',nav:'inventory',room:true,...overview,recommendations,agentTerms,manageRules,rules,safetyStock,runOut,reorderRefresh,demandForecasts,planLocksReorder:agentTerms&&state.plan==='starter',
       mayAccept:row=>!agentTerms||permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)&&agent.permits(state.plan,row.kind==='safety_stock'?150:row.evidence.locationId?120:21,'draft'),
       canOperate:permissions.can(req.user,permissions.OPERATE),canAdmin:permissions.can(req.user,permissions.ADMIN)});
   }));
@@ -149,6 +150,26 @@ function createPostgresPlanningRouter(database) {
     const result=await forecast().setExcluded(database,req.ctx,req.body);
     req.flash('success',result.status==='EXCLUDED'?'Planning uses plain sales history for this product.':'The forecast can plan this product again.');
     return res.redirect(303,forecastPath+'#forecasts');
+  }));
+  const runout=()=>require('../../forecasting/agent-runout'),runoutPath='/planning/run-out';
+  router.get(runoutPath,manageReorders,asyncRoute(async(req,res)=>{
+    const view={title:'When stock runs out',nav:'inventory'};
+    const agent=require('../../commercial/agent-plan'),state=await agent.accountState(database,req.ctx.workspaceId);
+    if(!agent.usesAgentTerms(state)&&req.accepts('html'))return res.page('autopilot/agent-plan-locked',{...view,tier:'Starter',
+      reviewTerms:agent.permits(state.plan,runout().JOB,'suggest'),backTo:{href:'/planning',label:'Planning'}});
+    try{
+      const model=await runout().page(database,req.ctx,{number:req.query.page||1});
+      return res.page('planning/run-out',{...view,model});
+    }catch(error){
+      if(error.code!=='entitlement_required'||!req.accepts('html'))throw error;
+      res.status(402);
+      return res.page('autopilot/locked',{...view,message:error.message});
+    }
+  }));
+  router.post(runoutPath+'/check',manageReorders,asyncRoute(async(req,res)=>{
+    const result=await runout().requestCheck(database,req.ctx);
+    req.flash('success',result.queued?'StockChief will check every item shortly.':'A check is already on its way.');
+    return res.redirect(303,runoutPath);
   }));
   const safety=()=>require('../../forecasting/agent-safety-stock'),safetyPath='/planning/safety-stock';
   router.get(safetyPath,manageReorders,asyncRoute(async(req,res)=>{

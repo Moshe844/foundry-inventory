@@ -83,10 +83,14 @@ test('dated orders forecast weekly demand and posted stock issues quantify the m
       assert.equal(forecast.rows[0]['Holdout error (units/day)'],0);
     }
     const runout=(await reviews.run(db,ctx,'stockout-cost',{filter:await code(sku)})).rows[0];
-    assert.equal(runout['Estimated daily gross margin at risk'],'$0.30');
+    // Job 151 follows the weekly order forecast: 7 every week from today, so
+    // 142 free units last 20 weeks. 35 units in 30 days at $9.00 margin each.
     assert.equal(runout['Available now'],142);
-    assert.equal(runout['Estimated runout'],addDays(today,4260));
-    assert.ok((await browser.get('/autopilot/reviews/stockout-cost').expect(200)).text.includes('$0.30'));
+    assert.equal(runout['Demand from'],'Forecast · Day-of-week pattern');
+    assert.equal(runout['Runs out'],addDays(today,140));
+    assert.equal(runout['Gross margin lost a day'],'$10.50');
+    assert.equal(runout['Before the delivery'],'No');
+    assert.ok((await browser.get('/autopilot/reviews/stockout-cost').expect(200)).text.includes('$10.50'));
   }
 });
 

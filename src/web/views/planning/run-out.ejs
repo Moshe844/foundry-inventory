@@ -1,0 +1,33 @@
+<% const m=model,base='/planning/run-out';
+   const qty=(value,unit)=>value==null?'':helpers.unitCount(Number(value),unit||'unit');
+   const when=value=>value?helpers.dateTime(new Date(value).toISOString()):'';
+   const counts=m.run?.counts||{}; %>
+<header class="rm-head"><a href="/planning">← Planning</a>
+<h1>When stock runs out</h1>
+<p>Every day StockChief works out when each item runs out: free stock after open orders, against the forecast day by day and purchase orders with a delivery date. Running out costs the gross margin of the sales you cannot make (selling price less cost) and keeps open orders waiting. It changes nothing on its own.</p></header>
+
+<section class="rm-panel"><div class="rm-panel__body">
+<% if(m.run){ %><p>Last check <%= when(m.run.started_at) %><%= m.run.finished_at?'':' · still running' %></p>
+<p class="rm-muted"><%= Number(counts.checked||0) %> items checked · <%= Number(counts.before_delivery||0) %> run out before their next delivery · <%= Number(counts.within_year||0) %> run out within a year</p>
+<% }else{ %><p>No check has run yet.</p><% } %>
+<form method="post" action="<%= base %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost">Check now</button></form>
+</div></section>
+
+<section class="rm-panel" id="before-delivery"><div class="rm-panel__head"><h2>Runs out before its next delivery</h2></div><div class="rm-panel__body">
+<% if(!m.flagged.length){ %><p>Nothing runs out before its next delivery.</p><% } %>
+<% if(m.flagged.length){ %><ul class="rm-list"><% for(const r of m.flagged){ %><li id="<%= r.code %>"><div class="rm-told__t">
+  <p><a class="rm-u" href="/inventory/<%= r.item_id %>"><strong><%= r.code %></strong></a> · <%= r.name %></p>
+  <p><%= r.reason %></p>
+  <p><% if(r.lost_margin_minor!=null){ %>About <strong><%= m.money(r.lost_margin_minor,r.currency) %></strong> of gross margin lost before the delivery · <%= m.money(r.daily_margin_minor,r.currency) %> a day for <%= r.days_short %> day<%= Number(r.days_short)===1?'':'s' %><% }else{ %>Cost unknown<% } %><% if(Number(r.orders_affected)){ %> · <%= r.orders_affected %> open order<%= Number(r.orders_affected)===1?'':'s' %> waiting<% } %></p>
+  <p class="rm-muted"><%= qty(r.available,r.unit_label) %> free now<% if(r.waiting){ %> · <%= qty(r.waiting,r.unit_label) %> owed to open orders<% } %> · about <%= qty(r.daily_demand,r.unit_label) %> a day (<%= r.demand_basis==='FORECAST'?'forecast':'recorded sales' %>)<% if(r.next_delivery){ %> · next delivery <%= r.next_delivery %> on <%= r.delivery %><% } %></p>
+  <% const missing=(r.evidence.notCounted||[]); if(missing.length){ %><p class="rm-muted">Not counted, no date to rely on: <%= missing.map(l=>l.po+(l.date?' (due '+l.date+')':' (no date)')).join(', ') %></p><% } %>
+</div></li><% } %></ul><% } %>
+</div></section>
+
+<% if(m.later.length){ %><section class="rm-panel" id="later"><div class="rm-panel__head"><h2>Runs out later</h2></div><div class="rm-panel__body">
+<ul class="rm-list"><% for(const r of m.later){ %><li id="<%= r.code %>"><div class="rm-told__t">
+  <p><a class="rm-u" href="/inventory/<%= r.item_id %>"><strong><%= r.code %></strong></a> · runs out about <%= r.runout %></p>
+  <p class="rm-muted"><%= qty(r.available,r.unit_label) %> free now · about <%= qty(r.daily_demand,r.unit_label) %> a day<% if(r.next_delivery){ %> · next delivery <%= r.next_delivery %> on <%= r.delivery %><% } %><% if(r.daily_margin_minor!=null){ %> · each day without stock costs about <%= m.money(r.daily_margin_minor,r.currency) %><% } %></p>
+</div></li><% } %></ul>
+<% if(m.number>1||m.more){ %><p><% if(m.number>1){ %><a href="?page=<%= m.number-1 %>">Previous</a><% } %> <% if(m.more){ %><a href="?page=<%= m.number+1 %>">Next</a><% } %></p><% } %>
+</div></section><% } %>

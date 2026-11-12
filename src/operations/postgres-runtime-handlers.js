@@ -451,6 +451,7 @@ async function autopilotEvaluate(job,client){
       await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'planning.automation-opportunities',idempotencyKey:'automation:'+month,payload:{},priority:65,maxAttempts:3});
       await require('../forecasting/agent-demand-forecast').schedule(scopedDatabase(client),job.workspaceId);
       await require('../forecasting/agent-reorder-refresh').schedule(scopedDatabase(client),job.workspaceId);
+      await require('../forecasting/agent-runout').schedule(scopedDatabase(client),job.workspaceId);
     }
     await require('./agent-daily-cycle-counts').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('./agent-annual-stocktake-runs').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
@@ -768,6 +769,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'planning.location-reorder.v1':Object.assign((job,c)=>require('../forecasting/location-reorder-rules').processBatch(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'planning.reorder-refresh.v1':Object.assign((job,c)=>require('../forecasting/agent-reorder-refresh').process(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'planning.demand-forecast.v1':Object.assign((job,c)=>require('../forecasting/agent-demand-forecast').process(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
+  'planning.runout.v1':Object.assign((job,c)=>require('../forecasting/agent-runout').process(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'agent.inventory-rollup.v1':Object.assign((job,c)=>require('../reports/agent-inventory-rollup').process(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
   'import.link-lot-certificate.v1':external((job,database)=>require('../autopilot/lot-certificate-evidence').onAttachment(database,job.workspaceId,job.payload.messageId,job.payload.attachmentId,job),'reading'),
   'mail.attachment-extract':external(async(job,database)=>{
