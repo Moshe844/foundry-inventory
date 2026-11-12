@@ -24,7 +24,8 @@ test('whole-order warehouse selection checks all four plans, current stock and t
   await browser.get(review).expect(402);
   await browser.post(review).set('Accept','application/json').type('form').send({_csrf:f.csrf(page.text),locationId:second,version:1}).expect(402);
   await subscribe('growth');const preview=await browser.get(review).expect(200);assert.match(preview.text,/West shipping/);
-  const select=()=>browser.post(review).set('Accept','application/json').type('form').send({_csrf:f.csrf(preview.text),locationId:second,version:1});
+  const fingerprint=/name="fingerprint" value="([^"]+)"/.exec(preview.text)[1];
+  const select=()=>browser.post(review).set('Accept','application/json').type('form').send({_csrf:f.csrf(preview.text),fingerprint});
   await stock.issue(db,ctx,{skuId:other,locationId:second,quantity:20,reasonCode:'sold',idempotencyKey:randomUUID()});
   await select().expect(400);await receive(other,second,20);await select().expect(303);
   const confirm=o=>workflows.confirmSalesOrder(db,ctx,o,{idempotencyKey:randomUUID()});
@@ -32,6 +33,9 @@ test('whole-order warehouse selection checks all four plans, current stock and t
   const first=await confirm(id);assert.deepEqual([...new Set(first.allocations.map(a=>a.locationId))],[second]);
   await assert.rejects(modes.save(db,ctx,121,{mode:'routine',revision:0}),/plan/);
   await subscribe('pro');await modes.save(db,ctx,121,{mode:'routine',revision:0});
+  // Pro and Custom choose at confirmation once the owner turns on routing rules that may act alone.
+  await require('../../src/sales/agent-ship-from').configure(db,ctx,{revision:0,first:'nearest',split:'never',maxUnits:'10',confirmed:'yes',automatic:'yes',
+    ['ships_'+f.location.id]:'yes',['ships_'+second]:'yes'});
   for(const tier of ['growth','pro','enterprise']){
     const next=(await order()).salesOrderId;await subscribe(tier);const done=await confirm(next);
     if(tier==='growth'){assert.equal(await stored(next),null);assert.equal(new Set(done.allocations.map(a=>a.locationId)).size,2);}

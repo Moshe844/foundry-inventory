@@ -220,6 +220,9 @@ function needsInputs(connection,workspaceId){return require('../lib/versioned-re
     database.query(`SELECT r.id,r.job_id,r.location_id,r.reason,r.created_at,(r.plan->>'units')::int AS units,l.name AS location_name
       FROM stockchief_runtime.agent_backorder_runs r JOIN locations l ON l.workspace_id=r.workspace_id AND l.id=r.location_id
       WHERE r.workspace_id=$1 AND r.status='DRAFT' ORDER BY r.created_at,r.id LIMIT 20`,[workspaceId]),
+    database.query(`SELECT r.id,r.status,r.sales_order_id,r.reason,r.created_at,r.plan->>'summary' AS summary,o.order_number
+      FROM stockchief_runtime.agent_warehouse_routings r JOIN sales_orders o ON o.workspace_id=r.workspace_id AND o.id=r.sales_order_id
+      WHERE r.workspace_id=$1 AND r.status IN ('DRAFT','ASK') ORDER BY r.created_at,r.id LIMIT 20`,[workspaceId]),
   ]);});}
 async function needsUncached(database,workspaceId,actorId,actor){
   const [inputs,nativeApprovals]=await Promise.all([
@@ -227,7 +230,7 @@ async function needsUncached(database,workspaceId,actorId,actor){
     require('../assistant/postgres-approval-projection').pending(database,workspaceId,actorId),
   ]);
   const [attention,connections,work,imports,bills,supplierReturns,shippingExceptions,mail,orders,purchases,
-    repairs,ambiguousEffects,bulkReviews,rentalBilling,batchExpiry,depositRefunds,calendar,booksMismatches=[],backorderPlans={rows:[]}]=inputs;
+    repairs,ambiguousEffects,bulkReviews,rentalBilling,batchExpiry,depositRefunds,calendar,booksMismatches=[],backorderPlans={rows:[]},warehouseChoices={rows:[]}]=inputs;
   const ownedRecords=new Set(work.rows.filter(r=>object(r.outcome).decision).map(r=>object(r.outcome).recordId));
   const preparedLinks=new Set(nativeApprovals.map(r=>r.href));
   const items=[...nativeApprovals];
@@ -238,6 +241,14 @@ async function needsUncached(database,workspaceId,actorId,actor){
     why:row.reason&&row.reason!=='Prepared on request.'?row.reason:'Your plan asks you to approve who gets stock that arrived or freed up.',
     recommendation:'Check who gets the stock, then approve or dismiss the plan.',
     href:(row.job_id===65?'/autopilot/stock-sharing':'/autopilot/backorders')+'?location='+encodeURIComponent(row.location_id),actionLabel:'Review plan',
+    sourceId:row.id,createdAt:row.created_at,timeLabel:'Prepared',at:row.created_at});
+  // Job 121: a warehouse choice to approve, or a fact StockChief needs before it can choose.
+  for(const row of warehouseChoices.rows)items.push({kind:'approval',requiredPermissions:[require('../actions/permissions').OPERATE],importance:'Needs You',priority:row.status==='ASK'?84:86,
+    title:(row.status==='ASK'?'Help StockChief choose the warehouse for ':'Approve the warehouse for ')+row.order_number,
+    happened:row.status==='ASK'?'StockChief stopped before choosing a warehouse. Nothing has changed.':(row.summary||'A warehouse choice is ready.')+' Nothing has changed yet.',
+    why:row.reason||'Your plan asks you to approve each warehouse choice.',
+    recommendation:row.status==='ASK'?'Fix what is missing on the order, or choose the warehouse yourself.':'Check the warehouse, then approve or dismiss it.',
+    href:'/orders/'+encodeURIComponent(row.sales_order_id)+'/ship-from',actionLabel:row.status==='ASK'?'Review order':'Review choice',
     sourceId:row.id,createdAt:row.created_at,timeLabel:'Prepared',at:row.created_at});
   for(const row of rentalBilling.rows)items.push({kind:'accounting',importance:'Needs You',priority:89,title:'Review rental billing for '+row.agreement_number,happened:'An earned rental invoice is paused before posting.',why:row.last_error,recommendation:'Review the unchanged billing authority, tax settings and accounting period before authorizing another attempt.',href:'/custody/'+row.agreement_id+'#rental-billing',actionLabel:'Review rental billing',sourceId:row.id,createdAt:row.created_at,updatedAt:row.updated_at,timeLabel:'Billing paused',at:row.updated_at});
   for(const row of bulkReviews.rows)items.push({kind:'approval',requiredPermissions:[require('../actions/permissions').ADMIN],importance:'Needs You',priority:70,title:row.kind==='price'?'Review selected selling prices':row.kind==='cost'?'Review selected purchase costs':row.kind==='reorder'?'Review selected reorder levels':row.kind==='restore'?'Restore selected products':'Archive selected products',happened:(row.payload.items||[]).length+' selected products are prepared; nothing has changed.',why:'Your approval is required before these product changes are applied.',recommendation:'Review the exact products and changes, then approve or cancel.',href:'/inventory/bulk/reviews/'+row.id,actionLabel:'Review changes',sourceId:row.id,createdAt:row.created_at,timeLabel:'Prepared',at:row.created_at});

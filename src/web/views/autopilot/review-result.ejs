@@ -7,6 +7,7 @@
 <% if(result.transferArrivalLink){ %><p><a href="/transfers/arrival-follow-up">Review open receiving follow-ups</a></p><% } %>
 <% if(result.backorderLink){ %><p><a class="btn" href="/autopilot/backorders">Open backorders</a></p><% } %>
 <% if(result.stockSharingLink){ %><p><a class="btn" href="/autopilot/stock-sharing">Share scarce stock by your rules</a></p><% } %>
+<% if(result.warehouseRoutingLink){ %><p><a class="btn" href="/autopilot/warehouse-routing">Set your warehouse routing rules</a></p><% } %>
 <% if(result.lossShifts?.length){ %>
   <details><summary>Set local warehouse shifts</summary>
     <% for(const warehouse of result.lossShifts){ %>
