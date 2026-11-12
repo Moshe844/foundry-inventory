@@ -1,0 +1,47 @@
+<% const m=model,alone=m.mode==='alone';
+const lines=a=>a.lines.map(l=>l.arrived+' of '+l.claimed+' × '+l.code).join(', ')||'No incoming stock';
+const state=a=>a.order_status!=='DRAFT'?(a.shipment_number?'Filled · '+a.shipment_number+(a.shipment_status==='PICKING'?' being picked':' '+String(a.shipment_status||'').toLowerCase()):'Filled · '+a.order_status.toLowerCase()):a.fill_status==='DRAFT'?'Ready to fill':a.fill_status==='DISCARDED'?'Fill dismissed · confirm the order yourself':a.problem?a.problem:'Waiting for stock'; %>
+<div class="page-head"><div class="titles"><h1>Preorders</h1>
+<p><%= alone?'When a preorder’s stock arrives, StockChief sets it aside for the customer in the order preorders came in, confirms the order and sends it to picking.':'When a preorder’s stock arrives, StockChief sets it aside for the customer in the order preorders came in and prepares the fill for your approval.' %></p></div></div>
+<% if(m.shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It shows what it would do and changes nothing.</p>
+<% }else if(m.blocked){ %><p class="notice notice--warn"><%= m.blocked %></p><% }else if(alone&&m.automatic){ %><p class="notice notice--warn"><%= m.automatic %></p><% } %>
+
+<% if(m.drafts.length){ %><section class="card section" id="approvals"><h2>Ready to fill</h2>
+<% for(const d of m.drafts){ %><article class="section" id="fill-<%= d.id %>">
+<h3>Preorder <%= d.reference %> · <%= d.customer %></h3>
+<% if(d.reason){ %><p class="cell-sub"><%= d.reason %></p><% } %>
+<p>All of its stock has arrived and is set aside on <a href="/orders/<%= d.sales_order_id %>"><%= d.order_number %></a>: <%= d.lines.map(l=>l.claimed+' × '+l.code).join(', ') %>. Approving confirms the order and sends it to picking.</p>
+<div class="btn-row"><form method="post" action="<%= m.href %>/fills/<%= d.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+<button class="btn btn--primary" <%= m.blocked?'disabled':'' %>>Approve and fill</button></form>
+<form method="post" action="<%= m.href %>/fills/<%= d.id %>/discard"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<button class="btn btn--ghost">Dismiss</button></form></div></article><% } %></section><% } %>
+
+<% if(m.short.length){ %><section class="card section"><h2>Less stock is coming</h2>
+<% for(const s of m.short){ %><article class="section" id="short-<%= s.request_id %>">
+<h3>Preorder <%= s.reference %> · <%= s.customer %></h3>
+<p><span class="badge badge--warn">Short</span> <%= s.cause %></p>
+<ul><% for(const l of s.lines){ %><li><%= l.short %> × <%= l.name %> (<%= l.code %>) may not arrive · <%= l.arrived %> of <%= l.claimed %> here</li><% } %></ul>
+<% if(s.notified_at){ %><p class="cell-sub">You told the customer on <%= helpers.dateTime(s.notified_at) %>.</p>
+<% }else if(!s.email){ %><p class="cell-sub">Add this customer’s email address to tell them.</p>
+<% }else if(!m.mailboxes.length){ %><p class="cell-sub">Connect a Gmail or Microsoft 365 mailbox to tell the customer.</p>
+<% }else{ %><details><summary>Tell the customer</summary><p class="cell-sub">To <%= s.email %> · <%= s.message.subject %></p><div class="cell-sub"><% for(const line of s.message.lines){ %><p><%= line %></p><% } %></div>
+<form method="post" action="<%= m.href %>/short/<%= s.request_id %>/tell" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label class="rm-field"><span>Send from</span><select name="connectorId"><% for(const b of m.mailboxes){ %><option value="<%= b.id %>"><%= b.display_name %></option><% } %></select></label>
+<label class="checkbox"><input type="checkbox" name="confirmed" value="yes" required><span class="checkbox-text">Send this note to <%= s.email %></span></label>
+<button class="btn">Send to customer</button></form></details><% } %></article><% } %></section><% } %>
+
+<section class="card section"><h2>Accepted preorders</h2>
+<% if(!m.accepted.length){ %><p>No preorder has been accepted yet. Customers send preorders through a <a href="/autopilot/customer-order-pages">preorder page</a>.</p>
+<% }else{ %><div class="table-wrap"><table class="table table--stack"><thead><tr><th>Preorder</th><th>Arrived</th><th>Where it is</th></tr></thead><tbody>
+<% for(const a of m.accepted){ %><tr><td class="cell-main"><a class="cell-title" href="/orders/<%= a.order_id %>"><%= a.reference %></a><span class="cell-sub"><%= a.customer %> · <%= a.order_number %></span></td>
+<td data-label="Arrived"><%= lines(a) %></td><td data-label="Status"><%= state(a) %></td></tr><% } %>
+</tbody></table></div><% if(m.more){ %><p class="cell-sub">Showing the latest 100 preorders.</p><% } %>
+<% if(!m.shadow&&!m.blocked){ %><form method="post" action="<%= m.href %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost">Check arrivals now</button></form><% } %><% } %>
+<p class="cell-sub"><a href="/autopilot/customer-order-pages">Publish preorder pages and accept preorders</a> · <a href="/autopilot/job-modes">Choose Watch only or Ask me first for this job</a></p></section>
+
+<% if(m.recent.length){ %><section class="card section"><h2>Recent fills</h2><ul class="rm-list">
+<% for(const f of m.recent){ %><li class="list-row"><span><strong><%= f.authorization_kind==='AUTOMATIC'?'StockChief':'You' %> filled preorder <%= f.reference %></strong>
+<small><%= helpers.dateTime(f.filled_at) %> · <a href="/orders/<%= f.sales_order_id %>"><%= f.order_number %></a><% if(f.shipment_number){ %> · <a href="/fulfilment/<%= f.shipment_id %>"><%= f.shipment_number %></a><% } %></small>
+<% if(f.release_note){ %><small><%= f.release_note %></small><% } %></span>
+<% if(f.status==='UNDONE'){ %><span class="badge badge--muted">Taken back from picking</span><% }else if(f.shipment_status==='PICKING'){ %><form method="post" action="<%= m.href %>/fills/<%= f.id %>/undo"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+<button class="btn btn--ghost btn--sm">Undo</button></form><% } %></li><% } %></ul></section><% } %>

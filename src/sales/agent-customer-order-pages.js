@@ -143,7 +143,7 @@ async function createDraft(db,ctx,id,input={}, {automatic=false}={}){return tx(d
  await require('../commercial/storage-capacity').reserve(c,ctx.workspaceId,'customer-order-draft:'+id,Buffer.byteLength(JSON.stringify(r.snapshot))*2+32768,{finished:true});
  const operations=require('../operations/postgres-business-workflows');
  const result=await operations.createSalesOrderInTransaction(c,ctx,{...r.snapshot.input,pricingQuoteHash:prices.quoteHash(quote),idempotencyKey:'customer-order-page:'+id});
- await c.query("UPDATE stockchief_runtime.agent_customer_page_requests SET status='DRAFTED',sales_order_id=$3,automatic=$4,processed_by=$5,processed_at=clock_timestamp(),problem=NULL WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id,result.salesOrderId,automatic,ctx.actorId]);await require('../operations/postgres-security-audit').record(c,ctx,{action:'Original customer page request drafted',reference:id,after:{salesOrderId:result.salesOrderId,automatic,awaitingLinkedReceipt:Boolean(f.preorderSources&&automatic),stockAndPaymentsUnchanged:true}});return {id,...result,automatic};
+ await c.query("UPDATE stockchief_runtime.agent_customer_page_requests SET status='DRAFTED',sales_order_id=$3,automatic=$4,processed_by=$5,processed_at=clock_timestamp(),problem=NULL WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id,result.salesOrderId,automatic,ctx.actorId]);if(f.preorderSources)await require('./agent-preorder-fills').hold(c,ctx,{requestId:id});await require('../operations/postgres-security-audit').record(c,ctx,{action:'Original customer page request drafted',reference:id,after:{salesOrderId:result.salesOrderId,automatic,awaitingLinkedReceipt:Boolean(f.preorderSources&&automatic),stockAndPaymentsUnchanged:true}});return {id,...result,automatic};
  });}
 async function configure(db,ctx,id,input){return tx(db,async c=>{await owner(c,ctx,true);const p=await page(c,ctx,id,true);if(Number(input.revision)!==p.revision)throw new ValidationError('Reload the current page before changing authority.');if(input.stop==='yes'){await c.query('UPDATE stockchief_runtime.agent_customer_order_pages SET enabled=false,routine_enabled=false,revision=revision+1 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]);await c.query('UPDATE stockchief_runtime.agent_customer_page_rules SET enabled=false,revision=revision+1 WHERE workspace_id=$1 AND page_id=$2',[ctx.workspaceId,id]);await require('../operations/postgres-security-audit').record(c,ctx,{action:'Customer order page stopped and link revoked',reference:id});return {id};}if(p.preorder_enabled)await preorderAuthority(c,ctx,{automatic:true});else await access(c,ctx,{automatic:true,trained:true,checkMode:true});if(input.confirmed!=='yes')throw new ValidationError(p.preorder_enabled?'Confirm routine preorder acceptance from this exact customer, incoming stock and price limits.':'Confirm routine creation of unapproved drafts within this exact published customer page and limits.');const f=await basis(c,ctx,p);if(!p.enabled||f.hash!==p.source_hash)throw new ValidationError('Republish the current exact offer before enabling routine drafts.');await c.query('UPDATE stockchief_runtime.agent_customer_order_pages SET routine_enabled=true,revision=revision+1 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]);await require('../operations/postgres-security-audit').record(c,ctx,{action:'Routine customer page drafting authorized',reference:id,after:{maximumUnits:p.maximum_units,maximumMinor:Number(p.maximum_minor),proRequiresMatchingCompletedExample:!p.preorder_enabled,ordersRemainDrafts:!p.preorder_enabled}});return {id};});}
 async function teach(db,ctx,id,input){return tx(db,async c=>{await owner(c,ctx,true);const r=await request(c,ctx,id,true),p=await page(c,ctx,r.page_id,true);await access(c,ctx,{checkMode:true});if(!p.enabled||new Date(p.expires_at).getTime()<=Date.now()||(await basis(c,ctx,p)).hash!==p.source_hash)throw new ValidationError('Republish the current customer offer before teaching a new request.');await completedExample(c,ctx,r,p);if(input.confirmed!=='yes')throw new ValidationError('Confirm teaching only this exact completed customer order shape, prices, quantities and delivery scope.');const value=scope(r,p),scopeHash=prices.hash(value),prior=(await c.query('SELECT * FROM stockchief_runtime.agent_customer_page_rules WHERE workspace_id=$1 AND page_id=$2 AND scope_hash=$3 FOR UPDATE',[ctx.workspaceId,p.id,scopeHash])).rows[0];if(prior?.enabled)return {id:prior.id,replayed:true};await require('../manager/postgres-operating-instructions').checkRuleLimit(c,ctx,[],1);const ruleId=prior?.id||newId('customer-page-rule');await require('../commercial/storage-capacity').reserve(c,ctx.workspaceId,'customer-page-rule:'+ruleId,Buffer.byteLength(JSON.stringify(value))+8192,{finished:true});if(prior)await c.query('UPDATE stockchief_runtime.agent_customer_page_rules SET enabled=true,example_request_id=$3,authorized_by=$4,revision=revision+1 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ruleId,id,ctx.actorId]);else await c.query('INSERT INTO stockchief_runtime.agent_customer_page_rules(id,workspace_id,page_id,scope_hash,scope,example_request_id,authorized_by) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)',[ruleId,ctx.workspaceId,p.id,scopeHash,JSON.stringify(value),id,ctx.actorId]);await require('../operations/postgres-security-audit').record(c,ctx,{action:'Completed customer page request taught',reference:id,after:{ruleId,scope:value}});return {id:ruleId};});}
@@ -157,74 +157,15 @@ async function preorderSchemaExists(db){
  const {rows:[row]}=await db.query("SELECT to_regclass('stockchief_runtime.agent_preorder_claims') IS NOT NULL AS installed");
  return row.installed;
 }
+// A posted receipt sets arrived units aside for accepted preorders and queues
+// their fill (job 68, agent-preorder-fills.js).
 async function queueArrival(client,ctx,receiptId,lineIds){
  if(!await preorderSchemaExists(client))return;
- const affected=(await client.query(`SELECT 1 FROM stockchief_runtime.agent_preorder_claims
-  WHERE workspace_id=$1 AND purchase_order_line_id=ANY($2::text[]) LIMIT 1`,[ctx.workspaceId,lineIds])).rowCount;
- if(affected)await require('../operations/postgres-job-queue').enqueue(scoped(client),{
-  workspaceId:ctx.workspaceId,kind:arrivalKind,idempotencyKey:receiptId,payload:{receiptId},priority:70});
+ await require('./agent-preorder-fills').onReceipt(client,ctx,receiptId,lineIds);
 }
-
 async function settlePreorders(db,workspaceId,{requestId=null,receiptId=null}={}){
- const state=await policy.accountState(db,workspaceId);
- if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,68,'automatic')||!await preorderSchemaExists(db))return {reserved:0,held:0};
- const due=(await db.query(`SELECT r.id,p.authorized_by FROM stockchief_runtime.agent_customer_page_requests r
-  JOIN stockchief_runtime.agent_customer_order_pages p ON p.workspace_id=r.workspace_id AND p.id=r.page_id
-  JOIN sales_orders o ON o.workspace_id=r.workspace_id AND o.id=r.sales_order_id
-  WHERE r.workspace_id=$1 AND r.status='DRAFTED' AND r.automatic AND p.preorder_enabled AND p.enabled AND p.routine_enabled
-    AND p.source_hash=r.source_hash AND o.status='DRAFT' AND ($2::text IS NULL OR r.id=$2)
-    AND EXISTS(SELECT 1 FROM stockchief_runtime.agent_preorder_claims claim
-      JOIN purchase_order_receipt_lines l ON l.workspace_id=claim.workspace_id AND l.purchase_order_line_id=claim.purchase_order_line_id AND l.location_id=claim.location_id
-      JOIN purchase_order_receipts receipt ON receipt.workspace_id=l.workspace_id AND receipt.id=l.receipt_id
-      JOIN balances balance ON balance.workspace_id=claim.workspace_id AND balance.sku_id=claim.sku_id AND balance.location_id=claim.location_id
-      WHERE claim.workspace_id=r.workspace_id AND claim.request_id=r.id AND receipt.created_at::timestamptz>=claim.created_at AND balance.on_hand>0
-        AND ($3::text IS NULL OR receipt.id=$3))
-  ORDER BY o.allocation_priority,o.needed_by NULLS LAST,o.created_at,o.id LIMIT 25`,[workspaceId,requestId,receiptId])).rows;
- const result={reserved:0,held:0};
- for(const candidate of due){
-  const ctx={workspaceId,actorId:candidate.authorized_by};
-  try{
-   const done=await tx(db,async c=>{
-    await owner(c,ctx,true);await preorderAuthority(c,ctx,{automatic:true});
-    const r=await request(c,ctx,candidate.id,true),p=await page(c,ctx,r.page_id,true);
-    if(!r.automatic||!p.preorder_enabled||!p.enabled||!p.routine_enabled||p.source_hash!==r.source_hash||p.authorized_by!==ctx.actorId){
-     throw new ValidationError('The exact preorder authority changed.');
-    }
-    if(!(await preorders.hasArrived(c,ctx,r.id)))return false;
-    const order=(await c.query(`SELECT o.*,snap.quote FROM sales_orders o
-      JOIN stockchief_runtime.pricing_order_snapshots snap ON snap.workspace_id=o.workspace_id AND snap.id=o.pricing_quote_id
-      WHERE o.workspace_id=$1 AND o.id=$2 FOR UPDATE OF o`,[workspaceId,r.sales_order_id])).rows[0];
-    if(order&&order.status!=='DRAFT')return false;
-    if(!order||order.customer_id!==p.customer_id||order.fulfillment_location_id!==p.location_id||
-      order.delivery_method!==p.delivery_method||order.currency!==p.currency||order.reference!==r.reference||
-      (p.delivery_method==='SHIP'&&order.ship_to_address!==r.snapshot.input.shipToAddress)||
-      termsHash(order.quote)!==r.snapshot.quoteHash)throw new ValidationError('The native preorder changed. Review it before setting stock aside.');
-    const lines=(await c.query('SELECT id,sku_id,quantity_ordered FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2 FOR SHARE',
-      [workspaceId,order.id])).rows;
-    const accepted=new Map(r.snapshot.input.lines.map(row=>[row.skuId,row.quantity]));
-    if(lines.length!==accepted.size||new Set(lines.map(row=>row.sku_id)).size!==accepted.size||
-      lines.some(row=>Number(row.quantity_ordered)!==accepted.get(row.sku_id)))throw new ValidationError('The native preorder quantities changed.');
-    const reserved=await require('../operations/postgres-business-workflows').confirmSalesOrderInTransaction(c,ctx,order.id,
-      {idempotencyKey:'preorder-arrived:'+r.id,requireFullAllocation:true});
-    const expected=new Map(lines.map(row=>[row.id,Number(row.quantity_ordered)]));
-    if(reserved.status!=='CONFIRMED'||reserved.allocations.length!==expected.size||
-      reserved.allocations.some(row=>row.locationId!==p.location_id||row.quantity!==expected.get(row.lineId))){
-      throw new ValidationError('The exact preorder cannot be reserved at the promised location.');
-    }
-    await c.query('UPDATE stockchief_runtime.agent_customer_page_requests SET problem=NULL WHERE workspace_id=$1 AND id=$2',[workspaceId,r.id]);
-    await require('../operations/postgres-security-audit').record(c,ctx,{action:'Reserved arrived stock for accepted preorder',reference:r.reference,
-      after:{orderId:order.id,units:[...accepted].map(([sku,quantity])=>({sku,quantity}))}});
-    return true;
-   });
-   if(done)result.reserved++;
-  }catch(error){
-   if(!['entitlement_required','forbidden','validation_error','not_found'].includes(error.code))throw error;
-   result.held++;
-   await db.query('UPDATE stockchief_runtime.agent_customer_page_requests SET problem=$3 WHERE workspace_id=$1 AND id=$2',
-     [workspaceId,candidate.id,String(error.message).slice(0,500)]);
-  }
- }
- return result;
+ if(!await preorderSchemaExists(db))return {reserved:0,held:0};
+ return require('./agent-preorder-fills').settle(db,workspaceId,{requestId,receiptId});
 }
 async function screen(db,ctx,input={}){
  await owner(db,ctx);const state=await policy.accountState(db,ctx.workspaceId),allowed=policy.usesAgentTerms(state)&&policy.permits(state.plan,83,'draft'),profilePage=integer(input.profilesPage||1,'Page number',10000),requestPage=integer(input.requestsPage||1,'Page number',10000);
@@ -249,6 +190,6 @@ const preorderDefinition={id:68,key:'preorders',label:'Accept preorders and rese
   FROM stockchief_runtime.agent_customer_page_requests r JOIN customers c ON c.workspace_id=r.workspace_id AND c.id=r.customer_id
   LEFT JOIN sales_orders o ON o.workspace_id=r.workspace_id AND o.id=r.sales_order_id
   WHERE r.workspace_id=$1 AND r.snapshot->>'preorder'='true' ORDER BY r.created_at DESC,r.id LIMIT 101 OFFSET $2`,[ctx.workspaceId,(pageNumber-1)*100])).rows;
- return {rows:rows.slice(0,100),more:rows.length>100,summary:'Preorders use placed incoming orders, an exact approved customer offer and checked capacity. Physical shipping and payments have separate controls.'};
+ return {rows:rows.slice(0,100),more:rows.length>100,summary:'Preorders claim placed incoming stock within the quantity still coming. Arrived units are held for them in the order they came in; each preorder is then reserved and sent to picking. Payments stay separate.'};
 }};
-module.exports={owner,page,basis,publish,renew,publicContext,quoteRequest,submit,request,createDraft,configure,teach,stopRequest,onRequest,queueArrival,settlePreorders,screen,notices,kind,preorderKind,arrivalKind,action,preorderAction,scope,preorderDefinition,definition:{id:83,key:'customer-order-pages',label:'Review customer order page requests',readPage}};
+module.exports={termsHash,owner,page,basis,publish,renew,publicContext,quoteRequest,submit,request,createDraft,configure,teach,stopRequest,onRequest,queueArrival,settlePreorders,screen,notices,kind,preorderKind,arrivalKind,action,preorderAction,scope,preorderDefinition,definition:{id:83,key:'customer-order-pages',label:'Review customer order page requests',readPage}};

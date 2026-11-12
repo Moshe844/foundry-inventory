@@ -56,12 +56,12 @@ test('preorders claim exact placed supply and reserve the actual receipt at the 
   assert.equal(routine.automatic,true,JSON.stringify(routine));
   assert.equal((await order(routine.salesOrderId)).status,'DRAFT');
   await assert.rejects(f.send(pro,{quantity:8}),/enough incoming stock/);
-  assert.deepEqual(await service.settlePreorders(db,ctx.workspaceId),{reserved:0,held:0});
+  assert.deepEqual(await service.settlePreorders(db,ctx.workspaceId),{reserved:0,held:0,drafted:0,released:0,flagged:0});
   assert.equal(await f.balance(),100);
 
   await workflows.receivePurchaseOrder(db,ctx,incoming.purchaseOrderId,{idempotencyKey:randomUUID(),reference:'PREORDER-ARRIVAL',
     lines:[{lineId:incoming.lineIds[0],locationId:f.location.id,quantity:7}]});
-  assert.deepEqual(await service.settlePreorders(db,ctx.workspaceId),{reserved:0,held:0});
+  assert.deepEqual(await service.settlePreorders(db,ctx.workspaceId),{reserved:0,held:0,drafted:1,released:0,flagged:0},'The individually accepted Growth preorder gets a fill to approve; the Pro preorder still waits for its last unit.');
   assert.equal((await order(routine.salesOrderId)).status,'DRAFT');
   const remainder=await workflows.receivePurchaseOrder(db,ctx,incoming.purchaseOrderId,{idempotencyKey:randomUUID(),reference:'PREORDER-REMAINDER',
     lines:[{lineId:incoming.lineIds[0],locationId:f.location.id,quantity:1}]});
@@ -84,8 +84,10 @@ test('preorders claim exact placed supply and reserve the actual receipt at the 
   await service.configure(db,ctx,custom.id,{revision:1,confirmed:'yes'});
   const customRequest=await f.send(custom,{quantity:2});
   assert.equal((await service.onRequest(db,ctx.workspaceId,customRequest.id,ctx.actorId)).automatic,true);
-  const contenders=await Promise.allSettled([f.send(custom,{quantity:2}),f.send(custom,{quantity:2})]);
+  // Seven units are still coming. The Growth preorder's three already arrived and are held for it,
+  // so 7 - 2 = 5 remain to claim: only one of two simultaneous claims for 3 fits.
+  const contenders=await Promise.allSettled([f.send(custom,{quantity:3}),f.send(custom,{quantity:3})]);
   assert.equal(contenders.filter(result=>result.status==='fulfilled').length,1);
   assert.match(contenders.find(result=>result.status==='rejected').reason.message,/enough incoming stock/);
-  assert.deepEqual(await service.settlePreorders(db,ctx.workspaceId),{reserved:0,held:0});
+  assert.deepEqual(await service.settlePreorders(db,ctx.workspaceId),{reserved:0,held:0,drafted:0,released:0,flagged:0});
 });

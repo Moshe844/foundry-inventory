@@ -359,6 +359,8 @@ async function cancelPurchaseOrderInTransaction(client,rawContext,purchaseOrderI
   [ctx.workspaceId,purchaseOrderId,reason,ctx.actorId,at]);
   await event(client,'purchase_order_events',null,{workspaceId:ctx.workspaceId,
     recordId:purchaseOrderId,type:'cancelled',detail:{reason},actorId:ctx.actorId,at});
+  // Preorders waiting on these goods are flagged for the owner (job 68).
+  await require('../sales/agent-preorder-fills').onSupplyChange(client,ctx,purchaseOrderId,'cancel:'+operation.id);
   const result={purchaseOrderId,status:'CANCELLED'};
   await completeOperation(client,operation,result);
   return {...result,replayed:false};

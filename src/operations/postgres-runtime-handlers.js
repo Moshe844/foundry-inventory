@@ -718,6 +718,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'customer.order-page.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId)),
   'customer.preorder.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId,{preorder:true})),
   'customer.preorder-arrival.v1':external((job,database)=>require('../sales/agent-customer-order-pages').settlePreorders(database,job.workspaceId,{receiptId:job.payload.receiptId})),
+  'customer.preorder-check.v1':external((job,database)=>require('../sales/agent-customer-order-pages').settlePreorders(database,job.workspaceId)),
   'sales_order.route-receipt.v1':external((job,database)=>require('../sales/agent-arrived-stock').onArrival(database,job)),
   'agent.backorders.allocate.v1':external((job,database)=>require('../sales/agent-backorders').onQueued(database,job)),
   'agent.warehouse-routing.v1':external((job,database)=>require('../sales/agent-ship-from').onQueued(database,job)),

@@ -10,6 +10,7 @@
 <% if(result.stockSharingLink){ %><p><a class="btn" href="/autopilot/stock-sharing">Share scarce stock by your rules</a></p><% } %>
 <% if(result.warehouseRoutingLink){ %><p><a class="btn" href="/autopilot/warehouse-routing">Set your warehouse routing rules</a></p><% } %>
 <% if(result.orderSplitsLink){ %><p><a class="btn" href="/autopilot/order-splits">Split orders by your rules</a></p><% } %>
+<% if(result.preordersLink){ %><p><a class="btn" href="/autopilot/preorders">Fill preorders as stock arrives</a></p><% } %>
 <% if(result.lossShifts?.length){ %>
   <details><summary>Set local warehouse shifts</summary>
     <% for(const warehouse of result.lossShifts){ %>

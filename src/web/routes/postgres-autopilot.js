@@ -651,7 +651,30 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/website-stock-chat/publish',requireAuth,owner,asyncRoute(async(req,res)=>{const base=new URL(req.protocol+'://'+req.get('host'));if(!['https:','http:'].includes(base.protocol)||base.username||base.password)throw new ValidationError('Open the current StockChief website before publishing its assistant link.');const p=await stockChat.publish(database,req.ctx,req.body);res.page('autopilot/website-stock-chat',{title:'Website assistant ready',nav:'autopilot',suppressBack:true,issuedUrl:new URL('/stock-assistant/'+p.token,base.origin).href,screen:await stockChat.screen(database,req.ctx)});}));
   router.post('/autopilot/website-stock-chat/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{await stockChat.stop(database,req.ctx,req.params.id,req.body);req.flash('success','Public stock answers stopped.');res.redirect(303,'/autopilot/website-stock-chat');}));
   const customerPages=require('../../sales/agent-customer-order-pages');
-  router.get('/autopilot/reviews/preorders',requireAuth,owner,(_req,res)=>res.redirect(303,'/autopilot/customer-order-pages'));
+  const preorderFills=require('../../sales/agent-preorder-fills');
+  router.get('/autopilot/reviews/preorders',requireAuth,owner,(_req,res)=>res.redirect(303,preorderFills.href));
+  router.get(preorderFills.href,requireAuth,owner,starterAgentPage(68,'draft','Preorders',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    return res.page('autopilot/preorders',{title:'Preorders',nav:'autopilot',backTo:{href:'/autopilot/customer-order-pages',label:'Customer order pages'},
+      model:await preorderFills.page(database,req.ctx)});
+  },'Growth'));
+  router.post(preorderFills.href+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await customerPages.settlePreorders(database,req.ctx.workspaceId);
+    req.flash('success','Checked. '+(result.reserved||0)+' filled, '+(result.drafted||0)+' waiting for approval, '+(result.flagged||0)+' short of stock.');
+    return res.redirect(303,preorderFills.href);
+  }));
+  for(const [step,handler] of [['approve',preorderFills.approve],['discard',preorderFills.discard],['undo',preorderFills.undo]]){
+    router.post(preorderFills.href+'/fills/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      const result=await handler(database,req.ctx,req.params.id,req.body);
+      req.flash('success',result.replayed?'This was already done.':step==='approve'?(result.shipmentId?'The preorder is confirmed and went to picking.':'The preorder is confirmed on the stock set aside.'):step==='discard'?'Fill dismissed.':'The order was taken back from picking. Its stock stays set aside.');
+      return res.redirect(303,preorderFills.href);
+    }));
+  }
+  router.post(preorderFills.href+'/short/:id/tell',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await preorderFills.tell(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.replayed?'The customer was already told.':'The note is on its way to the customer.');
+    return res.redirect(303,preorderFills.href);
+  }));
   router.get('/autopilot/customer-order-pages',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/customer-order-pages',{title:'Customer order pages',nav:'autopilot',suppressBack:true,issuedPath:null,screen:await customerPages.screen(database,req.ctx,req.query)})));
   router.post('/autopilot/customer-order-pages/publish',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await customerPages.publish(database,req.ctx,req.body);res.page('autopilot/customer-order-pages',{title:'Customer link ready',nav:'autopilot',suppressBack:true,issuedPath:'/customer/order/'+p.token,screen:await customerPages.screen(database,req.ctx)});}));
   router.post('/autopilot/customer-order-pages/pages/:id/renew',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await customerPages.renew(database,req.ctx,req.params.id,req.body);res.page('autopilot/customer-order-pages',{title:'Renewed customer link ready',nav:'autopilot',suppressBack:true,issuedPath:'/customer/order/'+p.token,screen:await customerPages.screen(database,req.ctx)});}));
