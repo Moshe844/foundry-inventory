@@ -1,0 +1,66 @@
+<header class="rm-head">
+  <h1>Supplier price lists</h1>
+  <p>Compare each exact product with its earlier trusted supplier price in the same currency and pricing unit.</p>
+</header>
+<% const {list,rows,full,lists,suppliers,page,more}=source, base='/autopilot/supplier-price-lists'; %>
+<% if(list){const href=base+'/'+encodeURIComponent(list.id); %>
+  <section class="card"><div class="card-body">
+    <h2><%= list.filename %></h2>
+    <p><%= list.supplier||'Archived supplier' %> · <%= {QUEUED:'Reading queued',READY:'Comparison complete',HELD:'Source needs review'}[list.status] %></p>
+    <p><a href="<%= href %>/original">Download the original price list</a></p>
+    <% if(list.problem){ %><p class="notice"><%= list.problem %></p><% } %>
+    <% if(list.confirmed_at){ %><p>The owner confirmed the pricing table against this original.</p><% } %>
+    <% if(list.status==='HELD'){ %>
+      <details><summary>Confirm the pricing table from the original</summary>
+        <form class="form-stack" method="post" action="<%= href %>/confirm">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="sourceHash" value="<%= list.content_hash %>">
+          <label>Complete table copied from the original <textarea name="sourceTable" rows="7" required placeholder="Supplier SKU,Pack price,Currency,Pack size"></textarea></label>
+          <label><input type="checkbox" name="confirmed" value="yes" required> I checked every copied row against this original.</label>
+          <button class="btn">Compare the confirmed table</button>
+        </form>
+      </details>
+    <% } %>
+    <% if(list.status==='READY'&&!rows.length){ %><p>No higher comparable price was found.</p><% } %>
+    <% if(list.held_rows){ %><p><%= list.held_rows %> <%= list.held_rows===1?'row needs':'rows need' %> source review before comparison.</p><% } %>
+    <% if(rows.length&&full){ %>
+    <div class="table-scroll"><table class="table">
+      <thead><tr><th scope="col">SKU and source row</th><th scope="col">Original price</th><th scope="col">Earlier trusted price</th><th scope="col">Result</th></tr></thead>
+      <tbody><% for(const r of rows){ %><tr>
+        <th scope="row"><%= r.sku_code||'SKU missing' %><br><small><%= r.sheet %>, row <%= r.row_number %><% if(r.quote.code&&r.quote.code!==r.sku_code){ %> · <%= r.quote.code %><% } %></small></th>
+        <td><%= r.result==='HELD'?[r.quote.amount,r.quote.currency,r.quote.unit].filter(Boolean).join(' ')||'Missing':formatPrice(r.amount_minor,r.pricing_quantity,r.currency)+' · '+r.currency+' · '+r.prior.unit %></td>
+        <td><% if(r.prior){ %><%= formatPrice(r.prior.amountMinor,r.prior.pricing_quantity,r.currency) %><br>
+          <% if(r.prior.href){ %><a href="<%= r.prior.href %>"><%= r.prior.kind %> <%= r.prior.reference %></a><% }else{ %><%= r.prior.kind %> <%= r.prior.reference %><% } %>
+        <% }else{ %>—<% } %></td>
+        <td><%= r.reason||{HIGHER:'Higher price',NO_INCREASE:'No increase'}[r.result] %></td>
+      </tr><% } %></tbody>
+    </table></div>
+    <% }else if(rows.length){const r=rows[0]; %>
+      <p>Check <strong><%= r.sku_code %></strong> on <%= r.sheet %>, row <%= r.row_number %>. The original shows <%= formatPrice(r.amount_minor,r.pricing_quantity,r.currency) %> versus <%= formatPrice(r.prior.amountMinor,r.prior.pricing_quantity,r.currency) %> from <%= r.prior.kind %> <%= r.prior.reference %>.</p>
+    <% } %>
+    <% if(page>1||more){ %><nav class="actions" aria-label="Price comparison pages"><% if(page>1){ %><a href="<%= href %>?page=<%= page-1 %>">Previous page</a><% } %><% if(more){ %><a href="<%= href %>?page=<%= page+1 %>">Next page</a><% } %></nav><% } %>
+    <% if(list.status==='READY'&&!list.reviewed_at&&full){ %><form method="post" action="<%= href %>/reviewed">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn secondary">Mark this original reviewed</button>
+    </form><% }else if(list.reviewed_at){ %><p>Reviewed</p><% } %>
+    <p><a href="<%= base %>">All supplier price lists</a></p>
+  </div></section>
+<% }else{ %>
+  <section class="card"><div class="card-body">
+    <h2>Upload an original</h2>
+    <p>Choose the exact existing supplier. Use a readable table with the supplier SKU, goods price, currency and price unit. Include the pack size when the original quotes a pack price. A new original uses one document allowance.</p>
+    <% if(suppliers.length){ %><form class="form-stack" method="post" enctype="multipart/form-data" action="<%= base %>/upload">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label>Supplier <select name="supplierId" required><option value="">Choose a supplier</option>
+        <% for(const supplier of suppliers){ %><option value="<%= supplier.id %>"><%= supplier.name %></option><% } %>
+      </select></label>
+      <label>Currency printed for the whole file, if it has no currency column <input name="currency" maxlength="3" pattern="[A-Za-z]{3}" placeholder="USD"></label>
+      <label>Complete price-list original <input name="priceListFile" type="file" accept="<%= accept %>" required></label>
+      <button class="btn">Save and compare this price list</button>
+    </form><% }else{ %><p><a href="/purchasing/suppliers">Add or review a supplier</a> before uploading a price list.</p><% } %>
+  </div></section>
+  <section class="card"><div class="card-body">
+    <h2>Saved originals</h2>
+    <% if(!lists.length){ %><p>No supplier price lists have been uploaded.</p><% } %>
+    <% if(lists.length){ %><ul><% for(const saved of lists){ %><li><a href="<%= base %>/<%= encodeURIComponent(saved.id) %>"><%= saved.filename %></a> · <%= saved.supplier||'Archived supplier' %> · <%= saved.reviewed_at?'Reviewed':{QUEUED:'Reading queued',READY:'Comparison complete',HELD:'Source needs review'}[saved.status] %></li><% } %></ul><% } %>
+    <% if(page>1||more){ %><nav class="actions" aria-label="Saved source pages"><% if(page>1){ %><a href="<%= base %>?page=<%= page-1 %>">Previous page</a><% } %><% if(more){ %><a href="<%= base %>?page=<%= page+1 %>">Next page</a><% } %></nav><% } %>
+  </div></section>
+<% } %>

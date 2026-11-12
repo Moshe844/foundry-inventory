@@ -2,7 +2,7 @@
 
 const policy=require('../commercial/agent-plan');
 const {ValidationError,AuthorizationError}=require('../domain/errors');
-const auditedJobs=new Set([4,5,6,7,8,10,11,12,13,14,16,17,19,20,21,22,23,24,25,27,31,36,37,38,39,42,43,45,46,47,48,49,50,51,52,53,56,57,59,60,61,63,65,66,67,70,71,73,74,75,76,77,78,79,80,81,82,83,84,93,94,95,96,97,98,100,101,102,103,104,105,107,108,110,111,112,113,114,116,118,119,120,121,122,123,124,127,128,129,130,132,133,135,136,137,140,142,143,145,147,150,178,182,183,188,192,196]);
+const auditedJobs=new Set([4,5,6,7,8,10,11,12,13,14,16,17,19,20,21,22,23,24,25,26,27,31,36,37,38,39,42,43,45,46,47,48,49,50,51,52,53,56,57,59,60,61,63,65,66,67,70,71,73,74,75,76,77,78,79,80,81,82,83,84,88,91,93,94,95,96,97,98,100,101,102,103,104,105,107,108,110,111,112,113,114,116,118,119,120,121,122,123,124,127,128,129,130,132,133,135,136,137,140,142,143,145,147,150,178,182,183,188,192,196]);
 const definitions=require('../commercial/agent-plan-v3.json').filter(r=>auditedJobs.has(r.id));
 const tiers=[['starter','Starter'],['growth','Growth'],['pro','Pro'],['enterprise','Custom']];
 const modes={inherit:'Use inventory setting',watch:'Watch only',ask:'Ask me first',routine:'Handle routine work'};
@@ -38,10 +38,11 @@ async function save(db,ctx,raw,input){
   if(!auditedJobs.has(job)||!Object.hasOwn(modes,mode)||input.revision==null||!Number.isSafeInteger(revision)||revision<0)
     throw new ValidationError('Review the current job settings before changing this mode.');
   return db.transaction(async c=>{
+    if(job===26)await require('../purchasing/postgres-purchase-exposure').lock(c,ctx.workspaceId,{budgetFence:true});
     const plan=await owner(c,ctx);
     policy.requireJob(plan,job,'suggest');
     if(!choices(plan,job).includes(mode))throw new ValidationError('This job cannot run at that level on your plan.');
-    if([4,7,24,120,150].includes(job))await c.query('SELECT workspace_id FROM workspace_autopilot WHERE workspace_id=$1 FOR UPDATE',[ctx.workspaceId]);
+    if([4,5,7,24,25,26,120,150].includes(job))await c.query('SELECT workspace_id FROM workspace_autopilot WHERE workspace_id=$1 FOR UPDATE',[ctx.workspaceId]);
     const prior=(await c.query('SELECT mode,revision FROM stockchief_runtime.agent_job_modes WHERE workspace_id=$1 AND job_id=$2 FOR UPDATE',[ctx.workspaceId,job])).rows[0];
     if((prior?.revision||0)!==revision)throw new ValidationError('This job setting has changed. Open its current settings.');
     if((prior?.mode||'inherit')===mode)return;

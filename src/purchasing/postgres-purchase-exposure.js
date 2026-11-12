@@ -1,7 +1,14 @@
 'use strict';
 const {ValidationError}=require('../domain/errors');
-async function lock(client,workspaceId){
+async function lock(client,workspaceId,{budgetFence=false}={}){
  await client.query("SELECT pg_advisory_xact_lock(hashtextextended('purchase-authority:'||$1,0))",[workspaceId]);
+ if(!budgetFence)return;
+ const installed=(await client.query("SELECT to_regclass('stockchief_runtime.agent_open_to_buy_fences') IS NOT NULL installed")).rows[0].installed;
+ if(!installed)return;
+ // A transaction may already have a serializable snapshot before it waits for
+ // the advisory lock. Updating the fence forces a stale snapshot to retry.
+ await client.query(`INSERT INTO stockchief_runtime.agent_open_to_buy_fences(workspace_id) VALUES($1)
+  ON CONFLICT(workspace_id) DO UPDATE SET revision=agent_open_to_buy_fences.revision+1`,[workspaceId]);
 }
 async function read(database,workspaceId,{now=null}={}){
  const rows=(await database.query(`WITH lines AS(SELECT purchase_order_id,SUM(unit_cost::numeric*quantity_units) AS full_amount,SUM(GREATEST(quantity_units-quantity_received_units,0)*unit_cost::numeric) AS pending_amount,COUNT(*) FILTER(WHERE unit_cost IS NULL) AS unknown_prices FROM purchase_order_lines WHERE workspace_id=$1 GROUP BY purchase_order_id),

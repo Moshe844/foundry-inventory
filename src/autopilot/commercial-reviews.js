@@ -49,27 +49,11 @@ module.exports=[
   require('../sales/agent-customer-checkins').definition,
   {id:79,key:'bought-together',label:'Find items commonly bought together',requiresFilter:true,
     readPage:require('../sales/quote-companion-evidence').readReport},
-  {id:88,key:'customer-health',label:'Flag customers buying less',summary:'Compare distinct shipped orders in the last 30 days with the preceding 30 days.',sql:`
-    WITH history AS (SELECT o.customer_id,count(DISTINCT o.id) FILTER(WHERE h.shipped_at::timestamptz>=now()-interval '30 days') AS recent,
-      count(DISTINCT o.id) FILTER(WHERE h.shipped_at::timestamptz<now()-interval '30 days') AS prior
-      FROM sales_orders o JOIN sales_shipments h ON h.workspace_id=o.workspace_id AND h.sales_order_id=o.id
-      WHERE o.workspace_id=$1 AND h.status IN ('SHIPPED','DELIVERED') AND h.shipped_at::timestamptz BETWEEN now()-interval '60 days' AND now() GROUP BY o.customer_id)
-    SELECT c.name AS "Customer",h.prior AS "Prior orders",h.recent AS "Recent orders",
-      CASE WHEN h.prior=0 THEN 'New activity' WHEN h.recent=0 THEN 'Stopped buying' WHEN h.recent<h.prior THEN 'Buying less' WHEN h.recent>h.prior THEN 'Buying more' ELSE 'Stable' END AS "Health"
-    FROM history h JOIN customers c ON c.id=h.customer_id WHERE ($2='' OR lower(c.name)=lower($2)) ORDER BY h.recent-h.prior,c.id`},
-  {id:91,key:'supplier-price-increases',label:'Flag higher supplier prices',summary:'Supplier document prices compared with the original PO. Each difference retains its source and currency.',sql:`
-    WITH evidence AS (
-      SELECT d.purchase_order_id,p.id AS line_id,(f->>'unitCostMinor')::numeric AS minor,d.document_reference AS reference,d.document_type AS kind,d.facts::jsonb->>'currency' AS currency,(f->>'unitCostMinor')::numeric source_minor,1::numeric price_quantity
-      FROM supplier_documents d CROSS JOIN LATERAL jsonb_array_elements(d.facts::jsonb->'lines') f
-      JOIN purchase_order_lines p ON p.workspace_id=$1 AND p.id=f->>'lineId' AND p.purchase_order_id=d.purchase_order_id
-      WHERE d.workspace_id=$1 AND d.status<>'IGNORED' AND d.document_type IN ('quotation','price_update') AND f->>'unitCostMinor' IS NOT NULL
-      UNION ALL SELECT b.purchase_order_id,l.purchase_order_line_id,l.unit_cost_minor/l.price_quantity,b.supplier_invoice_number,'invoice',b.currency,coalesce(l.source_unit_cost_minor,l.unit_cost_minor),coalesce(l.source_price_quantity,l.price_quantity) FROM accounting_supplier_bill_lines l
-      JOIN accounting_supplier_bills b ON b.id=l.bill_id AND b.workspace_id=l.workspace_id WHERE l.workspace_id=$1 AND b.status<>'VOID')
-    SELECT s.code AS "SKU",v.name AS "Supplier",p.po_number AS "Order",e.kind AS "Source",e.reference AS "Document",p.currency AS "Currency",
-      l.unit_cost AS "PO unit price",e.minor AS price_minor,e.source_minor AS display_price_minor,e.price_quantity,'/purchasing/orders/'||p.id AS link
-    FROM evidence e JOIN purchase_orders p ON p.id=e.purchase_order_id AND p.workspace_id=$1 JOIN purchase_order_lines l ON l.id=e.line_id AND l.workspace_id=$1
-    JOIN suppliers v ON v.id=p.supplier_id JOIN skus s ON s.id=l.sku_id WHERE p.currency=e.currency AND l.unit_cost IS NOT NULL
-      AND ($2='' OR lower(s.code)=lower($2)) ORDER BY v.name,s.code,p.id,e.kind,e.reference`,priceIncrease:true},
+  {id:88,key:'customer-health',label:'Review customer activity',filterLabel:'Customer or company name',
+    readPage:require('../sales/customer-health').review},
+  {id:91,key:'supplier-price-increases',label:'Flag higher supplier prices',
+    filterLabel:'Exact SKU, supplier, purchase order or source reference',
+    readPage:require('../purchasing/agent-supplier-price-increases').readPage},
   {id:148,key:'rising-demand',label:'Find items selling faster',summary:'Shipped units in the last seven days compared with the preceding seven days. Products with no earlier shipments are identified separately.',sql:`
     WITH demand AS (SELECT l.sku_id,coalesce(sum(l.quantity) FILTER(WHERE h.shipped_at::timestamptz>=now()-interval '7 days'),0) AS current_units,
       coalesce(sum(l.quantity) FILTER(WHERE h.shipped_at::timestamptz<now()-interval '7 days'),0) AS previous_units FROM sales_shipments h

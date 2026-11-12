@@ -11,21 +11,8 @@ const reports = [
       JOIN skus s ON s.id=l.sku_id JOIN suppliers v ON v.id=p.supplier_id
     WHERE p.workspace_id=$1 AND p.status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED') AND ($2='' OR lower(p.po_number)=lower($2) OR lower(s.code)=lower($2))
     ORDER BY p.order_date DESC,p.id,l.line_number`},
-  {id:90,key:'supplier-scorecard',label:'Review supplier performance',summary:'Delivery, fill and price figures cover warehouse purchases. On-time rate uses completed, dated POs. Fill rate counts stock units up to the quantity ordered. Exceptions count disputed bills. Price increases compare consecutive ordered unit prices in the same currency and pack.',sql:`
-    WITH po AS (SELECT id,workspace_id,supplier_id,status,currency,ordered_at,expected_date FROM purchase_orders p
-      WHERE workspace_id=$1 AND status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED')
-        AND coalesce(to_jsonb(p)->>'delivery_kind','WAREHOUSE')='WAREHOUSE'),
-    receipt AS (SELECT purchase_order_id,max(r.received_at::timestamptz AT TIME ZONE coalesce(w.time_zone,a.time_zone,'UTC')) AS delivered FROM purchase_order_receipts r JOIN workspaces w ON w.id=r.workspace_id JOIN accounts a ON a.id=w.owner_account_id WHERE r.workspace_id=$1 GROUP BY r.purchase_order_id),
-    delivery AS (SELECT p.supplier_id,count(*) AS orders,round(100*avg((r.delivered::date<=p.expected_date::date)::int) FILTER(WHERE p.status='RECEIVED'),1) AS on_time
-      FROM po p LEFT JOIN receipt r ON r.purchase_order_id=p.id GROUP BY p.supplier_id),
-    prices AS (SELECT p.supplier_id,l.*,lag(unit_cost) OVER(PARTITION BY p.supplier_id,l.sku_id,p.currency,l.units_per_purchase_unit ORDER BY p.ordered_at::timestamptz,p.id,l.line_number) AS prior
-      FROM po p JOIN purchase_order_lines l ON l.purchase_order_id=p.id AND l.workspace_id=p.workspace_id),
-    fill AS (SELECT supplier_id,round(100*sum(least(quantity_received_units,quantity_units))::numeric/nullif(sum(quantity_units),0),1) AS filled,
-      count(*) FILTER(WHERE unit_cost>prior) AS increases FROM prices GROUP BY supplier_id),
-    disputed AS (SELECT supplier_id,count(*) AS n FROM accounting_supplier_bills WHERE workspace_id=$1 AND status='DISPUTED' GROUP BY supplier_id)
-    SELECT s.name AS "Supplier",d.orders AS "Placed orders",d.on_time AS "On time %",f.filled AS "Filled %",f.increases AS "Price increases",coalesce(e.n,0) AS "Disputed bills"
-    FROM delivery d JOIN suppliers s ON s.id=d.supplier_id LEFT JOIN fill f ON f.supplier_id=s.id LEFT JOIN disputed e ON e.supplier_id=s.id
-    WHERE ($2='' OR lower(s.name)=lower($2)) ORDER BY s.name,s.id`},
+  {id:90,key:'supplier-scorecard',label:'Review supplier performance',filterLabel:'Exact supplier name',
+    readPage:require('../purchasing/agent-supplier-scorecard').review},
   {id:92,key:'compare-quotes',label:'Compare supplier quotations',summary:'Latest documented quotation per supplier, SKU and currency. Unit prices use the stocking unit. Open the originating order to check quantities and terms.',sql:`
     WITH latest AS (SELECT DISTINCT ON (d.supplier_id,line->>'skuId',d.facts::jsonb->>'currency') d.supplier_id,d.purchase_order_id,d.status,line,
       d.document_reference AS ref,d.facts::jsonb->>'currency' AS currency,d.processed_at FROM supplier_documents d

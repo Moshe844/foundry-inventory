@@ -291,7 +291,7 @@ async function approvePurchaseOrder(database, rawContext, purchaseOrderId, input
   const ctx = requireContext(rawContext);
   return transaction(database, async (client) => {
     await requirePermission(client, ctx, access.APPROVE_PO, 'approve purchase orders');
-    await require('../purchasing/postgres-purchase-exposure').lock(client,ctx.workspaceId);
+    await require('../purchasing/postgres-purchase-exposure').lock(client,ctx.workspaceId,{budgetFence:true});
     const operation = await beginOperation(client, ctx, 'purchase_order.approve', input.idempotencyKey);
     if (operation.replayed) return { ...operation.result, replayed: true };
     const order = await requireRow(client, `SELECT * FROM purchase_orders
@@ -300,6 +300,7 @@ async function approvePurchaseOrder(database, rawContext, purchaseOrderId, input
       throw new ValidationError('Only a draft purchase order can be approved.');
     }
     require('../purchasing/direct-shipment-authority').requireAction(ctx,order,'approve');
+    await require('../purchasing/agent-open-to-buy').assertApproval(client,ctx,order);
     const missing = await client.query(`SELECT COUNT(*) AS count FROM purchase_order_lines
       WHERE purchase_order_id=$1 AND workspace_id=$2 AND unit_cost IS NULL`, [purchaseOrderId, ctx.workspaceId]);
     if (Number(missing.rows[0].count)) throw new ValidationError('Every purchase-order line needs an approved cost.');
@@ -467,6 +468,7 @@ async function recordSupplierInvoice(database, rawContext, input, {preview=false
   if (!Array.isArray(input.lines) || !input.lines.length) throw new ValidationError('A supplier invoice needs its complete product lines.');
   return transaction(database, async (client) => {
     await requirePermission(client, ctx, access.MANAGE_ACCOUNTING, 'record supplier invoices');
+    if(!preview)await require('../purchasing/postgres-purchase-exposure').lock(client,ctx.workspaceId,{budgetFence:true});
     const operation = preview?null:await beginOperation(client, ctx, recheckId?'supplier_invoice.recheck':'supplier_invoice.record', input.idempotencyKey);
     if (operation?.replayed) return { ...operation.result, replayed: true };
     const supplier = await requireRow(client, 'SELECT * FROM suppliers WHERE id=$1 AND workspace_id=$2'+(preview?'':' FOR UPDATE'),

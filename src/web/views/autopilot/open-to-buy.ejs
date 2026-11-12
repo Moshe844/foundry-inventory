@@ -1,0 +1,64 @@
+<% const path='/autopilot/open-to-buy',month=model.month,saved=model.saved;
+const amount=(n,c)=>n==null?'Needs review':helpers.money(n,c); %>
+<h1>Monthly open-to-buy</h1>
+<p>Plan against recorded goods budgets by category, receiving month and currency. Freight, tax and purchase approval are reviewed on the native purchase order.</p>
+<% if(!saved){ %>
+<section class="card card-body stack">
+  <h2>Prepare a monthly buying plan</h2>
+  <p><a href="/purchasing/budgets?month=<%= month %>">Manage budgets</a></p>
+  <form method="get" action="<%= path %>" class="form-stack">
+    <label>Budget month <input type="month" name="month" value="<%= month %>" required></label>
+    <button class="btn secondary">Open month</button>
+  </form>
+  <form method="post" action="<%= path %>" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="month" value="<%= month %>">
+    <label>Exact independent measures, where needed <textarea name="secondaryQuantities" rows="3" placeholder="SKU | receiving location | pieces | weight"></textarea></label>
+    <button class="btn">Prepare plan for <%= month %></button>
+  </form>
+</section>
+<section class="card card-body stack">
+  <h2>Recurring planning</h2>
+  <form method="post" action="<%= path %>/routine" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= model.rule?.revision||'' %>">
+    <% if(model.rule?.enabled){ %><p>Routine plans are enabled.</p><button class="btn secondary" name="stop" value="yes">Stop recurring plans</button>
+    <% }else{ %><label><input type="checkbox" name="confirmed" value="yes" required> Prepare plans for current and future months with saved budgets when routine work runs.</label>
+    <button class="btn">Enable recurring plans</button><% } %>
+  </form>
+</section>
+<section class="card card-body stack"><h2>Saved plans for <%= month %></h2>
+  <% if(!model.plans.length){ %><p>No saved plan for this month.</p><% } %>
+  <% for(const p of model.plans){ %><p><a href="<%= path+'/'+p.id %>"><%= helpers.dateTime(p.created_at) %></a> · <%= p.automatic?'Routine plan':'Owner-requested plan' %> · <%= p.status==='DRAFTED'?'Drafts prepared':'Ready for review' %></p><% } %>
+</section>
+<% }else{ const s=saved.snapshot; %>
+<section class="card card-body stack">
+  <h2>Budget for <%= month %></h2>
+  <p><%= saved.automatic?'Routine plan':'Owner-requested plan' %> · <%= helpers.dateTime(saved.created_at) %></p>
+  <p><a href="<%= path+'?month='+month %>">Open this month’s plans</a></p>
+  <% for(const b of s.capacity){ %><p><strong><%= b.category||'Uncategorized' %> · <%= b.currency %></strong><br>
+    Budget <%= amount(b.budget,b.currency) %> · Billed <%= amount(b.spent,b.currency) %> · Unbilled commitments <%= amount(b.committed,b.currency) %> · Reserved drafts <%= amount(b.reserved,b.currency) %><br>
+    Headroom <%= amount(b.remaining,b.currency) %> · Planned <%= amount(b.planned,b.currency) %> · Left after plan <%= amount(b.afterPlan,b.currency) %></p><% } %>
+  <% if(saved.status==='READY'&&s.groups.length){ %><form method="post" action="<%= path+'/'+saved.id %>/drafts" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="evidence" value="<%= saved.evidence_hash %>">
+    <label><input type="checkbox" name="confirmed" value="yes" required> I reviewed the budget, supplier terms, quantities and delivery dates.</label>
+    <button class="btn">Create unsent purchase drafts</button>
+  </form><% } %>
+  <% if(model.orders.length){ %><h3>Native purchase orders</h3><% for(const o of model.orders){ %>
+    <p><a href="/purchasing/orders/<%= o.id %>"><%= o.po_number %></a> · <%= o.status %></p><% } %><% } %>
+</section>
+<% for(const g of model.groups){ %><article class="card card-body stack">
+  <h3><%= g.supplierName %> · <%= amount(g.totalMinor,g.currency) %></h3>
+  <p>Plan to order <%= g.orderDate %> · Expected <%= g.expectedDate %><% if(g.minimumOrderMinor!=null){ %> · Minimum <%= amount(g.minimumOrderMinor,g.currency) %><% } %></p>
+  <% for(const l of g.lines){ %><p><strong><%= l.code %> · <%= l.location %></strong><br>
+    <%= l.quantityUnits %> <%= l.stockUnit %> in <%= l.quantityPurchaseUnits %> <%= l.purchaseUnit %> of <%= l.unitsPerPurchaseUnit %> · <%= amount(l.amountMinor,g.currency) %><br>
+    Need <%= l.needed %> · Available <%= l.available %> · Dated incoming <%= l.incoming %>
+    <% if(l.secondaryQuantity!=null){ %> · Requested <%= l.secondaryQuantity %> <%= l.secondaryUnit %><% } %>
+    <% if(l.quantityUnits!==l.fullQuantity){ %> · Budget funds part of the reorder<% } %><% if(!l.knownTerms){ %> · Confirm current supplier terms at purchase approval<% } %></p>
+    <% if(l.incomingRecords.length){ %><details><summary>Dated incoming records for <%= l.code %></summary><ul><% for(const r of l.incomingRecords){ %>
+      <li><%= r.reference %> · <%= r.quantity %> <%= l.stockUnit %> · Due <%= r.date %></li><% } %></ul></details><% } %>
+  <% } %>
+</article><% } %>
+<% if(model.held.length){ %><section class="card card-body stack"><h2>Needs review</h2><% for(const h of model.held){ %>
+  <p><strong><%= h.code %><%= h.location?' · '+h.location:'' %></strong> · <%= h.reason %><%= h.earliest?' Earliest delivery '+h.earliest+'.':'' %></p><% } %></section><% } %>
+<% if(!s.groups.length&&!s.held.length){ %><p>No current reorder need was found for this budget month.</p><% } %>
+<% if(model.next!=null){ %><p><a href="?after=<%= model.next %>">Next results</a></p><% } %>
+<% } %>
