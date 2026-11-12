@@ -224,6 +224,7 @@ const actionJobs=new Map([
   ['supplier.negotiation_draft',94],
   ['catalog.fill_supplier_specs',129],
   ['catalog.fix_data',126],
+  ['catalog.classify_products',131],
   ['purchase_order.combine_drafts',24],['purchase_order.split_draft',25],
   ['catalog.restore_margin',77],
   ['catalog.clearance_plan',86],

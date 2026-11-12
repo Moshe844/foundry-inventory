@@ -42,6 +42,7 @@
 %>
 <% if (locals.postgresPlacement) { %><%- include('order-head-v2') %><% } %>
 <% if(locals.postgresPlacement){ %><%- include('../partials/filed-documents-link',{documentTargetKind:'sales_order',documentTargetId:order.id}) %><% } %>
+<% for(const d of locals.discontinuedLines||[]){ %><aside class="notice section" data-discontinued><p><strong><%= d.code %> is discontinued.</strong> <% if(d.replacement_code){ %>When none are left, use <a href="/inventory/<%= encodeURIComponent(d.replacement_item_id) %>"><%= d.replacement_code %> — <%= d.replacement_name %></a>. Check with the customer before changing the line.<% }else{ %>There is no recorded replacement. Check with the customer if none are left.<% } %></p></aside><% } %>
 <div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= order.order_number %></span></div>
 <% if(locals.agentOrderChecks){ %><nav aria-label="Order checks"><a href="/autopilot/reviews/order-credit-limits?filter=<%= encodeURIComponent(order.order_number) %>">Check customer credit</a> · <a href="/autopilot/reviews/order-price-exceptions?filter=<%= encodeURIComponent(order.order_number) %>">Check prices and discounts</a></nav><% } %>
 <% if(locals.creditHold){ const hold=locals.creditHold; %>

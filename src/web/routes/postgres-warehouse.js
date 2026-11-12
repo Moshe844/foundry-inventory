@@ -133,10 +133,13 @@ function createPostgresWarehouseRouter(database){
     }));
   router.get('/warehouse/waves/:id',asyncRoute(async(req,res)=>{
     const wave=await waves.get(database,req.ctx.workspaceId,req.params.id,{afterLineId:req.query.afterLineId,afterShipmentId:req.query.afterShipmentId});
-    return res.page('warehouse/wave',{title:'Fulfillment wave',nav:'warehouse',room:true,wave,
+    const zones=await require('../../warehouse/agent-pick-waves').pickLists(database,req.ctx.workspaceId,wave.id);
+    // Job 132: pickers see the replacement of a discontinued product.
+    const discontinued=Object.fromEntries(await require('../../catalog/retirement-guidance').forSkus(database,req.ctx.workspaceId,[...wave.lines.map(l=>l.sku_id),...zones.flatMap(z=>z.lines.map(l=>l.sku_id))].filter(Boolean)));
+    return res.page('warehouse/wave',{title:'Fulfillment wave',nav:'warehouse',room:true,wave,discontinued,
       containers:await waves.containers(database,req.ctx.workspaceId),
       // One pick list per zone, in walking order (job 57).
-      zones:await require('../../warehouse/agent-pick-waves').pickLists(database,req.ctx.workspaceId,wave.id)});
+      zones});
   }));
   router.post('/warehouse/waves/:id/start',requirePermission(permissions.MANAGE_FULFILLMENT_WAVES,'start fulfillment waves'),
     asyncRoute(async(req,res)=>{

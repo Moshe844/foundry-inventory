@@ -635,6 +635,35 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',result.replayed?'This was already done.':catalogDone[step]);
     res.redirect(303,catalogFixes.path);
   }));
+  // Job 131: categories and tags for new products.
+  const productClasses=require('../../catalog/agent-product-classification');
+  router.get(productClasses.path,requireAuth,owner,starterAgentPage(131,'draft','Categories and tags',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/product-categories',{title:'Categories and tags',nav:'autopilot',screen:await productClasses.page(database,req.ctx,{page:req.query.page||1}),
+      backTo:{href:'/autopilot/reviews/product-categories',label:'Categories and tags for new products'}});
+  },'Growth'));
+  router.post(productClasses.path+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await productClasses.check(database,req.ctx);
+    req.flash('success','StockChief is checking your new products for categories and tags.');
+    res.redirect(303,productClasses.path);
+  }));
+  router.post(productClasses.path+'/approve',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await productClasses.approveMany(database,req.ctx,req.body);
+    req.flash(result.failed.length?'error':'success',(result.done?result.done+(result.done===1?' product was updated.':' products were updated.'):'Nothing was changed.')+
+      (result.failed.length?' '+result.failed.length+' stopped: '+result.failed[0].reason:''));
+    res.redirect(303,productClasses.path);
+  }));
+  const classDone={approve:'The product was updated.',dismiss:'The product stays as it is.',undo:'The change was undone.'};
+  for(const step of Object.keys(classDone))router.post(productClasses.path+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await productClasses[step](database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.replayed?'This was already done.':classDone[step]);
+    res.redirect(303,req.body.back==='product'&&result.undone?'/inventory/'+encodeURIComponent((await productClasses.load(database,req.ctx,req.params.id)).item_id):productClasses.path);
+  }));
+  router.post(productClasses.path+'/limit',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await productClasses.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'Every category and tag now waits for you.':'Limit saved.');
+    res.redirect(303,productClasses.path);
+  }));
   // Job 200: the data health score and its fix list.
   const dataHealth=require('../../autopilot/data-health');
   router.get(dataHealth.path,requireAuth,owner,starterAgentPage(200,'automatic','Data health',async(req,res)=>{
@@ -1092,8 +1121,33 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/supplier-shutdowns/:id/settings',requireAuth,owner,asyncRoute(async(req,res)=>{await shutdowns.configure(database,req.ctx,req.params.id,req.body);res.redirect(303,req.body.stop==='yes'?'/autopilot/supplier-shutdowns':'/autopilot/supplier-shutdowns/'+req.params.id);}));
   router.post('/autopilot/shutdown-plans/:id/purchase',requireAuth,owner,asyncRoute(async(req,res)=>{const po=await shutdowns.purchase(database,req.ctx,req.params.id,req.body);res.redirect(303,'/purchasing/orders/'+po.purchaseOrderId);}));
   const retirements=require('../../catalog/agent-product-retirements');
-  router.get('/autopilot/discontinued-products',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/product-retirement-start',{title:'Discontinued products',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>({...await retirements.list(database,req.ctx,req.query),draft:null}))));
-  router.post('/autopilot/discontinued-products/preview',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/product-retirement-start',{title:'Review discontinued products',nav:'autopilot',backTo:{href:'/autopilot/discontinued-products',label:'Discontinued products'}},async()=>({...await retirements.list(database,req.ctx,req.body),draft:await retirements.preview(database,req.ctx,req.body)}))));
+  const retirementWork=require('../../catalog/agent-retirement-work');
+  const retirementScreen=async req=>{const listed=await retirements.list(database,req.ctx,req.query);return {...listed,markSku:String(req.query.sku||'').slice(0,160),work:listed.locked?null:await retirementWork.screen(database,req.ctx,{page:req.query.workPage||1})};};
+  router.get('/autopilot/discontinued-products',requireAuth,owner,asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');return agentPage(req,res,'autopilot/product-retirement-start',{title:'Discontinued products',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>({...await retirementScreen(req),draft:null}));}));
+  // Job 132: the owner marks a product discontinued, decides drafted
+  // retirements, brings one back, and sets the dead-stock rule.
+  router.post('/autopilot/discontinued-products/mark',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await retirementWork.mark(database,req.ctx,req.body);
+    req.flash('success',result.replayed?'This product is already discontinued.':result.status==='RETIRED'?result.code+' is retired. Staff see its replacement.':result.code+' is no longer reordered. Its stock is sold down first.');
+    res.redirect(303,'/autopilot/discontinued-products');
+  }));
+  const retireDone={approve:'The product is retired.',dismiss:'The product keeps selling.',undo:'The product is back. It is reordered again.'};
+  for(const step of Object.keys(retireDone))router.post('/autopilot/discontinued-products/work/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await retirementWork[step](database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.replayed?'This was already done.':retireDone[step]);
+    res.redirect(303,'/autopilot/discontinued-products');
+  }));
+  router.post('/autopilot/discontinued-products/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await retirementWork.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'Dead stock is no longer retired.':'Dead stock rule saved.');
+    res.redirect(303,'/autopilot/discontinued-products');
+  }));
+  router.post('/autopilot/discontinued-products/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await retirementWork.check(database,req.ctx);
+    req.flash('success','StockChief is checking discontinued products and dead stock.');
+    res.redirect(303,'/autopilot/discontinued-products');
+  }));
+  router.post('/autopilot/discontinued-products/preview',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/product-retirement-start',{title:'Review discontinued products',nav:'autopilot',backTo:{href:'/autopilot/discontinued-products',label:'Discontinued products'}},async()=>({...await retirements.list(database,req.ctx,req.body),markSku:'',work:null,draft:await retirements.preview(database,req.ctx,req.body)}))));
   router.post('/autopilot/discontinued-products',requireAuth,owner,asyncRoute(async(req,res)=>{const n=await retirements.record(database,req.ctx,req.body);res.redirect(303,'/autopilot/discontinued-products/'+n.id);}));
   router.get('/autopilot/discontinued-products/:id',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/product-retirement',{title:'Review discontinued products',nav:'autopilot',backTo:{href:'/autopilot/discontinued-products',label:'Discontinued products'}},()=>retirements.page(database,req.ctx,req.params.id))));
   router.post('/autopilot/discontinued-products/:id/apply',requireAuth,owner,asyncRoute(async(req,res)=>{await retirements.apply(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/discontinued-products/'+req.params.id);}));
@@ -1753,6 +1807,7 @@ function createPostgresAutopilotRouter(database,options={}){
       if(req.params.job==='slow-stock'&&result.mode!=='suggest')result.slowStockPath=require('../../forecasting/agent-slow-stock-steps').path;
       if(req.params.job==='catalog-fixes'&&result.mode!=='suggest')result.catalogFixesPath=require('../../catalog/agent-catalog-fixes').path;
       if(req.params.job==='supplier-catalogs'&&result.mode!=='suggest')result.supplierCatalogsPath=require('../../catalog/agent-supplier-catalog').path;
+      if(req.params.job==='product-categories')result.productCategoriesPath=require('../../catalog/agent-product-classification').path;
       if(req.params.job==='catalog-health')result.dataHealthPath=require('../../autopilot/data-health').path;
       if(req.params.job==='expiring-lots')result.expiryPath=require('../../operations/agent-expiry-warnings').path;
       if(req.params.job==='recall-audit')result.compliancePath=require('../../reports/agent-compliance-reports').path;

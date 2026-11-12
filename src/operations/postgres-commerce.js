@@ -190,11 +190,20 @@ async function catalogue(database, workspaceId, {limit=null,search='',ids=null,t
   const availability=await require('../domain/postgres-stock-availability').readMany(database,workspaceId,positions.map(p=>({skuId:p.sku_id,locationId:p.location_id})));
   for(const r of positions){const a=availability.get(JSON.stringify([r.sku_id,r.location_id]));if(!bySku.has(r.sku_id))bySku.set(r.sku_id,[]);bySku.get(r.sku_id).push({location_id:r.location_id,onHand:Number(r.on_hand),committed:a?.committed||0,reserved:a?.reserved||0,available:a?.available||0});}
   const kits=await require('../domain/postgres-kit-availability').read(database,workspaceId,result.rows.map(r=>r.id));
-  return result.rows.map(r=>{
+  // Job 132: discontinued products name their replacement for order entry.
+  const guide=require('../catalog/retirement-guidance'),notes=await guide.forSkus(database,workspaceId,result.rows.map(r=>r.id));
+  let rows=result.rows.map(r=>{
     const kit=kits.get(r.id),positions=bySku.get(r.id)||[],physicalAvailable=positions.reduce((sum,p)=>sum+p.available,0);
     for(const part of kit?.locations||[]){const existing=positions.find(p=>p.location_id===part.locationId);if(existing){existing.available+=part.buildable;existing.buildable=part.buildable;}else positions.push({location_id:part.locationId,onHand:0,committed:0,reserved:0,available:part.buildable,buildable:part.buildable});}
     return {...r,isKit:Boolean(kit),buildable:kit?.buildable||0,amount_minor:r.amount_minor==null?null:Number(r.amount_minor),on_hand:Number(r.on_hand),committed:Number(r.committed),available:physicalAvailable+(kit?.buildable||0),positions};
   });
+  rows=rows.map(r=>{const n=notes.get(r.id);return n?{...r,discontinued:true,replacement_sku_id:n.replacement_sku_id,replacement_code:n.replacement_code,replacement_name:n.replacement_name}:r;});
+  // A search for a retired product offers the product that replaces it.
+  if(search&&!ids){
+    const extra=(await guide.replacementsFor(database,workspaceId,search)).filter(e=>!rows.some(r=>r.id===e.sku_id));
+    if(extra.length)rows=rows.concat((await catalogue(database,workspaceId,{ids:extra.map(e=>e.sku_id),limit:extra.length,trackingMode})).map(r=>({...r,replaces:extra.find(e=>e.sku_id===r.id).replaces})));
+  }
+  return rows;
 }
 
 async function locations(database, workspaceId) {

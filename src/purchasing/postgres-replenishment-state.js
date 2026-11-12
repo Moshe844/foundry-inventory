@@ -73,6 +73,9 @@ async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibl
  WHERE s.workspace_id=$1 AND i.workspace_id=s.workspace_id
  ORDER BY s.id,l.id`,[workspaceId,afterSkuId,limitSkus===null?null:limitSkus+1,eligibleOnly,decision.WINDOW_DAYS,decision.MIN_ISSUE_EVENTS,decision.DEFAULT_LEAD_DAYS,onlySkuIds,...(cycleId?[cycleId]:[])]);
  for(const row of result.rows)if(!row.supplier_supply_held)delete row.supplier_supply_held;
+ // Job 132: discontinued products are never reordered.
+ const discontinued=await require('../catalog/retirement-guidance').discontinued(database,workspaceId,result.rows.map(row=>row.sku_id));
+ for(const row of result.rows)if(discontinued.has(row.sku_id))row.discontinued=true;
  const receivingOptions=result.rows.some(row=>row.global_policy)?(await database.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 AND custody_agreement_id IS NULL ORDER BY id',[workspaceId])).rows:[];
  const availability=require('../domain/postgres-stock-availability'),current=await availability.readMany(database,workspaceId,result.rows.map(row=>({skuId:row.sku_id,locationId:row.location_id}))),bySku=new Map();
  for(const row of result.rows){if(row.saved_cover_days!==null&&row.saved_cover_days!==undefined){let saved;try{saved=JSON.parse(row.saved_cover_days);}catch{throw new(require('../domain/errors').ValidationError)('Review the saved target days of stock before replenishment can continue.');}const days=Number(saved&&typeof saved==='object'?saved.value:saved);if(!Number.isSafeInteger(days)||days<1)throw new(require('../domain/errors').ValidationError)('Target days of stock must be a positive whole number.');row.cover_days=days;}const stock=current.get(availability.key(row.sku_id,row.location_id));if(stock){row.committed=stock.committed+stock.reserved;row.rental_reserved=stock.rentalReserved;}if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
