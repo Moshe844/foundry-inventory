@@ -1553,6 +1553,8 @@ function createPostgresAutopilotRouter(database,options={}){
       if(req.params.job==='warehouse-slotting')result.slottingPath=slotting.path;
       if(req.params.job==='repeat-loss')result.lossShifts=await require('../../autopilot/stock-loss-patterns').settings(database,req.ctx.workspaceId);
       if(req.params.job==='brand-watches')result.watches=await require('../../autopilot/brand-watches').list(database,req.ctx.workspaceId);
+      const alertJob=require('../../autopilot/agent-alerts').forKey(req.params.job);
+      if(alertJob)result.alerts=await require('../../autopilot/agent-alerts').panel(database,req.ctx,alertJob);
       if(req.params.job==='staff-count-lists')result.countAssignments={...await require('../../operations/agent-count-tasks').setup(database,req.ctx),requestKey:newId('count-assignment'),selectedLocationId:req.query.locationId};
       if(req.params.job==='vacation-deputy')result.vacation=await require('../../autopilot/vacation-deputy').setup(database,req.ctx);
       if(req.params.job==='purchase-approval-threshold'){
@@ -1572,6 +1574,17 @@ function createPostgresAutopilotRouter(database,options={}){
       if(req.params.job==='sales-order-checks'&&result.mode!=='suggest')result.orderCheckSettings=await require('../../sales/agent-order-screening').settings(database,req.ctx);
       return {title:result.label,result,filter:req.query.filter||''};
     },402);
+  }));
+  // Jobs 166 to 168: how alerts are sent, and sending waiting alerts now.
+  router.post('/autopilot/alerts/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const alerts=require('../../autopilot/agent-alerts'),saved=await alerts.configure(database,req.ctx,req.params.job,req.body);
+    req.flash('success',saved.unchanged?'Nothing changed.':'Alert settings saved.');
+    res.redirect(303,alerts.pathFor(Number(req.params.job)));
+  }));
+  router.post('/autopilot/alerts/:job/send',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const alerts=require('../../autopilot/agent-alerts'),sent=await alerts.sendNow(database,req.ctx,req.params.job);
+    req.flash('success',sent.emailed===1?'1 alert is on its way to you.':sent.emailed+' alerts are on their way to you.');
+    res.redirect(303,alerts.pathFor(Number(req.params.job)));
   }));
   router.post('/autopilot/alert-settings/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
     const watch=require('../../autopilot/activity-watches'),id=Number(req.params.id);

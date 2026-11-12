@@ -169,6 +169,7 @@
 </tbody></table></div><% }else if(!result.requiresChange||result.change){ %><p><%= result.bankMatchForm?'No completed matches in this view.':'No matching records.' %></p><% } %>
 <% if(result.page>1){ %><a href="?page=<%= result.page-1 %>&amp;filter=<%= encodeURIComponent(filter) %><%= result.requiresChange?'&change='+encodeURIComponent(result.change||''):'' %>">Previous page</a><% } %>
 <% if(result.more){ %><a href="?page=<%= result.page+1 %>&amp;filter=<%= encodeURIComponent(filter) %><%= result.requiresChange?'&change='+encodeURIComponent(result.change||''):'' %>">Next page</a><% } %>
+<% if(result.alerts){ %><%- include('alert-delivery',{alerts:result.alerts,csrfToken}) %><% } %>
 <% if(result.recurringForm){ %><%- include('recurring-orders',{result,csrfToken}) %><% } %>
 <% if(result.mapForm){ %><%- include('map-terms',{result,csrfToken}) %><% } %>
 <% if(result.undoForm){ %><%- include('daily-work',{result,csrfToken}) %><% } %>
