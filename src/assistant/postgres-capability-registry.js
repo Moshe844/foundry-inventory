@@ -114,7 +114,7 @@ const FIELDS=Object.freeze({
   shipToAddress:{type:'string',description:'Customer delivery address.'},
   orderDate:{type:'string',description:'Customer order business date in YYYY-MM-DD format, only when explicitly stated.'},
   neededBy:{type:'string',description:'Requested date in YYYY-MM-DD format.'},
-  repeatPeriod:{type:'string',enum:['latest','previous-month'],description:'Use previous-month for the previous calendar month and latest for the most recent confirmed order.'},
+  repeatPeriod:{type:'string',enum:['latest','previous-month','usual'],description:'Use previous-month for the previous calendar month, latest for the most recent confirmed order and usual for the customer’s usual order (the lines in most of their recent orders).'},
   sourceOrderNumber:{type:'string',description:'Exact historical customer order number explicitly selected for a repeat order.'},
   allocationPriority:{type:'integer',description:'Customer-order stock allocation priority, a whole number from 0 to 1000.'},
   purchaseOrder:{type:'string',entity:'purchase_order',description:'Purchase order identity or number.'},

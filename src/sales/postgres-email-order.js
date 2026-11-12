@@ -287,6 +287,8 @@ async function onArrival(db,workspaceId,id){
     FROM connection_email_messages m WHERE m.workspace_id=$1 AND m.id=$2`,[workspaceId,id])).rows[0];
   if(!m||m.classification!=='customer'||m.trust_status!=='TRUSTED')return {skipped:true};
   if(m.agent_category!=='order'&&!isOrderEnvelope(m.subject,m.body_text,m.has_attachments))return {skipped:true};
+  // "Same as last month" is job 53's repeat order, not a list of lines.
+  if(!m.has_attachments&&require('./agent-repeat-orders').isEmailRequest(m.subject,m.body_text))return {skipped:true};
   const decision=await orders.decide(db,workspaceId,52);
   if(decision.mode==='skip')return {skipped:true};
   const actorId=(decision.mode==='automatic'&&decision.actorId)||await orders.ownerUser(db,workspaceId);

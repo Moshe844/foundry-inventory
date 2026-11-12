@@ -714,6 +714,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     catch(error){if([400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}
   }),
   'mail.customer-order':external((job,database)=>require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId)),
+  'mail.customer-repeat-order.v1':external((job,database)=>require('../sales/agent-repeat-orders').fromEmail(database,job.workspaceId,job.payload.messageId)),
   'mail.customer-return.v1':external((job,database)=>require('../sales/agent-customer-return-emails').onArrival(database,job.workspaceId,job.payload.messageId)),
   'customer.order-page.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId)),
   'customer.preorder.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId,{preorder:true})),

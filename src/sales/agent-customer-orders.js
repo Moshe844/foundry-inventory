@@ -305,4 +305,5 @@ function readPage(job){
 }
 
 module.exports={path,CONFIRMED,ownerUser,limits,configure,saveCode,removeCode,identify,decide,overLimit,units,needsPerson,confirm,confirmProblems,undo,work,inbox,page,
-  definitions:[{id:52,key:'customer-email-orders',label:'Customer orders from email',readPage:readPage(52)}]};
+  definitions:[{id:52,key:'customer-email-orders',label:'Customer orders from email',readPage:readPage(52)},
+    {id:53,key:'repeat-customer-orders',label:'Repeat customer orders from one sentence',readPage:readPage(53)}]};

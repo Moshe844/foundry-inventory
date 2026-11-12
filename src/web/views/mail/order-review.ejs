@@ -1,6 +1,7 @@
 <a href="/mail/<%= messageId %>">Back to email</a>
 <h1>Review customer order</h1>
 <p><%= review.customer.name %> · <%= review.input.deliveryMethod==='PICKUP'?'Customer pickup':(review.address||review.customer.shipping_address) %></p>
+<% if(review.reading){ %><p data-repeat-reading>Repeat of their <%= review.reading %>, at today’s prices.</p><% } %>
 <% if(review.input.reference){ %><p>Customer purchase order <strong><%= review.input.reference %></strong></p><% } %>
 <% if(review.problems&&review.problems.length){ %>
 <div class="notice notice--warn" data-order-problems><div><strong>Check these before you create the order.</strong>

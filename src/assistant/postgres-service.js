@@ -2122,7 +2122,7 @@ async function continueApprovedPlans(database,ctx,proposalId,options={}){
   });
 }
 
-async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRoutine=false,invoiceRoutine=false,arrivedStockRoutine=false,pickReleaseRoutine=false}={}){
+async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRoutine=false,invoiceRoutine=false,arrivedStockRoutine=false,pickReleaseRoutine=false,repeatRoutine=false}={}){
   await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),'ask.prepare_actions');
   const committed=await database.transaction(async(client)=>{
     const proposal=await getProposal(database,ctx.workspaceId,id,true,client);
@@ -2150,7 +2150,11 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
       if(contract.name!=='warehouse.release_orders')throw new ValidationError('Pick release authority cannot run another kind of action.');
       routineAuthority=await require('../warehouse/agent-pick-release').requireRoutineAuthority(client,ctx);
     }
-    const automatic=Boolean(missionPlanId)||receiptRoutine||invoiceRoutine||arrivedStockRoutine||pickReleaseRoutine;
+    if(repeatRoutine){
+      if(contract.name!=='sales_order.repeat')throw new ValidationError('Repeat order authority cannot run another kind of action.');
+      routineAuthority=await require('../sales/agent-repeat-orders').requireRoutineAuthority(client,ctx,proposal.payload);
+    }
+    const automatic=Boolean(missionPlanId)||receiptRoutine||invoiceRoutine||arrivedStockRoutine||pickReleaseRoutine||repeatRoutine;
     const stopped=await agentPolicy.stopped(client,ctx.workspaceId,agentAccount,contract.name,automatic,proposal.payload);
     if(stopped)throw new ValidationError(stopped);
     const operation=automatic?'automatic':'draft', job=agentPolicy.actionJob(contract.name,operation,{...proposal.payload,idempotencyKey:proposal.idempotency_key});
@@ -2167,7 +2171,7 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
       throw new ValidationError('This step needs its own confirmation. Review the individual action to proceed.');
     if(contract.name==='sales_order.create')await require('../sales/agent-customer-pricing').checkOrder(client,ctx,proposal.payload);
     if(automatic&&['sales_order.reserve_all','sales_order.allocation_priority'].includes(contract.name))await require('../sales/agent-order-reservations').automaticAuthority(client,ctx,proposal.payload,contract.name);
-    if(missionPlanId&&agentPolicy.usesAgentTerms(agentAccount)&&await agentPolicy.customerOrderNeedsPerson(client,ctx.workspaceId,contract.name,proposal.payload,null,agentAccount))
+    if((missionPlanId||repeatRoutine)&&agentPolicy.usesAgentTerms(agentAccount)&&await agentPolicy.customerOrderNeedsPerson(client,ctx.workspaceId,contract.name,proposal.payload,null,agentAccount))
       throw new ValidationError('Individually approve this customer order or teach an eligible routine for these delivery details.');
     if(missionPlanId){const plan=(await client.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans
         WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,missionPlanId])).rows[0];
@@ -2195,7 +2199,7 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
     const arrivedStock=contract.name==='sales_order.reserve_arrived'&&agentPolicy.usesAgentTerms(agentAccount);
     const invoiceDispute=contract.name==='supplier_invoice.dispute'&&agentPolicy.usesAgentTerms(agentAccount);
     const executionContext=contract.name==='shipping.prepare_export_papers'?{...ctx,agentExportPaperScope:automatic?'automatic':'individual'}:contract.name==='customer_return.send_label'?{...ctx,agentReturnLabelScope:automatic?'automatic':'individual'}:contract.name==='warehouse.release_partial_order'?{...ctx,agentPartialShipmentScope:automatic?'automatic':'individual'}:contract.name==='inventory.plan_annual_stocktake'?{...ctx,agentAnnualPlanningScope:automatic?'automatic':'individual'}:contract.name==='sales_quote.followup'?{...ctx,agentQuoteFollowupScope:automatic?'automatic':'individual'}:contract.name==='customer.statement'?{...ctx,agentCustomerStatementScope:automatic?'automatic':'individual'}:contract.name==='landed_cost.apply'?{...ctx,agentLandedCostScope:automatic?'automatic':'individual'}:contract.name==='warehouse.prepare_putaway'?{...ctx,agentPutawayScope:automatic?'automatic':'individual'}:postage?{...ctx,agentPostageScope:automatic?'automatic':'individual'}:paymentMatch?{...ctx,agentPaymentScope:automatic?'automatic':'individual'}:invoiceMatch?{...ctx,agentInvoiceScope:automatic?'automatic':'individual'}:arrivedStock?{...ctx,agentArrivedStockScope:automatic?'automatic':'individual'}:invoiceDispute?{...ctx,agentInvoiceDisputeScope:automatic?'automatic':'individual'}:['warehouse.wave.create','warehouse.release_orders'].includes(contract.name)&&agentPolicy.usesAgentTerms(agentAccount)?{...ctx,agentWarehouseReleaseScope:automatic?'automatic':'individual'}:ctx;
-    const executed=await contract.execute(client,{...executionContext,agentReorderAutomatic:automatic,agentStockRotationAutomatic:automatic,...(contract.name==='document.save_product_facts'?{agentProductSourceScope:automatic?'automatic':'individual'}:{})},payload),result=routineAuthority?{...executed,executionAuthority:routineAuthority}:['sales_order.reserve_all','sales_order.allocation_priority'].includes(contract.name)?{...executed,automatic}:executed;
+    const executed=await contract.execute(client,{...executionContext,agentReorderAutomatic:automatic,agentStockRotationAutomatic:automatic,agentRepeatAutomatic:automatic,...(contract.name==='document.save_product_facts'?{agentProductSourceScope:automatic?'automatic':'individual'}:{})},payload),result=routineAuthority?{...executed,executionAuthority:routineAuthority}:['sales_order.reserve_all','sales_order.allocation_priority'].includes(contract.name)?{...executed,automatic}:executed;
     if(!await contract.verifyExecution(client,ctx,result,payload))
       throw new InvariantError('StockChief could not verify the resulting business record. Nothing was committed.',
         'proposal_result_unverified');
@@ -2238,6 +2242,11 @@ async function executeArrivedStockRoutine(database,ctx,id){
 }
 async function executePickReleaseRoutine(database,ctx,id){
   const committed=await executeProposalCore(database,ctx,id,{pickReleaseRoutine:true});
+  return continueRoutineProposal(database,ctx,committed);
+}
+// Job 53: a one-sentence repeat order the owner's authority lets StockChief create alone.
+async function executeRepeatRoutine(database,ctx,id){
+  const committed=await executeProposalCore(database,ctx,id,{repeatRoutine:true});
   return continueRoutineProposal(database,ctx,committed);
 }
 async function continueRoutineProposal(database,ctx,committed){
@@ -2308,7 +2317,7 @@ async function ask(database,ctx,message,options={}){
     const english=options.englishReading!==undefined?options.englishReading:await readQuestionInEnglish(database,ctx,message,options);
     if(english){readAs=english;readInEnglish=true;}
   }
-  const direct=options.continueInteractionId?null:await require('./direct-business-reads').run({lookup,prepareAction,resolveSku:(db,workspaceId,name)=>resolveOne(db,'skus',workspaceId,name,'i.name,s.position')},database,ctx,readAs,options);
+  const direct=options.continueInteractionId?null:await require('./direct-business-reads').run({lookup,prepareAction,executeRepeatRoutine,resolveSku:(db,workspaceId,name)=>resolveOne(db,'skus',workspaceId,name,'i.name,s.position')},database,ctx,readAs,options);
   if(direct){const toolMs=Date.now()-directStarted;direct.result.carryForward={...direct.result.carryForward,chatId:options.conversationId||null};
     const preferences=direct.answerPreferences||{};
     const localize=readInEnglish||preferences.answerStyle||preferences.answerLanguage&&!/^en(?:-|$)/i.test(preferences.answerLanguage);
@@ -2348,5 +2357,5 @@ async function ask(database,ctx,message,options={}){
 }
 
 module.exports={lookup,prepareAction,createProposal,ask,readQuestionInEnglish,askLegacy:askCapabilities,listInteractions,capabilityService,recordCapabilityOutcome,
-  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeReceiptRoutine,executeInvoiceRoutine,executeArrivedStockRoutine,executePickReleaseRoutine,executeMission,resumeMission,cancelProposal,
+  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeReceiptRoutine,executeInvoiceRoutine,executeArrivedStockRoutine,executePickReleaseRoutine,executeRepeatRoutine,executeMission,resumeMission,cancelProposal,
   fundedAskProvider,buildReportDefinition,summarizeCustomerOrders};

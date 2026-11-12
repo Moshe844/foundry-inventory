@@ -98,6 +98,11 @@ async function save(db,ctx,id,input){
 async function trained(db,workspaceId,name,payload,proposalId){
   if(name==='transfer.prepare_balance')return require('../transfers/agent-transfer-balancing').trained(db,workspaceId,payload);
   if(name==='warehouse.prepare_putaway')return require('../warehouse/agent-putaway').trained(db,workspaceId,payload);
+  // Job 53: a saved rule or a repeat order a person approved and confirmed.
+  if(name==='sales_order.repeat'){
+    if(!payload&&proposalId)payload=(await db.query('SELECT payload FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2 AND action_type=$3',[workspaceId,proposalId,name])).rows[0]?.payload;
+    return require('../sales/agent-repeat-orders').trained(db,workspaceId,payload);
+  }
   if(!jobs.has(name))return false;
   if(!payload&&proposalId)payload=(await db.query('SELECT payload FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2 AND action_type=$3',[workspaceId,proposalId,name])).rows[0]?.payload;
   const bound=payload?.training;
