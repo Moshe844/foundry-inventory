@@ -11,6 +11,29 @@
  <% } else if(['AUTHORIZED','PARTIALLY_RECEIVED'].includes(customerReturn.status)){ %><p class="rm-sub">Prepare a carrier label using this business’s own postage accounts. Carrier delivery never replaces physical receipt and inspection.</p>
  <form method="post" action="/returns/<%= customerReturn.id %>/postage" class="stack-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Return delivery location<select name="locationId" required><% locations.forEach(function(location){ %><option value="<%= location.id %>"><%= location.name %></option><% }); %></select></label><button class="rm-btn" type="submit">Prepare return postage</button></form>
  <% } else if(customerReturn.status==='REQUESTED'){ %><p class="rm-sub">Authorize the goods expected back before preparing a return label.</p><% } %>
+ <% if(typeof returnLabel!=='undefined'&&returnLabel&&!returnLabel.locked&&customerReturn.status==='AUTHORIZED'){ const label=returnLabel; %>
+ <div id="return-label" class="stack-form">
+  <h3>Return label from StockChief</h3>
+  <% if(label.email){ %><p>Label and instructions emailed to <%= label.email.recipient %>.</p>
+  <% } else if(label.canSend){ %><p><%= label.run.reason||'The label is bought. The email to the customer is next.' %></p>
+   <form method="post" action="/returns/<%= customerReturn.id %>/return-label/send" class="stack-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <% if(label.mailboxes.length>1){ %><label>Send from<select name="connectorId" required><% label.mailboxes.forEach(function(box){ %><option value="<%= box.id %>"><%= box.display_name %></option><% }); %></select></label><% } %>
+    <label><input type="checkbox" name="confirmed" value="yes" required> Email the customer this label and the return steps.</label><button class="rm-btn" type="submit">Send the email</button></form>
+  <% } else if(label.labelBought){ %><p>Label bought: <%= label.choice %>. The email to the customer follows.</p>
+  <% } else if(label.run&&label.run.status==='QUEUED'){ %><p>Buying the label: <%= label.choice %>.</p>
+  <% } else if(label.canApprove){ %><p><%= label.choice %>.<% if(label.run.label_reason){ %> <%= label.run.label_reason %><% } %></p>
+   <form method="post" action="/returns/<%= customerReturn.id %>/return-label/approve" class="stack-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="runId" value="<%= label.run.id %>">
+    <label><input type="checkbox" name="confirmed" value="yes" required> Buy this label and email it to the customer.</label><button class="rm-btn" type="submit">Approve the label</button></form>
+   <form method="post" action="/returns/<%= customerReturn.id %>/return-label/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="runId" value="<%= label.run.id %>"><button class="rm-btn" type="submit">No label needed</button></form>
+  <% } else if(label.run&&label.run.status==='HELD'){ %><p class="notice"><%= label.run.reason %></p>
+  <% } else if(label.waiting){ %><p class="notice"><%= label.waiting %></p>
+  <% } else { %><p class="rm-sub"><%= label.alone?'StockChief buys the label and emails the customer on its own.':'StockChief prepares the label for you to approve.' %></p><% } %>
+  <% if(label.canTeach){ %><form method="post" action="/returns/<%= customerReturn.id %>/return-label/rule" class="stack-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+   <input type="hidden" name="locationId" value="<%= label.teachLocationId %>"><input type="hidden" name="connectorId" value="<%= label.teachConnectorId %>"><input type="hidden" name="currency" value="<%= label.currency %>">
+   <label>Send return labels on their own for goods worth up to (<%= label.currency %>)<input type="text" inputmode="decimal" name="maximum" required></label>
+   <label><input type="checkbox" name="confirmed" value="yes" required> Send labels like this one on their own: same return location and mailbox, within this limit and my $ per label.</label><button class="rm-btn" type="submit">Save rule</button></form><% } %>
+  <% if(label.route){ %><form method="post" action="/returns/<%= customerReturn.id %>/return-label/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="remove" value="yes"><button class="rm-btn" type="submit">Remove the return label rule</button></form><% } %>
+ </div><% } %>
 </section>
 <section class="section"><div class="section-head"><h2>Next controlled step</h2></div>
   <% if(customerReturn.status==='REQUESTED'){ %>

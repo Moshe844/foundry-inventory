@@ -315,7 +315,7 @@ async function inbox(db,workspaceId){
   const {rows}=await db.query(`SELECT DISTINCT ON (r.shipment_id) r.*,s.shipment_number,s.sales_order_id,o.order_number
     FROM ${runs} r JOIN sales_shipments s ON s.workspace_id=r.workspace_id AND s.id=r.shipment_id
     JOIN sales_orders o ON o.workspace_id=s.workspace_id AND o.id=s.sales_order_id
-    WHERE r.workspace_id=$1 AND s.status='PACKED' AND o.status<>'CANCELLED' AND coalesce(s.label_status,'') NOT IN ('PURCHASED','PENDING','REVIEW','VOID_PENDING')
+    WHERE r.workspace_id=$1 AND s.status='PACKED' AND s.customer_return_id IS NULL AND o.status<>'CANCELLED' AND coalesce(s.label_status,'') NOT IN ('PURCHASED','PENDING','REVIEW','VOID_PENDING')
     ORDER BY r.shipment_id,r.updated_at DESC LIMIT 50`,[workspaceId]);
   return rows.filter(r=>r.mode!=='watch'&&(['SUGGESTED','CHOSEN'].includes(r.status)||r.status==='HELD'&&r.hold!=='address')).slice(0,25).map(r=>{
     const choice=r.carrier?require('../sales/carriers').displayName(r.carrier)+' '+r.service+' at '+money.format(Number(r.amount_minor),r.currency)+', arriving '+r.arrival_date:null;

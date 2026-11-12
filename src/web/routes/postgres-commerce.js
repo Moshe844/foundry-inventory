@@ -1362,9 +1362,32 @@ function createPostgresCommerceRouter(database,options={}){
     const receiptPreview=customerReturn.receipt_credit_policy==='RECEIPT_CREDIT_V1'&&!needsReceiptMeasures&&['REQUESTED','AUTHORIZED','PARTIALLY_RECEIVED'].includes(customerReturn.status)?await returns.previewReceiptCredit(database,req.ctx,customerReturn.id):null,refundFinancials=receiptPreview?{...receiptPreview,posted:false}:returns.refundSummary(customerReturn),refundableMinor=refundFinancials.totalMinor;
     return res.page('sales/postgres-return',{title:customerReturn.return_number,nav:'sales',customerReturn,
       returnParcel:await require('../../shipping/postgres-return-parcels').current(database,req.ctx.workspaceId,customerReturn.id),
+      returnLabel:req.user?.role==='owner'?await require('../../shipping/agent-return-labels').view(database,req.ctx.workspaceId,customerReturn.id):null,
       locations:locationRows,refundableMinor,refundFinancials,needsReceiptMeasures,refundRequest:refundRequestResult.rows[0]||null,
       managedRefund,refundAccess,isRefundOwner:req.user?.role==='owner',
       today:dateToday(req),formKey:newId('return-step')});
+  }));
+
+  // Job 112: the return label StockChief prepared, bought or is waiting to email.
+  router.post('/returns/:id/return-label/approve',requireOwner,asyncRoute(async(req,res)=>{
+    const result=await require('../../shipping/agent-return-labels').approve(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.changed?'The rate changed. Check the new label before approving it.':'Label approved. The customer is emailed once the carrier confirms it.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-label');
+  }));
+  router.post('/returns/:id/return-label/send',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../shipping/agent-return-labels').send(database,req.ctx,req.params.id,req.body);
+    req.flash('success','The label and instructions are on their way to the customer.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-label');
+  }));
+  router.post('/returns/:id/return-label/dismiss',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../shipping/agent-return-labels').dismiss(database,req.ctx,req.params.id,req.body);
+    req.flash('success','StockChief will not buy a label for this return.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-label');
+  }));
+  router.post('/returns/:id/return-label/rule',requireOwner,asyncRoute(async(req,res)=>{
+    const result=await require('../../shipping/agent-return-labels').configure(database,req.ctx,req.body);
+    req.flash('success',result.removed!==undefined?'Return label rule removed. Labels now wait for your approval.':'Rule saved. StockChief sends return labels like this one on its own.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-label');
   }));
 
   router.post('/returns/:id/authorize',requirePermission(permissions.AUTHORIZE_CUSTOMER_RETURN,'authorize customer returns'),

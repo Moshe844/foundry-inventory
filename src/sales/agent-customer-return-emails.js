@@ -70,6 +70,8 @@ async function create(db,ctx,id,input,{automatic=false}={}){
    after:{messageId:id,orderNumber:p.orderNumber,units:units(p),value:check.value,daysSinceGoodsLeft:check.days,returnWindowDays:check.window,outsidePolicy:check.problems,automatic}});
   await c.query(`INSERT INTO stockchief_runtime.agent_return_email_sources(workspace_id,message_id,customer_return_id,customer_id,request_reference,source_snapshot,source_fingerprint,input_hash,automatic,processed_by)
    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(workspace_id,message_id) DO UPDATE SET customer_return_id=EXCLUDED.customer_return_id,customer_id=EXCLUDED.customer_id,request_reference=EXCLUDED.request_reference,source_snapshot=EXCLUDED.source_snapshot,source_fingerprint=EXCLUDED.source_fingerprint,input_hash=EXCLUDED.input_hash,automatic=EXCLUDED.automatic,processed_by=EXCLUDED.processed_by,problem=NULL`,[ctx.workspaceId,id,result.customerReturnId,p.customerId,p.requestReference,JSON.stringify(p),p.sourceFingerprint,hash(p.input),automatic,ctx.actorId]);
+  // Job 112 looks at the new authorized return straight away.
+  await require('../shipping/agent-return-labels').kick(c,ctx.workspaceId,result.customerReturnId);
   return {...result,status:authorized.status,automatic};
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
