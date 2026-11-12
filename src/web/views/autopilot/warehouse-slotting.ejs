@@ -1,0 +1,139 @@
+<% const path='/autopilot/warehouse-slotting', saved=model.saved, site=model.site;
+const sitePath=id=>path+'?warehouse='+encodeURIComponent(id);
+const amount=(q,unit,weight,weightUnit)=>helpers.unitCount(q,unit)+(weight!=null?' · '+weight+' '+weightUnit:''); %>
+<% if(model.scheduleOnly){ %>
+<h1>Routine re-slots</h1>
+<p class="muted">Warehouses where StockChief re-slots busy products on its own, inside your limits. You can stop any of them on any plan.</p>
+<% if(model.canSchedule){ %><p><a href="<%= path %>">Open warehouse move lists</a></p><% } %>
+<% if(!model.rows.length){ %><section class="card card-body"><p>No routine re-slots are running.</p></section><% } %>
+<% for(const r of model.rows){ %><section class="card card-body stack">
+  <h2><%= r.name %></h2>
+  <p><%= r.cadence_days===1?'Every day':'Every week' %> · Next <%= r.due_on %> · Up to <%= r.maximum_moves %> moves of <%= r.maximum_units %> units each</p>
+  <form method="post" action="<%= path %>/routine" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="warehouseId" value="<%= r.warehouse_id %>">
+    <input type="hidden" name="revision" value="<%= r.revision %>">
+    <button class="btn" name="stop" value="yes">Stop routine re-slots for <%= r.name %></button>
+  </form>
+</section><% } %>
+<% }else if(saved){ const s=saved.snapshot; %>
+<h1>Move list · <%= s.warehouse.name %></h1>
+<section class="card card-body stack">
+  <p><span class="badge badge--info"><%= saved.automatic?'Routine list':'Your list' %></span> Made <%= s.asOf %> from <%= s.examined %> busy products and <%= s.measuredBins %> measured bins.</p>
+  <p><strong><%= s.moves.length %></strong> moves · <strong><%= model.approved %></strong> approved · <strong><%= model.waiting %></strong> waiting</p>
+  <% if(s.placed){ %><p class="muted"><%= s.placed %> busy products have no closer empty bin.</p><% } %>
+  <% if(s.deferred){ %><p class="muted"><%= s.deferred %> more products will be looked at on a later list.</p><% } %>
+  <% if(!s.moves.length){ %><p>Nothing to move. Every busy product is already as close to packing as the empty bins allow.</p><% } %>
+  <% if(model.blocked){ %><p class="hint"><%= model.blocked %></p>
+  <% }else if(model.waiting>1){ %><form method="post" action="<%= path+'/'+saved.id %>/approve" class="form-grid">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="move" value="all">
+    <label class="full"><span><input type="checkbox" name="confirmed" value="yes" required> I checked every waiting move on this list.</span></label>
+    <div class="full"><button class="btn btn--primary">Approve all <%= model.waiting %> waiting moves</button></div>
+  </form><% } %>
+  <p><a href="<%= sitePath(s.warehouse.id) %>">Back to <%= s.warehouse.name %></a></p>
+</section>
+<% for(const m of model.rows){ %><article class="card card-body stack">
+  <h2><%= m.name %> · <%= m.code %> <span class="badge badge--<%= m.status.tone %>"><%= m.status.label %></span></h2>
+  <p><strong><%= m.from.name %> → <%= m.to.name %></strong><br>
+    Move <%= amount(m.quantity,m.unit,m.secondaryQuantity,m.secondaryUnit) %> · <%= m.visits %> picks in 90 days · <%= m.metresSaved %> m closer to packing</p>
+  <p class="muted"><%= helpers.unitCount(m.free,m.unit) %> free in <%= m.from.name %><% if(Number(m.held)>0||Number(m.committed)>0){ %> · <%= m.committed %> promised to orders · <%= m.held %> on hold or moving<% } %>
+    <% if(m.checked){ %> · <%= m.to.name %> holds up to <%= helpers.unitCount(m.capacity,m.unit) %><% if(m.weightCapacity!=null){ %> and <%= m.weightCapacity %> <%= m.secondaryUnit %><% } %><% } %></p>
+  <% if(m.warnings.length&&!m.link){ %><div class="hint"><strong>Check first:</strong><ul><% for(const w of m.warnings){ %><li><%= w %></li><% } %></ul></div><% } %>
+  <% if(m.lines.some(l=>l.lot||l.serials)){ %><details><summary>Exact batches and serial numbers</summary><ul>
+    <% for(const l of m.lines){ %><li><%= l.quantity %> <%= m.unit %><% if(l.lot){ %> · Batch <%= l.lot %><% } %><% if(l.expiresOn){ %> · Use by <%= l.expiresOn %><% } %><% if(l.secondaryQuantity!=null){ %> · <%= l.secondaryQuantity %> <%= m.secondaryUnit %><% } %><% if(l.serials){ %> · <%= l.serials.join(', ') %><% } %></li><% } %>
+  </ul></details><% } %>
+  <% if(m.problem){ %><p class="hint"><%= m.problem %></p><% } %>
+  <% if(m.link){ %>
+    <p><a href="/transfers/<%= m.link.id %>"><%= m.link.transfer_number %></a> · <%= m.link.automatic?'Approved on its own':'Approved by you' %></p>
+    <% if(m.canUndo){ %><form method="post" action="<%= path+'/'+saved.id %>/undo" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="move" value="<%= m.fingerprint %>">
+      <button class="btn">Undo this move</button>
+    </form><% } %>
+  <% }else if(!model.blocked){ %><form method="post" action="<%= path+'/'+saved.id %>/approve" class="form-grid">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="move" value="<%= m.fingerprint %>">
+    <label class="full"><span><input type="checkbox" name="confirmed" value="yes" required> I checked this move.</span></label>
+    <div class="full"><button class="btn btn--primary">Approve move to <%= m.to.name %></button></div>
+  </form><% } %>
+</article><% } %>
+<% if(model.held.length){ %><section class="card card-body stack"><h2>Not on this list (<%= s.heldCount %>)</h2>
+  <% for(const h of model.held){ %><p><strong><%= h.code %> · <%= h.from %></strong><br><%= h.reason %></p><% } %>
+</section><% } %>
+<% if(model.next!=null){ %><p><a href="?after=<%= model.next %>">Next moves</a></p><% } %>
+<% }else{ %>
+<h1>Warehouse move lists</h1>
+<p class="muted">Moves busy products into empty bins closer to packing. Each approved move becomes a transfer that staff pick, move and put away.</p>
+<% if(!site){ %><section class="card card-body"><p>Add a warehouse with bins before planning moves.</p></section><% }else{ %>
+<section class="card card-body stack">
+  <h2><%= site.name %></h2>
+  <% if(model.sites.length>1){ %><form method="get" action="<%= path %>" class="form-stack">
+    <label>Warehouse <select name="warehouse"><% for(const w of model.sites){ %>
+      <option value="<%= w.id %>" <%= w.id===site.id?'selected':'' %>><%= w.name %></option><% } %>
+    </select></label><button class="btn">Open warehouse</button>
+  </form><% } %>
+  <form method="post" action="<%= path %>" class="form-grid">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="warehouseId" value="<%= site.id %>">
+    <label>Most moves on the list <input type="number" min="1" max="250" name="maximumMoves" value="50" required></label>
+    <label>Fewest picks in 90 days <input type="number" min="1" name="minimumVisits" value="1" required></label>
+    <div class="full"><button class="btn btn--primary">Make a move list</button></div>
+  </form>
+</section>
+<section class="card card-body stack">
+  <h2>Bins</h2>
+  <% const measured=model.bins.filter(b=>b.metres!=null).length; %>
+  <p class="muted"><%= measured %> of <%= model.bins.length %> bins have a walking distance to packing.</p>
+  <% if(model.bins.length){ %>
+  <details><summary>Record a walking distance</summary>
+    <form method="post" action="<%= path %>/distance" class="form-grid">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="warehouseId" value="<%= site.id %>">
+      <label>Bin <select name="bin" required><% for(const b of model.bins){ %><option value="<%= b.id %>"><%= b.name %><%= b.metres!=null?' · '+b.metres+' m':'' %></option><% } %></select></label>
+      <label>Walking distance to packing in metres <input required name="metres" type="number" min="0" step="0.01"></label>
+      <div class="full"><button class="btn">Save distance</button></div>
+    </form>
+  </details>
+  <details><summary>Record that a product fits a bin</summary>
+    <form method="post" action="<%= path %>/capacity" class="form-grid">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="warehouseId" value="<%= site.id %>">
+      <label>Bin <select name="bin" required><% for(const b of model.bins){ %><option value="<%= b.id %>"><%= b.name %></option><% } %></select></label>
+      <label>Product code <input required name="sku"></label>
+      <label>Most units it holds <input required name="primaryLimit" inputmode="decimal"></label>
+      <label>Most weight it holds, for products sold by weight <input name="secondaryLimit" inputmode="decimal"></label>
+      <label class="full"><span><input type="checkbox" name="confirmed" value="yes" required> I checked this product fits this bin safely.</span></label>
+      <div class="full"><button class="btn">Save bin fit</button></div>
+    </form>
+  </details>
+  <% if(model.capacities.length){ %><details><summary>Checked bin fits (<%= model.capacities.length %>)</summary>
+    <% for(const c of model.capacities){ %><form method="post" action="<%= path %>/capacity" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="warehouseId" value="<%= site.id %>">
+      <input type="hidden" name="bin" value="<%= c.location_id %>"><input type="hidden" name="sku" value="<%= c.sku_id %>">
+      <input type="hidden" name="revision" value="<%= c.revision %>">
+      <p><strong><%= c.bin %> · <%= c.code %></strong> · up to <%= c.primary_limit %> <%= c.unit_label %><% if(c.secondary_limit!=null){ %> and <%= c.secondary_limit %> <%= c.secondary_unit_label %><% } %></p>
+      <button class="btn" name="remove" value="yes">Remove fit for <%= c.code %> in <%= c.bin %></button>
+    </form><% } %>
+  </details><% } %>
+  <% } %>
+</section>
+<section class="card card-body stack">
+  <h2>Routine re-slots</h2>
+  <% if(model.canSchedule){ %>
+    <% if(model.rule?.enabled){ %><p><span class="badge badge--ok">On</span> <%= model.rule.cadence_days===1?'Every day':'Every week' %> · Next <%= model.rule.due_on %> · Up to <%= model.rule.maximum_moves %> moves of <%= model.rule.limit_units %> units each</p><% } %>
+    <p class="muted">StockChief makes the list and approves moves inside these limits. Batch, serial or expiry-tracked stock, reserved stock, stock being picked or counted, bins without a checked fit, and anything over your unit limit still wait for you.</p>
+    <form method="post" action="<%= path %>/routine" class="form-grid">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="warehouseId" value="<%= site.id %>">
+      <input type="hidden" name="revision" value="<%= model.rule?.revision||'' %>">
+      <label>How often <select name="cadenceDays"><option value="1">Every day</option><option value="7" <%= model.rule?.cadence_days!==1?'selected':'' %>>Every week</option></select></label>
+      <label>Most moves each time <input name="maximumMoves" type="number" min="1" max="250" value="<%= model.rule?.maximum_moves||10 %>" required></label>
+      <label>Most units in one move <input name="maximumUnits" inputmode="decimal" value="<%= model.rule?.limit_units||'' %>" required></label>
+      <label>Fewest picks in 90 days <input name="minimumVisits" type="number" min="1" value="<%= model.rule?.minimum_visits||1 %>" required></label>
+      <label class="full"><span><input type="checkbox" name="confirmed" value="yes" required> Re-slot <%= site.name %> on its own within these limits.</span></label>
+      <div class="full"><button class="btn btn--primary"><%= model.rule?.enabled?'Save routine re-slots':'Start routine re-slots' %></button></div>
+    </form>
+  <% }else{ %><p class="muted">Routine re-slots are on Custom. On Pro you approve each move.</p><% } %>
+  <p><a href="<%= path %>/routine">All routine re-slots</a></p>
+</section>
+<section class="card card-body stack"><h2>Saved lists</h2>
+  <% if(!model.recent.length){ %><p>No lists for <%= site.name %> yet.</p><% } %>
+  <% for(const p of model.recent){ %><p><a href="<%= path+'/'+p.id %>"><%= p.as_of %> · <%= p.moves %> moves</a> · <%= p.approved %> approved · <%= p.automatic?'Routine list':'Your list' %></p><% } %>
+  <% if(model.next!=null){ %><p><a href="<%= sitePath(site.id)+'&after='+model.next %>">Older lists</a></p><% } %>
+</section>
+<% } %>
+<% } %>

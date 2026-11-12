@@ -106,7 +106,7 @@ async function snapshot(db,ctx,profiles) {
   return {today,bySku,componentKits:new Set(componentKits.rows.map(k=>k.kit_sku_id))};
 }
 
-async function tracked(db,ctx,profile,from,today,maximum,previous) {
+async function tracked(db,ctx,profile,from,today,maximum,previous,maximumSecondary=null) {
   const sku=profile.sku_id,location=from.id,params=[ctx.workspaceId,sku,location,today];
   if(profile.tracking_mode==='serial')return (await db.query(`SELECT u.id,u.serial,u.secondary_quantity::text AS weight,
     u.received_at,l.code AS lot,l.expires_at AS expiry
@@ -114,6 +114,7 @@ async function tracked(db,ctx,profile,from,today,maximum,previous) {
     WHERE u.workspace_id=$1 AND u.sku_id=$2 AND u.location_id=$3 AND u.status='in_stock' AND u.condition='good'
       AND l.recalled_at IS NULL AND (l.expires_at IS NULL OR l.expires_at::date>=$4::date)
       AND NOT u.id=ANY($5::text[]) AND ($6::boolean=false OR u.secondary_quantity>0)
+      AND ($8::numeric IS NULL OR u.secondary_quantity<=$8::numeric)
       AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.sales_rotation_entries r WHERE r.workspace_id=u.workspace_id AND r.serial_unit_id=u.id)
       AND NOT EXISTS(SELECT 1 FROM inventory_transfer_serials x JOIN inventory_transfer_lines line
         ON line.workspace_id=x.workspace_id AND line.id=x.transfer_line_id JOIN inventory_transfers t ON t.workspace_id=line.workspace_id AND t.id=line.transfer_id
@@ -122,7 +123,8 @@ async function tracked(db,ctx,profile,from,today,maximum,previous) {
         ON line.workspace_id=x.workspace_id AND line.id=x.line_id JOIN sales_shipments h ON h.workspace_id=line.workspace_id AND h.id=line.shipment_id
         WHERE x.workspace_id=u.workspace_id AND x.serial_unit_id=u.id AND x.status='ACCEPTED' AND h.status NOT IN ('SHIPPED','DELIVERED','CANCELLED'))
     ORDER BY l.expires_at::date NULLS LAST,u.received_at,u.id LIMIT $7`,
-  [...params,previous.flatMap(l=>l.serialUnitIds||[]),Boolean(profile.secondary_unit_label),Number(maximum)])).rows;
+  [...params,previous.flatMap(l=>l.serialUnitIds||[]),Boolean(profile.secondary_unit_label),
+    maximumSecondary==null?Number(maximum):null,maximumSecondary])).rows;
   return (await db.query(`SELECT l.id,l.code,l.expires_at AS expiry,l.received_at,b.quantity::text,b.secondary_quantity::text AS weight,
     greatest(0,b.quantity
       -coalesce((SELECT sum(r.quantity) FROM stockchief_runtime.sales_rotation_entries r WHERE r.workspace_id=l.workspace_id AND r.location_id=b.location_id AND r.lot_id=l.id),0)
@@ -142,7 +144,9 @@ async function tracked(db,ctx,profile,from,today,maximum,previous) {
     ORDER BY l.expires_at::date NULLS LAST,l.received_at,l.id`,params)).rows;
 }
 
-async function selection(db,ctx,profile,from,maximum,today,previous=[]) {
+// maximumSecondary caps the total measured weight chosen, for a destination
+// with a checked weight limit.
+async function selection(db,ctx,profile,from,maximum,today,previous=[],{maximumSecondary=null}={}) {
   const skuId=profile.sku_id,weighted=Boolean(profile.secondary_unit_label);
   if((profile.tracking_mode!=='quantity'||weighted)&&(cmp(from.stock.quality_held,'0')>0||cmp(from.rentalHeld,'0')>0))return [];
   if(profile.tracking_mode==='serial'&&cmp(from.returnHeld,'0')>0)return [];
@@ -150,27 +154,36 @@ async function selection(db,ctx,profile,from,maximum,today,previous=[]) {
   if(profile.tracking_mode==='quantity'){
     if(!weighted)return [{skuId,quantity:maximum}];
     // Aggregate weight describes a whole known position, not a partial pick.
-    if(cmp(maximum,from.stock.on_hand)!==0||!from.stock.secondary_on_hand)return [];
+    if(cmp(maximum,from.stock.on_hand)!==0||!from.stock.secondary_on_hand||
+      maximumSecondary!=null&&cmp(from.stock.secondary_on_hand,maximumSecondary)>0)return [];
     return [{skuId,quantity:maximum,secondaryQuantity:String(units.secondary(profile,from.stock.secondary_on_hand))}];
   }
-  const candidates=await tracked(db,ctx,profile,from,today,maximum,previous);
+  const candidates=await tracked(db,ctx,profile,from,today,maximum,previous,maximumSecondary);
   if(profile.tracking_mode==='serial'){
-    const selected=candidates.filter(s=>!weighted||s.weight!=null&&cmp(s.weight,'0')>0).slice(0,Number(maximum));
+    const selected=[];let usedWeight='0';
+    for(const s of candidates){
+      if(selected.length>=Number(maximum))break;
+      if(weighted&&(s.weight==null||cmp(s.weight,'0')<=0||maximumSecondary!=null&&cmp(add(usedWeight,s.weight),maximumSecondary)>0))continue;
+      selected.push(s);
+      if(weighted)usedWeight=add(usedWeight,s.weight);
+    }
     if(!selected.length)return [];
-    const weight=weighted?String(units.secondary(profile,sum(selected.map(s=>s.weight)))):null;
+    const weight=weighted?String(units.secondary(profile,usedWeight)):null;
     return [{skuId,quantity:String(selected.length),serialUnitIds:selected.map(s=>s.id),serials:selected.map(s=>s.serial),...(weighted?{secondaryQuantity:weight}:{}),evidence:selected}];
   }
   const returned=await require('../operations/postgres-return-holds').heldLots(db,ctx.workspaceId,skuId,from.id);
-  const result=[];let remaining=maximum;
+  const result=[];let remaining=maximum,remainingWeight=maximumSecondary;
   for(const lot of candidates){
     if(cmp(remaining,'0')<=0)break;
     const earlier=sum(previous.filter(line=>line.lotId===lot.id).map(line=>line.quantity));
     const free=floor(sub(lot.free,add(returned.get(lot.id),earlier)),profile),quantity=floor(min(remaining,free),profile);
     if(cmp(quantity,'0')<=0)continue;
-    if(weighted&&(cmp(quantity,lot.quantity)!==0||lot.weight==null||cmp(lot.weight,'0')<=0))continue;
+    if(weighted&&(cmp(quantity,lot.quantity)!==0||lot.weight==null||cmp(lot.weight,'0')<=0||
+      remainingWeight!=null&&cmp(lot.weight,remainingWeight)>0))continue;
     const weight=weighted?String(units.secondary(profile,lot.weight)):null;
     result.push({skuId,quantity,lotId:lot.id,lot:lot.code,expiresOn:lot.expiry?.slice(0,10)||null,...(weighted?{secondaryQuantity:weight}:{}),evidence:lot});
     remaining=sub(remaining,quantity);
+    if(weighted&&remainingWeight!=null)remainingWeight=sub(remainingWeight,weight);
   }
   return result;
 }
