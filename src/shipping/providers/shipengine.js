@@ -99,6 +99,8 @@ function readRate(row = {}) {
     deliveryDate: row.estimated_delivery_date
       ? String(row.estimated_delivery_date).slice(0, 10) : null,
     guaranteed: Boolean(row.guaranteed_service),
+    // The day the carrier counts its transit days from, after its cut-off.
+    ...(row.ship_date ? { shipDate: String(row.ship_date).slice(0, 10) } : {}),
   };
 }
 

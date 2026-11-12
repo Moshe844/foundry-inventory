@@ -1289,7 +1289,9 @@ function createPostgresCommerceRouter(database,options={}){
         shipment:current.shipment,blocked:current.blocked,accounts:shippingAccounts.map(a=>a.providerName),
         rates:current.rates.map(rate=>({...rate,carrierName:carriers.displayName(rate.carrier)})),
         carrierName:current.shipment.carrier?carriers.displayName(current.shipment.carrier):null,
-        trackingUrl:current.shipment.tracking_url||carriers.trackingUrlFor(current.shipment.carrier,current.shipment.tracking_number)};}
+        trackingUrl:current.shipment.tracking_url||carriers.trackingUrlFor(current.shipment.carrier,current.shipment.tracking_number),
+        addressCheck:await require('../../shipping/agent-address-checks').view(database,req.ctx.workspaceId,openParcel.id),
+        agentRun:await require('../../shipping/agent-labels').view(database,req.ctx.workspaceId,openParcel.id)};}
     else if(shippingReady&&page.order.status!=='CANCELLED'&&page.pickable.length){let locationId=null;try{locationId=require('../../sales/parcel-lines').forParcel(page.detail).locationId;}catch(error){if(!(error instanceof ValidationError))throw error;}
       if(locationId)shipNeeds=await readiness.needs(database,req.ctx.workspaceId,{orderId:page.order.id,locationId});}
     return res.page('sales/order',{canEditLocation,shipConnectHref,shipNeeds,shipNoAccount:Boolean(openParcel&&!shippingReady),depositRefundKey:newId('deposit-refund'),shippingReady,shipNow,shippingAccountNames:shippingAccounts.map(a=>a.providerName),shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),

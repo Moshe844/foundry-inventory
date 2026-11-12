@@ -68,7 +68,14 @@
 <div class="ship-prefs">
 <% if(account.connected){ %>
 <section class="ox-card ox-ship__card" id="handling">
-  <div class="ox-ship__card-h"><h2>Choosing a rate</h2><p>Comparing rates never buys postage. Every label is bought by a person.</p></div>
+  <div class="ox-ship__card-h"><h2>Choosing a rate</h2><p>Comparing rates never buys postage.<% if (locals.agentRates) { %> StockChief picks the cheapest rate that arrives by the date promised on the order.<%= agentRates.mode === 'suggest' ? ' You approve each label with one tap.' : agentRates.mode === 'alone' ? ' It chooses on its own.' : '' %><% } else { %> Every label is bought by a person.<% } %></p></div>
+  <% if (locals.agentRates && agentRates.canTeach) { %>
+  <form method="post" action="/settings/shipping/agent-rates" class="ox-ship__form" data-busy data-agent-rates>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="ox-ship__choice"><input type="checkbox" name="enabled" <%= agentRates.ruleEnabled ? 'checked' : '' %>><span><strong>Let StockChief choose on its own</strong><small>Without this, it suggests a rate until you approve one. This uses one of your saved rules.</small></span></label>
+    <button class="ox-btn ox-btn--secondary" type="submit">Save</button>
+  </form>
+  <% } %>
   <form method="post" action="/settings/shipping/operation-mode" class="ox-ship__form" data-busy>
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <div class="ox-ship__choices">
@@ -101,7 +108,7 @@
 </section>
 
 <section class="ox-card ox-ship__card" id="limits">
-  <div class="ox-ship__card-h"><h2>Postage spending limits <small>optional</small></h2><p>Caps on what can be spent on labels, including batches. Blank means no limit beyond your own approval.</p></div>
+  <div class="ox-ship__card-h"><h2>Postage spending limits <small>optional</small></h2><p>Caps on what can be spent on labels, including batches. Blank means no limit beyond your own approval.<% if (locals.agentRates && agentRates.buysAlone) { %> StockChief buys labels on its own only within these<%= agentRates.plan === 'growth' ? ', and never over $25 a label' : ', and only once a maximum per parcel is set' %>.<% } %></p></div>
   <form method="post" action="/settings/shipping/limits" class="ox-ship__form" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="currency" value="<%= purchaseLimits?.currency||currency %>">
     <div class="ox-ship__grid">
       <label class="ox-ship__field"><span>Maximum per parcel (<%= purchaseLimits?.currency||currency %>)</span><input name="perLabel" inputmode="decimal" value="<%= purchaseLimits?.per_label_minor!=null?fromMinor(purchaseLimits.per_label_minor,purchaseLimits.currency):'' %>" <%= owner?'':'disabled' %>></label>

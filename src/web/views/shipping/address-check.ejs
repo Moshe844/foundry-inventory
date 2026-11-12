@@ -1,0 +1,28 @@
+<%#
+  Job 69: the ship-to address check before a label is bought. A held address
+  waits for one decision: use the suggested address, keep this one, or
+  correct it (below on the order, or through fixHref).
+%>
+<% if (ac && ac.held) { %>
+  <div class="ship-now__warn" data-address-check>
+    <strong>Check the address before the label is bought.</strong> <%= ac.reason %>
+    <% if (ac.suggested && ac.canAccept) { %><p class="hint">Suggested: <strong><%= ac.suggested %></strong></p><% } %>
+    <div class="ship-now__buy">
+      <% if (ac.suggested && ac.canAccept) { %>
+        <form method="post" action="/fulfilment/<%= shipmentId %>/address-check" class="ship-now__minor" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="checkId" value="<%= ac.id %>">
+          <input type="hidden" name="action" value="accept"><input type="hidden" name="returnTo" value="<%= returnTo %>">
+          <button class="btn btn--primary" type="submit">Use the suggested address</button>
+        </form>
+      <% } %>
+      <form method="post" action="/fulfilment/<%= shipmentId %>/address-check" class="ship-now__minor" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="checkId" value="<%= ac.id %>">
+        <input type="hidden" name="action" value="keep"><input type="hidden" name="returnTo" value="<%= returnTo %>">
+        <button class="btn" type="submit">Keep this address</button>
+      </form>
+      <% if (locals.fixHref) { %><a class="ship-now__link" href="<%= fixHref %>">Correct the address</a><% } else { %><span class="hint">Or correct it below and get new rates.</span><% } %>
+    </div>
+  </div>
+<% } else if (ac && ac.checked) { %>
+  <p class="hint" data-address-check><%= ac.decision === 'KEPT' ? 'You confirmed this address.' : ac.decision === 'FORMATTED' ? 'The carrier checked this address and tidied its format.' : ['VERIFIED', 'FORMATTED'].indexOf(ac.result) >= 0 ? 'The carrier confirmed this address.' : '' %><% if (ac.poBox) { %> This is a PO box: only postal services can deliver here.<% } %></p>
+<% } %>

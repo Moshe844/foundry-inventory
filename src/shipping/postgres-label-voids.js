@@ -3,9 +3,19 @@ const {newId,nowIso}=require('../lib/util'),{ValidationError,InvariantError}=req
 const effects=require('../operations/postgres-provider-effects'),jobs=require('../operations/postgres-job-queue'),accounts=require('./postgres-accounts'),providers=require('./provider');
 const shipping=()=>require('./postgres-service');
 function refs(value){try{const parsed=typeof value==='string'?JSON.parse(value):value;return Array.isArray(parsed)?parsed.filter(id=>typeof id==='string'&&id.length>0&&id.length<=500):[];}catch{return [];}}
-async function queue(database,ctx,shipmentId,input={}){return database.transaction(async client=>{
+async function queue(database,ctx,shipmentId,input={}){return database.transaction(client=>queueWithin(client,ctx,shipmentId,input),{isolation:'SERIALIZABLE',retrySafe:true});}
+// Job 59: an order cancelled before handoff voids its unused label as part of
+// the person's (or the sales channel's) cancellation, where the carrier can.
+async function voidable(client,workspaceId,shipment){
+ if(shipment.label_status!=='PURCHASED'||!['PACKED','PICKING'].includes(shipment.status)||shipment.customer_return_id)return false;
+ if(['IN_TRANSIT','OUT_FOR_DELIVERY','DELIVERED','RETURNED'].includes(shipment.tracking_status)||(shipment.provider_packages||[]).some(p=>p.externalLabel===true))return false;
+ if(!providers.has(shipment.provider)||!providers.supports(shipment.provider,'voidLabel'))return false;
+ const purchase=(await client.query("SELECT t.provider_reference,e.payload->>'connectorId' AS connector FROM shipping_label_transactions t LEFT JOIN stockchief_runtime.provider_effects e ON e.workspace_id=t.workspace_id AND e.kind='shipping.label.purchase' AND e.payload->>'transactionId'=t.id WHERE t.workspace_id=$1 AND t.shipment_id=$2 AND t.operation='PURCHASE' AND t.status='SUCCEEDED' ORDER BY t.requested_at DESC,t.id DESC LIMIT 1",[workspaceId,shipment.id])).rows[0];
+ return Boolean(purchase?.connector&&refs(purchase.provider_reference).length);
+}
+async function queueWithin(client,ctx,shipmentId,input={},{orderCancelled=false}={}){
  const actor=(await client.query('SELECT * FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
- require('../actions/permissions').assertCan(actor,require('../actions/permissions').ADMIN,'void a shipping label');
+ if(!orderCancelled)require('../actions/permissions').assertCan(actor,require('../actions/permissions').ADMIN,'void a shipping label');
  const shipment=await shipping().requireShipment(client,ctx.workspaceId,shipmentId,true);
  if(['SHIPPED','DELIVERED'].includes(shipment.status)||['IN_TRANSIT','OUT_FOR_DELIVERY','DELIVERED','RETURNED'].includes(shipment.tracking_status))
   throw new ValidationError('This parcel already left. Use the physical return workflow instead of voiding its label.');
@@ -29,10 +39,10 @@ async function queue(database,ctx,shipmentId,input={}){return database.transacti
  await client.query(`INSERT INTO shipping_label_transactions(id,workspace_id,shipment_id,provider,operation,status,idempotency_key,purchase_transaction_id,refund_status,currency,requested_by_user_id,requested_at,updated_at,provider_reference)
   VALUES($1,$2,$3,$4,'VOID','PENDING',$5,$6,'PENDING',$7,$8,$9,$9,$10)`,[id,ctx.workspaceId,shipmentId,purchase.provider,key,purchase.id,purchase.currency,ctx.actorId,at,JSON.stringify(labels)]);
  const queued=await effects.enqueueInTransaction(client,{workspaceId:ctx.workspaceId,kind:'shipping.label.void',provider:purchase.provider,aggregateType:'shipment',aggregateId:shipmentId,idempotencyKey:key,requestedByUserId:ctx.actorId,
-  payload:{transactionId:id,purchaseTransactionId:purchase.id,shipmentId,actorId:ctx.actorId,connectorId:original.payload.connectorId,providerReferences:labels},priority:10,maxAttempts:1});
+  payload:{transactionId:id,purchaseTransactionId:purchase.id,shipmentId,actorId:ctx.actorId,connectorId:original.payload.connectorId,providerReferences:labels,...(orderCancelled?{orderCancelled:true}:{})},priority:10,maxAttempts:1});
  await client.query("UPDATE sales_shipments SET label_status='VOID_PENDING',updated_at=$3 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,shipmentId,at]);
  return {effectId:queued.effect.id,transactionId:id,purchaseTransactionId:purchase.id,status:'PENDING',replayed:false};
-},{isolation:'SERIALIZABLE',retrySafe:true});}
+}
 async function enqueueVerification(client,effect){return jobs.enqueue({query:(...args)=>client.query(...args),transaction:operation=>operation(client)},
  {workspaceId:effect.workspaceId,kind:'shipping.void.verify',idempotencyKey:'shipping-void-verification:'+effect.id,payload:{effectId:effect.id,readOnlyVerification:true},priority:12,maxAttempts:80});}
 async function pending(database,effect,error,{final=false}={}){
@@ -62,6 +72,11 @@ async function settle(database,effect,result){
   await client.query(`UPDATE shipping_label_transactions SET status='SUCCEEDED',refund_status=$3,amount_minor=$4,detail=$5,error_message=NULL,completed_at=$6,updated_at=$6 WHERE workspace_id=$1 AND id=$2`,
    [effect.workspaceId,effect.payload.transactionId,refundStatus,amount,String(result.detail||'Carrier confirmed that the label is void.').slice(0,500),at]);
   await client.query("UPDATE sales_shipments SET label_status='VOIDED',label_voided_at=$3,postage_refund_minor=$4,updated_at=$3 WHERE workspace_id=$1 AND id=$2",[effect.workspaceId,effect.aggregateId,at,amount]);
+  // The parcel of a cancelled order closes once its label is void.
+  if(effect.payload.orderCancelled===true&&(await client.query("SELECT 1 FROM sales_orders WHERE workspace_id=$1 AND id=$2 AND status='CANCELLED'",[effect.workspaceId,shipment.sales_order_id])).rowCount){
+   await client.query("UPDATE sales_shipments SET status='CANCELLED',updated_at=$3 WHERE workspace_id=$1 AND id=$2",[effect.workspaceId,effect.aggregateId,at]);
+   await client.query("UPDATE fulfillment_wave_shipments SET status='CANCELLED' WHERE workspace_id=$1 AND shipment_id=$2",[effect.workspaceId,effect.aggregateId]);
+  }
  }});return true;
 }
 async function callProvider(database,effect,options,method){
@@ -102,4 +117,4 @@ async function recover(client,options={}){
   }
  }return {checked:rows.length};
 }
-module.exports={queue,execute,verify,recover};
+module.exports={queue,queueWithin,voidable,execute,verify,recover};

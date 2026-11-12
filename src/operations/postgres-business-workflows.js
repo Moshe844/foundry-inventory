@@ -1049,12 +1049,20 @@ async function cancelSalesOrderInTransaction(client,rawContext,salesOrderId,inpu
       (SELECT id FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2) RETURNING location_id`,[ctx.workspaceId,salesOrderId])).rows.map(row=>row.location_id);
     await require('./postgres-kit-allocations').release(client,ctx,salesOrderId);
     const at=nowIso();
-    // Nothing is going out for a cancelled order. A saved label stops the
-    // cancellation: it has to be voided first or its postage is simply lost.
-    const parcels=require('../shipping/postgres-service');
+    // Nothing is going out for a cancelled order. An unused label the carrier
+    // can void is voided as part of the cancellation (job 59) and its parcel
+    // closes once the carrier confirms; any other saved label stops it.
+    const parcels=require('../shipping/postgres-service'),voids=require('../shipping/postgres-label-voids');
     for(const open of (await client.query(`SELECT id FROM sales_shipments WHERE workspace_id=$1 AND sales_order_id=$2
       AND status IN ('PICKING','PACKED') AND customer_return_id IS NULL ORDER BY id`,[ctx.workspaceId,salesOrderId])).rows){
-      parcels.assertParcelEditable(await parcels.requireShipment(client,ctx.workspaceId,open.id,true));
+      const parcel=await parcels.requireShipment(client,ctx.workspaceId,open.id,true);
+      if(await voids.voidable(client,ctx.workspaceId,parcel)){
+        const queued=await voids.queueWithin(client,ctx,open.id,{idempotencyKey:'order-cancel-void:'+open.id},{orderCancelled:true});
+        await require('./postgres-security-audit').record(client,ctx,{action:'Voided the unused label of a cancelled order',reference:parcel.shipment_number,
+          before:{labelStatus:'PURCHASED',tracking:parcel.tracking_number},after:{labelStatus:'VOID_PENDING',effectId:queued.effectId}});
+        continue;
+      }
+      parcels.assertParcelEditable(parcel);
       await client.query(`UPDATE sales_shipments SET status='CANCELLED',updated_at=$3 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,open.id,at]);
     }
     await client.query(`UPDATE sales_orders SET status='CANCELLED',cancelled_by_user_id=$3,cancelled_at=$4,

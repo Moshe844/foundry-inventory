@@ -229,7 +229,7 @@ const actionJobs=new Map([
   ['landed_cost.apply',49],['warehouse.prepare_putaway',47],['warehouse.release_orders',56],['warehouse.wave.create',57],['warehouse.wave.scan',57],['warehouse.wave.pack',57],['warehouse.wave.shortage',57],['warehouse.wave.refresh',57],
   ['customer_return.refund',107],['customer_return.credit_receipt',107],['shipping.return_parcel',112],['customer_return.inspect',113],
   ['customer_return.receive',114],['supplier_return.request',115],['supplier_return.authorize',115],['supplier_return.ship',115],['supplier_return.reconcile',115],
-  ['inventory.transfer',118],['transfer.approve',118],['transfer.prepare_balance',118],['shipping.label',59],['shipping.batch_purchase',59],
+  ['inventory.transfer',118],['transfer.approve',118],['transfer.prepare_balance',118],['shipping.label',59],['shipping.batch_purchase',59],['shipping.address_check',69],['shipping.choose_rate',58],
   ['shipping.carrier_claim',63],['shipping.freight_pickup',66],['shipping.plan_van_routes',71],['purchasing.track_inbound_freight',39],['agent.answer_slack',188],
   ['purchase_order.record_supplier_invoice',98],['supplier_invoice.recheck',98],['supplier_invoice.dispute',100],['supplier_credit.apply_note',105],
   ['connection.accounting_export',184],['report.template.create',154],['report.template.schedule',155],['report.template.resume',155],['report.template.send_now',155]

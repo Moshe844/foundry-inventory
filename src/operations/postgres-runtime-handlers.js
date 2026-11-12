@@ -432,6 +432,7 @@ async function autopilotEvaluate(job,client){
     await require('./agent-expiry-warnings').schedule(client,job.workspaceId,cycleId);
     await require('../reports/agent-compliance-reports').schedule(client,job.workspaceId,cycleId);
     await require('../accounting/agent-landed-cost-bills').schedule(client,job.workspaceId,cycleId);
+    await require('../shipping/agent-labels').schedule(client,job.workspaceId,cycleId);
     await require('../transfers/agent-transfer-balancing').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-freight-combine').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-rfq-competition').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
@@ -646,6 +647,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.expiry-warnings.v1':external((job,database)=>require('./agent-expiry-warnings').run(job,database)),
   'agent.compliance-reports.v1':external((job,database)=>require('../reports/agent-compliance-reports').run(job,database)),
   'agent.landed-cost-bill.v1':external((job,database)=>require('../accounting/agent-landed-cost-bills').run(job,database)),
+  'agent.shipping-labels.v1':external((job,database)=>require('../shipping/agent-labels').run(database,job,{providerResolver:options.shippingProviderResolver})),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-shelf-photo.v1':external((job,database)=>require('../warehouse/agent-shelf-photos').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.discover-filed-document.v1':external((job,database)=>require('../documents/agent-document-discovery').run(job,database),'reading'),

@@ -15,6 +15,7 @@ function combine(groups){
    r.deliveryDays=r.deliveryDays==null||match.deliveryDays==null?null:Math.max(r.deliveryDays,match.deliveryDays);
    r.deliveryDate=r.deliveryDate&&match.deliveryDate?[r.deliveryDate,match.deliveryDate].sort().at(-1):null;
    r.guaranteed=Boolean(r.guaranteed&&match.guaranteed);
+   if(r.shipDate||match.shipDate)r.shipDate=[r.shipDate,match.shipDate].filter(Boolean).sort().at(-1);
   }
  }
  return {providerShipmentIds:groups.flatMap(g=>g.providerShipmentIds||[]),rates:[...rates.values()]};
