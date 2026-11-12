@@ -29,7 +29,8 @@ test('every operationally qualified duty explains its current scope while permis
   assert(row.currentScope&&row.currentScope.length>=35&&row.currentScope.length<=600,'Missing or unusable scope for duty '+row.id);
   for(const cell of row.plans){assert.equal(Boolean(cell.currentScope),cell.mode!=='excluded','Scope availability must match the plan cell for duty '+row.id+' '+cell.tier);}
  }
- for(const id of [12,65]){const row=rows.find(r=>r.id===id);assert.equal(row.status,'partial','Positive native customer-reservation scenarios qualify only their bounded supported scope');assert.equal(row.plans.find(p=>p.tier==='pro').mode,'trained');assert.equal(row.plans.find(p=>p.tier==='enterprise').mode,'alone');assert.match(row.currentScope,/open/);}
+ for(const id of [12]){const row=rows.find(r=>r.id===id);assert.equal(row.status,'partial','Positive native customer-reservation scenarios qualify only their bounded supported scope');assert.equal(row.plans.find(p=>p.tier==='pro').mode,'trained');assert.equal(row.plans.find(p=>p.tier==='enterprise').mode,'alone');assert.match(row.currentScope,/open/);}
+ {const row=rows.find(r=>r.id===65);assert.equal(row.status,'complete');for(const tier of ['starter','growth'])assert.equal(row.plans.find(p=>p.tier===tier).mode,'excluded');assert.equal(row.plans.find(p=>p.tier==='pro').mode,'trained');assert.match(row.plans.find(p=>p.tier==='pro').currentScope,/teach/);assert.equal(row.plans.find(p=>p.tier==='enterprise').mode,'alone');assert.match(row.plans.find(p=>p.tier==='enterprise').currentScope,/without training/);assert.match(row.currentScope,/never from one being picked/);}
  const approval=rows.find(r=>r.id===119);
  assert.equal(approval.status,'complete');
  assert.match(approval.currentScope,/exact stocking-unit limit/);

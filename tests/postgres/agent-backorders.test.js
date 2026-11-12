@@ -46,7 +46,7 @@ test('Starter sees who waits and what ships first; Growth drafts in saved priori
   await f.receive(4);
 
   await f.subscribe('starter');
-  assert.deepEqual(await backorders.run(db,f.ws),{applied:0,drafted:0,released:0,held:0,watching:false});
+  assert.deepEqual(await backorders.run(db,f.ws),{applied:0,drafted:0,released:0,held:0,shared:0,watching:false});
   const plain=await browser.get('/autopilot/backorders').expect(200);
   assert.match(plain.text,/Who is waiting at Dispatch/);assert.match(plain.text,new RegExp(urgent.orderNumber));
   assert.match(plain.text,/Gets 3 × [^<]+ now\. Complete\./);assert.match(plain.text,/On Growth, StockChief prepares this stock/);
@@ -124,7 +124,7 @@ test('Pro and Custom set stock aside alone inside the owner limit, send complete
   assert.deepEqual([await f.reserved(big),await f.reserved(slow),await f.reserved(urgent)],[10,0,0]);
 
   // Without the owner's limit, Pro only prepares.
-  assert.deepEqual(await backorders.run(db,ws),{applied:0,drafted:0,released:0,held:0,watching:false},'No free stock, nothing to do.');
+  assert.deepEqual(await backorders.run(db,ws),{applied:0,drafted:0,released:0,held:0,shared:0,watching:false},'No free stock, nothing to do.');
   await f.workflows.cancelSalesOrder(db,ctx,big.salesOrderId,{idempotencyKey:randomUUID(),reason:'Customer changed plans'});
   const queued=(await db.query('SELECT payload FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind=$2',[ws,backorders.KIND])).rows;
   assert.equal(queued.length,1,'Freed stock queues a backorder check.');assert.deepEqual(queued[0].payload.locationIds,[f.location.id]);
@@ -157,7 +157,7 @@ test('Pro and Custom set stock aside alone inside the owner limit, send complete
   await autopilot.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
 
   const done=await backorders.run(db,ws);
-  assert.deepEqual(done,{applied:1,drafted:0,released:2,held:0,watching:false});
+  assert.deepEqual(done,{applied:1,drafted:0,released:2,held:0,shared:0,watching:false});
   assert.deepEqual([await f.reserved(urgent),await f.reserved(slow)],[2,4]);
   const [auto]=await f.runs("status='APPLIED'");
   assert.equal(auto.authorization_kind,'AUTOMATIC');assert.equal(auto.rule_revision,2);
@@ -167,7 +167,7 @@ test('Pro and Custom set stock aside alone inside the owner limit, send complete
   assert.deepEqual(boxes.map(b=>b.status),['PICKING','PICKING']);
   assert.equal((await f.runs("status='DRAFT'")).length,0,'The applied work replaces the waiting draft.');
   assert.equal(await f.audits('StockChief set stock aside for waiting orders'),1);
-  assert.deepEqual(await backorders.run(db,ws),{applied:0,drafted:0,released:0,held:0,watching:false},'A replay finds nothing left to do.');
+  assert.deepEqual(await backorders.run(db,ws),{applied:0,drafted:0,released:0,held:0,shared:0,watching:false},'A replay finds nothing left to do.');
   assert.equal(await f.balance(),10,'Setting stock aside moves no physical stock.');
 
   // Undo cancels the unpicked picks and gives the stock back.

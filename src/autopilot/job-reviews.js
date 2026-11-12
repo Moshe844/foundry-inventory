@@ -219,6 +219,7 @@ async function run(db,ctx,key,options={}){
       ...(result.reminderForm?{reminderForm:result.reminderForm}:{}),
       ...(result.arrivedStockForm?{arrivedStockForm:result.arrivedStockForm}:{}),
       ...(result.stockReadyForm?{stockReadyForm:result.stockReadyForm}:{}),
+      ...(def.id===65?{stockSharingLink:true}:{}),
       ...(result.invoiceDisputeForm?{invoiceDisputeForm:result.invoiceDisputeForm}:{}),
       ...(result.returnLabelForm?{returnLabelForm:result.returnLabelForm}:{}),
       ...(result.customerStatementForm?{customerStatementForm:result.customerStatementForm}:{}),

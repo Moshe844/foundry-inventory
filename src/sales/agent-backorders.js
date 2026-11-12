@@ -36,9 +36,10 @@ async function currentOwner(c,workspaceId){
 async function rule(c,workspaceId,{lock=false}={}){
   return (await c.query(`SELECT * FROM ${rules} WHERE workspace_id=$1${lock?' FOR UPDATE':''}`,[workspaceId])).rows[0]||null;
 }
-// Products whose scarce stock is shared by the owner's own rules instead.
-async function deferred(){
-  return new Set();
+// Products whose scarce stock is shared by the owner's own rules (job 65).
+const sharing=()=>require('./agent-stock-sharing');
+async function deferred(c,ctx,state,locationId){
+  return sharing().deferred(c,ctx,state,locationId);
 }
 async function lockPlace(c,ctx,locationId){
   await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['backorders:'+ctx.workspaceId+':'+locationId]);
@@ -131,7 +132,10 @@ async function automaticStop(c,ctx,state,saved,p){
 async function handle(c,ctx,locationId,{watch=false}={}){
   const state=await policy.accountState(c,ctx.workspaceId);
   await lockPlace(c,ctx,locationId);
-  return watch?{}:allocate(c,ctx,state,locationId);
+  // Scarce stock is shared by the owner's rules first; the rest goes in saved order priority.
+  const shared=await sharing().handle(c,ctx,state,locationId);
+  const done=watch?{}:await allocate(c,ctx,state,locationId);
+  return {...done,drafted:Boolean(done.drafted||shared.drafted),shared:shared.applied?1:0};
 }
 async function allocate(c,ctx,state,locationId){
   const p=await freshPlan(c,ctx,state,locationId);
@@ -152,14 +156,15 @@ async function allocate(c,ctx,state,locationId){
 }
 
 async function run(db,workspaceId,{locationIds=null}={}){
-  const result={applied:0,drafted:0,released:0,held:0,watching:false};
+  const result={applied:0,drafted:0,released:0,held:0,shared:0,watching:false};
   const state=await policy.accountState(db,workspaceId);
   if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,JOB,'draft'))return result;
   const actorId=await currentOwner(db,workspaceId);
   if(!actorId)return result;
   // Shadow mode, Watch only and each job's own Watch setting only watch.
   const watch=Boolean(await policy.stopped(db,workspaceId,state,ACTION,false));
-  if(watch){result.watching=true;return result;}
+  const sharingOff=!policy.permits(state.plan,65,'draft')||Boolean(await policy.stopped(db,workspaceId,state,sharing().ACTION,false));
+  if(watch&&sharingOff){result.watching=true;return result;}
   const ctx={workspaceId,actorId};
   for(const place of await planning.candidates(db,workspaceId,{locationIds})){
     const outcome=await tx(db,async c=>{
@@ -175,6 +180,7 @@ async function run(db,workspaceId,{locationIds=null}={}){
     if(outcome.drafted)result.drafted++;
     if(outcome.held)result.held++;
     result.released+=outcome.released||0;
+    result.shared+=outcome.shared||0;
   }
   return result;
 }
@@ -218,7 +224,7 @@ async function approve(database,ctx,id,input){
   return tx(database,async c=>{
     await owner(c,ctx);
     const r=await locked(c,ctx,id);
-    if(r.job_id!==JOB)throw new ValidationError('Review this plan from its own page.');
+    if(r.job_id!==JOB)return sharing().approveLocked(c,ctx,r,input);
     const state=await policy.requireWorkspaceJob(c,ctx.workspaceId,JOB,'draft');
     const stop=await policy.stopped(c,ctx.workspaceId,state,ACTION,false);
     if(stop)throw new ValidationError(stop);
@@ -269,12 +275,13 @@ async function undo(database,ctx,id,input){
     if(r.status!=='APPLIED')throw new ValidationError('Only applied work can be undone.');
     if(input.confirmed!=='yes')throw new ValidationError('Confirm that this work should be undone.');
     await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['backorders:'+ctx.workspaceId+':'+r.location_id]);
-    if(r.job_id!==JOB)throw new ValidationError('Undo this work from its own page.');
     await cancelRelease(c,ctx,r);
-    for(const g of [...r.plan.gives].reverse())await native.giveBack(c,ctx,g.orderId,{idempotencyKey:'backorders-undo:'+r.id+':'+g.orderId,
-      lines:g.lines.map(l=>({lineId:l.lineId,locationId:r.location_id,quantity:l.quantity})),detail:{job:JOB,runId:r.id,undo:true}});
+    if(r.job_id===JOB){
+      for(const g of [...r.plan.gives].reverse())await native.giveBack(c,ctx,g.orderId,{idempotencyKey:'backorders-undo:'+r.id+':'+g.orderId,
+        lines:g.lines.map(l=>({lineId:l.lineId,locationId:r.location_id,quantity:l.quantity})),detail:{job:JOB,runId:r.id,undo:true}});
+    }else await sharing().undoLocked(c,ctx,r);
     await c.query(`UPDATE ${runs} SET status='UNDONE',undone_by=$3,undone_at=now() WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,r.id,ctx.actorId]);
-    await audit.record(c,ctx,{action:'Undid stock set aside for waiting orders',reference:r.id});
+    await audit.record(c,ctx,{action:r.job_id===JOB?'Undid stock set aside for waiting orders':'Undid a scarce stock split',reference:r.id});
     return {id:r.id};
   });
 }

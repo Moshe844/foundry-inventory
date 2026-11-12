@@ -257,7 +257,7 @@ function createPostgresAutopilotRouter(database,options={}){
     return res.page('autopilot/backorders',{title:'Backorders',nav:'autopilot',backTo:{href:'/autopilot/reviews/waiting-orders',label:'Prioritize backorders'},
       model:await backorders.page(database,req.ctx,{locationId:String(req.query.location||'')||null})});
   }));
-  const backorderPlace=id=>backorders.href+(id?'?location='+encodeURIComponent(id):'');
+  const backorderPlace=(id,sharingPage)=>(sharingPage?stockSharing.href:backorders.href)+(id?'?location='+encodeURIComponent(id):'');
   router.post(backorders.href+'/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const result=await backorders.prepare(database,req.ctx,{locationId:req.body.locationId});
     req.flash('success',result.created?'The plan is ready for your approval.':'This plan is already waiting for your approval.');
@@ -273,9 +273,35 @@ function createPostgresAutopilotRouter(database,options={}){
       const result=await handler(database,req.ctx,req.params.id,req.body);
       if(result.stale)req.flash('error','Stock or orders changed since this plan was made. Review the updated plan.');
       else req.flash('success',step==='approve'?'Stock is set aside for these orders.':step==='discard'?'Plan dismissed.':'The work was undone.');
-      return res.redirect(303,backorderPlace(req.body.locationId));
+      return res.redirect(303,backorderPlace(req.body.locationId,req.body.returnTo==='sharing'));
     }));
   }
+  const stockSharing=require('../../sales/agent-stock-sharing');
+  router.get(stockSharing.href,requireAuth,owner,starterAgentPage(65,'draft','Share scarce stock',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    return res.page('autopilot/stock-sharing',{title:'Share scarce stock',nav:'autopilot',backTo:{href:backorders.href,label:'Backorders'},
+      model:await stockSharing.page(database,req.ctx,{locationId:String(req.query.location||'')||null})});
+  },'Pro'));
+  router.post(stockSharing.href+'/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await stockSharing.prepare(database,req.ctx,{locationId:req.body.locationId});
+    req.flash('success',result.created?'The split is ready for your approval.':'This split is already waiting for your approval.');
+    return res.redirect(303,backorderPlace(req.body.locationId,true));
+  }));
+  router.post(stockSharing.href+'/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await stockSharing.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'Your sharing rules are updated.':result.unchanged?'These rules are already saved.':'Your sharing rules are saved.');
+    return res.redirect(303,stockSharing.href);
+  }));
+  router.post(stockSharing.href+'/teach',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await stockSharing.teach(database,req.ctx,req.body);
+    req.flash('success','StockChief will share scarce stock like this on its own, within your limit.');
+    return res.redirect(303,stockSharing.href);
+  }));
+  router.post(stockSharing.href+'/tiers',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await stockSharing.setTier(database,req.ctx,req.body);
+    req.flash('success',result.tier?result.customer+' is now tier '+result.tier+'.':result.customer+' has no tier.');
+    return res.redirect(303,stockSharing.href);
+  }));
   const supplierCredits = require('../../purchasing/agent-supplier-credit-notes');
   const supplierCreditPage = starterAgentPage(105,'suggest','Supplier credit notes',async (req,res) => res.page('autopilot/supplier-credits', {
     title:'Supplier credit notes', nav:'autopilot', backTo:{href:'/autopilot/reviews/supplier-credits',label:'Credit review'},
