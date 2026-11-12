@@ -6,6 +6,9 @@
     </div>
   </div>
   <div class="page-actions">
+    <% if (locals.postgresMode && currentWorkspaceId && workspaces.filter(function (w) { return !w.deleting; }).length > 1) { %>
+      <a class="btn" href="/inventory/combined"><%- helpers.icon('layers', { size: 16 }) %> See all inventories together</a>
+    <% } %>
     <% if (!allowance.exceeded) { %>
       <a class="btn btn--primary" href="/inventories/new"><%- helpers.icon('plus', { size: 16 }) %> New Inventory</a>
     <% } %>

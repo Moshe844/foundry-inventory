@@ -241,6 +241,7 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.use(createPostgresOnboardingRouter(database));
   app.use(createPostgresLocationsRouter(database));
   app.use(require('./web/routes/postgres-removal').createPostgresRemovalRouter(database));
+  app.use(require('./web/routes/postgres-inventory-rollup').createPostgresInventoryRollupRouter(database));
   app.use(createPostgresInventoryRouter(database));
   app.use(createPostgresPricingRouter(database));
     app.use(require('./web/routes/postgres-promotions').createPostgresPromotionsRouter(database));
