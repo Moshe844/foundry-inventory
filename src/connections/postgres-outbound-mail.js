@@ -222,6 +222,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       if(input.standingAuthority?.kind==='invoice_dispute')await require('../purchasing/agent-invoice-disputes').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='expiry_warning')await require('../operations/agent-expiry-warnings').emailAuthority(client,workspaceId,input.standingAuthority);
+      if(input.standingAuthority?.kind==='agent_alert')await require('../autopilot/agent-alerts').emailAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='fx_alert')await require('../purchasing/agent-purchase-fx').emailAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(client,workspaceId,input.standingAuthority.workId,input.standingAuthority);
       return {message,connection};
@@ -233,6 +234,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
         if(agentJob)await require('../commercial/agent-plan').requireWorkspaceJob(database,workspaceId,agentJob,'draft');
         if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='expiry_warning')await require('../operations/agent-expiry-warnings').emailAuthority(database,workspaceId,input.standingAuthority);
+        if(input.standingAuthority?.kind==='agent_alert')await require('../autopilot/agent-alerts').emailAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='fx_alert')await require('../purchasing/agent-purchase-fx').emailAuthority(database,workspaceId,input.standingAuthority);
         if(options.beforeSend)await options.beforeSend({effect,message:loaded.message,connection:loaded.connection});
         if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(database,workspaceId,input.standingAuthority.workId,input.standingAuthority);

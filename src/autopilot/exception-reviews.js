@@ -65,20 +65,26 @@ module.exports = [
   {id:116, key:'customer-return-rates', salesHistory:true, label:'Compare item and customer return rates',
     summary:returnRates.summary,sql:returnRates.report},
   {id:168, key:'overdue-work', label:'Find late orders, shipments and invoices', usesDate:true,
-    summary:'Open purchase orders and unpaid invoices past their due dates, plus shipped parcels past their delivery dates.',
+    summary:'Purchase orders past their expected date with goods still to come, customer orders not shipped by the date promised, shipped parcels past their delivery date, and customer invoices and supplier bills unpaid past their due date.',
     sql:`WITH late AS (
-      SELECT 'Purchase order' AS kind,p.po_number AS reference,s.name AS partner,p.expected_date::date AS due,'/purchasing/orders/'||p.id AS link
+      SELECT 'Purchase order' AS kind,p.po_number AS reference,s.name AS partner,p.expected_date::date AS due,'/purchasing/orders/'||p.id AS link,
+        'Goods not received by the expected date' AS problem
       FROM purchase_orders p JOIN suppliers s ON s.workspace_id=p.workspace_id AND s.id=p.supplier_id
       WHERE p.workspace_id=$1 AND p.status IN ('ORDERED','PARTIALLY_RECEIVED') AND p.expected_date::date<$3::date
         AND EXISTS(SELECT 1 FROM purchase_order_lines l WHERE l.workspace_id=p.workspace_id AND l.purchase_order_id=p.id AND l.quantity_units>l.quantity_received_units)
-      UNION ALL SELECT 'Shipment',reference,partner,due::date,link FROM (${lateParcels}) parcels WHERE due::date<$3::date
-      UNION ALL SELECT 'Customer invoice',i.invoice_number,c.name,i.due_date::date,'/money/invoices/'||i.id
+      UNION ALL SELECT 'Customer order',o.order_number,c.name,o.needed_by::date,'/orders/'||o.id,'Not shipped by the date promised'
+      FROM sales_orders o JOIN customers c ON c.workspace_id=o.workspace_id AND c.id=o.customer_id
+      WHERE o.workspace_id=$1 AND o.needed_by IS NOT NULL AND o.needed_by::date<$3::date
+        AND (o.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED') OR o.status='FULFILLED' AND EXISTS(SELECT 1 FROM sales_shipments h
+          WHERE h.workspace_id=o.workspace_id AND h.sales_order_id=o.id AND h.customer_return_id IS NULL AND h.status IN ('PICKING','PACKED')))
+      UNION ALL SELECT 'Shipment',reference,partner,due::date,link,'Past its expected delivery date' FROM (${lateParcels}) parcels WHERE due::date<$3::date
+      UNION ALL SELECT 'Customer invoice',i.invoice_number,c.name,i.due_date::date,'/money/invoices/'||i.id,'Unpaid past its due date'
       FROM accounting_customer_invoices i JOIN customers c ON c.workspace_id=i.workspace_id AND c.id=i.customer_id
       WHERE i.workspace_id=$1 AND i.status IN ('OPEN','PARTIALLY_PAID') AND i.balance_minor>0 AND i.due_date::date<$3::date
-      UNION ALL SELECT 'Supplier bill',coalesce(i.supplier_invoice_number,i.bill_number),s.name,i.due_date::date,'/money/bills/'||i.id
+      UNION ALL SELECT 'Supplier bill',coalesce(i.supplier_invoice_number,i.bill_number),s.name,i.due_date::date,'/money/bills/'||i.id,'Unpaid past its due date'
       FROM accounting_supplier_bills i JOIN suppliers s ON s.workspace_id=i.workspace_id AND s.id=i.supplier_id
       WHERE i.workspace_id=$1 AND i.status IN ('OPEN','PARTIALLY_PAID','DISPUTED') AND i.balance_minor>0 AND i.due_date::date<$3::date)
       SELECT kind AS "Type",reference AS "Reference",partner AS "Contact",due::text AS "Due",
-        $3::date-due AS "Days late",link FROM late WHERE ($2='' OR lower(reference)=lower($2) OR lower(partner)=lower($2))
+        $3::date-due AS "Days late",problem AS "Problem",link FROM late WHERE ($2='' OR lower(reference)=lower($2) OR lower(partner)=lower($2))
       ORDER BY due,kind,reference,link`}
 ];
