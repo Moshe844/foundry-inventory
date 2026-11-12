@@ -160,14 +160,28 @@ async function resolveLot(client, ctx, row, input, at, create) {
   return lot;
 }
 
+// Job 194: recalled or expired batches leave stock only as a write-off or by
+// going back to the supplier ('returned' is the supplier return shipment).
+const BATCH_REMOVALS=['damaged','damage','expired','disposal','loss','lost','returned'];
 function assertLotEligible(lot,input){
-  if(lot?.recalled_at && !['damaged','damage','expired','disposal','loss','lost'].includes(input.reasonCode))
+  if(lot?.recalled_at && !BATCH_REMOVALS.includes(input.reasonCode))
     throw new InvariantError('Batch '+lot.code+' is under recall. Choose another batch.', 'lot_recalled');
   if(!lot?.expires_at)return;
   const expiry=String(lot.expires_at).slice(0,10);
   const when=String(input.occurredAt||nowIso()).slice(0,10);
-  if(expiry<when&&!['damaged','damage','expired','disposal','loss','lost'].includes(input.reasonCode))
+  if(expiry<when&&!BATCH_REMOVALS.includes(input.reasonCode))
     throw new InvariantError(`Batch ${lot.code} expired on ${expiry}. Expired stock may only leave through an explicit disposal or loss operation.`, 'lot_expired');
+}
+
+// Job 194: stock leaving for another location never carries a recalled or
+// expired batch, whether the batch is named or carried by its serial units.
+async function assertOutboundBatches(client,ctx,{lotId=null,serialUnitIds=[],at=nowIso()}={}){
+  if(!lotId&&!serialUnitIds.length)return;
+  const day=await require('../lib/business-time').today(client,ctx.workspaceId,new Date(at));
+  const lots=(await client.query(`SELECT id,code,expires_at,recalled_at FROM lots WHERE workspace_id=$1
+    AND (id=$2 OR id IN (SELECT lot_id FROM serial_units WHERE workspace_id=$1 AND id=ANY($3::text[]))) ORDER BY id`,
+  [ctx.workspaceId,lotId,serialUnitIds.map(String)])).rows;
+  for(const lot of lots)assertLotEligible(lot,{occurredAt:day});
 }
 
 async function serialBatchDeltas(client,ctx,ids,sourceLocationId,destinationLocationId,at,input={}){
@@ -463,6 +477,7 @@ async function dispatchTransferInTransaction(client, rawContext, input) {
   const groupId = input.groupId || newId('grp');
   let lot = null;
   if (source.tracking_mode === 'lot') lot = await resolveLot(client, ctx, source, input, at, false);
+  await assertOutboundBatches(client, ctx, { lotId: lot?.id || null, serialUnitIds: input.serialUnitIds || [], at });
   let serialUnitIds = [];
   if (source.tracking_mode === 'serial') {
     const ids = [...new Set((input.serialUnitIds || []).map(String))];
@@ -633,4 +648,4 @@ async function reweighInTransaction(client,rawContext,input){
 }
 
 module.exports = { receive, receiveInTransaction, receiveManyInTransaction, receiveBatchInTransaction, issue, issueInTransaction, transfer, transferInTransaction,reweighInTransaction,
-  dispatchTransferInTransaction, receiveTransferInTransaction, adjust,adjustInTransaction };
+  dispatchTransferInTransaction, receiveTransferInTransaction, adjust,adjustInTransaction,assertOutboundBatches };

@@ -1,0 +1,68 @@
+<% const base='/autopilot/compliance-reports', r=screen.report, label={DRAFT:'Draft',FINAL:'Final',DISCARDED:'Discarded'}; %>
+<% if(r){ const c=r.content, href=base+'/'+encodeURIComponent(r.id); %>
+<header class="rm-head">
+  <h1>Compliance report</h1>
+  <p><%= r.period_start %> to <%= r.period_end %> · <%= label[r.status] %><%= r.status==='FINAL'?' · finalized '+helpers.dateTime(r.finalized_at)+(r.finalized_name?' by '+r.finalized_name:' by StockChief on your schedule'):'' %></p>
+</header>
+<% if(r.reason&&r.status==='DRAFT'){ %><p class="notice notice--warn" data-compliance-reason><%= r.reason %></p><% } %>
+<% if(r.would_finalize&&r.status==='DRAFT'){ %><p>StockChief would have finalized this report on its own once it may.</p><% } %>
+<% for(const g of c.gaps){ %><p class="notice notice--warn" data-compliance-gap><%= g %></p><% } %>
+<p class="btn-row"><a class="rm-btn rm-btn--ghost" href="<%= href %>/download?format=xlsx">Download Excel</a> <a class="rm-btn rm-btn--ghost" href="<%= href %>/download?format=pdf">Download PDF</a></p>
+<% if(r.status==='DRAFT'){ %>
+<form method="post" action="<%= href %>/finalize" data-compliance-finalize>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="hash" value="<%= r.content_hash %>">
+  <label><input type="checkbox" name="confirmed" value="yes" required> I checked this report.</label>
+  <button class="rm-btn">Finalize the report</button>
+</form>
+<form method="post" action="<%= href %>/discard"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+  <button class="rm-btn rm-btn--ghost">Discard the draft</button></form>
+<% } %>
+<% for(const s of c.sections){ %>
+<section class="rm-panel" data-compliance-section="<%= s.key %>"><div class="rm-panel__body">
+  <h2><%= s.label %> · <%= s.rows.length %></h2>
+  <% if(s.note){ %><p><%= s.note %></p><% } %>
+  <% if(!s.rows.length){ %><p>Nothing recorded in this period.</p><% }else{ %>
+  <ul class="rm-list"><% for(const row of s.rows.slice(0,100)){ %>
+    <li class="list-row"><span><strong><%= [row.Item,row.Lot].filter(Boolean).join(' batch ')||row.Detail %></strong>
+      <small><%= row.Detail %><%= row.Quantity?' · '+row.Quantity:'' %><%= row.Location?' · '+row.Location:'' %><%= row.Reference?' · '+row.Reference:'' %></small></span>
+      <span><%= row.When %><%= row.Person?' · '+row.Person:'' %></span></li>
+  <% } %></ul>
+  <% if(s.rows.length>100){ %><p>The first 100 are shown. The download has all <%= s.rows.length %>.</p><% } %>
+  <% } %>
+</div></section>
+<% } %>
+<% }else{ %>
+<header class="rm-head">
+  <h1>Compliance reports</h1>
+  <p><%= screen.mode==='draft'?'StockChief prepares each report from your records. You check it and finalize it.':'StockChief prepares and finalizes reports from your records, on your schedule.' %>
+    Each report covers lot traceability, recalls, expiry write-offs, stock adjustments, stocktake sign-off and quality checks.</p>
+</header>
+<% if(screen.stop){ %><p class="notice notice--warn">Scheduled reports wait as drafts: <%= screen.stop %></p><% } %>
+<form method="post" action="<%= base %>" class="form-inline" data-compliance-prepare>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= screen.requestKey %>">
+  <label class="field"><span class="field-label">From</span><input class="input" type="date" name="from" required value="<%= screen.defaults.start %>"></label>
+  <label class="field"><span class="field-label">To</span><input class="input" type="date" name="to" required value="<%= screen.defaults.end %>"></label>
+  <button class="rm-btn">Prepare a report</button>
+</form>
+
+<h2>On a schedule</h2>
+<% const s=screen.schedule, on=s&&s.enabled; %>
+<p><%= on?(s.frequency==='WEEKLY'?'Every Monday, for the week before.':'On the first of each month, for the month before.')+(screen.mode==='draft'?' Each one waits for you to finalize it.':''):'No schedule yet.' %></p>
+<form method="post" action="<%= base %>/schedule" class="form-inline" data-compliance-schedule>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <label class="field"><span class="field-label">How often</span><select class="input" name="frequency"><option value="MONTHLY" <%= on&&s.frequency==='MONTHLY'?'selected':'' %>>Monthly</option><option value="WEEKLY" <%= on&&s.frequency==='WEEKLY'?'selected':'' %>>Weekly</option></select></label>
+  <button class="rm-btn rm-btn--ghost">Save the schedule</button>
+</form>
+<% if(on){ %><form method="post" action="<%= base %>/schedule"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= s.revision %>">
+  <button class="rm-btn rm-btn--ghost" name="stop" value="yes">Stop the schedule</button></form><% } %>
+
+<h2>Reports</h2>
+<% if(!screen.list.length){ %><p>No reports yet.</p><% } %>
+<ul class="rm-list" data-compliance-list>
+<% for(const x of screen.list){ %>
+  <li class="list-row" data-compliance-report="<%= x.id %>"><span><strong><a href="<%= base %>/<%= encodeURIComponent(x.id) %>"><%= x.period_start %> to <%= x.period_end %></a></strong>
+    <small><%= x.scheduled?'On the schedule':'Prepared by you' %><%= x.gaps?' · '+x.gaps+(x.gaps===1?' missing fact':' missing facts'):'' %><%= x.status==='DRAFT'&&x.reason?' · '+x.reason:'' %></small></span>
+    <span><%= label[x.status] %></span></li>
+<% } %>
+</ul>
+<% } %>

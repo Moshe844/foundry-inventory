@@ -35,10 +35,16 @@ async function local(db,p){
   WHERE s.workspace_id=$1 AND s.id=$2 AND s.is_active=1 AND i.is_active=1`,[p.workspace_id,p.sku_id,p.location_id])).rows[0];
  if(!row)throw new ValidationError('The mapped product or location is no longer active.');
  if(p.field==='price'){const v=await prices.currentPrice(db,p.workspace_id,p.sku_id);return {value:v.amount_minor===null?null:{amount:v.amount_minor,currency:v.currency},version:v.id,catalogueOnly:prices.catalogueOnlyPrice(v)};}
+ // Job 194: a channel never offers recalled or expired batches.
+ const blocked=['lot','serial'].includes(row.tracking_mode)?Number((await db.query(`SELECT CASE WHEN $4='lot' THEN coalesce((SELECT sum(b.quantity) FROM lot_balances b JOIN lots l ON l.workspace_id=b.workspace_id AND l.id=b.lot_id
+   WHERE b.workspace_id=$1 AND l.sku_id=$2 AND b.location_id=$3 AND b.quantity>0 AND (l.recalled_at IS NOT NULL OR l.expires_at::date<$5::date)),0)
+  ELSE (SELECT count(*) FROM serial_units u JOIN lots l ON l.workspace_id=u.workspace_id AND l.id=u.lot_id WHERE u.workspace_id=$1 AND u.sku_id=$2 AND u.location_id=$3
+   AND u.status='in_stock' AND (l.recalled_at IS NOT NULL OR l.expires_at::date<$5::date)) END AS n`,
+  [p.workspace_id,p.sku_id,p.location_id,row.tracking_mode,await require('../lib/business-time').today(db,p.workspace_id)])).rows[0].n):0;
  const physical=Number(row.on_hand||0),costed=Number(row.costed),committed=Number(row.committed);
  if(![physical,costed,committed].every(Number.isSafeInteger))throw new ValidationError('This stock position needs an exact quantity review.');
  const availability=await require('../transfers/postgres-transfer-service').sourceAvailable(db,p.workspace_id,p.sku_id,p.location_id);
- return require('./agent-channel-buffers').apply(db,p,{value:row.custody_agreement_id?0:Math.max(0,Math.min(physical,costed)-committed-Number(availability.reserved||0)),physical,costed,committed,reserved:Number(availability.reserved||0),tracking:row.tracking_mode,version:row.updated_at||null});
+ return require('./agent-channel-buffers').apply(db,p,{value:row.custody_agreement_id?0:Math.max(0,Math.min(physical-blocked,costed)-committed-Number(availability.reserved||0)),physical,blocked,costed,committed,reserved:Number(availability.reserved||0),tracking:row.tracking_mode,version:row.updated_at||null});
 }
 async function mapped(db,p){
  return Boolean((await db.query(`SELECT 1 FROM connection_mappings sku JOIN connection_mappings loc ON loc.workspace_id=sku.workspace_id AND loc.connector_id=sku.connector_id AND loc.entity_type='location'

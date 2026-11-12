@@ -231,6 +231,8 @@ async function requestInTransaction(client, rawContext, input) {
       [ctx.workspaceId, sku.id, from.id, serialUnitIds]);
       if (serials.rows.length !== quantity) throw new ValidationError('One selected serial unit is not available at the source.');
     }
+    // Job 194: recalled or expired batches cannot be sent to another location.
+    await inventory.assertOutboundBatches(client, ctx, { lotId, serialUnitIds });
     const availability=await sourceAvailable(client,ctx.workspaceId,sku.id,from.id,{lotId});
     const total=lotId?await sourceAvailable(client,ctx.workspaceId,sku.id,from.id):availability;
     const already=prepared.filter(row=>row.sku.id===sku.id).reduce((sum,row)=>exact.add(sum,row.quantity),'0');

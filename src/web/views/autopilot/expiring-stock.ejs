@@ -1,0 +1,71 @@
+<% const base='/autopilot/expiring-stock', scopeLabel={ALL:'Every product',CATEGORY:'Category',ITEM:'Product'}; %>
+<header class="rm-head">
+  <h1>Expiring stock</h1>
+  <p>StockChief checks every batch each day and warns you before it expires, with where to sell it first. Picks take the soonest expiry first.
+    Warnings change nothing on their own.</p>
+</header>
+<form method="post" action="<%= base %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost">Check now</button>
+  <a href="/autopilot/reviews/expiring-lots">See the full list</a></form>
+<% if(screen.stop){ %><p class="notice notice--warn" data-expiry-stop>Emails wait: <%= screen.stop %></p><% } %>
+<% if(screen.mailbox){ %><p>New warnings are emailed to you from <%= screen.mailbox %> once a day.</p><% }else if(screen.mailboxNote){ %><p class="notice notice--warn"><%= screen.mailboxNote %></p><% }else{ %><p>Connect a mailbox to get these warnings by email too.</p><% } %>
+
+<h2>Warnings</h2>
+<% if(!screen.open.length){ %><p>Nothing expires inside your warning window.</p><% } %>
+<ul class="rm-list" data-expiry-open>
+<% for(const w of screen.open){ %>
+  <li class="list-row" data-expiry-warning="<%= w.id %>">
+    <span>
+      <strong><%= w.sku %> batch <%= w.lot %> at <%= w.location %></strong>
+      <small><%= w.amount %> · <%= w.expired?'Expired on '+w.expires_on:'Expires on '+w.expires_on+' ('+(w.days_left===0?'today':w.days_left===1?'tomorrow':'in '+w.days_left+' days')+')' %></small>
+      <% for(const line of w.lines){ %><small><%= line %></small><% } %>
+      <% if(w.plan.orders.length){ %><small><% w.plan.orders.forEach((o,i)=>{ %><%= i?' · ':'' %><a href="/orders/<%= encodeURIComponent(o.orderId) %>"><%= o.order %></a><% }); %></small><% } %>
+      <% if(w.plan.clearance){ %><small><a href="<%= screen.clearance+encodeURIComponent(w.sku) %>">Plan a clearance for <%= w.sku %></a></small><% } %>
+      <% if(w.email_status){ %><small><%= w.email_status==='SENT'?'Emailed to you.':w.email_status==='FAILED'?'The email could not be sent.':'Email on its way.' %></small><% }else if(w.email_note){ %><small><%= w.email_note %></small><% } %>
+      <form method="post" action="<%= base %>/warnings/<%= encodeURIComponent(w.id) %>/handled">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+        <button class="rm-btn rm-btn--ghost">Mark as dealt with</button>
+      </form>
+    </span>
+    <span><%= w.expired?'Expired':'Warn '+w.warning_days+' days ahead' %></span>
+  </li>
+<% } %>
+</ul>
+<% if(screen.page>1||screen.more){ %><nav class="actions" aria-label="Warning pages"><% if(screen.page>1){ %><a href="<%= base %>?page=<%= screen.page-1 %>">Previous page</a><% } %> <% if(screen.more){ %><a href="<%= base %>?page=<%= screen.page+1 %>">Next page</a><% } %></nav><% } %>
+
+<h2>How early to warn</h2>
+<p>Without a choice, StockChief warns <%= screen.allWindow?screen.allWindow.warning_days:screen.defaultDays %> days ahead. A product's own days win over its category's.</p>
+<ul class="rm-list" data-expiry-windows>
+<% for(const r of screen.windows){ %>
+  <li class="list-row" data-expiry-window="<%= r.id %>">
+    <span><strong><%= r.scope==='ALL'?'Every product':r.scope==='CATEGORY'?'Category: '+r.category:'Product: '+(r.sku||'') %></strong>
+      <small>Warn <%= r.warning_days %> days before expiry.</small>
+      <form method="post" action="<%= base %>/windows">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="scope" value="<%= r.scope %>"><input type="hidden" name="revision" value="<%= r.revision %>">
+        <input type="hidden" name="category" value="<%= r.category||'' %>"><input type="hidden" name="sku" value="<%= r.sku||'' %>">
+        <button class="rm-btn rm-btn--ghost" name="stop" value="yes">Remove</button>
+      </form></span>
+    <span><%= scopeLabel[r.scope] %></span>
+  </li>
+<% } %>
+</ul>
+<details><summary>Set warning days</summary>
+  <form method="post" action="<%= base %>/windows" class="form-inline" data-expiry-window-form>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="field"><span class="field-label">For</span><select class="input" name="scope"><option value="ALL">Every product</option><option value="CATEGORY">A category</option><option value="ITEM">One product</option></select></label>
+    <label class="field"><span class="field-label">Category</span><input class="input" name="category" maxlength="160" list="expiry-categories"></label>
+    <datalist id="expiry-categories"><% for(const c of screen.categories){ %><option value="<%= c %>"><% } %></datalist>
+    <label class="field"><span class="field-label">Item code</span><input class="input" name="sku" maxlength="150"></label>
+    <label class="field"><span class="field-label">Days before expiry</span><input class="input" name="days" type="number" inputmode="numeric" min="1" max="3650" step="1" required></label>
+    <button class="rm-btn">Save</button>
+  </form>
+  <p>Setting days for the same product or category again replaces them.</p>
+</details>
+
+<% if(screen.handled.length){ %>
+<h2>Dealt with</h2>
+<ul class="rm-list" data-expiry-handled>
+<% for(const w of screen.handled){ %>
+  <li class="list-row"><span><strong><%= w.sku %> batch <%= w.lot %> at <%= w.location %></strong><small>Expires on <%= w.expires_on %>.</small></span><span><%= helpers.dateTime(w.handled_at) %></span></li>
+<% } %>
+</ul>
+<% } %>

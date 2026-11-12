@@ -15,9 +15,12 @@ async function expandLines(client,ctx,lines,requested,at){
   if(line.tracking_mode==='serial'&&request.serials!=null){const serials=codes(request.serials);if(serials.length!==quantity)throw new ValidationError(line.name+': scan one serial number for each unit leaving.');const found=(await client.query("SELECT id FROM serial_units WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3 AND status='in_stock' AND lower(serial)=ANY($4::text[]) ORDER BY id FOR UPDATE",[ctx.workspaceId,line.sku_id,request.locationId,serials.map(s=>s.toLowerCase())])).rows;if(found.length!==quantity)throw new ValidationError(line.name+': one or more scanned serial numbers are not available at this location.');result.push({...request,serialUnitIds:found.map(r=>r.id)});continue;}
   if(line.tracking_mode!=='lot'||request.lotId){result.push(request);continue;}
   const rotation=require('./postgres-stock-rotation'),allocation=request.rotationAllocation||await rotation.normalAllocation(client,ctx,line.id,request.locationId);
-  if(request.lotStrategy==='RESERVED'&&allocation?.rotation_selection&&!request.lotCode){result.push(...rotation.frozenLotRequests(request,allocation));continue;}
+  // Job 191: with no batch named, a pick takes the soonest expiry first, or the
+  // exact batches a FIFO/FEFO reservation already holds.
+  const strategy=request.lotStrategy||(allocation?.rotation_selection?'RESERVED':'FEFO');
+  if(strategy==='RESERVED'&&allocation?.rotation_selection&&!request.lotCode){result.push(...rotation.frozenLotRequests(request,allocation));continue;}
   if(request.lotCode){const lot=(await client.query('SELECT id FROM lots WHERE workspace_id=$1 AND sku_id=$2 AND code=$3',[ctx.workspaceId,line.sku_id,String(request.lotCode).trim()])).rows[0];if(!lot)throw new ValidationError(line.name+': that lot or batch was not found.');result.push({...request,lotId:lot.id});continue;}
-  if(request.lotStrategy!=='FEFO'){result.push(request);continue;}
+  if(strategy!=='FEFO'){result.push(request);continue;}
   if(line.secondary_unit_label)throw new ValidationError(line.name+': choose the exact batch and measured weight before fulfilling it.');
   const lots=(await client.query(`SELECT l.id,b.quantity FROM lots l JOIN lot_balances b ON b.workspace_id=l.workspace_id AND b.lot_id=l.id WHERE l.workspace_id=$1 AND l.sku_id=$2 AND b.location_id=$3 AND b.quantity>0 AND l.recalled_at IS NULL AND (l.expires_at IS NULL OR l.expires_at::date>=$4::date) ORDER BY l.expires_at::date NULLS LAST,l.received_at,l.id FOR UPDATE OF l,b`,[ctx.workspaceId,line.sku_id,request.locationId,businessDay])).rows;
   const held=await require('./postgres-return-holds').heldLots(client,ctx.workspaceId,line.sku_id,request.locationId),rotated=await rotation.heldLots(client,ctx.workspaceId,line.sku_id,request.locationId,{excludeAllocation:allocation?(request.rotationKind||'sales')+':'+allocation.id:null});
