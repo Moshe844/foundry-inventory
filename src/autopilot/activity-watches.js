@@ -3,27 +3,14 @@ const {ValidationError,AuthorizationError}=require('../domain/errors');
 const policy=require('../commercial/agent-plan');
 const exact=require('../domain/exact-quantity');
 const costAlerts=require('./cost-alerts');
+const unusualActivity=require('./unusual-activity');
 
-const activity=`WITH selected AS (
-  SELECT m.id,m.operation,m.reference,m.quantity_delta,s.code,s.item_id,l.name AS location,u.name AS actor,w.adjustment_units,w.night_from,w.night_until,
-    (m.occurred_at::timestamptz AT TIME ZONE coalesce(i.time_zone,a.time_zone,'UTC')) AS local_time
-  FROM stockchief_runtime.agent_alert_settings w JOIN workspaces i ON i.id=w.workspace_id JOIN accounts a ON a.id=i.owner_account_id
-  JOIN movements m ON m.workspace_id=w.workspace_id JOIN skus s ON s.workspace_id=m.workspace_id AND s.id=m.sku_id
-  JOIN locations l ON l.workspace_id=m.workspace_id AND l.id=m.location_id LEFT JOIN users u ON u.workspace_id=m.workspace_id AND u.id=m.actor_user_id
-  WHERE w.workspace_id=$1 AND w.job_id=171 AND ($2='' OR lower(s.code)=lower($2) OR lower(l.name)=lower($2))
-    AND m.occurred_at::timestamptz>=($3::date-6)::timestamp AT TIME ZONE coalesce(i.time_zone,a.time_zone,'UTC')
-    AND m.occurred_at::timestamptz<($3::date+1)::timestamp AT TIME ZONE coalesce(i.time_zone,a.time_zone,'UTC')
-), flags AS (
-  SELECT *,operation='adjust' AND abs(quantity_delta)>=adjustment_units AS large,
-    CASE WHEN night_from<night_until THEN extract(hour FROM local_time)>=night_from AND extract(hour FROM local_time)<night_until
-      ELSE extract(hour FROM local_time)>=night_from OR extract(hour FROM local_time)<night_until END AS night FROM selected
-) SELECT code AS "SKU",CASE WHEN large AND night THEN 'Large adjustment during watched hours' WHEN large THEN 'Large adjustment' ELSE 'Stock change during watched hours' END AS "Alert",
-  operation AS "Movement",quantity_delta AS "Units changed",location AS "Location",actor AS "Recorded by",to_char(local_time,'YYYY-MM-DD HH24:MI') AS "Local time",
-  id AS reference,'/inventory/'||item_id AS link FROM flags WHERE large OR night ORDER BY local_time DESC,id`;
 const spec={169:{key:'channel-alerts',label:'Sales channel alerts',usesDate:false,sql:require('../connections/agent-channel-alerts').sql,summary:'Flags stopped or overdue checks and channel quantities last verified above costed physical stock after sales commitments. Transfer and rental holds can reduce available stock further.'},
   // Job 170 lives in cost-alerts.js; it needs migration 473.
   170:{key:costAlerts.key,label:costAlerts.label,sql:costAlerts.sql,summary:costAlerts.summary,readPage:costAlerts.review,ready:costAlerts.ready,filterLabel:'Exact SKU, category or channel'},
-  171:{key:'unusual-stock-activity',label:'Unusual stock activity',sql:activity,summary:'Shows stock changes in the last seven business-calendar days against the unit threshold and local hours selected by the owner.'}};
+  // Job 171 lives in unusual-activity.js; it needs migration 473.
+  171:{key:unusualActivity.key,label:unusualActivity.label,sql:unusualActivity.sql,summary:unusualActivity.summary,readPage:unusualActivity.review,ready:unusualActivity.ready,
+    filterLabel:'Exact SKU, person or location'}};
 function optional(value){return value==null||String(value).trim()===''?null:value;}
 function hour(value){
   if(optional(value)===null)return null;
@@ -42,6 +29,11 @@ async function save(db,ctx,job,input){
     const rise=job===170&&optional(input.costRisePct)!==null?exact.safeNumber(input.costRisePct,{precision:2,positive:true,label:'Cost rise'}):null;
     if(rise>1000)throw new ValidationError('Choose a cost rise up to 1,000 percent.');
     const units=job===171&&optional(input.adjustmentUnits)!==null?exact.safeNumber(input.adjustmentUnits,{positive:true,label:'Adjustment units'}):null;
+    if(job===171&&!await unusualActivity.ready(c))throw new ValidationError('Unusual activity alerts are being upgraded. Try again shortly.');
+    const edits=job===171&&optional(input.editCount)!==null?Number(input.editCount):null;
+    if(edits!==null&&(!Number.isSafeInteger(edits)||edits<1||edits>100000))throw new ValidationError('Choose a whole number of changes from 1 to 100,000.');
+    const priceChange=job===171&&optional(input.priceChangePct)!==null?exact.safeNumber(input.priceChangePct,{precision:2,positive:true,label:'Price change'}):null;
+    if(priceChange>1000)throw new ValidationError('Choose a price change up to 1,000 percent.');
     const from=job===171?hour(input.nightFrom):null,until=job===171?hour(input.nightUntil):null;
     if((from===null)!==(until===null)||from!==null&&from===until)throw new ValidationError('Choose both ends of the watched hours, with a different start and end.');
     const revision=Number(input.revision);
@@ -53,9 +45,11 @@ async function save(db,ctx,job,input){
       WHERE w.revision=$7 RETURNING revision`,[ctx.workspaceId,job,pct,units,from,until,revision]);
     if(!updated.rowCount||updated.rows[0].revision!==revision+1)throw new ValidationError('The settings changed. Reopen this alert before saving.');
     if(job===170)await c.query('UPDATE stockchief_runtime.agent_alert_settings SET cost_rise_pct=$3 WHERE workspace_id=$1 AND job_id=$2',[ctx.workspaceId,job,rise]);
-    const after=job===170?{marginPct:pct,costRisePct:rise}:{adjustmentUnits:units,nightFrom:from,nightUntil:until};
-    const before=!prior?{}:job===170?{marginPct:prior.margin_pct==null?null:Number(prior.margin_pct),costRisePct:prior.cost_rise_pct==null?null:Number(prior.cost_rise_pct)}
-      :{adjustmentUnits:prior.adjustment_units==null?null:Number(prior.adjustment_units),nightFrom:prior.night_from,nightUntil:prior.night_until};
+    else await c.query('UPDATE stockchief_runtime.agent_alert_settings SET edit_count=$3,price_change_pct=$4 WHERE workspace_id=$1 AND job_id=$2',[ctx.workspaceId,job,edits,priceChange]);
+    const number=value=>value==null?null:Number(value);
+    const after=job===170?{marginPct:pct,costRisePct:rise}:{adjustmentUnits:units,nightFrom:from,nightUntil:until,editCount:edits,priceChangePct:priceChange};
+    const before=!prior?{}:job===170?{marginPct:number(prior.margin_pct),costRisePct:number(prior.cost_rise_pct)}
+      :{adjustmentUnits:number(prior.adjustment_units),nightFrom:prior.night_from,nightUntil:prior.night_until,editCount:prior.edit_count??null,priceChangePct:number(prior.price_change_pct)};
     await require('../operations/postgres-security-audit').record(c,ctx,{action:'Alert settings saved',reference:String(job),before,after});
     await require('./operational-notices').refresh(c,ctx.workspaceId);
   },{isolation:'SERIALIZABLE',retrySafe:true});

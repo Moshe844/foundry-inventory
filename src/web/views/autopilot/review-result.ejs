@@ -116,9 +116,12 @@
 <% if(w.job===170){ %><label>Alert when a cost goes up by at least (%) <input name="costRisePct" type="number" min=".01" max="1000" step=".01" value="<%= w.cost_rise_pct??'' %>" placeholder="Any rise"></label>
 <label>Alert below this gross margin (%) <input name="marginPct" type="number" min="0" max="100" step=".01" value="<%= w.margin_pct??'' %>"></label>
 <p class="hint">Gross margin is the selling price or sales minus the cost of the goods, before fees and shipping.</p>
-<% }else{ %><label>Alert on adjustments of at least this many units <input type="number" min=".000001" step=".000001" name="adjustmentUnits" value="<%= w.adjustment_units??'' %>"></label>
-<label>Watch from local hour (0–23) <input type="number" min="0" max="23" name="nightFrom" value="<%= w.night_from??'' %>"></label>
-<label>Until local hour (0–23) <input type="number" min="0" max="23" name="nightUntil" value="<%= w.night_until??'' %>"></label><% } %>
+<% }else{ %><label>Alert on stock corrections of at least this many units <input type="number" min=".000001" step=".000001" name="adjustmentUnits" value="<%= w.adjustment_units??'' %>"></label>
+<label>Alert on a selling price change of at least (%) <input type="number" min=".01" max="1000" step=".01" name="priceChangePct" value="<%= w.price_change_pct??'' %>"></label>
+<label>Alert when one person makes this many changes or deletions in a day <input type="number" min="1" max="100000" step="1" name="editCount" value="<%= w.edit_count??'' %>"></label>
+<label>Watch changes from local hour (0–23) <input type="number" min="0" max="23" name="nightFrom" value="<%= w.night_from??'' %>"></label>
+<label>Until local hour (0–23) <input type="number" min="0" max="23" name="nightUntil" value="<%= w.night_until??'' %>"></label>
+<p class="hint">Leave a box empty and StockChief alerts only when something is at least three times what is usual. Use the hours outside your business day.</p><% } %>
 <button class="btn">Save alert settings</button></form><% } %>
 <% if(result.watchRules){ %><%- include('watch-rules',{watchRules:result.watchRules,csrfToken}) %><% } %>
 <% if(result.download){ %><p><a class="btn" href="<%= result.download %>"><%= result.downloadLabel %></a></p><% } %>

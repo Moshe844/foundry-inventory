@@ -79,6 +79,11 @@ async function reviewedInTransaction(client,ctx,kind,id,expectedHash){
  if(fresh.blockers.length)throw new ValidationError(fresh.blockers[0]);return fresh;
 }
 
+// Who deleted what is recorded, so unusual activity (job 171) can see many deletions by one person.
+async function deleted(client,ctx,kind,name,outcome){
+ await require('../operations/postgres-security-audit').record(client,ctx,{action:'Record deleted',reference:String(name||'').slice(0,200)||null,after:{kind,outcome}});
+}
+
 async function record(db,ctx,kind,id){
  const k=KINDS[kind],row=(await db.query(`SELECT * FROM ${k.table} WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id])).rows[0];
  if(!row)throw new NotFoundError(`That ${k.noun} is not in this inventory.`);return row;
@@ -153,7 +158,7 @@ async function remove(db,ctx,user,kind,id,{expectedHash}={}){
  if(!expectedHash||expectedHash!==current.hash)throw new ValidationError(`This ${k.noun} changed after you opened the review. Check it again before deleting.`);
  if(current.blockers.length)throw new ValidationError(current.blockers[0]);
  if(current.outcome==='erase'){
-  try{await db.transaction(async client=>{await reviewedInTransaction(client,ctx,kind,id,expectedHash);return client.query(`DELETE FROM ${k.table} WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id]);},{isolation:'SERIALIZABLE'});return {...current,outcome:'erased'};}
+  try{await db.transaction(async client=>{await reviewedInTransaction(client,ctx,kind,id,expectedHash);await client.query(`DELETE FROM ${k.table} WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id]);await deleted(client,ctx,kind,current.name,'erased');},{isolation:'SERIALIZABLE'});return {...current,outcome:'erased'};}
   // A record referenced since the review, or through a deeper link, is kept and archived instead.
   catch(error){if(error.code!=='23503')throw error;}
  }
@@ -168,6 +173,7 @@ async function remove(db,ctx,user,kind,id,{expectedHash}={}){
     [removalId,ctx.workspaceId,id,{name:current.name,variants:current.variants,positions:current.stock.positions,units:current.stock.units,valueMinor:current.stock.valueMinor,variantStatesRecorded:true,previouslyInactiveSkuIds},{positions:0,units:'0',valueMinor:0},ctx.actorId,nowIso()]);
    await client.query('UPDATE items SET is_active=0,updated_at=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,nowIso()]);
    await client.query('UPDATE skus SET is_active=0 WHERE workspace_id=$1 AND item_id=$2 AND is_active<>0',[ctx.workspaceId,id]);
+   await deleted(client,ctx,kind,current.name,'archived');
    await require('../operations/postgres-job-queue').enqueue({query:(statement,values=[])=>client.query(statement,values),transaction:operation=>operation(client)},
     {workspaceId:ctx.workspaceId,kind:'records.remove-product',idempotencyKey:'remove-product:'+removalId,payload:{removalId,itemId:id,actorId:ctx.actorId},maxAttempts:5});
   },{isolation:'SERIALIZABLE'});
@@ -178,6 +184,7 @@ async function remove(db,ctx,user,kind,id,{expectedHash}={}){
   let stock=null;
   if(kind==='product')stock=await archiveProductsInTransaction(client,ctx,[id],{debitAccountKey:'INVENTORY_ADJUSTMENTS',reason:`Deleted product ${current.name}`,reference:current.name,sourceType:'inventory_count',sourceRecordType:'adjustment',sourceRecordId:id});
   else await client.query(`UPDATE ${k.table} SET ${k.archive},updated_at=$3 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,nowIso()]);
+  await deleted(client,ctx,kind,current.name,'archived');
   return stock;
  },{isolation:'SERIALIZABLE'});
  return {...current,outcome:'archived',removed};
@@ -280,10 +287,10 @@ async function removeImport(db,ctx,user,id,{expectedHash}){
  if(!expectedHash||expectedHash!==current.hash)throw new ValidationError('This import changed after you opened the review. Check it again before deleting.');
  if(current.blockers.length)throw new ValidationError(current.blockers[0]);
  if(current.outcome==='erase'){
-  try{await db.transaction(async client=>{await reviewedInTransaction(client,ctx,'import',id,expectedHash);return client.query('DELETE FROM import_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]);},{isolation:'SERIALIZABLE'});return {...current,outcome:'erased'};}
+  try{await db.transaction(async client=>{await reviewedInTransaction(client,ctx,'import',id,expectedHash);await client.query('DELETE FROM import_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]);await deleted(client,ctx,'import',current.name,'erased');},{isolation:'SERIALIZABLE'});return {...current,outcome:'erased'};}
   catch(error){if(error.code!=='23503')throw error;}
   await db.transaction(async client=>{await reviewedInTransaction(client,ctx,'import',id,expectedHash);await client.query(`INSERT INTO record_removals(id,workspace_id,kind,record_id,status,summary,created_by_user_id,created_at,completed_at) VALUES($1,$2,'import',$3,'COMPLETED',$4,$5,$6,$6)`,
-   [newId('rmv'),ctx.workspaceId,id,{hidden:true},ctx.actorId,nowIso()]);},{isolation:'SERIALIZABLE'});
+   [newId('rmv'),ctx.workspaceId,id,{hidden:true},ctx.actorId,nowIso()]);await deleted(client,ctx,'import',current.name,'hidden');},{isolation:'SERIALIZABLE'});
   return {...current,outcome:'removed'};
  }
  const removalId=newId('rmv'),at=nowIso();
@@ -291,6 +298,7 @@ async function removeImport(db,ctx,user,id,{expectedHash}){
   await reviewedInTransaction(client,ctx,'import',id,expectedHash);
   await client.query(`INSERT INTO record_removals(id,workspace_id,kind,record_id,status,summary,progress,created_by_user_id,created_at) VALUES($1,$2,'import',$3,'RUNNING',$4,$5,$6,$7)`,
    [removalId,ctx.workspaceId,id,{products:current.products,variants:current.variants,units:current.stock.units,valueMinor:current.stock.valueMinor,existingRows:current.existingRows},{products:0,units:'0',valueMinor:0,skipped:[]},ctx.actorId,at]);
+  await deleted(client,ctx,'import',current.name,'undone');
   // The job commits with its removal record or not at all.
   await require('../operations/postgres-job-queue').enqueue({query:(statement,values=[])=>client.query(statement,values),transaction:operation=>operation(client)},
    {workspaceId:ctx.workspaceId,kind:'records.remove-import',idempotencyKey:'remove-import:'+removalId,payload:{removalId,importId:id,actorId:ctx.actorId},maxAttempts:5});

@@ -140,7 +140,7 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
     UPDATE stockchief_runtime.agent_operational_notices n SET resolved=true WHERE n.workspace_id=$1 AND NOT n.resolved
       AND NOT EXISTS(SELECT 1 FROM current c WHERE c.job=n.job_id AND c.kind=n.kind AND c.ref=n.reference AND c.link=n.link)`,
   args);
-  // Jobs 166 to 168 and 170: record what opened and cleared, and email new alerts.
+  // Jobs 166 to 168, 170 and 171: record what opened and cleared, and email new alerts.
   return require('./agent-alerts').track(db,workspaceId,account);
 }
 
@@ -235,6 +235,9 @@ async function inbox(db,workspaceId,actorId=null){
     if(Number(r.job_id)===170)return {kind:'inventory',grouped:true,importance:'Important',priority:78,title:'Costs went up or margins fell',
       happened:r.n+' cost or margin alert'+(r.n===1?'':'s')+'.',why:'StockChief compares each new cost with the one before it, and gross margins (before fees and shipping) with your minimum, through the day.',
       recommendation:'Review the costs and selling prices. StockChief has not changed any price.',href:require('./cost-alerts').path,actionLabel:'Review cost and margin alerts',sourceId:'agent-notice-170'};
+    if(Number(r.job_id)===171)return {kind:'inventory',grouped:true,importance:'Important',priority:79,title:'Unusual activity',
+      happened:r.n+' unusual change'+(r.n===1?'':'s')+' in the last seven days.',why:'Big stock corrections or price changes, many changes by one person, or changes during the hours you watch.',
+      recommendation:'Check who made each change and why. Nothing was blocked.',href:require('./unusual-activity').path,actionLabel:'Review unusual activity',sourceId:'agent-notice-171'};
     const watch=require('./activity-watches').spec[r.job_id];
     if(watch)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:watch.label,happened:r.n+' matching stock or price record'+(r.n===1?'':'s')+'.',
       why:watch.summary,recommendation:'Review the matching records.',href:'/autopilot/reviews/'+watch.key,actionLabel:'Review alerts',sourceId:'agent-notice-'+r.job_id};

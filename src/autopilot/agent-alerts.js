@@ -1,6 +1,6 @@
 'use strict';
 
-// Jobs 166, 167, 168 and 170 deliver their alerts the same way.
+// Jobs 166, 167, 168, 170 and 171 deliver their alerts the same way.
 //
 // The alerts are agent notices: the routine check (operational-notices.refresh,
 // run by the worker) opens, updates and clears them. Every alert is shown in
@@ -40,7 +40,10 @@ const JOBS={
   // Needs migration 473.
   170:{action:'alert.cost_margin',name:'Cost and margin alerts',module:'./cost-alerts',needs473:true,
     subject:(n,first)=>n===1?first.split(':')[0]:n+' cost and margin alerts',
-    intro:'StockChief found costs that went up or margins under your minimum. Margins are gross margins, before fees and shipping.'}
+    intro:'StockChief found costs that went up or margins under your minimum. Margins are gross margins, before fees and shipping.'},
+  171:{action:'alert.unusual_activity',name:'Unusual activity',module:'./unusual-activity',needs473:true,
+    subject:(n,first)=>n===1?'Unusual activity: '+first.split(':')[0]:n+' unusual activity alerts',
+    intro:'StockChief noticed activity that looks unusual. Nothing was blocked.'}
 };
 const plural=(n,one,many)=>n+' '+(Number(n)===1?one:many);
 const expected=error=>error instanceof DomainError&&[400,402,403,404,409,422].includes(error.status);
