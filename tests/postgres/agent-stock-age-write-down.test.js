@@ -22,8 +22,10 @@ test('recorded stock age and individually approved native valuation use exact qu
   const position=sku=>sku+':'+location.id;
   const age=code=>reviews.run(db,ctx,'stock-age',{filter:code});
   const item=async(code,opts={})=>(await catalog.createItem(db,ctx,{name:code,baseCode:code,trackingMode:'quantity',...opts})).skuIds[0];
+  // Noon UTC of the business's today is still in the future before noon UTC,
+  // which the receipt rightly refuses; today's receipt happens now instead.
   const receive=(sku,quantity,ageDate=old,extra={})=>receipt.receive(db,ctx,{skuId:sku,locationId:location.id,quantity,unitCost:'2',
-    occurredAt:ageDate+'T12:00:00Z',idempotencyKey:randomUUID(),...extra});
+    occurredAt:ageDate===today?new Date().toISOString():ageDate+'T12:00:00Z',idempotencyKey:randomUUID(),...extra});
   const prepare=async(sku,amount,extra={})=>{
     const review=await writeDown.page(db,ctx,position(sku));
     return assistant.prepareAction(db,ctx,'Review the evidenced inventory carrying value.',{
