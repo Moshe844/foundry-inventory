@@ -437,6 +437,7 @@ async function autopilotEvaluate(job,client){
     await require('../reports/agent-compliance-reports').schedule(client,job.workspaceId,cycleId);
     await require('../accounting/agent-landed-cost-bills').schedule(client,job.workspaceId,cycleId);
     await require('../shipping/agent-labels').schedule(client,job.workspaceId,cycleId);
+    await require('../shipping/agent-return-labels').schedule(client,job.workspaceId,cycleId);
     await require('../shipping/agent-parcel-watch').schedule(client,job.workspaceId,cycleId);
     await require('../shipping/agent-carrier-claims').schedule(client,job.workspaceId,cycleId);
     await require('../transfers/agent-transfer-balancing').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
@@ -664,6 +665,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.compliance-reports.v1':external((job,database)=>require('../reports/agent-compliance-reports').run(job,database)),
   'agent.landed-cost-bill.v1':external((job,database)=>require('../accounting/agent-landed-cost-bills').run(job,database)),
   'agent.shipping-labels.v1':external((job,database)=>require('../shipping/agent-labels').run(database,job,{providerResolver:options.shippingProviderResolver})),
+  'agent.return-labels.v1':external((job,database)=>require('../shipping/agent-return-labels').run(database,job,{providerResolver:options.shippingProviderResolver})),
   'agent.parcel-watch.v1':external((job,database)=>require('../shipping/agent-parcel-watch').run(database,job,{providerResolver:options.shippingProviderResolver})),
   'agent.carrier-claim-follow-up.v1':external((job,database)=>require('../shipping/agent-carrier-claims').followUp(database,job,options.carrierClaimProvider)),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
@@ -747,6 +749,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.warehouse-routing.v1':external((job,database)=>require('../sales/agent-ship-from').onQueued(database,job)),
   'agent.order-splits.v1':external((job,database)=>require('../sales/agent-order-splits').onQueued(database,job)),
   'return.disposition-plan.v1':external((job,database)=>require('./agent-return-disposition').onObservation(database,job.workspaceId,job.payload.assessmentId,job.payload.ownerId)),
+  'return.disposition-apply.v1':external((job,database)=>require('./agent-return-disposition').applyRoutine(database,job.workspaceId,job.payload.assessmentId,job.payload.ownerId)),
   'mail.supplier-terms.v1':external((job,database)=>require('../purchasing/agent-supplier-email-terms').onArrival(database,job.workspaceId,job.payload.messageId)),
   'mail.supplier-rfq-reply.v1':external((job,database)=>require('../purchasing/agent-rfq-competition').captureReply(database,job.workspaceId,job.payload)),
   'agent.rfq-competition.v1':external((job,database)=>require('../purchasing/agent-rfq-competition').run(database,job.workspaceId,job.payload)),

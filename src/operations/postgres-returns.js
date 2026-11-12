@@ -456,8 +456,17 @@ async function inspectCustomerReturn(database, rawContext, id, input) {
     const row = await readReturn(client, ctx.workspaceId, id, true);
     if (row.status !== 'RECEIVED') throw new ValidationError('Receive all returned goods into quarantine before inspecting them.');
     const outcomes = [];
+    // With partial, only the listed lines are decided now; the rest stay in
+    // quarantine for their own decision. A decided line is never decided again.
+    const partial = input.partial === true;
     for (const line of row.lines) {
       const decision = input.lines.find((candidate) => candidate.lineId === line.id);
+      if (Number(line.quantity_restocked) + Number(line.quantity_scrapped) + Number(line.quantity_repair) > 0) {
+        if (decision && [decision.restock, decision.scrap, decision.repair].some((value) => Number(value || 0) > 0))
+          throw new ValidationError(`${line.item_name} was already restocked, repaired or scrapped.`);
+        continue;
+      }
+      if (!decision && partial) continue;
       if (!decision) throw new ValidationError(`${line.item_name}: choose restock, scrap, or repair.`);
       const profile=await stockQuantity.forSku(client,ctx,line.sku_id);
       const restock = stockQuantity.validate(profile,decision.restock||0,{positive:false,label:`${line.item_name} restock quantity`});
@@ -527,7 +536,18 @@ async function inspectCustomerReturn(database, rawContext, id, input) {
         JSON.stringify([...line.dispositionMovementIds, ...movementIds]), nowIso()]);
       outcomes.push({ lineId: line.id, restock, scrap, repair, movementIds });
     }
+    if (!outcomes.length) throw new ValidationError('Choose restock, scrap, or repair for at least one returned product.');
+    const undecided = Number((await client.query(`SELECT count(*) AS n FROM customer_return_lines WHERE workspace_id=$1 AND customer_return_id=$2
+      AND quantity_restocked+quantity_scrapped+quantity_repair<quantity_received`, [ctx.workspaceId, id])).rows[0].n);
+    if (undecided) {
+      const result = { customerReturnId: id, status: 'RECEIVED', lines: outcomes, undecided };
+      await completeOperation(client, operation, result);
+      return { ...result, replayed: false };
+    }
     const status = row.resolution === 'REFUND' ? 'AWAITING_REFUND' : row.resolution === 'EXCHANGE' ? 'INSPECTED' : 'COMPLETED';
+    // A return finished by hand leaves no open agent assessment behind.
+    if (await require('../db/schema-installed').has(client, 'stockchief_runtime.agent_return_assessments'))
+      await client.query("UPDATE stockchief_runtime.agent_return_assessments SET status='STOPPED',problem='Finished on the return itself.',revision=revision+1 WHERE workspace_id=$1 AND return_id=$2 AND status IN ('OBSERVED','READY')", [ctx.workspaceId, id]);
     const at = nowIso();
     await client.query(`UPDATE customer_returns SET status=$3,inspected_by_user_id=$4,inspected_at=$5,
       completed_at=CASE WHEN $3='COMPLETED' THEN $5 ELSE completed_at END WHERE id=$1 AND workspace_id=$2`,

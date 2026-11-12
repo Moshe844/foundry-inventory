@@ -1363,9 +1363,50 @@ function createPostgresCommerceRouter(database,options={}){
     const receiptPreview=customerReturn.receipt_credit_policy==='RECEIPT_CREDIT_V1'&&!needsReceiptMeasures&&['REQUESTED','AUTHORIZED','PARTIALLY_RECEIVED'].includes(customerReturn.status)?await returns.previewReceiptCredit(database,req.ctx,customerReturn.id):null,refundFinancials=receiptPreview?{...receiptPreview,posted:false}:returns.refundSummary(customerReturn),refundableMinor=refundFinancials.totalMinor;
     return res.page('sales/postgres-return',{title:customerReturn.return_number,nav:'sales',customerReturn,
       returnParcel:await require('../../shipping/postgres-return-parcels').current(database,req.ctx.workspaceId,customerReturn.id),
+      returnLabel:req.user?.role==='owner'?await require('../../shipping/agent-return-labels').view(database,req.ctx.workspaceId,customerReturn.id):null,
+      returnCheck:await require('../../operations/agent-return-disposition').check(database,req.ctx,customerReturn.id),
       locations:locationRows,refundableMinor,refundFinancials,needsReceiptMeasures,refundRequest:refundRequestResult.rows[0]||null,
       managedRefund,refundAccess,isRefundOwner:req.user?.role==='owner',
       today:dateToday(req),formKey:newId('return-step')});
+  }));
+
+  // Job 112: the return label StockChief prepared, bought or is waiting to email.
+  router.post('/returns/:id/return-label/approve',requireOwner,asyncRoute(async(req,res)=>{
+    const result=await require('../../shipping/agent-return-labels').approve(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.changed?'The rate changed. Check the new label before approving it.':'Label approved. The customer is emailed once the carrier confirms it.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-label');
+  }));
+  router.post('/returns/:id/return-label/send',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../shipping/agent-return-labels').send(database,req.ctx,req.params.id,req.body);
+    req.flash('success','The label and instructions are on their way to the customer.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-label');
+  }));
+  router.post('/returns/:id/return-label/dismiss',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../shipping/agent-return-labels').dismiss(database,req.ctx,req.params.id,req.body);
+    req.flash('success','StockChief will not buy a label for this return.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-label');
+  }));
+  router.post('/returns/:id/return-label/rule',requireOwner,asyncRoute(async(req,res)=>{
+    const result=await require('../../shipping/agent-return-labels').configure(database,req.ctx,req.body);
+    req.flash('success',result.removed!==undefined?'Return label rule removed. Labels now wait for your approval.':'Rule saved. StockChief sends return labels like this one on its own.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-label');
+  }));
+
+  // Job 114: staff check the received goods on the phone; good goods go back into stock.
+  router.post('/returns/:id/check',requirePermission(permissions.INSPECT_CUSTOMER_RETURN,'check returned goods'),asyncRoute(async(req,res)=>{
+    await require('../../operations/agent-return-disposition').observe(database,req.ctx,{...req.body,returnId:req.params.id});
+    req.flash('success','Check saved. Good goods go back into stock as your plan and limits allow.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-check');
+  }));
+  router.post('/returns/:id/check/apply',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../operations/agent-return-disposition').apply(database,req.ctx,req.body.assessmentId,req.body);
+    req.flash('success','The checked goods are back in stock.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-check');
+  }));
+  router.post('/returns/:id/check/limit',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../operations/agent-return-disposition').saveRestockLimit(database,req.ctx,req.body);
+    req.flash('success',req.body.remove==='yes'?'Good returns now wait for you to confirm.':'Good returns within this limit now go back into stock on their own.');
+    return res.redirect(303,'/returns/'+req.params.id+'#return-check');
   }));
 
   router.post('/returns/:id/authorize',requirePermission(permissions.AUTHORIZE_CUSTOMER_RETURN,'authorize customer returns'),
