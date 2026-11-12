@@ -798,11 +798,14 @@ function createPostgresAutopilotRouter(database,options={}){
   // plan keeps the lock and its 402.
   const planNames=[['starter','Starter'],['growth','Growth'],['pro','Pro'],['enterprise','Custom']];
   const olderTerms=async req=>req.accepts('html')&&!policy.usesAgentTerms(await policy.accountState(database,req.ctx.workspaceId));
-  async function reportPage(req,res,job,view,locals,load,lockedStatus){
-    if(!(await olderTerms(req)))return agentPage(req,res,view,locals,load,lockedStatus);
+  async function planCard(req,res,job,locals){
     const state=await policy.accountState(database,req.ctx.workspaceId),row=require('../../commercial/agent-plan-v3.json').find(r=>r.id===job);
     const tier=planNames.find(([key])=>row?.[key]&&row[key]!=='excluded')?.[1];
     return res.page('autopilot/agent-plan-locked',{...locals,tier,reviewTerms:policy.permits(state.plan,job,'suggest')});
+  }
+  async function reportPage(req,res,job,view,locals,load,lockedStatus){
+    if(job==null||!(await olderTerms(req)))return agentPage(req,res,view,locals,load,lockedStatus);
+    return planCard(req,res,job,locals);
   }
   // Job 158: the month-end stock value and cost of goods report.
   const monthEndStock=require('../../reports/agent-month-end-stock'),reportRuns=require('../../reports/agent-report-runs');
@@ -1485,7 +1488,7 @@ function createPostgresAutopilotRouter(database,options={}){
     res.redirect(303,monthlyBuying.path+'/'+req.params.id);
   }));
   const slotting=require('../../forecasting/warehouse-slotting');
-  const slottingPage=async(req,res)=>agentPage(req,res,'autopilot/warehouse-slotting',{title:'Warehouse move lists',nav:'autopilot',
+  const slottingPage=async(req,res)=>reportPage(req,res,slotting.definition.id,'autopilot/warehouse-slotting',{title:'Warehouse move lists',nav:'autopilot',
     backTo:{href:'/autopilot/reviews/warehouse-slotting',label:'Warehouse bin moves'}},async()=>({
     model:await slotting.page(database,req.ctx,{id:req.params.id,warehouseId:req.query.warehouse,after:req.query.after}),
   }),402);
@@ -1802,7 +1805,7 @@ function createPostgresAutopilotRouter(database,options={}){
   // Brand watches became watch rules (job 167).
   router.get('/autopilot/reviews/brand-watches',requireAuth,(req,res)=>res.redirect(301,'/autopilot/reviews/watch-rules'));
   router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
-    return agentPage(req,res,'autopilot/review-result',{title:'Agent review',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>{
+    return reportPage(req,res,reviews.definitions.find(d=>d.key===req.params.job)?.id,'autopilot/review-result',{title:'Agent review',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>{
       const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,change:req.query.change});
       const packs=require('../../accounting/agent-report-packs');
       if(Object.hasOwn(packs.downloads,req.params.job)&&(req.params.job!=='quarterly-supplier-pack'||result.rows.length)){
@@ -1894,8 +1897,12 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   // Job 94: negotiation emails built from recorded facts.
   const negotiations=require('../../purchasing/negotiation-drafts');
-  const negotiationPage=async(req,res,options)=>res.page('autopilot/supplier-negotiations',{title:'Supplier negotiation emails',nav:'autopilot',
-    backTo:{href:options.draftId?'/autopilot/supplier-negotiations':'/autopilot/reviews',label:options.draftId?'Supplier negotiation emails':'Agent reviews'},...await negotiations.page(database,req.ctx,options)});
+  const negotiationPage=async(req,res,options)=>{
+    const locals={title:'Supplier negotiation emails',nav:'autopilot',
+      backTo:{href:options.draftId?'/autopilot/supplier-negotiations':'/autopilot/reviews',label:options.draftId?'Supplier negotiation emails':'Agent reviews'}};
+    if(await olderTerms(req))return planCard(req,res,negotiations.JOB,locals);
+    return res.page('autopilot/supplier-negotiations',{...locals,...await negotiations.page(database,req.ctx,options)});
+  };
   router.get('/autopilot/supplier-negotiations',requireAuth,owner,asyncRoute((req,res)=>negotiationPage(req,res,{supplier:req.query.supplier})));
   router.get('/autopilot/supplier-negotiations/drafts/:id',requireAuth,owner,asyncRoute((req,res)=>negotiationPage(req,res,{draftId:req.params.id})));
   router.post('/autopilot/supplier-negotiations/drafts/:id/save',requireAuth,owner,asyncRoute(async(req,res)=>{
