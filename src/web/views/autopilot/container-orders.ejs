@@ -1,0 +1,63 @@
+<%
+const m3=v=>(Number(v)/1e9).toLocaleString('en-US',{maximumFractionDigits:2});
+const kg=v=>(Number(v)/1000).toLocaleString('en-US',{maximumFractionDigits:1});
+const statusLabel={NEEDS_FACTS:'Stopped: facts missing',WATCHED:'Watched only',DRAFTED:'Drafted for approval',SENT:'Ordered and queued to the supplier',UNDONE:'Undone'};
+const r=selected;
+const field=(input)=>{ const c=input.container||{}; return {feet:c.feet||'',lengthMm:c.length||'',widthMm:c.width||'',heightMm:c.height||'',payloadKg:c.payload?c.payload/1000:'',fillPercent:input.fill_percent||'',minimumFillPercent:input.minimum_fill_percent||'',coverDays:input.cover_days||'',maximumValue:input.maximum_minor?helpers.money(Number(input.maximum_minor),input.currency):''}; };
+%>
+<div class="page-head"><div class="titles"><h1>Fill a container</h1><p>Plan an import order that fills a 20 ft or 40 ft container by space and by weight. The most-needed products go in first, then the next most-needed, inside the supplier’s minimums and packs.</p></div></div>
+<% if(locked){ %><section class="card section" data-agent-plan-locked><h2><span class="badge">Pro</span> Pro or Custom required</h2><p>Container planning from reorder needs is part of Pro and Custom. Saved rules and past orders stay as they are.</p><a class="btn" href="/settings/billing">Upgrade</a></section><% } else { %>
+<p><%= runsAlone?'On Custom, StockChief orders the container on its own within your agreed limits. It asks you when a fact is missing, the container would be too empty, or the order is over a limit.':'On Pro, StockChief drafts each container order for your approval. Once you approve one and teach it, it orders on its own within your limits.' %> It never guesses a size, weight or price: a missing one stops the plan and asks you.</p>
+<% if(shadow){ %><p class="notice">Your first 14 days are watch only. StockChief records the container it would have ordered; it places nothing.</p><% } %>
+<% } %>
+<% if(rules.length){ %><section class="card section"><h2>Container rules</h2><div class="table-wrap"><table class="table"><thead><tr><th>Supplier</th><th>Receiving at</th><th>Container</th><th>Checks on its own</th><th>Needs you</th></tr></thead><tbody>
+<% rules.forEach(x=>{ %><tr><td><a href="/autopilot/container-orders/<%= x.id %>"><%= x.supplier_name %></a></td><td><%= x.destination_name %></td><td><%= x.container.feet %> ft</td><td><%= x.enabled?'Yes':'No' %></td><td><%= x.last_issue||'' %></td></tr><% }) %>
+</tbody></table></div></section><% } %>
+
+<% if(r){ const cur=current; %>
+<section class="card section"><h2><%= r.supplier_name %> → <%= r.destination_name %> · <%= r.container.feet %> ft</h2>
+<p><%= r.enabled?'StockChief checks every hour and plans a container when products need ordering.':'StockChief plans only when you ask.' %><% if(plan==='pro'){ %> <%= taught?'Taught: it orders on its own within your limits.':'Not taught yet: it drafts each order for your approval.' %><% } %></p>
+<% if(r.last_issue){ %><p class="notice notice--warn"><%= r.last_issue %></p><% } %>
+<% if(problem){ %><p class="notice notice--warn"><%= problem %></p><% } %>
+<% if(open){ %><p class="notice"><span>Container order <a href="/purchasing/orders/<%= open.purchase_order_id %>"><%= open.po_number %></a> is waiting for approval. Approve or cancel it before StockChief plans another.</span></p><% } %>
+<% if(cur&&cur.missing.length){ %><h3>Add these facts first</h3><p>StockChief stopped. It needs these before it can fill the container:</p><ul><% cur.missing.forEach(m=>{ %><li><a href="/inventory/<%= encodeURIComponent(m.itemId) %>"><%= m.code %></a> · <%= m.name %>: <%= m.missing.join(' and ') %></li><% }) %></ul><% } %>
+<% if(cur&&!cur.missing.length){ %>
+<div class="stat-grid"><div class="stat"><span class="stat-label">Space used</span><strong class="stat-value"><%= cur.volumePercent %>%</strong><span class="rm-meter<%= cur.fullEnough?' is-good':' is-flag' %>"><span style="width:<%= Math.min(100,cur.volumePercent) %>%"></span></span><small><%= m3(cur.usedMm3) %> of <%= m3(cur.container.capacityMm3) %> m³ · fills to <%= cur.container.fillPercent %>%</small></div>
+<div class="stat"><span class="stat-label">Weight used</span><strong class="stat-value"><%= cur.weightPercent %>%</strong><span class="rm-meter<%= cur.fullEnough?' is-good':' is-flag' %>"><span style="width:<%= Math.min(100,cur.weightPercent) %>%"></span></span><small><%= kg(cur.usedGrams) %> of <%= kg(cur.container.payloadGrams) %> kg</small></div>
+<div class="stat"><span class="stat-label">Order value</span><strong class="stat-value"><%= helpers.money(cur.valueMinor,cur.currency) %></strong><small>Your limit: <%= helpers.money(Number(r.maximum_minor),r.currency) %></small></div>
+<div class="stat"><span class="stat-label">Needed now</span><strong class="stat-value"><%= cur.needed %></strong><small>products at or below their reorder point</small></div></div>
+<% if(!cur.fullEnough&&cur.lines.length){ %><p class="notice notice--warn">Only <%= Math.max(cur.volumePercent,cur.weightPercent) %>% full. Your rule asks you when it is under <%= r.minimum_fill_percent %>%.</p><% } %>
+<% if(cur.lines.length){ %><div class="table-wrap"><table class="table"><thead><tr><th>Product</th><th>Why</th><th>Order</th><th>Space</th><th>Weight</th><th>Days of stock</th><th>Value</th></tr></thead><tbody>
+<% cur.lines.forEach(l=>{ %><tr><td><%= l.code %> · <%= l.name %></td><td><%= l.why==='needed'?'Needed now':'Top-up' %></td><td><%= l.purchaseUnits %> <%= l.purchaseUnit %><% if(l.unitsPerPurchaseUnit>1){ %> (<%= l.quantity %> <%= l.unit %>)<% } %><% if(l.cartons){ %> · <%= l.cartons %> cartons<% } %></td><td><%= m3(l.mm3) %> m³</td><td><%= kg(l.grams) %> kg</td><td><%= l.daysBefore==null?'—':l.daysBefore+' → '+l.daysAfter %></td><td><%= helpers.money(l.valueMinor,cur.currency) %></td></tr><% }) %>
+</tbody></table></div><% } else { %><p>Nothing needs ordering from this supplier right now.</p><% } %>
+<% if(cur.left.length){ %><h3>Needed but not in this container</h3><ul><% cur.left.forEach(x=>{ %><li><%= x.code %> · <%= x.units %> units: <%= x.reason.toLowerCase() %></li><% }) %></ul><% } %>
+<% if(cur.lines.length&&!open&&!locked){ %><form method="post" action="/autopilot/container-orders/<%= r.id %>/draft" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="fingerprint" value="<%= cur.fingerprint %>"><label><input type="checkbox" name="confirmed" value="yes" required> Draft this container order now. You approve the PO before anything is sent.</label><button class="btn btn--primary" <%= shadow?'disabled':'' %>>Draft this container order</button></form><% } %>
+<% } %>
+</section>
+<% if(history.length){ %><section class="card section"><h2>Container orders</h2><div class="table-wrap"><table class="table"><thead><tr><th>When</th><th>What happened</th><th>PO</th><th>Fill</th><th>Value</th><th></th></tr></thead><tbody>
+<% history.forEach(o=>{ const canUndo=['DRAFTED','SENT'].includes(o.status)&&['DRAFT','AWAITING_APPROVAL','APPROVED'].includes(o.po_status)&&(!o.effect_status||o.effect_status==='PENDING'); const canTeach=!locked&&plan==='pro'&&o.status==='DRAFTED'&&['APPROVED','ORDERED','PARTIALLY_RECEIVED','RECEIVED'].includes(o.po_status)&&!taught; %>
+<tr data-container-order="<%= o.id %>"><td><%= helpers.shortDate?helpers.shortDate(o.created_at):new Date(o.created_at).toISOString().slice(0,10) %></td><td><%= statusLabel[o.status] %><%= o.automatic?' · by StockChief':' · by you' %><% if(o.reason){ %><br><small><%= o.reason %></small><% } %></td>
+<td><% if(o.purchase_order_id){ %><a href="/purchasing/orders/<%= o.purchase_order_id %>"><%= o.po_number %></a> · <%= String(o.po_status||'').toLowerCase().replace(/_/g,' ') %><% } %></td>
+<td><%= o.volume_percent %>% space · <%= o.weight_percent %>% weight</td><td><%= o.value_minor?helpers.money(Number(o.value_minor),r.currency):'' %></td>
+<td><% if(canUndo){ %><form method="post" action="/autopilot/container-orders/orders/<%= o.id %>/undo"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label><input type="checkbox" name="confirmed" value="yes" required> Cancel this PO before it is sent</label><button class="btn">Undo</button></form><% } %>
+<% if(canTeach){ %><form method="post" action="/autopilot/container-orders/orders/<%= o.id %>/teach"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label><input type="checkbox" name="confirmed" value="yes" required> Order like this on its own from now on</label><button class="btn">Teach from this order</button></form><% } %></td></tr><% }) %>
+</tbody></table></div></section><% } %>
+<% } %>
+
+<% if(!locked){ const v=r?field(r):{}; %>
+<section class="card section"><h2><%= r?'Rule settings':'New container rule' %></h2>
+<form method="post" action="/autopilot/container-orders" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<% if(r){ %><input type="hidden" name="id" value="<%= r.id %>"><input type="hidden" name="revision" value="<%= r.revision %>"><% } else { %>
+<label class="rm-field"><span>Supplier</span><select name="supplierId" required><option value="">Choose a supplier</option><% suppliers.forEach(s=>{ %><option value="<%= s.id %>"><%= s.name %> · <%= s.currency %></option><% }) %></select></label>
+<label class="rm-field"><span>Receiving warehouse</span><select name="destinationId" required><option value="">Choose a warehouse</option><% places.forEach(l=>{ %><option value="<%= l.id %>"><%= l.name %></option><% }) %></select></label><% } %>
+<label class="rm-field"><span>Container size</span><select name="feet" required><option value="">Choose size</option><option value="20" <%= String(v.feet)==='20'?'selected':'' %>>20 ft</option><option value="40" <%= String(v.feet)==='40'?'selected':'' %>>40 ft</option></select></label>
+<% for(const [key,label] of [['lengthMm','Inside length (mm)'],['widthMm','Inside width (mm)'],['heightMm','Inside height (mm)'],['payloadKg','Most weight it can carry (kg)'],['fillPercent','Fill up to (% of space)'],['minimumFillPercent','Ask me if less full than (%)'],['coverDays','Top up to at most (days of stock)']]){ %>
+<label class="rm-field"><span><%= label %></span><input name="<%= key %>" type="number" min="1" step="1" value="<%= v[key]||'' %>" required></label><% } %>
+<label class="rm-field"><span>Largest order it may place</span><input name="maximumValue" inputmode="decimal" value="<%= v.maximumValue||'' %>" required></label>
+<p>Use the real inside measurements and weight limit from your carrier. Space is never 100% usable, so set how full to plan it.</p>
+<p><label><input type="checkbox" name="routine" value="yes" <%= r&&r.enabled?'checked':'' %>> Check every hour and plan a container when products need ordering</label></p>
+<p><label><input type="checkbox" name="confirmed" value="yes" required> I checked these measurements and limits.</label></p>
+<button class="btn btn--primary">Save container rule</button></form>
+<% if(r&&r.enabled){ %><form method="post" action="/autopilot/container-orders"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="id" value="<%= r.id %>"><input type="hidden" name="revision" value="<%= r.revision %>"><input type="hidden" name="stop" value="yes"><button class="btn">Stop checking on its own</button></form><% } %>
+</section><% } %>
+<p><a href="/autopilot/container-plans">Check the carton layout of orders you already have</a></p>
