@@ -1,37 +1,63 @@
 <h1>Carrier claims</h1>
-<p>File a lost or damaged parcel claim with your connected EasyPost account. The original label and its insurance must cover the parcel.</p>
-<% const statusLabels={DRAFT:'Private draft',PENDING:'Queued',RUNNING:'Filing',FAILED:'Held for review',AMBIGUOUS:'Awaiting carrier confirmation',CANCELLED:'Stopped',
-  SUCCEEDED:'Filed',submitted:'Submitted',in_review:'In review',approved:'Approved',approved_partial:'Partly approved',rejected:'Rejected',cancelled:'Cancelled',needs_action:'Needs your attention'}; %>
+<p>Claims for lost or damaged parcels. Parcels insured through your EasyPost account are filed through it; for other carriers StockChief prepares the claim pack and the steps, and you file it. Every claim is followed until the carrier pays or denies it.</p>
 <% if(!allowed){ %>
   <p class="notice"><strong>Pro / Custom</strong> · Carrier claim filing requires Pro or Custom. <a class="btn" href="/billing">Upgrade</a></p>
 <% }else if(blocked){ %><p class="notice"><%= blocked %></p><% } %>
-<% if(selected){ const {row,status,standing,canTeach,problem}=selected,claim=row.facts; %>
-  <section class="card"><div class="card-body">
+<% if(selected){ const {row,status,standing,canTeach,problem}=selected,claim=row.facts,cur=claim.currency||'USD',portal=row.route==='portal'; %>
+  <section class="card" id="claim"><div class="card-body">
     <h2><%= claim.number %> · <%= claim.type==='loss'?'Lost parcel':'Damaged parcel' %></h2>
     <dl>
-      <dt>Status</dt><dd><%= statusLabels[row.receipt?.status||status] %></dd>
+      <dt>Status</dt><dd><%= selected.label %></dd>
       <dt>Tracking number</dt><dd><%= claim.trackingNumber %></dd>
-      <dt>Requested reimbursement</dt><dd><%= helpers.money(claim.amountMinor,'USD') %></dd>
-      <dt>Verified coverage</dt><dd><%= helpers.money(claim.coverageMinor,'USD') %></dd>
+      <dt>Requested reimbursement</dt><dd><%= helpers.money(claim.amountMinor,cur) %></dd>
+      <% if(claim.valueMinor&&claim.valueMinor!==claim.amountMinor){ %><dt>Value of the parcel</dt><dd><%= helpers.money(claim.valueMinor,cur) %>, more than its insurance</dd><% } %>
+      <% if(!portal){ %><dt>Verified coverage</dt><dd><%= helpers.money(claim.coverageMinor,'USD') %></dd><% } %>
       <dt>What happened</dt><dd><%= claim.description %></dd>
+      <% if(row.source&&row.source!=='owner'){ %><dt>Reported by</dt><dd><%= {carrier:'The carrier',staff:'Your staff',customer:'The customer'}[row.source] %></dd><% } %>
       <dt>Claimant</dt><dd><%= claim.recipient %> · <%= claim.contactEmail %></dd>
       <dt>Evidence</dt><dd>
         <a href="/autopilot/carrier-claims/<%= selected.id %>/evidence/invoice">Download invoice</a>
-        · <a href="/autopilot/carrier-claims/<%= selected.id %>/evidence/correspondence">Download correspondence</a>
-        <% if(row.has_supporting){ %> · <a href="/autopilot/carrier-claims/<%= selected.id %>/evidence/supporting">Download supporting evidence</a><% } %>
+        · <a href="/autopilot/carrier-claims/<%= selected.id %>/evidence/correspondence">Download <%= portal||row.source!=='owner'?'tracking record':'correspondence' %></a>
+        <% if(row.has_supporting){ %> · <a href="/autopilot/carrier-claims/<%= selected.id %>/evidence/supporting">Download <%= row.source==='owner'?'supporting evidence':'photo' %></a><% } %>
       </dd>
       <% if(row.receipt?.id){ %><dt>EasyPost claim</dt><dd><%= row.receipt.id %></dd><% } %>
+      <% if(row.filed_reference){ %><dt>Carrier claim number</dt><dd><%= row.filed_reference %></dd><% } %>
+      <% if(row.outcome==='PAID'){ %><dt>Paid</dt><dd><%= helpers.money(Number(row.paid_minor),cur) %></dd><% } %>
+      <% if(row.outcome_note){ %><dt>Carrier’s note</dt><dd><%= row.outcome_note %></dd><% } %>
     </dl>
-    <% if(row.receipt?.detail){ %><p><%= row.receipt.detail %></p><% } %>
+    <% if(row.receipt?.detail&&!row.outcome_note){ %><p><%= row.receipt.detail %></p><% } %>
     <% if(problem){ %><p class="notice"><%= problem %></p><% } %>
-    <% if(allowed&&!blocked&&(status==='DRAFT'||selected.canReapprove)){ %>
+    <% if(portal&&!row.filed_at&&allowed&&!blocked){ %>
+      <h3>File it with <%= claim.carrierName %></h3>
+      <ol>
+        <li>Download the invoice and the tracking record above<%= row.has_supporting?', and the photo':'' %>.</li>
+        <li><% if(claim.claimPage){ %>Open <a href="<%= claim.claimPage %>" target="_blank" rel="noopener noreferrer"><%= claim.carrierName %>’s claim page</a><% }else{ %>Contact <%= claim.carrierName %>’s claims team<% } %> and file a <%= claim.type==='loss'?'lost':'damaged' %> parcel claim for tracking number <%= claim.trackingNumber %>, for <%= helpers.money(claim.amountMinor,cur) %>.</li>
+        <li>Enter the claim number they give you below.</li>
+      </ol>
+      <form method="post" action="/autopilot/carrier-claims/<%= selected.id %>/filed" class="form-stack">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label>Carrier claim number<input name="reference" maxlength="120" required></label>
+        <label><input type="checkbox" name="confirmed" value="yes" required> I filed this claim with <%= claim.carrierName %>.</label>
+        <button class="btn btn--primary">Save the claim number</button>
+      </form>
+    <% }else if(portal&&row.filed_at&&!row.outcome&&allowed){ %>
+      <h3>The carrier’s answer</h3>
+      <form method="post" action="/autopilot/carrier-claims/<%= selected.id %>/outcome" class="form-stack">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label>What happened<select name="outcome" required><option value="paid">The carrier paid</option><option value="denied">The carrier denied it</option></select></label>
+        <label>Amount paid (<%= cur %>)<input name="amount" inputmode="decimal"></label>
+        <label>Note <span class="t-muted">(optional)</span><input name="note" maxlength="500"></label>
+        <button class="btn">Save the answer</button>
+      </form>
+    <% } %>
+    <% if(!portal&&allowed&&!blocked&&(status==='DRAFT'||selected.canReapprove)){ %>
       <form method="post" action="/autopilot/carrier-claims/<%= selected.id %>/file" class="form-stack">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <label><input type="checkbox" name="confirmed" value="yes" required> File this exact claim and send the evidence to EasyPost.</label>
         <button class="btn btn--primary"><%= selected.canReapprove?'Approve filing again':'File claim' %></button>
       </form>
     <% } %>
-    <% if(['AMBIGUOUS','SUCCEEDED'].includes(status)){ %>
+    <% if(!portal&&!row.outcome&&['AMBIGUOUS','SUCCEEDED'].includes(status)){ %>
       <form method="post" action="/autopilot/carrier-claims/<%= selected.id %>/check">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <button class="btn">Check carrier status</button>
@@ -61,6 +87,22 @@
     </div></section>
   <% } %>
 <% }else if(allowed&&!blocked){ %>
+  <section class="card" id="claim-details"><div class="card-body">
+    <h2>Claim details</h2>
+    <p>StockChief prepares a claim when the carrier reports a parcel lost, or when your staff report a lost or damaged parcel from its shipment page. Claims use these details.</p>
+    <form method="post" action="/autopilot/carrier-claims/settings" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label>Business receiving claim payments<input name="claimant" maxlength="150" value="<%= details?.claimant||'' %>" required></label>
+      <label>Email for claim updates<input type="email" name="contactEmail" maxlength="240" value="<%= details?.contact_email||'' %>" required></label>
+      <% if(custom){ %>
+        <label>File on its own up to (USD) <span class="t-muted">(optional)</span><input name="autoLimit" inputmode="decimal" value="<%= details?.auto_limit_minor?helpers.money(Number(details.auto_limit_minor),'USD'):'' %>"></label>
+        <p class="t-xs t-muted">Claims through your EasyPost account at or under this amount are filed without asking you. Leave it empty to approve each one.</p>
+      <% }else{ %>
+        <p class="t-xs t-muted">On Pro, file one claim yourself; once the carrier confirms it you can save a rule so similar claims are filed on their own.</p>
+      <% } %>
+      <button class="btn">Save claim details</button>
+    </form>
+  </div></section>
   <section class="card"><div class="card-body">
     <h2>Prepare a claim</h2>
     <form method="get" action="/autopilot/carrier-claims">
@@ -94,6 +136,6 @@
 <section class="card"><div class="card-body">
   <h2>Recent claims</h2>
   <% if(rows.length){ %><ul>
-    <% for(const row of rows){ %><li><a href="/autopilot/carrier-claims/<%= row.id %>"><%= row.number %> · <%= row.tracking %> · <%= statusLabels[row.receipt||row.status||'DRAFT'] %></a></li><% } %>
+    <% for(const row of rows){ %><li><a href="/autopilot/carrier-claims/<%= row.id %>"><%= row.number %> · <%= row.tracking %> · <%= row.label %></a></li><% } %>
   </ul><% }else{ %><p>No claims yet.</p><% } %>
 </div></section>

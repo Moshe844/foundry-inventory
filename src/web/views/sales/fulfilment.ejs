@@ -194,8 +194,8 @@
             <span class="choice-body">
               <strong>StockChief sends it for me</strong>
               <span class="t-xs t-muted">
-                Sent as soon as the physical carrier handoff is confirmed. Needs a connected mailbox, and
-                nothing goes out while StockChief is paused.
+                Sent as soon as the parcel leaves: when you record the carrier handoff or the carrier
+                first scans it. Needs a connected mailbox, and nothing goes out while StockChief is paused.
               </span>
             </span><% } %>
           </label>
@@ -209,12 +209,26 @@
           </label>
         </div>
 
+        <% if ((locals.noticeChannels || []).length) { %>
+          <div class="field-row" id="channel-notices">
+            <% noticeChannels.forEach(function (channel) { %>
+              <label class="field">
+                <span class="field-label">Orders from <%= channel.name %></span>
+                <select class="select" name="channelSender[<%= channel.id %>]">
+                  <option value="channel" <%= channel.sender === 'channel' ? 'selected' : '' %>><%= channel.name %> emails them</option>
+                  <option value="stockchief" <%= channel.sender === 'stockchief' ? 'selected' : '' %>>StockChief emails them</option>
+                </select>
+                <span class="field-hint">Stores and marketplaces send their own shipping email. Choose StockChief only if <%= channel.name %> does not.</span>
+              </label>
+            <% }) %>
+          </div>
+        <% } %>
+
         <div class="field-row" style="margin-top:16px;">
           <% [
             ['outForDeliveryNotice','Out for delivery',noticePolicy.outForDeliveryNotice],
-            ['deliveredNotice','Delivered',noticePolicy.deliveredNotice],
-            ['exceptionNotice','Carrier exception / return',noticePolicy.exceptionNotice]
-          ].forEach(function (setting) { %>
+            ['deliveredNotice','Delivered',noticePolicy.deliveredNotice]
+          ].concat(locals.delayNotices ? [] : [['exceptionNotice','Carrier exception / return',noticePolicy.exceptionNotice]]).forEach(function (setting) { %>
             <label class="field">
               <span class="field-label"><%= setting[1] %></span>
               <select class="select" name="<%= setting[0] %>">
@@ -224,6 +238,23 @@
               </select>
             </label>
           <% }) %>
+          <% if (locals.delayNotices && delayNotices.available) { %>
+            <label class="field" id="delay-email-setting">
+              <span class="field-label">Late parcel email</span>
+              <select class="select" name="exceptionNotice">
+                <option value="prepare" <%= noticePolicy.exceptionNotice === 'prepare' ? 'selected' : '' %>>Write it for me to send</option>
+                <option value="send" <%= noticePolicy.exceptionNotice === 'send' ? 'selected' : '' %>>Send it automatically</option>
+                <option value="off" <%= noticePolicy.exceptionNotice === 'off' ? 'selected' : '' %>>Off</option>
+              </select>
+              <span class="field-hint">When StockChief sees a parcel running late, it tells the customer the facts and promises no new date.</span>
+            </label>
+          <% } else if (locals.delayNotices) { %>
+            <input type="hidden" name="exceptionNotice" value="<%= noticePolicy.exceptionNotice %>">
+            <div class="field" id="delay-email-setting">
+              <span class="field-label">Late parcel email · Growth</span>
+              <span class="field-hint">Watching parcels and telling customers about delays needs Growth. <a href="/billing">Upgrade</a></span>
+            </div>
+          <% } %>
         </div>
 
         <div class="field-row">

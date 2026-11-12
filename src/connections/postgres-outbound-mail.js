@@ -207,6 +207,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       if(input.standingAuthority?.kind==='supplier_direct_purchase')await require('../purchasing/direct-shipment-mail').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='return_label')await require('../shipping/agent-return-instructions').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='shipment_notice')await require('../shipping/agent-shipping-notices').authority(client,workspaceId,input.standingAuthority);
+      if(input.standingAuthority?.kind==='parcel_delay_notice')await require('../shipping/agent-parcel-watch').noticeAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='quote_followup')await require('../sales/agent-quote-followups').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='quote_share')await require('../sales/quotation-mail').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='supplier_forecast')await require('../purchasing/agent-supplier-forecasts').authority(client,workspaceId,input.standingAuthority);
@@ -249,6 +250,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
         if(input.standingAuthority?.kind==='invoice_dispute')await require('../purchasing/agent-invoice-disputes').authority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='return_label')await require('../shipping/agent-return-instructions').authority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='shipment_notice')await require('../shipping/agent-shipping-notices').authority(database,workspaceId,input.standingAuthority);
+        if(input.standingAuthority?.kind==='parcel_delay_notice')await require('../shipping/agent-parcel-watch').noticeAuthority(database,workspaceId,input.standingAuthority);
         if(kind==='supplier'&&loaded.message.purchase_order_id)await require('../purchasing/dual-approval').guardOrderMessage(database,workspaceId,loaded.message.purchase_order_id);
         if(input.standingAuthority?.kind==='return_label')await database.query("UPDATE stockchief_runtime.provider_effects SET result=result-'providerNotCalled' WHERE workspace_id=$1 AND id=$2 AND claim_token=$3",[workspaceId,effectId,effect.claimToken]);
         const invoiceDispute=input.standingAuthority?.kind==='invoice_dispute';
@@ -285,7 +287,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       "UPDATE stockchief_runtime.provider_effects SET result=jsonb_build_object('providerNotCalled',true) WHERE workspace_id=$1 AND id=$2 AND status='RUNNING' AND claim_token=$3",
       [workspaceId,effectId,effect.claimToken]);
     await providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous,apply:async(client)=>{
-      const review=(!providerCalled&&input.standingAuthority?.kind==='shipment_notice'&&error.code==='shipment_needs_approval');
+      const review=(!providerCalled&&(input.standingAuthority?.kind==='shipment_notice'&&error.code==='shipment_needs_approval'||input.standingAuthority?.kind==='parcel_delay_notice'&&error.code==='delay_needs_approval'));
       const at=nowIso();await client.query(`UPDATE ${table} SET status=$5,error_message=$3,updated_at=$4
         WHERE workspace_id=$1 AND id=$2 AND status IN ('QUEUED','SENDING')`,[workspaceId,input.communicationId,
         String(ambiguous?'The mailbox provider outcome is uncertain. StockChief did not send this message again.':error.message).slice(0,500),at,review?'PREPARED':'FAILED']);

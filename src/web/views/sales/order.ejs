@@ -77,6 +77,31 @@
   <% } %>
   </section>
 <% } %>
+<% if((locals.parcelWatch||[]).length){ %>
+  <section class="card card-body" id="parcel-watch" aria-label="Parcel problems">
+    <h2>Parcel problems</h2>
+    <% parcelWatch.forEach(function(p){ %>
+      <div class="notice<%= p.handled ? '' : ' notice--warn' %>"><div>
+        <strong><%= p.title %></strong><br><%= p.detail %><br>
+        <span class="t-xs t-muted"><a href="/fulfilment/<%= p.shipmentId %>"><%= p.shipmentNumber %></a><% if(p.trackingNumber){ %> · <%= p.trackingNumber %><% } %> · flagged by StockChief <%= helpers.dateTime(p.flaggedAt) %></span>
+        <% if(['lost','damaged'].includes(p.problem)){ %><br><a href="/fulfilment/<%= p.shipmentId %>#claim-report">Carrier claim</a><% } %>
+      </div></div>
+      <% if(p.handled){ %><p class="t-muted">Marked handled.</p><% }else{ %>
+        <p><%= p.next %></p>
+        <% if(p.delayEmail && p.delayEmail.status === 'PREPARED'){ %><p><a href="/fulfilment/<%= p.shipmentId %>#delay-notice">Read the delay email</a></p><% } %>
+        <% if(p.delayEmail && p.delayEmail.status === 'SENT'){ %><p class="t-muted">The customer was told it is late.</p><% } %>
+        <% if(locals.canHandleParcels){ %>
+          <form method="post" action="/orders/<%= order.id %>/parcel-watch/handled" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="shipmentId" value="<%= p.shipmentId %>">
+            <input type="hidden" name="problem" value="<%= p.problem %>">
+            <button class="btn" type="submit">Mark as handled</button>
+          </form>
+        <% } %>
+      <% } %>
+    <% }) %>
+  </section>
+<% } %>
 <% if(locals.orderScreening){ const screening=locals.orderScreening,checked=screening.result; %>
   <section class="card card-body" id="order-checks" aria-label="Order checks">
     <h2>Order checks</h2>
@@ -678,9 +703,11 @@
               <td>
                 <%
                   var told = (locals.customerNotices || [])
-                    .filter(function (note) { return note.shipmentId === box.id; })[0];
+                    .filter(function (note) { return note.shipmentId === box.id && note.messageKind !== 'shipping_delay'; })[0];
                 %>
-                <% if (!told) { %>
+                <% if (!told && locals.noticeChannel && noticeChannel.sender !== 'stockchief' && box.handover === 'CARRIER') { %>
+                  <span class="t-muted"><%= noticeChannel.name %> tells them</span>
+                <% } else if (!told) { %>
                   <span class="t-muted">—</span>
                 <% } else if (told.status === 'SENT') { %>
                   <span class="t-ok">Sent <%= helpers.shortDate(told.sentAt) %></span>
