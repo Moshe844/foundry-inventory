@@ -64,6 +64,7 @@
 <% if(result.invoiceDisputeForm){ %><%- include('supplier-invoice-disputes',{result,csrfToken}) %><% } %>
 <% if(result.returnLabelForm){ %><%- include('return-labels',{result,csrfToken}) %><% } %>
 <% if(result.customerStatementForm){ %><%- include('customer-statements',{result,csrfToken}) %><% } %>
+<% if(result.expiryPath){ %><p><a class="btn" href="<%= result.expiryPath %>">Set warning days and see where to sell first</a></p><% } %>
 <% if(result.compliancePath){ %><p><a class="btn" href="<%= result.compliancePath %>">Prepare a full compliance report</a></p><% } %>
 <% if(result.slowStockPath){ %><p><a class="btn" href="<%= result.slowStockPath %>">Review next steps for slow stock</a></p><% } %>
 <% if(result.clearancePlanPath){ %><p><a class="btn" href="<%= result.clearancePlanPath %>">Open clearance plans</a></p><% } %>

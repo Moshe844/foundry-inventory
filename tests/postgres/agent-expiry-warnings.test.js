@@ -72,6 +72,7 @@ test('expiry warnings follow the owner windows, suggest where to sell first and 
   assert.match(page.text,/M-EARLY/);assert.match(page.text,new RegExp('Ship 4 to '+soon.orderNumber));assert.match(page.text,/Move up to 2 to Shop/);
   assert.match(page.text,/Discount them with a clearance plan/);assert.match(page.text,/Emails wait: StockChief is watching/);
   assert.match(page.text,/href="\/autopilot\/reviews\/clearance-plan\?filter=MILK"/,'Starter clearance is a suggestion.');
+  assert.match((await browser.get('/autopilot/reviews/expiring-lots?filter=MILK').expect(200)).text,/href="\/autopilot\/expiring-stock"/);
   const listed=await reviews.run(db,ctx,'expiring-lots',{filter:'MILK'});
   assert.deepEqual(listed.rows.map(r=>[r.Lot,r.Priority]),[['M-OLD','Expired'],['M-EARLY',soon.orderNumber]]);
 
