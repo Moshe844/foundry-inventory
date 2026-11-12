@@ -721,6 +721,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'supplier.record-ship-promise.v1':external((job,database)=>require('../purchasing/agent-supplier-ship-promises').work(database,job.workspaceId,job.payload.sourceId)),
   'purchase-order.delivery-date.v1':external((job,database)=>require('../purchasing/agent-po-delivery-dates').onArrival(database,job.workspaceId,job.payload.sourceId)),
   'purchasing.container-plan.v1':external((job,database)=>require('../purchasing/agent-container-plans').onProject(database,job.workspaceId,job.payload.projectId)),
+  'purchasing.container-order.v1':external((job,database)=>require('../purchasing/agent-container-orders').onRule(database,job.workspaceId,job.payload.ruleId)),
   'purchasing.promotion-stock-plan.v1':external((job,database)=>require('../purchasing/agent-promotion-stock').onProject(database,job.workspaceId,job.payload.promotionId)),
   'purchasing.shutdown-plan.v1':external((job,database)=>require('../purchasing/agent-supplier-shutdowns').onProject(database,job.workspaceId,job.payload.shutdownId)),
   'catalog.retire-products.v1':external((job,database)=>require('../catalog/agent-product-retirements').onNotice(database,job.workspaceId,job.payload.noticeId)),
