@@ -92,6 +92,17 @@ async function runtimeFailures(database,workspaceId){
   return {attempts:rows.reduce((sum,row)=>sum+number(row.attempts),0),causes:rows};
 }
 
+// Needs you is counted on every page. A source whose table or column comes from
+// a migration this database has not run yet (an upgrade in progress, or an
+// upgrade test) contributes nothing instead of failing every page. Any other
+// error still fails loudly.
+function schemaTolerant(source){
+  return Promise.resolve(source).catch(error=>{
+    if(error?.code!=='42P01'&&error?.code!=='42703')throw error;
+    console.error('[needs] skipped a source that needs a newer database:',error.message);
+    return [];
+  });
+}
 function needs(database,workspaceId,actorId=null){
   return require('../lib/request-read-cache').read(JSON.stringify(['needs',workspaceId,actorId]),async()=>{
     const actor=await membership(database,workspaceId,actorId);
@@ -133,7 +144,7 @@ function needs(database,workspaceId,actorId=null){
       actor?.role==='owner'?require('../operations/agent-expiry-warnings').inbox(database,workspaceId):[],
       actor?.role==='owner'?require('../operations/agent-lot-blocks').inbox(database,workspaceId):[],
       actor?.role==='owner'?require('../reports/agent-compliance-reports').inbox(database,workspaceId):[],
-    ]);
+    ].map(schemaTolerant));
     const delegated=new Set(deputyTasks.map(r=>r.href));
     const supplierMail=new Set(supplierUpdates.filter(r=>!r.grouped).map(r=>r.href.replace(/\/supplier-details$/,'')));
     return items.concat(notices,purchaseReviews,countTasks).filter(r=>!delegated.has(r.href)&&!supplierMail.has(r.href)).concat(deputyTasks,supplierUpdates,supplierBenefits,supplierDates,staleIncoming,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources,directShipments,lotCertificates,shippingDocuments,documentDiscoveries,supplierCostUpdates,clearancePlans,slowStockSteps,expiryWarnings,lotBlocks,complianceReports).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));

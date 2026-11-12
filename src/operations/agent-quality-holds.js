@@ -327,6 +327,8 @@ async function page(db,ctx,input={}){
 }
 const definition={id:51,key:'delivery-quality',label:'Hold new deliveries until they pass QC',readPage:async()=>({summary:'Choose suppliers or products whose new deliveries wait on a QC hold. Held goods cannot be sold, reserved, picked or offered on sales channels until a person passes the inspection. Growth suggests holds until you save a rule or teach it with a completed example; Pro and Custom hold under your rules. Failed goods stay held for a supplier return or your write-off.',rows:[{Action:'Open delivery QC',link:'/autopilot/delivery-quality'}],more:false})};
 async function inbox(db,workspaceId,actorId){
+ // Needs you counts on every page; skip this on a database migrated before the QC write-off columns.
+ if(!await require('../db/schema-installed').has(db,'stockchief_runtime.agent_quality_holds','written_off_quantity'))return [];
  await actor(db,{workspaceId,actorId},{owner:true,lock:false});
  const rows=(await db.query(`SELECT h.id,trim_scale(h.quantity-h.returned_quantity-h.written_off_quantity)::text quantity,h.status,h.proposal_reason,h.created_at,s.code,l.name FROM stockchief_runtime.agent_quality_holds h
   JOIN skus s ON s.workspace_id=h.workspace_id AND s.id=h.sku_id JOIN locations l ON l.workspace_id=h.workspace_id AND l.id=h.location_id

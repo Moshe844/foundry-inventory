@@ -313,6 +313,8 @@ async function reconcile(db,ctx,p,{state=null}={}){
 // order took stock. The protected customer's own order uses its reservation
 // first; a one-time reservation (expected or repeating order) then ends.
 async function handOver(c,ctx,order,allocations){
+  // Nothing is protected on a database migrated before stock protections.
+  if(!await require('../db/schema-installed').has(c,'stockchief_runtime.agent_stock_reservations'))return;
   const wanted=new Map();
   for(const a of allocations||[]){
     const quantity=Number(a.quantity);
