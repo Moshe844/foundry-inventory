@@ -1,0 +1,59 @@
+<% const m=model,r=m.rule,f=m.found;
+const goods=lines=>lines.map(l=>(l.closed||l.remaining)+' × '+l.code).join(', '); %>
+<div class="page-head"><div class="titles"><h1>Goods that will not arrive</h1>
+<p>StockChief looks for goods on placed purchase orders that are long past their promised date with no word from the supplier. Closing them stops them counting as incoming, so reorders and what you can promise stay real. Closing does not tell the supplier. StockChief drafts a note for you to send.</p></div></div>
+<% if(m.shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It shows what it would close and changes nothing.</p>
+<% }else if(m.blocked){ %><p class="notice notice--warn"><%= m.blocked %></p><% } %>
+<% if(!m.canClose){ %><p class="notice notice--info">Your plan lists these goods. Closing them, by you or on its own, needs Growth or above. <a href="/settings/billing">See plans</a></p><% } %>
+
+<% if(m.canClose&&m.drafts.length){ %><section class="card section" id="approvals"><h2>Waiting for your approval</h2>
+<% for(const d of m.drafts){ const plan=d.plan; %><article class="section" id="close-<%= d.id %>">
+<h3>Close <%= goods(plan.lines) %> on <%= d.po_number %></h3>
+<p class="cell-sub"><%= plan.supplier %> · due <%= plan.due %> · <%= plan.lateDays %> days late<%= plan.valueMinor!=null?' · '+m.money(plan.valueMinor,plan.currency):'' %></p>
+<% if(d.reason){ %><p class="cell-sub"><%= d.reason %></p><% } %>
+<div class="btn-row"><form method="post" action="<%= m.href %>/orders/<%= d.purchase_order_id %>/close"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<input type="hidden" name="closeId" value="<%= d.id %>"><input type="hidden" name="fingerprint" value="<%= d.fingerprint %>"><input type="hidden" name="confirmed" value="yes">
+<button class="btn btn--primary" <%= m.blocked?'disabled':'' %>>Close these goods</button></form>
+<form method="post" action="<%= m.href %>/closes/<%= d.id %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<button class="btn btn--ghost">Keep them as incoming</button></form></div></article><% } %></section><% } %>
+
+<section class="card section"><h2>Late goods</h2>
+<p class="cell-sub">Goods close <%= m.grace %> days after their promised date, or after the order date when there is no promise, if the supplier has sent nothing in that time.<%= r&&r.enabled?'':' StockChief uses '+m.defaultGrace+' days until you save your own rule.' %></p>
+<% if(!f.orders.length){ %><p>Every placed order is on time. Nothing is late.</p>
+<% }else{ %><div class="table-wrap"><table class="table table--stack"><thead><tr><th>Order</th><th>Still due</th><th>Late</th><th>What happens</th></tr></thead><tbody>
+<% for(const o of f.orders){ %><tr><td class="cell-main"><a class="cell-title" href="/purchasing/orders/<%= o.orderId %>"><%= o.number %></a><span class="cell-sub"><%= o.supplier %></span></td>
+<td data-label="Still due"><%= goods(o.lines) %><% if(o.valueMinor!=null&&o.closable.length){ %><span class="cell-sub"><%= m.money(o.valueMinor,o.currency) %></span><% } %></td>
+<td data-label="Late"><%= o.lateDays %> days<span class="cell-sub">Due <%= o.due %><%= o.promised?'':' (order date)' %></span></td>
+<td data-label="What happens"><% if(o.kept){ %><span class="badge badge--muted">Kept</span> <%= o.kept %>
+<% }else if(!o.closable.length){ %><span class="badge badge--muted">Kept</span> <%= o.lines.map(l=>l.kept).filter(Boolean)[0] %>
+<% }else if(o.ownerKept){ %><span class="badge badge--muted">Kept</span> <%= o.ownerKept %>
+<% }else if(o.ready){ %><span class="badge badge--warn">Not expected</span> No word from the supplier in <%= m.grace %> days.
+<% }else{ %><span class="badge">Waiting</span> Closes after <%= o.closesOn %> if nothing changes.<% } %>
+<% if(o.closable.length&&o.closable.length<o.lines.length){ %><span class="cell-sub">Kept: <%= o.lines.filter(l=>l.kept).map(l=>l.code+' ('+l.kept+')').join('; ') %></span><% } %>
+<% if(m.canClose&&o.closable.length&&!m.shadow){ %><form method="post" action="<%= m.href %>/orders/<%= o.orderId %>/close" class="btn-row"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<input type="hidden" name="fingerprint" value="<%= o.fingerprint %>"><input type="hidden" name="confirmed" value="yes">
+<button class="btn btn--ghost btn--sm" <%= m.blocked?'disabled':'' %>>Close now</button></form><% } %></td></tr><% } %>
+</tbody></table></div><% if(f.more){ %><p class="cell-sub">Showing the 200 latest orders first.</p><% } %><% } %></section>
+
+<% if(m.canClose){ %><section class="card section"><h2>Your rule</h2>
+<% if(r&&r.enabled){ %><p>Close goods <strong><%= r.grace_days %> days</strong> after their promised date when the supplier has sent nothing. Up to <%= m.money(r.max_value_minor,r.currency) %> of goods on one order.</p>
+<% if(r.automatic){ %><p><span class="badge badge--ok">On its own</span> StockChief closes late goods within this limit.<% if(m.automatic){ %> <%= m.automatic %><% } %></p>
+<% }else{ %><p><span class="badge">Asks you</span> StockChief lists each late order for your approval.</p><% } %>
+<% }else{ %><p>No rule yet. StockChief lists late goods and closes nothing on its own.</p><% } %>
+<form method="post" action="<%= m.href %>/rules" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r?.revision||0 %>">
+<label class="rm-field"><span>Days after the promised date</span><input type="number" name="graceDays" min="1" max="365" step="1" required value="<%= r?.grace_days||m.defaultGrace %>"></label>
+<label class="rm-field"><span>Most value to close on one order</span><input type="text" inputmode="decimal" name="maxValue" required value="<%= r?m.amount(r.max_value_minor,r.currency):'' %>"></label>
+<label class="rm-field"><span>Currency</span><input type="text" name="currency" maxlength="3" required value="<%= m.currency %>"></label>
+<label class="checkbox"><input type="checkbox" name="automatic" value="yes" <%= r?.automatic?'checked':'' %>><span class="checkbox-text">Close late goods on its own within this limit</span></label>
+<label class="checkbox"><input type="checkbox" name="confirmed" value="yes" required><span class="checkbox-text">Stop counting goods as incoming once they are this late and the supplier has sent nothing. Orders with a shipment, goods being received or a customer preorder are kept.</span></label>
+<button class="btn btn--primary">Save rule</button></form>
+<% if(r&&r.enabled){ %><form method="post" action="<%= m.href %>/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r.revision %>">
+<button class="btn btn--ghost" name="stop" value="yes">Turn off rule</button></form><% } %>
+<p class="cell-sub"><a href="/autopilot/job-modes">Choose Watch only or Ask me first for this job</a></p></section><% } %>
+
+<% if(m.recent.length){ %><section class="card section"><h2>Recent closes</h2><ul class="rm-list">
+<% for(const c of m.recent){ const plan=c.plan; %><li class="list-row" id="close-<%= c.id %>"><span><strong><%= c.authorization_kind==='AUTOMATIC'?'StockChief':'You' %> closed <%= goods(plan.lines) %> on <%= c.po_number %></strong>
+<small><%= helpers.dateTime(c.closed_at) %><%= c.closed_status!==c.previous_status?' · order '+(c.closed_status==='CANCELLED'?'cancelled':'complete'):'' %></small>
+<% if(c.notice_id&&c.status==='CLOSED'){ %><small><a href="/messages/supplier/<%= c.notice_id %>">Draft note to the supplier</a></small><% } %></span>
+<% if(c.status==='REOPENED'){ %><span class="badge badge--muted">Reopened</span><% }else{ %><form method="post" action="<%= m.href %>/closes/<%= c.id %>/reopen"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+<button class="btn btn--ghost btn--sm">Reopen</button></form><% } %></li><% } %></ul></section><% } %>

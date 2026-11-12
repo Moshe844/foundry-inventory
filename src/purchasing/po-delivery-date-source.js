@@ -2,7 +2,7 @@
 const {hash}=require('../pricing/postgres-promotions'),policy=require('../commercial/agent-plan'),{ValidationError,NotFoundError}=require('../domain/errors');
 const owner=require('./supplier-email-terms-source').owner;
 const instant=value=>new Date(value).getTime();
-const orderSnapshotSql="md5((to_jsonb(po)-'updated_at'-'expected_date')::text||coalesce((SELECT string_agg((to_jsonb(captured_line)-ARRAY['supplier_supply_hold_id','supplier_supply_hold_at','supplier_amendment_parent_line_id']::text[])::text,'|' ORDER BY captured_line.id) FROM purchase_order_lines captured_line WHERE captured_line.workspace_id=po.workspace_id AND captured_line.purchase_order_id=po.id),''))";
+const orderSnapshotSql="md5((to_jsonb(po)-'updated_at'-'expected_date')::text||coalesce((SELECT string_agg((to_jsonb(captured_line)-ARRAY['supplier_supply_hold_id','supplier_supply_hold_at','supplier_amendment_parent_line_id','incoming_close_id']::text[])::text,'|' ORDER BY captured_line.id) FROM purchase_order_lines captured_line WHERE captured_line.workspace_id=po.workspace_id AND captured_line.purchase_order_id=po.id),''))";
 async function currentSnapshot(db,workspaceId,orderId){
  return (await db.query(`SELECT po.expected_date,po.status,${orderSnapshotSql} AS snapshot
    FROM purchase_orders po WHERE po.workspace_id=$1 AND po.id=$2`,[workspaceId,orderId])).rows[0];
@@ -28,7 +28,9 @@ async function facts(db,ctx,id){
  if(!r)throw new NotFoundError('That supplier response is not in this inventory.');
  const commercial=r.kind==='amendment';
  const valid=commercial
-  ?r.amendment?.changes?.length&&r.fingerprint===require('./po-amendment-link').tokenFingerprint(r.proposed_date,r.amendment.changes,r.amendment.revision,r.amendment.mail)
+  ?(r.amendment?.document
+    ?Array.isArray(r.amendment.changes)&&(r.amendment.changes.length||r.proposed_date)&&r.fingerprint===require('./po-amendment-document').fingerprint(r.proposed_date,r.amendment.changes,r.amendment.revision,r.amendment.document)
+    :r.amendment?.changes?.length&&r.fingerprint===require('./po-amendment-link').tokenFingerprint(r.proposed_date,r.amendment.changes,r.amendment.revision,r.amendment.mail))
   :['date','confirm'].includes(r.kind)&&r.proposed_date&&r.fingerprint===require('./supplier-order-link').responseFingerprint(r.kind,r.proposed_date,r.ship_date,r.availability_generation);
  if(!valid)throw new ValidationError('Review the original supplier response. Its exact submitted terms could not be verified.');
  const instructionHash=hash({token:r.token_hash,fingerprint:r.fingerprint,kind:r.kind,date:r.proposed_date,receivedAt:r.received_text});
@@ -36,7 +38,7 @@ async function facts(db,ctx,id){
   if(r.instruction_hash!==instructionHash)throw new ValidationError('The original supplier response changed after it was processed.');
   return {...r.source_snapshot,instructionHash};
  }
- if(r.supplier_status!=='active'||!r.supplier_email||r.supplier_email.toLowerCase()!==r.recipient.toLowerCase()||instant(r.expires_at)<=Date.now())throw new ValidationError('The original supplier link expired or its known supplier contact changed. Review the supplier directly before updating this order.');
+ if(r.supplier_status!=='active'||!r.supplier_email||r.supplier_email.toLowerCase()!==r.recipient.toLowerCase()||!r.amendment?.document&&instant(r.expires_at)<=Date.now())throw new ValidationError('The original supplier link expired or its known supplier contact changed. Review the supplier directly before updating this order.');
  const rows=(await db.query(`SELECT l.id,l.sku_id AS "skuId",s.code,i.unit_label AS unit,i.quantity_precision::int AS precision,l.purchase_unit AS "purchaseUnit",l.units_per_purchase_unit::text AS "unitsPerPurchaseUnit",l.quantity_units::text AS quantity,l.unit_cost::text AS cost,l.quantity_received_units::text AS received
   FROM purchase_order_lines l JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
   WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 ORDER BY l.sku_id,l.id LIMIT 251`,[ctx.workspaceId,r.order_id])).rows;
@@ -50,14 +52,23 @@ async function facts(db,ctx,id){
     throw new ValidationError('The original supplier message or approved mailbox changed. Review the original email before changing this purchase.');
    p.mailSource=original.mail;
   }
+  if(r.amendment.document){
+   const original=await require('./po-amendment-document').original(db,ctx.workspaceId,r.amendment.document.id);
+   if(original.row.order_id!==p.orderId||hash(original.document)!==hash(r.amendment.document))
+    throw new ValidationError('The supplier document or its original message changed. Review the original before changing this purchase.');
+   p.mailSource=original.mailSource;
+  }
   const revision=hash({expected_date:r.current_date,status:r.status,snapshot:r.order_snapshot_hash});
   if(revision!==r.amendment.revision)throw new ValidationError('The purchase order changed after this supplier response. Ask the supplier to submit its revised remaining quantities and prices against the current order.');
+  // A supplier document can change only the date. That stays a date review.
+  if(r.amendment.changes.length){
   const changes=await require('./po-amendment-lines').prepare(db,ctx.workspaceId,{id:p.orderId,currency:p.currency},r.amendment.changes);
   p.amendmentInput=r.amendment.changes;
   p.amendments=changes.map(({line,amendment})=>({lineId:line.id,number:line.line_number,code:line.code,name:line.name,
     unit:line.unit_label,weightUnit:line.secondary_unit_label,locationId:line.receiving_location,
     skuId:line.sku_id,pack:line.purchase_unit,packSize:line.units_per_purchase_unit,
     ...(line.supplier_supply_hold_id?{supplyHold:line.supplier_supply_hold_id,supplyHoldAt:line.supplier_supply_hold_at}:{}),...amendment}));
+  }
  }
  p.scope=scope(p);p.sourceFingerprint=hash(p);return p;
 }

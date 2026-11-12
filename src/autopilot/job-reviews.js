@@ -255,7 +255,7 @@ async function run(db,ctx,key,options={}){
   }
   return {label:def.label,summary,rows,more,page,mode,filterable:!def.read,
     ...(paymentRun?{paymentRun}:{}),...(def.id===22&&mode!=='suggest'?{supplierSelection:true}:{}),
-    ...(def.id===124?{transferArrivalLink:true}:{}),...(def.id===64?{backorderLink:true}:{})};
+    ...(def.id===124?{transferArrivalLink:true}:{}),...(def.id===64?{backorderLink:true}:{}),...(def.id===32?{staleIncomingLink:true}:{})};
 }
 
 module.exports={definitions,ownerState,offers,run};

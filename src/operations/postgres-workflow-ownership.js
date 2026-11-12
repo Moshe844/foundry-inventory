@@ -52,7 +52,8 @@ async function purchase(database,workspaceId,id,prior,clock){
  if(!po)return missing();
  const lines=(await database.query(`SELECT id,sku_id,quantity_units,quantity_received_units,
    to_jsonb(l)->>'supplier_amendment_closed_at' AS amendment_closed,
-   to_jsonb(l)->>'supplier_supply_hold_id' AS supply_hold
+   to_jsonb(l)->>'supplier_supply_hold_id' AS supply_hold,
+   to_jsonb(l)->>'incoming_close_id' AS incoming_closed
    FROM purchase_order_lines l WHERE workspace_id=$1 AND purchase_order_id=$2 ORDER BY line_number,id`,[workspaceId,id])).rows;
  let documents=(await database.query(`SELECT d.id,d.status,d.document_type,d.facts,d.discrepancies,d.processed_at,d.message_id,NULL AS reply_kind FROM supplier_documents d WHERE d.workspace_id=$1 AND d.purchase_order_id=$2 AND d.status<>'IGNORED'
  UNION ALL SELECT r.id,CASE WHEN r.kind IN ('amendment','date') OR (r.expected_date IS NOT NULL AND p.expected_date IS NOT NULL AND r.expected_date<>p.expected_date::date)
@@ -79,7 +80,7 @@ async function purchase(database,workspaceId,id,prior,clock){
  if(po.status==='RECEIVED'){
   const receipts=(await database.query(`SELECT l.purchase_order_line_id,sum(l.quantity_units)::numeric AS received FROM purchase_order_receipt_lines l JOIN purchase_order_receipts r ON r.id=l.receipt_id AND r.workspace_id=l.workspace_id WHERE l.workspace_id=$1 AND r.purchase_order_id=$2 GROUP BY l.purchase_order_line_id`,[workspaceId,id])).rows;
   const received=new Map(receipts.map(l=>[l.purchase_order_line_id,Number(l.received)]));
-  if(lines.length&&lines.every(l=>l.amendment_closed&&Number(l.quantity_units)===0&&!received.has(l.id)||
+  if(lines.length&&lines.every(l=>(l.amendment_closed||l.incoming_closed)&&Number(l.quantity_units)===0&&!received.has(l.id)||
     Number(l.quantity_received_units)>=Number(l.quantity_units)&&received.get(l.id)===Number(l.quantity_received_units)))return {...base,phase:'RECEIVED_AND_RECONCILED',complete:true,nextAction:'Physical receipt is recorded and agrees with every order line.',completionProof:{...proof,receiptLines:receipts}};
   return {...base,phase:'RECEIPT_REVIEW',nextAction:'Reconcile the physical receipt records',decision:decision('receipt_evidence_missing','The order is marked received, but its receipt evidence does not reconcile.','StockChief cannot confirm completion.',['Order quantities','Canonical receipt lines'],'Review the receipt history.',['Investigate the recorded receiving event'],'Confirm the correct receiving evidence; never receive it twice.')};
  }

@@ -105,6 +105,7 @@ function needs(database,workspaceId,actorId=null){
       actor?.role==='owner'?require('../purchasing/agent-supplier-email-terms').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../purchasing/agent-supplier-benefits').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../purchasing/agent-po-delivery-dates').inbox(database,workspaceId,actorId):[],
+      actor?.role==='owner'?require('../purchasing/agent-stale-incoming').inbox(database,workspaceId):[],
       actor?.role==='owner'?require('../purchasing/agent-container-plans').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../autopilot/team-procedures').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../catalog/agent-product-retirements').inbox(database,workspaceId,actorId):[],
