@@ -84,6 +84,7 @@
       <div class="notice<%= p.handled ? '' : ' notice--warn' %>"><div>
         <strong><%= p.title %></strong><br><%= p.detail %><br>
         <span class="t-xs t-muted"><a href="/fulfilment/<%= p.shipmentId %>"><%= p.shipmentNumber %></a><% if(p.trackingNumber){ %> · <%= p.trackingNumber %><% } %> · flagged by StockChief <%= helpers.dateTime(p.flaggedAt) %></span>
+        <% if(['lost','damaged'].includes(p.problem)){ %><br><a href="/fulfilment/<%= p.shipmentId %>#claim-report">Carrier claim</a><% } %>
       </div></div>
       <% if(p.handled){ %><p class="t-muted">Marked handled.</p><% }else{ %>
         <p><%= p.next %></p>

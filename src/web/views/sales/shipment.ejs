@@ -901,6 +901,42 @@
   </section>
 <% } %>
 
+<%# Job 63: a lost or damaged parcel becomes a carrier claim. %>
+<% if (locals.claimReport) { var cr = locals.claimReport; %>
+  <section class="section" id="claim-report">
+    <div class="panel">
+      <div class="panel-head"><div><h2>Report a lost or damaged parcel</h2></div></div>
+      <div class="card-body">
+        <% if (!cr.available) { %>
+          <p><strong>Carrier claims · Pro</strong> · Claiming lost or damaged parcels from the carrier needs Pro or Custom. <a href="/billing">Upgrade</a></p>
+        <% } else if (cr.claim) { %>
+          <p>Carrier claim: <strong><%= cr.status %></strong>.<% if (locals.canOpenClaims) { %> <a href="/autopilot/carrier-claims/<%= cr.claim.id %>">Open the claim</a><% } %></p>
+        <% } else if (cr.blocked) { %>
+          <p class="notice"><%= cr.blocked %></p>
+        <% } else if (cr.settingsMissing) { %>
+          <p>Before StockChief can claim, the owner adds who receives claim payments in <a href="/autopilot/carrier-claims#claim-details">Carrier claims</a>.</p>
+        <% } else { %>
+          <form method="post" action="/fulfilment/<%= s.id %>/claim-report" enctype="multipart/form-data" class="form-stack" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <label class="field"><span class="field-label">What happened</span>
+              <select class="select" name="type" required><option value="damage">It arrived damaged</option><option value="loss">It never arrived</option></select></label>
+            <label class="field"><span class="field-label">Who reported it</span>
+              <select class="select" name="reportedBy" required><option value="customer">The customer</option><option value="staff">Our staff</option></select></label>
+            <label class="field"><span class="field-label">What they saw</span>
+              <textarea class="input textarea" name="description" rows="3" maxlength="1600" required></textarea></label>
+            <label class="field"><span class="field-label">Photo of the damage</span>
+              <input class="input" type="file" name="photo" accept=".jpg,.jpeg,.png,.pdf">
+              <span class="field-hint">Needed for damage. JPEG, PNG or PDF, up to 1.5 MB.</span></label>
+            <label><input type="checkbox" name="confirmed" value="yes" required> This is what happened to this parcel.</label>
+            <button class="btn" type="submit">Prepare the claim</button>
+          </form>
+          <p class="t-xs t-muted">StockChief adds the order's value and the carrier's tracking record. Parcels insured through EasyPost are filed through it; for other carriers the owner gets the claim pack and the steps.</p>
+        <% } %>
+      </div>
+    </div>
+  </section>
+<% } %>
+
 <%# Job 62: the delay email StockChief wrote for a late parcel, when the owner turned it on. %>
 <% var delayNote = locals.postgresPlacement ? (notices || []).filter(function (n) { return n.message_kind === 'shipping_delay'; })[0] : null; %>
 <% if (delayNote) { %>

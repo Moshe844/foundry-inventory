@@ -764,7 +764,11 @@ function createPostgresAutopilotRouter(database,options={}){
     const result=await carrierClaims.prepare(database,req.ctx,{...req.body,shipmentId:selected[0],trackingNumber:selected[1]},req.files);
     res.redirect(303,claimPath+'/'+result.id);
   }));
-  for(const [step,method] of [['file','approve'],['rule','saveRule'],['check','verify']]){
+  router.post(claimPath+'/settings',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await carrierClaims.saveSettings(database,req.ctx,req.body);
+    req.flash('success','Claim details saved.');res.redirect(303,claimPath);
+  }));
+  for(const [step,method] of [['file','approve'],['rule','saveRule'],['check','verify'],['filed','recordFiled'],['outcome','recordOutcome']]){
     router.post(claimPath+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
       if(method==='verify')await carrierClaims.verify(database,req.ctx,req.params.id);
       else await carrierClaims[method](database,req.ctx,req.params.id,req.body);

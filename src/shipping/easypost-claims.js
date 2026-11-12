@@ -40,7 +40,12 @@ function receipt(value,claim,mode){
     value.type!==claim.type||requested!==claim.amountMinor||!statuses.has(value.status)){
     throw new ValidationError('The shipping account did not confirm the exact claim. Check its saved reference before taking any further action.');
   }
-  return {id:value.id,reference:claim.reference,status:value.status,amountMinor:requested,
+  // What the carrier agreed to pay, when it has decided.
+  let approvedMinor=null;
+  if(['approved','approved_partial'].includes(value.status)&&value.approved_amount!=null){
+    try{approvedMinor=currency.toMinor(String(value.approved_amount),'USD',{label:'Approved claim amount'});}catch{approvedMinor=null;}
+  }
+  return {id:value.id,reference:claim.reference,status:value.status,amountMinor:requested,approvedMinor,
     detail:typeof value.status_detail==='string'?value.status_detail.slice(0,500):null};
 }
 
@@ -66,4 +71,14 @@ async function retrieve(ctx,claim,request=easypost.call){
   return receipt(await request(ctx,'/claims/'+claim.reference),claim,mode);
 }
 
-module.exports={coverage,submit,retrieve};
+// The active insurance bought with this exact label, found without asking a
+// person for its number. Null when the parcel carries no EasyPost insurance.
+async function findCoverage(ctx,parcel,request=easypost.call){
+  const mode=account(ctx);
+  const listed=await request(ctx,'/insurances?page_size=100');
+  const match=(listed?.insurances||[]).find(row=>row?.shipment_id===parcel.externalId&&row.tracking_code===parcel.trackingNumber
+    &&row.status==='purchased'&&row.mode===mode&&insuranceId.test(row.id||''));
+  return match?coverage(ctx,{...parcel,insuranceId:match.id},request):null;
+}
+
+module.exports={coverage,findCoverage,submit,retrieve};

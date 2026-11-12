@@ -219,6 +219,11 @@ async function run(database,job,options={}){
     result.checked++;
     const found=classify(s,today);if(!found)continue;
     if(await flag(database,workspaceId,s,found,auth))result.flagged++;
+    // Job 63: a parcel the carrier itself reports lost gets its claim prepared.
+    if(found.problem==='lost'&&!auth.watch){
+      try{if(await require('./agent-carrier-claims').fromWatch(database,workspaceId,s,found))result.claimed=(result.claimed||0)+1;}
+      catch{/* A claim that cannot be prepared now is tried again on the next watch; the flag stands. */}
+    }
     // Watch only, observe and the first 14 days flag but write nothing to customers.
     const told=auth.watch?null:await tell(database,workspaceId,s,found,auth,owner);
     if(told?.queued)result.emailed++;else if(told?.prepared)result.written++;
