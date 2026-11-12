@@ -311,7 +311,7 @@ async function inbox(db,workspaceId){
     (SELECT count(*)::int FROM ${ACTIONS} WHERE workspace_id=$1 AND kind='order') orders,
     $2::timestamptz>now()-interval '30 days' recent`,[workspaceId,account.shadowEndsAt]);
   if(row.decided||!row.n&&!row.recent)return [];
-  return [{kind:'approval',importance:'Important',priority:72,title:'StockChief’s 14 days of watching are over',
+  return [{kind:'approval',ownerOnly:true,importance:'Important',priority:72,title:'StockChief’s 14 days of watching are over',
     happened:row.n?'It recorded '+row.n+(row.n===1?' thing':' things')+' it would have done'+(row.orders?', including '+row.orders+(row.orders===1?' order':' orders'):'')+'. Nothing was changed.'
       :'It watched for 14 days and found nothing it would have done on its own. Nothing was changed.',
     why:'Until you choose, StockChief asks you before it acts.',
