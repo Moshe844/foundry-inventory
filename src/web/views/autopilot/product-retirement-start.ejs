@@ -1,14 +1,56 @@
 <h1>Discontinued products</h1>
-<p>Use a supplier notice you have checked to retire products with no remaining stock and show staff their exact recorded replacements. This does not change stock, prices or orders.</p>
+<p>A discontinued product is never reordered. StockChief sells down the stock left, archives the product once none is left and nothing needs it, sets it to zero on your sales channels and shows staff the replacement. Prices change only after you approve them, and it never writes off stock.</p>
 <% if(locked){ %><section class="card"><h2><span class="badge">Pro</span> Product retirement and replacement guidance</h2><p>Pro can learn a supplier scope from your approved example. Custom can use an explicit supplier scope without training.</p><a class="btn" href="/settings/billing">Upgrade</a></section><% }else{ %>
 <% if(shadow){ %><p class="notice">The first 14 days are Watch only. You can preview this work; retirement and automatic authority remain paused.</p><% } %>
+<% if(locals.work){ const w=work; %>
+<% if(w.stop&&!shadow){ %><p class="notice notice--warn"><%= w.stop %></p><% } %>
+<section class="card" id="mark" data-retire-mark><h2>Mark a product discontinued</h2>
+<form method="post" action="/autopilot/discontinued-products/mark" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label class="rm-field"><span>SKU of the discontinued product</span><input name="sku" maxlength="160" required value="<%= markSku %>"></label>
+<label class="rm-field"><span>SKU of its replacement, if there is one</span><input name="replacement" maxlength="160"></label>
+<label class="rm-field"><span>Clearance markdown for stock left, in % (optional)</span><input name="markdown" inputmode="decimal" maxlength="6" value="<%= w.rule&&w.rule.markdown_points?w.rule.markdown_points/100:'' %>"></label>
+<label class="rm-field"><span>Days each clearance step runs</span><input name="stepDays" type="number" min="1" max="365" value="<%= w.rule&&w.rule.step_days||'' %>"></label>
+<label><input type="checkbox" name="confirmed" value="yes" required> Stop reordering it, sell down what is left and show staff the replacement.</label>
+<button class="btn" <%= shadow?'disabled':'' %>>Mark as discontinued</button></form></section>
+<section class="card" data-retire-work><h2>Discontinued products</h2>
+<form method="post" action="/autopilot/discontinued-products/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Check now</button></form>
+<% if(!w.work.length){ %><p>No discontinued products yet.</p><% } %>
+<ul class="rm-list">
+<% for(const r of w.work){ const base='/autopilot/discontinued-products/work/'+encodeURIComponent(r.id); %>
+<li class="list-row" data-retirement="<%= r.id %>" data-retirement-status="<%= r.status %>"><span>
+<strong><a href="/inventory/<%= encodeURIComponent(r.item_id) %>"><%= r.code %></a> · <%= r.name %></strong>
+<small><%= r.sourceLabel %> · <%= r.replacement_code?'Replacement '+r.replacement_code:'No replacement recorded' %></small>
+<small><%= r.text %></small>
+<% if(r.status==='DRAFT'&&!shadow){ %><form method="post" action="<%= base %>/approve" class="form-inline"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="fingerprint" value="<%= r.fingerprint %>"><input type="hidden" name="confirmed" value="yes">
+<label class="field"><span class="field-label">Replacement SKU (optional)</span><input class="input" name="replacement" maxlength="160"></label><button class="rm-btn">Retire it</button></form>
+<form method="post" action="<%= base %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes"><button class="rm-btn rm-btn--ghost">Keep selling it</button></form><% } %>
+<% if(r.stalled){ %><small>It has not sold in 30 days. You decide what happens to the stock left.</small><p class="btn-row"><a class="btn btn--sm" href="/autopilot/clearance-plans">Build a clearance plan</a> <a class="btn btn--sm" href="/delete/product/<%= encodeURIComponent(r.item_id) %>">Write it off and archive</a></p><% } %>
+<% if(['SELLING_DOWN','RETIRED'].includes(r.status)&&!(r.applied&&(r.applied.before||r.applied.archived==='person'))){ %><form method="post" action="<%= base %>/undo"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes"><button class="rm-btn rm-btn--ghost">Bring it back</button></form><% } %>
+</span><span class="badge <%= r.status==='DRAFT'?'badge--warn':r.status==='RETIRED'?'badge--ok':r.status==='SELLING_DOWN'?'badge--info':'badge--muted' %>"><%= r.label %></span></li>
+<% } %></ul>
+<% if(w.workPage>1||w.workMore){ %><nav aria-label="Discontinued product pages"><% if(w.workPage>1){ %><a href="/autopilot/discontinued-products?workPage=<%= w.workPage-1 %>">Previous products</a><% } %> <% if(w.workMore){ %><a href="/autopilot/discontinued-products?workPage=<%= w.workPage+1 %>">More products</a><% } %></nav><% } %>
+</section>
+<section class="card" data-retire-rule><h2>Retire dead stock</h2>
+<p><%= w.alone?'StockChief retires products whose stock has not sold for the days you set, up to your daily limit. You can bring any back.':'StockChief lists products whose stock has not sold for the days you set, for you to retire. Retire one yourself, then save the rule with it to let StockChief retire dead stock on its own.' %></p>
+<% if(w.rule){ %><p><%= w.rule.enabled?'On':'Off' %> · No sale for <%= w.rule.dead_days %> days · Up to <%= w.rule.daily_limit %> a day<%= w.rule.markdown_points?' · Clearance markdown '+(w.rule.markdown_points/100)+'% every '+w.rule.step_days+' days':'' %>.</p><% } %>
+<form method="post" action="/autopilot/discontinued-products/rule" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= w.rule?w.rule.revision:0 %>">
+<label class="rm-field"><span>Days without a sale</span><input name="deadDays" type="number" min="30" max="1095" required value="<%= w.rule?w.rule.dead_days:'' %>"></label>
+<label class="rm-field"><span>Most products a day</span><input name="dailyLimit" type="number" min="1" max="100" required value="<%= w.rule?w.rule.daily_limit:'' %>"></label>
+<label class="rm-field"><span>Clearance markdown in % (optional)</span><input name="markdown" inputmode="decimal" maxlength="6" value="<%= w.rule&&w.rule.markdown_points?w.rule.markdown_points/100:'' %>"></label>
+<label class="rm-field"><span>Days each clearance step runs</span><input name="stepDays" type="number" min="1" max="365" value="<%= w.rule&&w.rule.step_days||'' %>"></label>
+<% if(w.mode==='trained'&&w.examples.length){ %><label class="rm-field"><span>Teach it from a retirement you completed</span><select name="exampleId"><option value="">Do not teach it yet</option><% for(const e of w.examples){ %><option value="<%= e.id %>" <%= w.rule&&w.rule.example_id===e.id?'selected':'' %>><%= e.code %></option><% } %></select></label><% } %>
+<label><input type="checkbox" name="confirmed" value="yes" required> Use this rule for products whose stock stops selling. Stock left is never written off.</label>
+<button class="btn">Save the rule</button></form>
+<% if(w.rule&&w.rule.enabled){ %><form method="post" action="/autopilot/discontinued-products/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= w.rule.revision %>"><button class="btn" name="stop" value="yes">Stop retiring dead stock</button></form><% } %>
+</section>
+<% } %>
 <nav aria-label="Supplier choices"><% if(supplierPage>1){ %><a href="/autopilot/discontinued-products?supplierPage=<%= supplierPage-1 %>&page=<%= page %>&settingsPage=<%= settingsPage %>">Previous supplier choices</a><% } %> <% if(supplierMore){ %><a href="/autopilot/discontinued-products?supplierPage=<%= supplierPage+1 %>&page=<%= page %>&settingsPage=<%= settingsPage %>">Next supplier choices</a><% } %></nav>
 <section class="card"><h2>Review a supplier notice</h2><form method="post" action="/autopilot/discontinued-products/preview" class="form-stack">
 <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="supplierPage" value="<%= supplierPage %>"><input type="hidden" name="page" value="<%= page %>"><input type="hidden" name="settingsPage" value="<%= settingsPage %>">
 <label class="rm-field"><span>Known supplier</span><select name="supplierId" required><option value="">Choose supplier</option><% for(const s of suppliers){ %><option value="<%= s.id %>" <%= draft?.supplier.id===s.id?'selected':'' %>><%= s.name %></option><% } %></select></label>
 <label class="rm-field"><span>Supplier discontinuation reference</span><input name="reference" maxlength="200" value="<%= draft?.reference||'' %>" required></label>
 <label class="rm-field"><span>Exact product pairs, copied from the checked notice</span><textarea name="products" rows="7" required placeholder="Discontinued SKU,Replacement SKU"><%= draft?.products||'' %></textarea></label>
-<p>Include the header Discontinued SKU,Replacement SKU. Use up to 100 single-SKU products already linked to this supplier. Stock units and tracking must match.</p><button class="btn">Preview product retirements</button></form></section>
+<p>Include the header Discontinued SKU,Replacement SKU. Use up to 100 products already linked to this supplier. Stock units and tracking must match. Stock left is sold down first.</p><button class="btn">Preview product retirements</button></form></section>
 <% if(draft){ %><section class="card"><h2>Check the exact source</h2><p><%= draft.supplier.name %> · <%= draft.reference %></p><ul><% for(const pair of draft.pairs){ %><li><%= pair.old.code %> — <%= pair.old.name %> → <%= pair.replacement.code %> — <%= pair.replacement.name %></li><% } %></ul>
 <form method="post" action="/autopilot/discontinued-products" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="supplierId" value="<%= draft.supplier.id %>"><input type="hidden" name="reference" value="<%= draft.reference %>"><input type="hidden" name="products" value="<%= draft.products %>"><input type="hidden" name="sourceFingerprint" value="<%= draft.sourceFingerprint %>">
 <label><input type="checkbox" name="sourceChecked" value="yes" required> I checked these exact discontinued products and replacement SKUs against the original supplier notice. Recording it is separate from approving retirement.</label><button class="btn" <%= shadow?'disabled':'' %>>Record checked supplier notice</button></form></section><% } %><% } %>

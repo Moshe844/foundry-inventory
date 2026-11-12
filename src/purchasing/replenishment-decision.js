@@ -16,8 +16,10 @@ function forecastUnits(forecast,days){
 }
 function derive(row){
  const onHand=Number(row.on_hand||0),committed=Number(row.committed||0),incoming=Number(row.incoming||0),issued=Number(row.issued??row.sold_90??0),issueEvents=Number(row.issue_events||0),lead=optional(row.lead_time_days)??DEFAULT_LEAD_DAYS,coverDays=optional(row.cover_days)??COVER_DAYS;
- const forecast=!row.planning_suppressed&&Array.isArray(row.forecast?.daily)?row.forecast:null,rate=forecast?forecastUnits(forecast,coverDays)/coverDays:issued/WINDOW_DAYS,demand=days=>forecast?forecastUnits(forecast,days):rate*days;
- const safety=row.planning_suppressed?0:optional(row.safety_stock)??Math.ceil(demand(SAFETY_DAYS)),inferredReorder=row.planning_suppressed?null:forecast||issueEvents>=MIN_ISSUE_EVENTS?Math.ceil(demand(lead))+safety:null,reorder=row.planning_suppressed?null:optional(row.reorder_point)??inferredReorder,target=row.planning_suppressed?null:optional(row.target_stock)??(reorder===null?null:Math.max(reorder+safety,Math.ceil(demand(coverDays)))),available=onHand-committed,projected=available+incoming;
+ // Job 132: a discontinued product gets no reorder point, target or safety stock.
+ const suppressed=row.planning_suppressed||row.discontinued;
+ const forecast=!suppressed&&Array.isArray(row.forecast?.daily)?row.forecast:null,rate=forecast?forecastUnits(forecast,coverDays)/coverDays:issued/WINDOW_DAYS,demand=days=>forecast?forecastUnits(forecast,days):rate*days;
+ const safety=suppressed?0:optional(row.safety_stock)??Math.ceil(demand(SAFETY_DAYS)),inferredReorder=suppressed?null:forecast||issueEvents>=MIN_ISSUE_EVENTS?Math.ceil(demand(lead))+safety:null,reorder=suppressed?null:optional(row.reorder_point)??inferredReorder,target=suppressed?null:optional(row.target_stock)??(reorder===null?null:Math.max(reorder+safety,Math.ceil(demand(coverDays)))),available=onHand-committed,projected=available+incoming;
  return {onHand,committed,incoming,available,projected,issued,issueEvents,rate,lead,safety,reorder,target,inferredReorder,windowDays:WINDOW_DAYS,coverDays,shortage:reorder!==null&&projected<=reorder,daysOfSupply:rate>0?available/rate:null,
   ...(forecast?{forecast:{basis:forecast.basis,method:forecast.method,label:forecast.label}}:{})};
 }
