@@ -10,7 +10,7 @@ async function fixture(t){
   await f.workflows.confirmSalesOrder(db,ctx,order.salesOrderId,{idempotencyKey:randomUUID()});await f.workflows.fulfillSalesOrder(db,ctx,order.salesOrderId,{idempotencyKey:randomUUID(),lines:[{lineId:order.lineIds[0],locationId:f.location.id,quantity:3}]});return {...order,...(await db.query('SELECT order_number FROM sales_orders WHERE id=$1',[order.salesOrderId])).rows[0]};
  }
  const incoming=(order,{reference=randomUUID(),quantity=1,extra='',sender='receiver@example.test'}={})=>mail.capture(db,connection,{externalMessageId:randomUUID(),sender,subject:'Return request',bodyText:'Order: '+order.order_number+'\nReason: Damaged item\nResolution: refund\nReturn reference: '+reference+'\nSKU,Quantity\n'+code+','+quantity+extra});
- const review=id=>service.preview(db,ctx,id,f.location.id),create=async id=>{const p=await review(id);return service.create(db,ctx,id,{locationId:f.location.id,expectedFingerprint:p.facts.sourceFingerprint,confirmed:'yes'});},enable=()=>service.configure(db,ctx,{locationId:f.location.id,maximumUnits:3,confirmed:'yes',revision:0});
+ const review=id=>service.preview(db,ctx,id,f.location.id),create=async id=>{const p=await review(id);return service.create(db,ctx,id,{locationId:f.location.id,expectedFingerprint:p.facts.sourceFingerprint,confirmed:'yes'});},enable=()=>service.configure(db,ctx,{locationId:f.location.id,maximumUnits:3,windowDays:30,reviewAbove:'1000',currency:'USD',confirmed:'yes',revision:0});
  return {...f,connector,service,incoming,sale,review,create,enable};
 }
 test('Starter cannot use return-email automation; Growth reviews an exact email then teaches only its reviewed scope',{timeout:240000},async t=>{
@@ -18,7 +18,7 @@ test('Starter cannot use return-email automation; Growth reviews an exact email 
  await f.subscribe('starter');await assert.rejects(f.review(first.messageId),e=>e.code==='entitlement_required');await assert.rejects(f.enable(),e=>e.code==='entitlement_required');
  await f.subscribe('growth');await f.enable();assert.equal((await f.service.onArrival(db,ctx.workspaceId,first.messageId)).held,true);
  const reviewed=await f.review(first.messageId);await assert.rejects(f.service.create(db,ctx,first.messageId,{locationId:f.location.id,expectedFingerprint:reviewed.facts.sourceFingerprint}),/Review and approve/);
- const made=await f.create(first.messageId);assert.equal(made.status,'REQUESTED');assert.equal((await f.create(first.messageId)).replayed,true);
+ const made=await f.create(first.messageId);assert.equal(made.status,'AUTHORIZED');assert.equal((await f.create(first.messageId)).replayed,true);
  await f.service.teach(db,ctx,first.messageId,{maximumUnits:1,confirmed:'yes',revision:0});
  const second=await f.incoming(order);const result=await f.service.onArrival(db,ctx.workspaceId,second.messageId);assert.equal(result.automatic,true);assert.notEqual(result.customerReturnId,made.customerReturnId);
  const third=await f.incoming(otherOrder,{quantity:2});const held=await f.service.onArrival(db,ctx.workspaceId,third.messageId);assert.equal(held.held,true);assert.match(held.reason,/saved customer\/product rule/);
@@ -34,7 +34,7 @@ test('native arrival worker creates one Pro or Custom RMA per customer reference
   assert.equal(await jobs.claim(db,{owner:'previous-mail-worker',kinds:['mail.customer-order']}),null);
   const one=await jobs.processOne(db,{[kind]:handlers[kind]},{owner:'return-current-worker'});assert.equal(one.status,'COMPLETED',JSON.stringify(one.lastError));
   const two=await jobs.processOne(db,{[kind]:handlers[kind]},{owner:'return-current-worker'});assert.equal(two.status,'COMPLETED',JSON.stringify(two.lastError));
-  const rows=(await db.query('SELECT id,status FROM customer_returns WHERE workspace_id=$1 AND sales_order_id=$2',[ctx.workspaceId,order.salesOrderId])).rows;assert.equal(rows.length,1);assert.equal(rows[0].status,'REQUESTED');
+  const rows=(await db.query('SELECT id,status FROM customer_returns WHERE workspace_id=$1 AND sales_order_id=$2',[ctx.workspaceId,order.salesOrderId])).rows;assert.equal(rows.length,1);assert.equal(rows[0].status,'AUTHORIZED');
   assert.equal((await f.service.saved(db,ctx.workspaceId,first.messageId)).customer_return_id,rows[0].id);
   assert.equal((await f.service.onArrival(db,ctx.workspaceId,second.messageId)).replayed,true);
  }
@@ -56,10 +56,10 @@ test('phone return-email journey shows Starter lock, reviewed Growth RMA, taught
  await f.subscribe('growth');await page.reload();await page.getByRole('link',{name:'Review as a customer return',exact:true}).click();assert.equal(await page.getByRole('link',{name:'Review as a customer order'}).count(),0);
  await page.getByLabel('Location for the later physical inspection').selectOption(f.location.id);await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Preview return request',exact:true}).click()]);
  assert.match(await page.locator('main').innerText(),/Exact proposed RMA/);assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
- await page.getByLabel('I approve this original customer request, order, products, quantities and requested resolution.').check();await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Create this RMA request',exact:true}).click()]);
+ await page.getByLabel('I approve this original customer request, order, products, quantities and requested resolution.').check();await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Create this RMA',exact:true}).click()]);
  assert.match(await page.locator('main').innerText(),/Recorded RMA/);assert(await page.getByRole('link',{name:'Open this RMA',exact:true}).isVisible());
  await page.getByLabel('Maximum whole units in each matching request').fill('1');await page.getByLabel('I approve this exact customer and product rule, within the maximum above.').check();await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save return request rule',exact:true}).click()]);
- await page.getByLabel('Inspection location',{exact:true}).selectOption(f.location.id);await page.getByLabel('Maximum whole units per request',{exact:true}).fill('3');await page.getByLabel('I authorize clear return requests from known customers within these limits.').check();await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Enable routine RMA requests',exact:true}).click()]);
+ await page.getByLabel('Inspection location',{exact:true}).selectOption(f.location.id);await page.getByLabel('Maximum whole units per request',{exact:true}).fill('3');await page.getByLabel('Return window in days',{exact:true}).fill('30');await page.getByLabel(/Ask me about returns worth more than/).fill('1000');await page.getByLabel('I authorize clear return requests from known customers within these limits.').check();await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Enable routine RMA requests',exact:true}).click()]);
  const next=await f.incoming(order);assert.equal((await f.service.onArrival(db,ctx.workspaceId,next.messageId)).automatic,true);
  await page.goto(origin+'/autopilot/reviews/customer-return-emails');assert.equal(await page.locator('tbody tr').count(),2);await page.locator('a[href="/mail/'+incoming.messageId+'/return"]').click();
  await f.subscribe('starter');await page.reload();assert.equal(await page.getByRole('button',{name:'Enable routine RMA requests'}).count(),0);await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Stop routine RMA requests',exact:true}).click()]);

@@ -40,7 +40,7 @@ async function facts(db,ctx,id,quarantineLocationId,{excludeReturnId=null}={}){
  const customers=(await db.query(`SELECT id,name,email FROM customers WHERE workspace_id=$1 AND record_state='ACTIVE' AND lower(email)=lower($2)
   AND NOT EXISTS(SELECT 1 FROM suppliers WHERE workspace_id=$1 AND status='active' AND lower(email)=lower($2)) LIMIT 2`,[ctx.workspaceId,message.sender])).rows;
  if(customers.length!==1)throw new ValidationError('The return email must match one active customer and must not also identify a supplier.');
- const customer=customers[0],parsed=parse(message.subject,message.body_text),order=(await db.query('SELECT id,order_number,version,status,customer_id,contact_email FROM sales_orders WHERE workspace_id=$1 AND order_number=$2 AND customer_id=$3',[ctx.workspaceId,parsed.orderNumber,customer.id])).rows[0];
+ const customer=customers[0],parsed=parse(message.subject,message.body_text),order=(await db.query('SELECT id,order_number,version,status,customer_id,contact_email,currency FROM sales_orders WHERE workspace_id=$1 AND order_number=$2 AND customer_id=$3',[ctx.workspaceId,parsed.orderNumber,customer.id])).rows[0];
  if(!order||!['FULFILLED','PARTIALLY_FULFILLED'].includes(order.status)||order.contact_email&&order.contact_email.toLowerCase()!==customer.email.toLowerCase())throw new ValidationError('Match this customer and their email to an order whose goods actually left. Review different order contacts individually.');
  const location=(await db.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL',[ctx.workspaceId,quarantineLocationId])).rows[0];
  if(!location)throw new ValidationError('Choose an active internal location for the later physical return inspection.');
@@ -56,7 +56,17 @@ async function facts(db,ctx,id,quarantineLocationId,{excludeReturnId=null}={}){
   return {salesOrderLineId:row.id,skuId:row.sku_id,code:row.code,name:row.name,unit:row.unit_label,quantity:line.quantity,fulfilled:Number(row.quantity_fulfilled),alreadyRequested:Number(row.already_requested)};
  });
  const input={salesOrderId:order.id,quarantineLocationId:location.id,reason:parsed.reason,resolution:parsed.resolution,lines:lines.map(line=>({salesOrderLineId:line.salesOrderLineId,quantity:line.quantity}))};
- const evidence={messageId:message.id,sender:message.sender,subject:message.subject,bodyHash:hash(message.body_text),sourceHash:message.content_hash,connectorId:message.connector_id,mailboxAccount:message.provider_account_id,providerType:message.provider_type,customerId:customer.id,customerEmail:customer.email,orderId:order.id,orderVersion:Number(order.version),orderNumber:order.order_number,locationId:location.id,locationName:location.name,requestReference:parsed.requestReference,lines,input};
+ // The return window counts from when the goods last reached or left the
+ // customer: a recorded delivery, else the fulfilment that sent them.
+ const left=(await db.query(`SELECT greatest(
+  (SELECT max(je.created_at::timestamptz) FROM accounting_journal_entries je WHERE je.workspace_id=$1 AND je.source_type='sale_fulfillment' AND je.status='POSTED' AND je.metadata::jsonb->>'salesOrderLineId'=ANY($2::text[])),
+  (SELECT max(coalesce(nullif(s.delivered_at,''),s.shipped_at)::timestamptz) FROM sales_shipments s WHERE s.workspace_id=$1 AND s.sales_order_id=$3 AND s.customer_return_id IS NULL AND s.status IN('SHIPPED','DELIVERED'))) AS at`,
+  [ctx.workspaceId,lines.map(line=>line.salesOrderLineId),order.id])).rows[0]?.at;
+ const prices=(await db.query('SELECT id,unit_price_minor FROM sales_order_lines WHERE workspace_id=$1 AND id=ANY($2::text[])',[ctx.workspaceId,lines.map(line=>line.salesOrderLineId)])).rows;
+ const priced=lines.every(line=>prices.some(row=>row.id===line.salesOrderLineId&&row.unit_price_minor!=null));
+ const valueMinor=priced?require('../domain/currency').sum(lines.map(line=>require('../domain/exact-quantity').costMinor(line.quantity,Number(prices.find(row=>row.id===line.salesOrderLineId).unit_price_minor)))):null;
+ const evidence={messageId:message.id,sender:message.sender,subject:message.subject,bodyHash:hash(message.body_text),sourceHash:message.content_hash,connectorId:message.connector_id,mailboxAccount:message.provider_account_id,providerType:message.provider_type,customerId:customer.id,customerEmail:customer.email,orderId:order.id,orderVersion:Number(order.version),orderNumber:order.order_number,locationId:location.id,locationName:location.name,requestReference:parsed.requestReference,lines,input,
+  leftAt:left?new Date(left).toISOString():null,valueMinor,currency:order.currency};
  return {...evidence,customerName:customer.name,sourceFingerprint:hash(evidence)};
 }
 module.exports={parse,owner,facts,isReturnSubject};
