@@ -78,7 +78,9 @@ async function adjustments(db,workspaceId,order,currency,charges,taxMinor,docume
  for(const bill of prior){taxBudget-=Number(bill.tax_minor);for(const c of bill.charges||[])budget.set(key(c),(budget.get(key(c))||0)-Number(c.amountMinor));}
  const requested=new Map();for(const c of charges)requested.set(key(c),money.sum([requested.get(key(c))||0,c.amountMinor]));
  const chargesApproved=[...requested].filter(([,n])=>n!==0).every(([k,n])=>budget.has(k)&&(n>=0?n<=budget.get(k):n>=budget.get(k)));
- return {approved:explicit||chargesApproved&&taxMinor<=taxBudget,chargesApproved:explicit||chargesApproved,taxApproved:explicit||taxMinor<=taxBudget,explicit};
+ // taxAgreed: the purchase order states its tax, so tax above what is left of it is wrong tax (job 100).
+ return {approved:explicit||chargesApproved&&taxMinor<=taxBudget,chargesApproved:explicit||chargesApproved,taxApproved:explicit||taxMinor<=taxBudget,explicit,
+  taxAgreed:approved.some(c=>c.kind==='tax'),taxBudget};
 }
 function terms(supplier,issueDate,dueDate,sourceTerms){const parsed=require('../accounting/agent-cash-planning').terms(supplier.payment_terms);const net=parsed.net??(/^(?:due on receipt|cash on delivery|cod)$/i.test(String(supplier.payment_terms||'').trim())?0:undefined);const normalize=v=>String(v||'').toLowerCase().replace(/[^a-z0-9]/g,'');return {approved:(!sourceTerms||normalize(sourceTerms)===normalize(supplier.payment_terms))&&net!==undefined&&dueDate===require('../accounting/customer-money').addDays(issueDate,net),expected:net===undefined?null:require('../accounting/customer-money').addDays(issueDate,net),saved:supplier.payment_terms||null};}
 function isCreditSource(text){if(!text)return false;try{return require('./supplier-invoice-source-parser').parse(text).documentType==='credit';}catch{return /^\s*(?:supplier )?credit (?:note|memo)\s*(?:$|(?:number|no\.?|#)\s*[:=])/im.test(text);}}

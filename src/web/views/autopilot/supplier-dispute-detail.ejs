@@ -1,14 +1,25 @@
+<% const amount=n=>money.format(n,bill.currency); %>
 <header class="rm-head">
   <h1>Supplier invoice <%= bill.supplier_invoice_number %></h1>
-  <p><%= bill.supplier_name %> · <%= money.format(bill.total_minor,bill.currency) %> · <%= bill.po_number %></p>
+  <p><%= bill.supplier_name %> · <%= amount(bill.total_minor) %> · <%= bill.po_number %></p>
 </header>
 <section class="card"><div class="card-body">
   <h2>Dispute</h2>
   <% if(work?.intake_id){ %><p><a href="/autopilot/supplier-invoices/<%= work.intake_id %>">Original invoice</a></p>
   <% }else if(bill.source_message_id){ %><p><a href="/mail/<%= bill.source_message_id %>">Original supplier message</a></p><% } %>
   <% if(bill.status==='DISPUTED'){ %><p><a href="/accounting/payables/<%= bill.id %>/review">Current purchase and receipt comparison</a></p><% } %>
+  <% if(explained){ %>
+    <dl class="kv">
+      <dt>Amount in question</dt><dd><%= explained.disputedMinor==null?'Unclear, so the whole invoice counts':amount(explained.disputedMinor) %></dd>
+      <dt>Payment</dt><dd>Held. This invoice stays out of the payment run until the dispute is settled.</dd>
+      <% if(saved){ %><dt>Your dispute limit</dt><dd><%= money.format(saved.maximum_minor,saved.currency) %></dd><% } %>
+    </dl>
+    <ul><% for(const d of explained.differences){ %><li><%= d.text %></li><% } %></ul>
+  <% } %>
   <% if(work?.replacement_bill_id){ %>
     <p><strong>Resolved</strong> · <a href="/money/bills/<%= work.replacement_bill_id %>">Posted corrected invoice</a></p>
+  <% }else if(work?.credit_intake_id){ %>
+    <p><strong>Settled by credit note</strong> · <a href="/money/bills/<%= bill.id %>">Posted invoice</a> · <a href="/autopilot/supplier-credits/<%= work.credit_intake_id %>">Credit note</a></p>
   <% }else if(bill.status==='OPEN'){ %>
     <p><strong>Resolved</strong> · <a href="/money/bills/<%= bill.id %>">Matched and posted invoice</a></p>
   <% }else if(message?.verified){ %>
@@ -24,9 +35,30 @@
       <button class="btn">Prepare for approval</button>
     </form><% } %>
   <% } %>
+  <% if(work?.attention&&bill.status==='DISPUTED'){ %><p class="notice"><%= work.attention %></p><% } %>
   <% if(blocked&&bill.status==='DISPUTED'){ %><p class="notice"><%= blocked %></p><% } %>
 </div></section>
-<% if(message?.verified&&message.external_thread_id){ %>
+<% if(messages.length){ %>
+<section class="card"><div class="card-body">
+  <h2>Messages to the supplier</h2>
+  <ul><% for(const m of messages){ %><li>
+    <a href="/messages/supplier/<%= m.id %>"><%= m.reminder?'Reminder '+m.reminder:'Dispute' %></a> ·
+    <%= m.verified?'Sent '+m.sentOn:m.status==='QUEUED'||m.status==='SENDING'?'Delivery pending':'Delivery needs verification' %>
+  </li><% } %></ul>
+  <% if(reminder){ %>
+    <% if(!reminder.canSend){ %><p>No reminder is needed while the supplier's reply or the last message is being handled.</p>
+    <% }else{ %>
+      <p>Last message <%= reminder.lastSentOn %>. <%= reminder.sent<reminder.limit?'Next reminder due '+reminder.dueOn+'.':'StockChief has sent all '+reminder.limit+' reminders it may send on its own.' %></p>
+      <% if(!blocked){ %><form method="post" action="/autopilot/supplier-disputes/<%= bill.id %>/remind" class="form-stack">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="reminder" value="<%= reminder.next %>">
+        <label><input type="checkbox" name="confirmed" value="yes" required> Send reminder <%= reminder.next %> now from the same mailbox.</label>
+        <button class="btn secondary">Send reminder</button>
+      </form><% } %>
+    <% } %>
+  <% } %>
+</div></section>
+<% } %>
+<% if(threadKnown){ %>
 <section class="card"><div class="card-body">
   <h2>Supplier replies</h2>
   <% if(!replies.length){ %><p>Waiting for the supplier's reply.</p><% } %>
@@ -39,8 +71,43 @@
   </article><% } %>
   <% if(page>1){ %><a href="?page=<%= page-1 %>">Previous replies</a><% } %>
   <% if(more){ %><a href="?page=<%= page+1 %>">More replies</a><% } %>
+  <% if(unread&&bill.status==='DISPUTED'){ %>
+    <p>A supplier reply or a counter-claim always waits for you. StockChief does not answer it or accept a new price on its own.</p>
+    <form method="post" action="/autopilot/supplier-disputes/<%= bill.id %>/read" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+      <button class="btn secondary">Mark replies as read</button>
+    </form>
+  <% } %>
 </div></section>
 <% } %>
+<% if(credits.length&&bill.status==='DISPUTED'){ %>
+<section class="card"><div class="card-body">
+  <h2>Credit notes for this invoice</h2>
+  <ul><% for(const credit of credits){ %><li>
+    <a href="/autopilot/supplier-credits/<%= credit.id %>"><%= credit.invoice_number %></a> ·
+    <a href="?credit=<%= encodeURIComponent(credit.id) %>">Compare with the dispute</a>
+  </li><% } %></ul>
+</div></section>
+<% } %>
+<% if(selectedCredit){ %><section class="card"><div class="card-body">
+  <h2>Settle with credit note</h2>
+  <% if(selectedCredit.row){ %>
+    <dl class="kv">
+      <dt>Credit note</dt><dd><%= selectedCredit.row.invoice_number %> · <%= amount(selectedCredit.total) %></dd>
+      <dt>Amount in question</dt><dd><%= selectedCredit.disputedMinor==null?'Unclear':amount(selectedCredit.disputedMinor) %></dd>
+    </dl>
+  <% } %>
+  <% if(selectedCredit.hold){ %><p class="notice"><%= selectedCredit.hold %></p><% } %>
+  <% if(selectedCredit.row&&!selectedCredit.hold&&!blocked){ %>
+    <form method="post" action="/autopilot/supplier-disputes/<%= bill.id %>/settle-credit" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="sourceId" value="<%= selectedCredit.row.id %>">
+      <input type="hidden" name="fingerprint" value="<%= selectedCredit.fingerprint %>">
+      <label>Evidence reviewed <input name="reason" maxlength="800" required></label>
+      <label><input type="checkbox" name="confirmed" value="yes" required> Post this invoice as billed and apply credit note <%= selectedCredit.row.invoice_number %>, which brings it back to the agreed amount.</label>
+      <button class="btn">Post invoice and apply credit</button>
+    </form>
+  <% } %>
+</div></section><% } %>
 <% if(selected){ %><section class="card"><div class="card-body">
   <h2>Corrected invoice</h2>
   <% if(selected.row){ %>

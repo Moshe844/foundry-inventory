@@ -19,3 +19,17 @@
 <button class="btn" <%= f.blocked?'disabled':'' %>>Prepare for approval</button></form><% } %>
 <p>Once you approve a fully matched original and the mailbox confirms sending, you can teach a supplier, product and invoice-value limit from that completed message.</p>
 <p><a href="/autopilot/job-modes">Review job authority</a></p></section>
+<section class="card"><h2>Your dispute limit</h2>
+<p><%= f.rulePlan==='pro'?'Saving a limit teaches StockChief to send disputes on its own when the amount in question is at most this much.':'StockChief sends disputes on its own when the amount in question is at most this much.' %> Larger or unclear disputes, and any supplier reply, wait for you.</p>
+<% if(f.rule){ %><p><%= f.rule.enabled?'On':'Stopped' %> · <%= f.rule.maximum %> <%= f.rule.currency %> · reminder after <%= f.rule.reminderDays %> days, up to <%= f.rule.reminderLimit %></p><% } %>
+<% if(!f.ruleCurrency){ %><p>Set up the accounting currency first.</p><% }else{ %>
+<form method="post" action="/autopilot/supplier-disputes/settings" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<input type="hidden" name="revision" value="<%= f.ruleRevision %>">
+<label>Largest amount in question (<%= f.ruleCurrency %>) <input name="maximum" inputmode="decimal" required value="<%= f.rule?.maximum||'' %>"></label>
+<label>Remind the supplier after (days) <input name="reminderDays" inputmode="numeric" required value="<%= f.rule?.reminderDays??f.defaults.reminderDays %>"></label>
+<label>Reminders before it waits for you <input name="reminderLimit" inputmode="numeric" required value="<%= f.rule?.reminderLimit??f.defaults.reminderLimit %>"></label>
+<label><input type="checkbox" name="confirmed" value="yes" required> Send disputes and reminders on my behalf within this limit.</label>
+<button class="btn">Save dispute limit</button></form>
+<% if(f.rule?.enabled){ %><form method="post" action="/autopilot/supplier-disputes/settings"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<input type="hidden" name="revision" value="<%= f.ruleRevision %>"><button class="btn secondary" name="stop" value="yes">Stop dispute limit</button></form><% } %>
+<% } %></section>

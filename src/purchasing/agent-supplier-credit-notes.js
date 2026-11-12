@@ -348,16 +348,24 @@ async function approve(database, ctx, id, input) {
     }
     if (candidate.returnId && candidate.expectedCredit != null && candidate.expectedCredit !== result.total
         && input.confirmVariance !== 'yes') throw new ValidationError('Confirm the exact difference from the expected return credit.');
+    return book(db, ctx, row, result, { fingerprint: input.fingerprint, reason, authority });
+  }, { isolation: 'SERIALIZABLE', retrySafe: true });
+}
+
+// Books one exact, already-checked application of a credit note. Job 100 also
+// uses it when a supplier settles an invoice dispute with a credit note.
+async function book(db, ctx, row, result, { fingerprint, reason, authority }) {
+    const id = row.id, candidate = result.candidate;
     const evidence = { originalBillId: result.originalBillId, targetBillId: candidate.billId, candidate, reason,
       number: result.number, date: result.date, currency: result.currency, sourceHash: row.source_hash, tax: result.tax,
       total: result.total, approvedBy: ctx.actorId };
-    await require('../commercial/storage-capacity').reserve(db, ctx.workspaceId, 'supplier-credit-approval:' + input.fingerprint,
+    await require('../commercial/storage-capacity').reserve(db, ctx.workspaceId, 'supplier-credit-approval:' + fingerprint,
       Buffer.byteLength(JSON.stringify(evidence)) + 8192, { finished: true });
     const bill = await findBill(db, ctx, row.supplier_id, candidate.billId, true);
     const booked = await creditLedger.applySourceCredit(db, ctx, bill, { amountMinor: candidate.amount, taxMinor: candidate.taxMinor,
       creditNumber: result.number, creditDate: result.date, postingDate: candidate.postingDate, originalBillId: result.originalBillId,
       returnId: candidate.returnId, returnCostMinor: candidate.returnCostMinor,
-      sourceHash: row.source_hash, sourceKey: 'agent-supplier-credit:' + input.fingerprint, reason });
+      sourceHash: row.source_hash, sourceKey: 'agent-supplier-credit:' + fingerprint, reason });
     if(candidate.managedReturn){
       const complete=candidate.remainingReturnCredit===0;
       await db.query(`UPDATE supplier_returns SET actual_credit_minor=$3,supplier_credit_id=$4,status=$5,
@@ -377,13 +385,12 @@ async function approve(database, ctx, id, input) {
     await db.query(`INSERT INTO stockchief_runtime.agent_supplier_credit_applications
       (credit_id,intake_id,workspace_id,source_hash,source_number,approval_fingerprint,tax_minor,evidence,supplier_return_id,return_cost_minor)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)`, [booked.supplierCreditId, id, ctx.workspaceId, row.source_hash,
-      result.number, input.fingerprint, candidate.taxMinor, JSON.stringify(evidence), candidate.returnId, candidate.returnCostMinor]);
+      result.number, fingerprint, candidate.taxMinor, JSON.stringify(evidence), candidate.returnId, candidate.returnCostMinor]);
     await require('../operations/postgres-security-audit').record(db, ctx, { action: 'Supplier credit note applied', reference: result.number,
       after: { supplierCreditId: booked.supplierCreditId, sourceId: id, billId: candidate.billId, amountMinor: candidate.amount,
         balanceMinor: candidate.balanceAfter, unusedMinor: candidate.remainingAfter } });
     await storeWork(db, ctx.workspaceId, id, await evaluate(db, ctx, row, { authority }));
     return { ...booked, billId: candidate.billId, remainingMinor: candidate.remainingAfter };
-  }, { isolation: 'SERIALIZABLE', retrySafe: true });
 }
 
 async function schedule(db, workspaceId) {
@@ -518,4 +525,4 @@ function notices(row) {
 
 const definition = { id:JOB, key:'supplier-credits', label:'Track and use supplier credit notes',
   filterLabel:'Supplier, credit memo, return or bill number', readPage };
-module.exports = { JOB, KIND, evaluate, worker, approve, grant, detailHref, listHref, definition, page, schedule, notices };
+module.exports = { JOB, KIND, evaluate, readNote, amounts, book, worker, approve, grant, detailHref, listHref, definition, page, schedule, notices };
