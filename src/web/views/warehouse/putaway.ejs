@@ -1,11 +1,33 @@
+<% const p=instruction.source,unit=p.unit||'units',done=instruction.status==='PUT_AWAY'; %>
 <p class="rm-stamp no-print">Received goods · put-away instructions</p>
-<h1>Put <%= instruction.source.quantity %> units of <%= instruction.source.product %> away</h1>
-<p>Purchase order <strong><%= instruction.source.order %></strong> · SKU <%= instruction.source.sku %></p>
-<p>Take the received goods from <strong><%= instruction.source.from.name %></strong> to <strong><%= instruction.source.to.name %></strong>.</p>
-<p>Match the product and both location codes. Report any difference before moving goods. Preparing or printing this sheet does not record a stock movement.</p>
+<h1>Put <%= p.quantity %> <%= unit %> of <%= p.product %> away</h1>
+<p>Purchase order <strong><%= p.order %></strong> · SKU <%= p.sku %><% if(p.lot){ %> · Batch <strong><%= p.lot.code %></strong><% } %><% if(p.secondaryQuantity!=null){ %> · <%= p.secondaryQuantity %> <%= p.secondaryUnit %><% } %></p>
+<p>Take the received goods from <strong><%= p.from.name %></strong> to <strong><%= p.to.name %></strong>.</p>
+<% if(p.serials&&p.serials.length){ %><p>Serial numbers: <%= p.serials.map(s=>s.serial).join(', ') %></p><% } %>
+<p class="no-print"><%= instruction.chosen_by==='agent'?'StockChief chose this bin. '+(instruction.reason||''):instruction.chosen_by==='rule'?'Your taught bin for this product.':'Bin chosen by the owner.' %></p>
+<p role="status" class="no-print"><strong><%= done?'Put away':instruction.confirmations.length?'Partly put away: '+instruction.remaining+' '+unit+' still waiting':'Waiting to be put away' %></strong></p>
+<% if(instruction.confirmations.length){ %><ul class="no-print"><% for(const c of instruction.confirmations){ %><li><%= c.quantity %> <%= unit %><%= c.secondary_quantity?' · '+c.secondary_quantity+' '+p.secondaryUnit:'' %> in <strong><%= c.location_name %></strong><%= c.location_id!==c.planned_location_id?' (not the planned bin)':'' %> · <%= c.method==='scan'?'scanned':'tapped' %> by <%= c.confirmed_name||'staff' %> · <%= helpers.dateTime(c.created_at) %></li><% } %></ul><% } %>
+<p>Match the product and bin codes. Printing this sheet does not move stock; confirming the put-away below does.</p>
 <% for(const label of labels){ %><section class="rm-label-sheet"><h2><%= label.title %></h2><p><%= label.subtitle %></p><div class="rm-label-barcode"><%- label.svg %></div><code><%= label.barcode %></code></section><% } %>
 <div class="rm-actions no-print"><button class="rm-button rm-button--primary" type="button" onclick="window.print()">Print instructions and labels</button><a class="rm-button" href="<%= putawayBack %>">Back to put-away instructions</a></div>
-<% if(canTeach){ const r=instruction.rule; %><section class="card no-print"><h2>Teach this destination</h2><p>Future receipts of <%= instruction.source.sku %> at <%= instruction.source.from.name %> can use <%= instruction.source.to.name %> after you enable routine work for this job. Each receipt stays within your unit limit.</p>
+<% if(canConfirm){ %><section class="card no-print"><div class="card-body"><h2>Confirm the put-away</h2><p>Scan the product label and the bin you put the goods in. The stock moves to that bin with its <%= p.lot?'batch, ':'' %><%= p.serials&&p.serials.length?'serial numbers, ':'' %><%= p.secondaryQuantity!=null?'weight, ':'' %>cost and history.</p>
+<form method="post" action="/warehouse/putaway/<%= instruction.id %>/confirm" class="stacked-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= requestKey %>"><input type="hidden" name="method" value="scan">
+<label>Product code<input name="productCode" maxlength="80" autocomplete="off" required></label>
+<label>Bin code<input name="binCode" maxlength="80" autocomplete="off" required></label>
+<% if(p.serials&&p.serials.length){ %><label>Serial numbers put away (leave empty for all <%= instruction.remainingSerials.length %> waiting)<textarea name="serials" rows="3" autocomplete="off"></textarea></label>
+<% }else{ %><label>Quantity put away (leave empty for all <%= instruction.remaining %> <%= unit %>)<input name="quantity" inputmode="decimal" autocomplete="off"></label>
+<% if(p.secondaryQuantity!=null){ %><label>Actual <%= p.secondaryUnit %> put away (only for part of the goods)<input name="weight" inputmode="decimal" autocomplete="off"></label><% } %><% } %>
+<label class="checkbox"><input type="checkbox" name="wrongBin" value="yes"> The goods went into the bin I scanned, not the planned bin</label>
+<div class="form-actions"><button class="btn btn--primary">Confirm put-away</button></div></form>
+<h3>No scanner?</h3>
+<form method="post" action="/warehouse/putaway/<%= instruction.id %>/confirm" class="stacked-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= requestKey %>-tap"><input type="hidden" name="method" value="tap">
+<label class="checkbox"><input type="checkbox" name="confirmed" value="yes" required> I put all <%= instruction.remaining %> waiting <%= unit %> in <%= p.to.name %></label>
+<div class="form-actions"><button class="btn">Put away without scanning</button></div></form></div></section><% } %>
+<% if(canReplan){ %><section class="card no-print"><div class="card-body"><h2>Choose a different bin</h2><p>Change the bin before staff start. This also replaces a bin StockChief chose.</p>
+<form method="post" action="/warehouse/putaway/<%= instruction.id %>/plan" class="stacked-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= instruction.revision %>">
+<label>Bin<select name="destination" required><% for(const d of destinations){ %><option value="<%= d.id %>" <%= d.id===p.to.id?'selected':'' %>><%= d.display_path %><%= d.barcode?'':' — add a scan code first' %></option><% } %></select></label>
+<div class="form-actions"><button class="btn">Use this bin</button></div></form></div></section><% } %>
+<% if(canTeach){ const r=instruction.rule; %><section class="card no-print"><h2>Teach this destination</h2><p>Future receipts of <%= p.sku %> at <%= p.from.name %> can use <%= p.to.name %> after you enable routine work for this job. Each receipt stays within your unit limit.</p>
 <form method="post" action="/autopilot/putaway/<%= instruction.id %>/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r?.revision||0 %>">
-<label>Maximum units per receipt <input name="maximum" type="number" min="<%= instruction.source.quantity %>" max="2147483647" value="<%= r?.maximum_quantity||instruction.source.quantity %>" required></label><button class="btn">Save destination rule</button>
+<label>Maximum units per receipt <input name="maximum" type="number" min="<%= Math.ceil(Number(p.quantity)) %>" max="2147483647" value="<%= r?.maximum_quantity||Math.ceil(Number(p.quantity)) %>" required></label><button class="btn">Save destination rule</button>
 <% if(r){ %><button class="btn" name="remove" value="1" formnovalidate>Stop this destination rule</button><% } %></form></section><% } %>

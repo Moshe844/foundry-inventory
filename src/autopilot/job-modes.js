@@ -47,7 +47,7 @@ async function save(db,ctx,raw,input){
     if((prior?.revision||0)!==revision)throw new ValidationError('This job setting has changed. Open its current settings.');
     if((prior?.mode||'inherit')===mode)return;
     await c.query(`INSERT INTO stockchief_runtime.agent_job_modes(workspace_id,job_id,mode,revision,updated_by) VALUES($1,$2,$3,1,$4)
-      ON CONFLICT(workspace_id,job_id) DO UPDATE SET mode=EXCLUDED.mode,revision=stockchief_runtime.agent_job_modes.revision+1,updated_by=EXCLUDED.updated_by`,
+      ON CONFLICT(workspace_id,job_id) DO UPDATE SET mode=EXCLUDED.mode,revision=stockchief_runtime.agent_job_modes.revision+1,updated_by=EXCLUDED.updated_by,changed_at=now()`,
       [ctx.workspaceId,job,mode,ctx.actorId]);
     await require('../operations/postgres-security-audit').record(c,ctx,{action:'Agent job mode changed',before:{job,mode:prior?.mode||'inherit'},after:{job,mode}});
   },{isolation:'SERIALIZABLE',retrySafe:true});

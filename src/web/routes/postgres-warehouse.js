@@ -36,13 +36,22 @@ function createPostgresWarehouseRouter(database){
   }));
   router.get('/warehouse/batches',requirePermission(permissions.VIEW,'review batch stock'),asyncRoute(async(req,res)=>{const pagination=require('../presentation/pagination'),size=pagination.pageSize(req),found=await require('../../domain/postgres-batch-expiry').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});return res.page('warehouse/batch-expiry',{title:'Batch expiry',nav:'inventory',...found,pager:pagination.pager(req,{page:found.page,size,total:found.total,shown:found.rows.length}),locations:await require('../../operations/postgres-commerce').locations(database,req.ctx.workspaceId)});}));
   router.get('/warehouse/putaway/:id',requirePermission(permissions.VIEW,'read put-away labels'),asyncRoute(async(req,res)=>{
-    const instruction=await require('../../warehouse/agent-putaway').instruction(database,req.ctx,req.params.id),barcode=require('../../warehouse/labels');
-    const labels=[{title:'Product',subtitle:instruction.source.product,barcode:instruction.source.barcode},
-      {title:'Receiving location',subtitle:instruction.source.from.name,barcode:instruction.source.from.barcode},
-      {title:'Destination bin',subtitle:instruction.source.to.name,barcode:instruction.source.to.barcode}].map(l=>({...l,svg:barcode.code128Svg(l.barcode)}));
-    const state=await require('../../commercial/agent-plan').accountState(database,req.ctx.workspaceId);
-    res.page('warehouse/putaway',{title:'Put-away instructions',nav:'warehouse',instruction,labels,canTeach:req.user.role==='owner'&&!instruction.automatic&&!state.shadow,
-      putawayBack:req.user.role==='owner'?'/autopilot/reviews/putaway-labels':'/warehouse/stock'});
+    const putaway=require('../../warehouse/agent-putaway'),instruction=await putaway.instruction(database,req.ctx,req.params.id),barcode=require('../../warehouse/labels');
+    const labels=putaway.labels(instruction).map(l=>({...l,svg:barcode.code128Svg(l.barcode)}));
+    const state=await require('../../commercial/agent-plan').accountState(database,req.ctx.workspaceId),owner=req.user.role==='owner',open=instruction.status==='READY';
+    const canConfirm=open&&[permissions.OPERATE,permissions.REQUEST_TRANSFER,permissions.PICK_TRANSFER,permissions.DISPATCH_TRANSFER,permissions.RECEIVE_TRANSFER].every(p=>permissions.can(req.user,p));
+    const canReplan=owner&&open&&!instruction.confirmations.length;
+    res.page('warehouse/putaway',{title:'Put-away instructions',nav:'warehouse',instruction,labels,canTeach:owner&&!instruction.automatic&&!state.shadow,canConfirm,canReplan,requestKey:newId('putawayscan'),
+      destinations:canReplan?(await require('../../domain/postgres-location-service').listHierarchy(database,req.ctx.workspaceId,{includeStock:false})).filter(l=>!l.custody_agreement_id&&l.id!==instruction.source.from.id):[],
+      putawayBack:owner?'/autopilot/reviews/putaway-labels':'/warehouse/stock'});
+  }));
+  router.post('/warehouse/putaway/:id/confirm',requirePermission(permissions.OPERATE,'confirm a put-away'),asyncRoute(async(req,res)=>{
+    const done=await require('../../warehouse/agent-putaway').confirm(database,req.ctx,req.params.id,req.body);
+    req.flash('success',done.wrongBin?'Put away in a different bin than planned. The stock is recorded where you put it.':done.finished?'Put-away complete. The stock is in its bin.':'Put-away recorded. The rest is still waiting.');
+    res.redirect(303,'/warehouse/putaway/'+req.params.id);
+  }));
+  router.post('/warehouse/putaway/:id/plan',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../warehouse/agent-putaway').replan(database,req.ctx,req.params.id,req.body);res.redirect(303,'/warehouse/putaway/'+req.params.id);
   }));
   router.get('/warehouse/labels/sku/:id',asyncRoute(async(req,res)=>{
     const sku=await require('../../pricing/postgres-service').requireSku(database,req.ctx.workspaceId,req.params.id);

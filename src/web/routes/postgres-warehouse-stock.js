@@ -39,7 +39,7 @@ function createRouter(db){
   res.locals.putawayInstructions=[];
   if(locationId&&putawayPolicy.usesAgentTerms(putawayState)&&putawayPolicy.permits(putawayState.plan,47,'draft')){
     const prepared=(await db.query(`SELECT p.id,p.source FROM stockchief_runtime.agent_putaway_instructions p
-      WHERE p.workspace_id=$1 AND p.source#>>'{from,id}'=$2 ORDER BY p.created_at DESC,p.id DESC LIMIT 20`,[req.ctx.workspaceId,locationId])).rows;
+      WHERE p.workspace_id=$1 AND p.source#>>'{from,id}'=$2 AND p.status='READY' ORDER BY p.created_at DESC,p.id DESC LIMIT 20`,[req.ctx.workspaceId,locationId])).rows;
     const permitted=new Set(locations.map(l=>l.id));res.locals.putawayInstructions=prepared.filter(p=>permitted.has(p.source.to.id));
   }
   return res.render('warehouse/stock-access',{title:'Warehouse stock',locations,locationId,q,rows:rows.slice(0,100),next:rows.length>100?rows[99].id:null,operationKey:newId('warehouse-receipt'),canReceive:permissions.can(req.user,permissions.OPERATE),canCount:permissions.can(req.user,permissions.ADJUST),message:String(req.query.saved||'')==='1'?'Stock received with its purchase cost.':String(req.query.saved||'')==='count'?'Count saved for an owner to review.':null,restricted:roots!==null});
@@ -83,7 +83,7 @@ function protection(db){const router=createRouter(db);return async(req,res,next)
   if(req.method==='GET'&&(req.path==='/transfers/arrival-follow-up'||transferDetail.test(req.path)) ||
      req.method==='POST'&&(transferReceipt.test(req.path)||transferCheck.test(req.path)))return next();
   if(['GET','POST'].includes(req.method)&&/^\/warehouse\/bin-corrections(?:\/[A-Za-z0-9_-]+(?:\/scan)?)?$/.test(req.path))return next();
-  if(req.method==='GET'&&/^\/warehouse\/putaway\/[A-Za-z0-9_-]+$/.test(req.path))return next();
+  if(req.method==='GET'&&/^\/warehouse\/putaway\/[A-Za-z0-9_-]+$/.test(req.path)||req.method==='POST'&&/^\/warehouse\/putaway\/[A-Za-z0-9_-]+\/confirm$/.test(req.path))return next();
   if(req.path==='/warehouse/stock'||req.path==='/warehouse/stock/receive'||req.path==='/warehouse/stock/count')return router(req,res,next);
   if(req.method==='GET'&&!req.path.startsWith('/api/'))return res.redirect(302,'/warehouse/stock');
   return res.status(403).json({error:'warehouse_access_required',message:'Your access is limited to assigned warehouses. Use Warehouse stock or ask your inventory owner to update your access.'});
