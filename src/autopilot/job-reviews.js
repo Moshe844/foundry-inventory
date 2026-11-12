@@ -220,6 +220,7 @@ async function run(db,ctx,key,options={}){
       ...(result.reminderForm?{reminderForm:result.reminderForm}:{}),
       ...(result.arrivedStockForm?{arrivedStockForm:result.arrivedStockForm}:{}),
       ...(result.stockReadyForm?{stockReadyForm:result.stockReadyForm}:{}),
+      ...(def.id===65?{stockSharingLink:true}:{}),
       ...(result.invoiceDisputeForm?{invoiceDisputeForm:result.invoiceDisputeForm}:{}),
       ...(result.returnLabelForm?{returnLabelForm:result.returnLabelForm}:{}),
       ...(result.customerStatementForm?{customerStatementForm:result.customerStatementForm}:{}),
@@ -254,7 +255,7 @@ async function run(db,ctx,key,options={}){
   }
   return {label:def.label,summary,rows,more,page,mode,filterable:!def.read,
     ...(paymentRun?{paymentRun}:{}),...(def.id===22&&mode!=='suggest'?{supplierSelection:true}:{}),
-    ...(def.id===124?{transferArrivalLink:true}:{})};
+    ...(def.id===124?{transferArrivalLink:true}:{}),...(def.id===64?{backorderLink:true}:{})};
 }
 
 module.exports={definitions,ownerState,offers,run};

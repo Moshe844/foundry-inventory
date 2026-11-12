@@ -1,0 +1,77 @@
+<% const m=model,r=m.rules,place=m.selected,p=m.preview,pro=m.mode==='trained',labels=m.labels;
+const change=l=>l.delta>0?'gets '+l.delta+' × '+l.code:'gives up '+(-l.delta)+' × '+l.code;
+const order=ch=>ch.lines.map(change).join(', '); %>
+<div class="page-head"><div class="titles"><h1>Share scarce stock</h1>
+<p>When open orders need more of a product than a warehouse has free, StockChief shares it by your rules. It never takes stock from an order that is being picked, packed or has shipped.</p></div></div>
+<% if(m.shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It shows how it would share stock and changes nothing.</p>
+<% }else if(m.blocked){ %><p class="notice notice--warn"><%= m.blocked %></p><% } %>
+
+<% if(m.drafts.length){ %><section class="card section" id="approvals"><h2>Waiting for your approval</h2>
+<% for(const d of m.drafts){ const plan=d.plan; %><article class="section" id="split-<%= d.id %>">
+<h3>Share <%= plan.skus.map(s=>s.code).join(', ') %> at <%= d.location_name %></h3>
+<% if(d.reason&&d.reason!=='Prepared on request.'){ %><p class="cell-sub"><%= d.reason %></p><% } %>
+<ul><% for(const ch of plan.changes){ %><li><a href="/orders/<%= ch.orderId %>"><%= ch.orderNumber %></a> · <%= ch.customer %> <%= order(ch) %><%= ch.complete?' · complete':'' %></li><% } %></ul>
+<% if(plan.held.length){ %><p class="cell-sub">Left for you: <%= plan.held.map(h=>h.orderNumber+' ('+h.reason+')').join('; ') %></p><% } %>
+<div class="btn-row"><form method="post" action="/autopilot/backorders/runs/<%= d.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<input type="hidden" name="fingerprint" value="<%= d.fingerprint %>"><input type="hidden" name="confirmed" value="yes"><input type="hidden" name="returnTo" value="sharing"><input type="hidden" name="locationId" value="<%= d.location_id %>">
+<button class="btn btn--primary" <%= m.blocked?'disabled':'' %>>Approve this split</button></form>
+<form method="post" action="/autopilot/backorders/runs/<%= d.id %>/discard"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="sharing"><input type="hidden" name="locationId" value="<%= d.location_id %>">
+<button class="btn btn--ghost">Dismiss</button></form></div></article><% } %></section><% } %>
+
+<section class="card section"><h2><%= place?'Scarce stock at '+place.name:'Scarce stock' %></h2>
+<% if(m.locations.length>1){ %><form method="get" class="btn-row"><label class="rm-field"><span>Warehouse</span><select name="location"><% for(const l of m.locations){ %><option value="<%= l.id %>" <%= place&&l.id===place.id?'selected':'' %>><%= l.name %></option><% } %></select></label><button class="btn btn--ghost">Show</button></form><% } %>
+<% if(!place){ %><p>No confirmed order is waiting for stock.</p>
+<% }else if(!r||!r.enabled){ %><p>Save your rules below to see how scarce stock would be shared.</p>
+<% }else if(!p.skus.length){ %><p>Every waiting order at <%= place.name %> can be served from free stock. Nothing is scarce.</p>
+<% }else{ %>
+<p class="cell-sub"><%= p.skus.map(s=>s.code+': '+s.pool+' to share, '+s.demand+' wanted').join(' · ') %></p>
+<% if(p.changes.length){ %><div class="table-wrap"><table class="table table--stack"><thead><tr><th>Order</th><th>Set aside now</th><th>After the split</th></tr></thead><tbody>
+<% for(const ch of p.changes){ %><tr><td class="cell-main"><a class="cell-title" href="/orders/<%= ch.orderId %>"><%= ch.orderNumber %></a><span class="cell-sub"><%= ch.customer %><%= ch.tier?' · tier '+ch.tier:'' %><%= ch.neededBy?' · promised '+ch.neededBy:'' %></span></td>
+<td data-label="Now"><%= ch.lines.map(l=>l.from+' × '+l.code).join(', ') %></td>
+<td data-label="After"><% if(ch.takes){ %><span class="badge badge--warn">Gives up stock</span> <% }else{ %><span class="badge badge--ok">Gets stock</span> <% } %><%= ch.lines.map(l=>l.to+' × '+l.code).join(', ') %><%= ch.complete?' · complete':'' %></td></tr><% } %>
+</tbody></table></div><% }else{ %><p>The stock is already shared by your rules.</p><% } %>
+<% if(p.held.length){ %><p class="cell-sub">Left for you: <%= p.held.map(h=>h.orderNumber+' ('+h.reason+')').join('; ') %></p><% } %>
+<% if(p.changes.length&&!m.shadow){ %><form method="post" action="<%= m.href %>/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= place.id %>">
+<button class="btn" <%= m.blocked?'disabled':'' %>>Prepare this split for approval</button></form><% } %>
+<% } %></section>
+
+<section class="card section"><h2>Your rules</h2>
+<% if(r&&r.enabled){ %><p>Who comes first: <strong><%= r.criteria.map(c=>labels[c]).join(', then ') %></strong>. <%= r.fill==='complete'?'Complete whole orders first, then share what is left.':'Share stock across orders in that order.' %> Up to <%= r.max_units %> units in one split.</p>
+<% if(r.automatic){ %><p><span class="badge badge--ok">On its own</span> StockChief applies splits within this limit.<% if(m.automatic){ %> <%= m.automatic %><% } %></p>
+<% }else if(pro){ %><p><span class="badge">Proposes</span> StockChief proposes each split for your approval until you teach it.</p><% }else{ %><p><span class="badge">Proposes</span> StockChief proposes each split for your approval.</p><% } %>
+<% }else{ %><p>No rules yet. Until you save them, waiting orders get stock in their order priority.</p><% } %>
+<form method="post" action="<%= m.href %>/rules" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r?.revision||0 %>">
+<% const chosen=r?.criteria||['tier','promised','ordered']; ['first','second','third','fourth'].forEach((name,i)=>{ %>
+<label class="rm-field"><span><%= i===0?'Who comes first':'Then' %></span><select name="<%= name %>" <%= i===0?'required':'' %>><% if(i){ %><option value="">Nothing more</option><% } %>
+<% for(const [key,label] of Object.entries(labels)){ %><option value="<%= key %>" <%= chosen[i]===key?'selected':'' %>><%= label %></option><% } %></select></label><% }); %>
+<fieldset class="rm-field"><legend>When stock is short</legend>
+<label class="checkbox"><input type="radio" name="fill" value="complete" <%= (r?.fill||'complete')==='complete'?'checked':'' %>><span class="checkbox-text">Complete whole orders first, then share what is left</span></label>
+<label class="checkbox"><input type="radio" name="fill" value="share" <%= r?.fill==='share'?'checked':'' %>><span class="checkbox-text">Share stock across orders in this order, even if some stay partly filled</span></label></fieldset>
+<label class="rm-field"><span>Most units in one split</span><input type="number" name="maxUnits" min="1" max="1000000" step="1" required value="<%= r?.max_units||'' %>"></label>
+<% if(!pro){ %><label class="checkbox"><input type="checkbox" name="automatic" value="yes" <%= r?.automatic?'checked':'' %>><span class="checkbox-text">Share stock on its own within this limit</span></label><% } %>
+<label class="checkbox"><input type="checkbox" name="confirmed" value="yes" required><span class="checkbox-text">Use these rules when stock is scarce. Stock can move from a lower-ranked order that nobody has started to pick.</span></label>
+<button class="btn btn--primary">Save rules</button></form>
+<% if(pro&&r&&r.enabled&&!r.automatic){ %><% if(m.example){ %><form method="post" action="<%= m.href %>/teach" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r.revision %>"><input type="hidden" name="runId" value="<%= m.example.id %>">
+<label class="checkbox"><input type="checkbox" name="confirmed" value="yes" required><span class="checkbox-text">You approved a split at <%= m.example.location_name %> under these rules. Let StockChief share stock like that on its own, up to <%= r.max_units %> units at a time.</span></label>
+<button class="btn">Teach these rules</button></form><% }else{ %><p class="cell-sub">Approve one split under these rules to teach StockChief to share stock on its own.</p><% } %><% } %>
+<% if(r&&r.enabled){ %><div class="btn-row"><% if(r.automatic){ %><form method="post" action="<%= m.href %>/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r.revision %>">
+<button class="btn btn--ghost" name="manual" value="yes">Propose each split instead</button></form><% } %>
+<form method="post" action="<%= m.href %>/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r.revision %>">
+<button class="btn btn--ghost" name="stop" value="yes">Turn off rules</button></form></div><% } %>
+<p class="cell-sub"><a href="/autopilot/job-modes">Choose Watch only or Ask me first for this job</a></p></section>
+
+<section class="card section"><h2>Customer tiers</h2><p>Tier 1 customers come first when your rules use customer tier, then tier 2 and tier 3. Customers without a tier come last.</p>
+<% if(m.tiered.length){ %><ul class="rm-list"><% for(const t of m.tiered){ %><li class="list-row"><span><strong><%= t.name %></strong><small>Tier <%= t.tier %></small></span>
+<form method="post" action="<%= m.href %>/tiers" class="btn-row"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="customerId" value="<%= t.id %>">
+<button class="btn btn--ghost btn--sm" name="tier" value="">Remove tier</button></form></li><% } %></ul><% } %>
+<% if(m.customers.length){ %><form method="post" action="<%= m.href %>/tiers" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label class="rm-field"><span>Customer</span><select name="customerId" required><% for(const c of m.customers){ %><option value="<%= c.id %>"><%= c.name %></option><% } %></select></label>
+<label class="rm-field"><span>Tier</span><select name="tier" required><option value="1">Tier 1</option><option value="2">Tier 2</option><option value="3">Tier 3</option></select></label>
+<button class="btn">Save tier</button></form><% }else{ %><p class="cell-sub">Customers with open orders appear here.</p><% } %></section>
+
+<% if(m.recent.length){ %><section class="card section"><h2>Recent splits</h2><ul class="rm-list">
+<% for(const run of m.recent){ const plan=run.plan; %><li class="list-row"><span><strong><%= run.authorization_kind==='AUTOMATIC'?'StockChief':'You' %> shared <%= plan.skus.map(s=>s.code).join(', ') %> at <%= run.location_name %></strong>
+<small><%= helpers.dateTime(run.applied_at) %></small>
+<small><%= plan.changes.map(ch=>ch.orderNumber+' '+order(ch)).join(' · ') %></small></span>
+<% if(run.status==='UNDONE'){ %><span class="badge badge--muted">Undone</span><% }else{ %><form method="post" action="/autopilot/backorders/runs/<%= run.id %>/undo"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes"><input type="hidden" name="returnTo" value="sharing">
+<button class="btn btn--ghost btn--sm">Undo</button></form><% } %></li><% } %></ul></section><% } %>

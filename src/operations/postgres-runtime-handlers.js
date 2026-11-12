@@ -708,6 +708,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'customer.preorder.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId,{preorder:true})),
   'customer.preorder-arrival.v1':external((job,database)=>require('../sales/agent-customer-order-pages').settlePreorders(database,job.workspaceId,{receiptId:job.payload.receiptId})),
   'sales_order.route-receipt.v1':external((job,database)=>require('../sales/agent-arrived-stock').onArrival(database,job)),
+  'agent.backorders.allocate.v1':external((job,database)=>require('../sales/agent-backorders').onQueued(database,job)),
   'return.disposition-plan.v1':external((job,database)=>require('./agent-return-disposition').onObservation(database,job.workspaceId,job.payload.assessmentId,job.payload.ownerId)),
   'mail.supplier-terms.v1':external((job,database)=>require('../purchasing/agent-supplier-email-terms').onArrival(database,job.workspaceId,job.payload.messageId)),
   'mail.supplier-po-amendment.v1':external((job,database)=>require('../purchasing/po-amendment-email').onArrival(database,job.workspaceId,job.payload.messageId)),

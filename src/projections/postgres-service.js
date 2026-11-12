@@ -217,6 +217,9 @@ function needsInputs(connection,workspaceId){return require('../lib/versioned-re
     require('../sales/postgres-deposit-refunds').due(database,workspaceId),
     require('../lib/business-time').forWorkspace(database,workspaceId),
     require('../operations/postgres-reconciliation').failures(database,workspaceId),
+    database.query(`SELECT r.id,r.job_id,r.location_id,r.reason,r.created_at,(r.plan->>'units')::int AS units,l.name AS location_name
+      FROM stockchief_runtime.agent_backorder_runs r JOIN locations l ON l.workspace_id=r.workspace_id AND l.id=r.location_id
+      WHERE r.workspace_id=$1 AND r.status='DRAFT' ORDER BY r.created_at,r.id LIMIT 20`,[workspaceId]),
   ]);});}
 async function needsUncached(database,workspaceId,actorId,actor){
   const [inputs,nativeApprovals]=await Promise.all([
@@ -224,11 +227,18 @@ async function needsUncached(database,workspaceId,actorId,actor){
     require('../assistant/postgres-approval-projection').pending(database,workspaceId,actorId),
   ]);
   const [attention,connections,work,imports,bills,supplierReturns,shippingExceptions,mail,orders,purchases,
-    repairs,ambiguousEffects,bulkReviews,rentalBilling,batchExpiry,depositRefunds,calendar,booksMismatches=[]]=inputs;
+    repairs,ambiguousEffects,bulkReviews,rentalBilling,batchExpiry,depositRefunds,calendar,booksMismatches=[],backorderPlans={rows:[]}]=inputs;
   const ownedRecords=new Set(work.rows.filter(r=>object(r.outcome).decision).map(r=>object(r.outcome).recordId));
   const preparedLinks=new Set(nativeApprovals.map(r=>r.href));
   const items=[...nativeApprovals];
   if(batchExpiry.expired||batchExpiry.soon)items.push({kind:'inventory',grouped:true,importance:batchExpiry.expired?'Urgent':'Important',priority:batchExpiry.expired?94:70,title:batchExpiry.expired?batchExpiry.expired+' batches have expired':batchExpiry.soon+' batches expire within 30 days',happened:batchExpiry.expired+' expired batches; '+batchExpiry.soon+' more expire within 30 days.',why:'Expired stock is blocked from sale. Review batch stock before picking or disposing of it.',recommendation:'Review the batches and their locations. Use unexpired stock with the earliest expiry first.',href:'/warehouse/batches',actionLabel:'Review batch expiry',sourceId:'batch-expiry'});
+  for(const row of backorderPlans.rows)items.push({kind:'approval',requiredPermissions:[require('../actions/permissions').ADMIN],importance:'Needs You',priority:87,
+    title:(row.job_id===65?'Approve how scarce stock is shared at ':'Approve stock for waiting orders at ')+row.location_name,
+    happened:number(row.units)+' '+(number(row.units)===1?'unit is':'units are')+' ready to set aside. Nothing has moved yet.',
+    why:row.reason&&row.reason!=='Prepared on request.'?row.reason:'Your plan asks you to approve who gets stock that arrived or freed up.',
+    recommendation:'Check who gets the stock, then approve or dismiss the plan.',
+    href:(row.job_id===65?'/autopilot/stock-sharing':'/autopilot/backorders')+'?location='+encodeURIComponent(row.location_id),actionLabel:'Review plan',
+    sourceId:row.id,createdAt:row.created_at,timeLabel:'Prepared',at:row.created_at});
   for(const row of rentalBilling.rows)items.push({kind:'accounting',importance:'Needs You',priority:89,title:'Review rental billing for '+row.agreement_number,happened:'An earned rental invoice is paused before posting.',why:row.last_error,recommendation:'Review the unchanged billing authority, tax settings and accounting period before authorizing another attempt.',href:'/custody/'+row.agreement_id+'#rental-billing',actionLabel:'Review rental billing',sourceId:row.id,createdAt:row.created_at,updatedAt:row.updated_at,timeLabel:'Billing paused',at:row.updated_at});
   for(const row of bulkReviews.rows)items.push({kind:'approval',requiredPermissions:[require('../actions/permissions').ADMIN],importance:'Needs You',priority:70,title:row.kind==='price'?'Review selected selling prices':row.kind==='cost'?'Review selected purchase costs':row.kind==='reorder'?'Review selected reorder levels':row.kind==='restore'?'Restore selected products':'Archive selected products',happened:(row.payload.items||[]).length+' selected products are prepared; nothing has changed.',why:'Your approval is required before these product changes are applied.',recommendation:'Review the exact products and changes, then approve or cancel.',href:'/inventory/bulk/reviews/'+row.id,actionLabel:'Review changes',sourceId:row.id,createdAt:row.created_at,timeLabel:'Prepared',at:row.created_at});
   for(const row of attention.rows)items.push({kind:'inventory',importance:row.severity==='critical'?'Urgent':row.severity==='important'?'Important':'Watch',
