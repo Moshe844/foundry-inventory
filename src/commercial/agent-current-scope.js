@@ -312,7 +312,12 @@ const notes={
  158:{common:summaries[158],
   growth:'Makes the report on its own, without training, after each month ends, and checks a month again each day while it differs from your books. Pause holds it; Watch only, Ask me first and the first 14 days make the report with no flags, and Ask me first lets you check by hand.',
   pro:'Makes the report on its own, without training, after each month ends, and checks a month again each day while it differs from your books. Pause holds it; Watch only, Ask me first and the first 14 days make the report with no flags, and Ask me first lets you check by hand.',
-  enterprise:'Makes the report on its own, without training, after each month ends, and checks a month again each day while it differs from your books. Pause holds it; Watch only, Ask me first and the first 14 days make the report with no flags, and Ask me first lets you check by hand.'}
+  enterprise:'Makes the report on its own, without training, after each month ends, and checks a month again each day while it differs from your books. Pause holds it; Watch only, Ask me first and the first 14 days make the report with no flags, and Ask me first lets you check by hand.'},
+ 162:{common:summaries[162],
+  starter:'Suggests one item at one location to review from its stock turns, margin return and days of supply. Checking every item each day and flagging the worst in Needs you needs Growth.',
+  growth:'Checks every item at every location each day on its own, without training, and flags in Needs you up to five that earn back less than they cost to hold. Pause holds it; Watch only, Ask me first and the first 14 days check with no flags, and Ask me first lets you check by hand.',
+  pro:'Checks every item at every location each day on its own, without training, and flags in Needs you up to five that earn back less than they cost to hold. Pause holds it; Watch only, Ask me first and the first 14 days check with no flags, and Ask me first lets you check by hand.',
+  enterprise:'Checks every item at every location each day on its own, without training, and flags in Needs you up to five that earn back less than they cost to hold. Pause holds it; Watch only, Ask me first and the first 14 days check with no flags, and Ask me first lets you check by hand.'}
 };
 function current(id,tier){const note=notes[id];return note?(tier&&note[tier]||note.common):summaries[id]||null;}
 module.exports={current};

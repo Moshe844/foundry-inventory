@@ -772,6 +772,13 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post(roiReport.href+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await roiReport.checkNow(database,req.ctx,req.body);
     req.flash('success',r.replayed?'Nothing changed since this report was kept.':'Report made and kept.');
     res.redirect(303,roiReport.href+'?'+new URLSearchParams({month:String(req.body.month||'')})+'#kept-reports');}));
+  // Job 162: stock health per item and location, checked each day on Growth and up.
+  const stockHealth=require('../../forecasting/agent-stock-health');
+  router.get(stockHealth.href,requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/stock-health',{title:'Stock health',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>stockHealth.page(database,req.ctx,req.query),402)));
+  router.post(stockHealth.href+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await stockHealth.checkNow(database,req.ctx);
+    req.flash('success',r.replayed?'Nothing changed since the last check.':(r.opened.length?r.opened.length+' item'+(r.opened.length===1?'':'s')+' flagged.':'Checked every item.')+(r.cleared.length?' '+r.cleared.length+' cleared.':''));
+    res.redirect(303,stockHealth.href+'#stock-health-flags');}));
+  router.post(stockHealth.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,stockHealth.href+'#stock-health-flags');}));
   router.post(roiReport.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,roiReport.href+'?'+new URLSearchParams({month:r.period})+'#kept-reports');}));
   router.post('/autopilot/net-contribution/preview',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await contribution.preview(database,req.ctx,req.body);res.redirect(303,'/autopilot/net-contribution/reviews/'+p.id);}));
   router.get('/autopilot/net-contribution/reviews/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const state=await policy.accountState(database,req.ctx.workspaceId);res.page('autopilot/order-cost-review',{title:'Review actual order costs',nav:'autopilot',suppressBack:true,preview:await contribution.review(database,req.ctx,req.params.id),allowed:policy.usesAgentTerms(state)&&policy.permits(state.plan,85,'draft')});}));

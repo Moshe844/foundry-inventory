@@ -145,7 +145,7 @@ const suggestions={
   85:r=>'Order '+r.Order+' has '+r['Posted net sales']+' posted net sales and '+r['Net contribution']+' net contribution after checked costs. '+r.Review,
   40:r=>r.Review,
   13:r=>require('../purchasing/agent-kit-reorders').suggestion(r),
-  162:r=>r['Days of supply']==null?'Check the sales and valuation records for '+r.SKU+'.':'Review '+r.SKU+' with '+r['Days of supply']+' days of stock at its recorded sales rate.',
+  162:r=>r['Days of supply']==null?'Check the sales and valuation records for '+r.SKU+' at '+r.Location+'.':'Review '+r.SKU+' at '+r.Location+' with '+r['Days of supply']+' days of stock at its recorded sales rate.',
   126:r=>'Review '+r.Product+'. '+r['What to fix']+'.',
   17:r=>r.SKU+' at '+r.Location+(r['Days since receipt']===null?' has unconfirmed age.':
     ' has '+r.Units+' recorded units received '+r['Days since receipt']+' days ago.')+' '+r.Review+'.',
