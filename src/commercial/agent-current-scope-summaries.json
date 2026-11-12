@@ -52,7 +52,7 @@
   "55": "An owner-enabled rule holds orders for overdue customer receivables and releases the hold after full payment. Lower-plan suggestions do not enable this hold.",
   "56": "Releases up to 20 fully reserved, unshipped quantity orders at one warehouse by saved priority and due date. Physical scans, packing and handoff stay separate.",
   "57": "Prepares single-warehouse quantity pick waves with scan and packing checks. Multi-zone optimization and tracked, kit or partial-order workflows remain open.",
-  "58": "Selects the lowest current shipping quote that meets the recorded delivery promise, keeping currencies separate and refusing missing or expired estimates.",
+  "58": "For each packed parcel StockChief fetches current rates from every connected shipping account and picks the cheapest that arrives by the date promised on the order. Arrival is the carrier's date, or its transit days counted from its ship date or the day it quoted. Other currencies are never compared, and PO boxes only get postal services. Starter sees the suggestion and buys with one tap. Growth suggests until the owner approves one at that price or saves the rule, then chooses alone. Pro and Custom choose alone. A missing promise date or no timely rate stops and asks.",
   "59": "Buys eligible labels within current owner and plan limits, with individual Starter approval. Live carrier qualification remains open.",
   "60": "Prepares a shipment-specific tracking email after physical handoff. Starter approves every shipment; higher plans may authorize routine sending. Live mailbox verification remains open.",
   "62": "Reviews overdue parcels and recorded carrier exceptions. Live tracking updates still need provider verification.",

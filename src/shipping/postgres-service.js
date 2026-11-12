@@ -257,6 +257,7 @@ async function quote(database,ctx,shipmentId,options={}){
     const now=nowIso();
     await client.query(`UPDATE sales_shipments SET shipping_quote_problems=$3::jsonb,updated_at=$4
       WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,shipmentId,JSON.stringify(quoteProblems),now]);
+    const shipDates=await require('../db/schema-installed').has(client,'shipment_rates','ship_date');
     for(const {account,answer} of successful)for(const rate of answer.rates||[]){
       await client.query(`INSERT INTO shipment_rates
         (id,workspace_id,shipment_id,provider,provider_rate_id,carrier,service,amount_minor,currency,
@@ -267,6 +268,9 @@ async function quote(database,ctx,shipmentId,options={}){
         account.provider,(rate.rateIds||[rate.rateId]).join(','),rate.carrier,rate.service,rate.amountMinor,
         rate.currency||'USD',rate.deliveryDays??null,rate.deliveryDate||null,rate.guaranteed?1:0,now,
         account.connectorId,accountFingerprint(account),fingerprint,JSON.stringify(answer.providerShipmentIds||[]),JSON.stringify(rate.packageAmountsMinor||null)]);
+      // Job 58 counts transit days from the carrier's own ship date when it gives one.
+      if(shipDates&&/^\d{4}-\d{2}-\d{2}$/.test(String(rate.shipDate||'')))await client.query(`UPDATE shipment_rates SET ship_date=$4
+        WHERE workspace_id=$1 AND shipment_id=$2 AND connector_id=$3 AND provider_rate_id=$5`,[ctx.workspaceId,shipmentId,account.connectorId,rate.shipDate,(rate.rateIds||[rate.rateId]).join(',')]);
     }
   },{isolation:'SERIALIZABLE',retrySafe:true});
   return state(database,ctx.workspaceId,shipmentId);

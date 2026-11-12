@@ -144,7 +144,7 @@ function createPostgresShippingRouter(database,options={}){
       active:Boolean(Number(row.is_active)),statedText:row.stated_text}));
     return res.page('shipping/postgres-settings',{title:'Shipping settings',nav:'settings',room:true,backTo:{href:'/settings',label:'Settings'},
       account,customStore:customRows.rows[0]||null,returnTo:safeReturn(req.query.returnTo),selectedProvider:accounts.KEY_PROVIDERS.includes(req.query.provider)?req.query.provider:'shipengine',openKeyForm:Boolean(req.query.provider||safeReturn(req.query.returnTo)),shippoLink:shippoReady(),shippingAccounts:shippingAccounts.map(a=>({...a,webhookSetup:setupRows.rows.find(row=>row.connector_id===a.connectorId)||null,webhookUrl:`${res.locals.origin}/webhooks/shipping/${a.provider}/${req.ctx.workspaceId}`})),rules,
-      purchaseLimits:await require('../../shipping/postgres-purchase-policy').get(database,req.ctx.workspaceId),fromMinor:require('../../domain/currency').fromMinor,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD',
+      purchaseLimits:await require('../../shipping/postgres-purchase-policy').get(database,req.ctx.workspaceId),agentRates:await require('../../shipping/agent-labels').settings(database,req.ctx.workspaceId),fromMinor:require('../../domain/currency').fromMinor,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD',
       automaticShippingAvailable:false,operationPolicy:{mode:policyRows.rows[0]?.mode||'RECOMMEND'},
       referral:{available:false,opened:false,billingReady:false},shipengine:{available:false,opened:false,billingReady:false},
       openShipEngineSetup:false,workspaceName:req.workspace?.name||'',providers:accounts.PROVIDERS,carriers:carriers.list(),
@@ -153,6 +153,11 @@ function createPostgresShippingRouter(database,options={}){
         country_code:parsed.country||'US'},
       webhookUrl:`${res.locals.origin}/webhooks/shipping/${account.provider||'<provider>'}/${req.ctx.workspaceId}`,
     });
+  }));
+  router.post('/settings/shipping/agent-rates',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../shipping/agent-labels').configure(database,req.ctx,{enabled:req.body.enabled==='on'});
+    req.flash('success',req.body.enabled==='on'?'StockChief now picks the cheapest rate that arrives in time on its own.':'StockChief will suggest rates for you to approve.');
+    return res.redirect(303,'/settings/shipping#handling');
   }));
   router.post('/settings/shipping/limits',requireOwner,asyncRoute(async(req,res)=>{
     const currency=req.body.currency,convert=value=>String(value??'').trim()===''?null:require('../../domain/currency').toMinor(value,currency);
@@ -349,6 +354,19 @@ function createPostgresShippingRouter(database,options={}){
     try{const decided=await require('../../shipping/agent-address-checks').decide(database,req.ctx,req.params.id,{checkId:req.body.checkId,action:req.body.action});
       if(decided.addressChanged)await quoteFlash(req,req.params.id,'address-check:'+newId('quote'));
       else req.flash('success','Address confirmed. You can buy the label.');}
+    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+    return backTo(req,res,'#carrier');
+  }));
+  // Jobs 58 and 59: one tap approves StockChief's rate and buys its label.
+  router.post('/fulfilment/:id/agent-label',requireOwner,requireCapability(database,'shipping.labels'),asyncRoute(async(req,res)=>{
+    try{const result=await require('../../shipping/agent-labels').approve(database,req.ctx,req.params.id,{runId:req.body.runId},{providerResolver:options.providerResolver});
+      if(result.changed)req.flash('warning',result.run.status==='HELD'?result.run.reason:'Rates changed since StockChief suggested this one. Check the new suggestion and tap again.');
+      else req.flash('success',result.replayed?'That label is already being bought. It was not bought twice.':'Buying the label. It appears here as soon as the carrier confirms it.');}
+    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+    return backTo(req,res,'#label');
+  }));
+  router.post('/fulfilment/:id/agent-label/dismiss',requirePermission(permissions.OPERATE,'choose a shipping rate'),asyncRoute(async(req,res)=>{
+    try{await require('../../shipping/agent-labels').dismiss(database,req.ctx,req.params.id,{runId:req.body.runId});req.flash('success','Suggestion set aside. Choose a rate below.');}
     catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
     return backTo(req,res,'#carrier');
   }));

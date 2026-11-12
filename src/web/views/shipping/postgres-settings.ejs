@@ -68,7 +68,14 @@
 <div class="ship-prefs">
 <% if(account.connected){ %>
 <section class="ox-card ox-ship__card" id="handling">
-  <div class="ox-ship__card-h"><h2>Choosing a rate</h2><p>Comparing rates never buys postage. Every label is bought by a person.</p></div>
+  <div class="ox-ship__card-h"><h2>Choosing a rate</h2><p>Comparing rates never buys postage.<% if (locals.agentRates) { %> StockChief picks the cheapest rate that arrives by the date promised on the order.<%= agentRates.mode === 'suggest' ? ' You approve each label with one tap.' : agentRates.mode === 'alone' ? ' It chooses on its own.' : '' %><% } else { %> Every label is bought by a person.<% } %></p></div>
+  <% if (locals.agentRates && agentRates.canTeach) { %>
+  <form method="post" action="/settings/shipping/agent-rates" class="ox-ship__form" data-busy data-agent-rates>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="ox-ship__choice"><input type="checkbox" name="enabled" <%= agentRates.ruleEnabled ? 'checked' : '' %>><span><strong>Let StockChief choose on its own</strong><small>Without this, it suggests a rate until you approve one. This uses one of your saved rules.</small></span></label>
+    <button class="ox-btn ox-btn--secondary" type="submit">Save</button>
+  </form>
+  <% } %>
   <form method="post" action="/settings/shipping/operation-mode" class="ox-ship__form" data-busy>
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <div class="ox-ship__choices">

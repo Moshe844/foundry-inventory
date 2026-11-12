@@ -14,6 +14,7 @@
   var cheapest = sn.rates[0];
   var accounts = sn.accounts.join(', ');
   var addressHeld = Boolean(sn.addressCheck && sn.addressCheck.held);
+  var ar = sn.agentRun, chosenRate = ar && ar.rate_id && sn.rates.some(function (r) { return r.id === ar.rate_id; }) ? ar.rate_id : null;
 %>
 <div class="card-body ship-now" id="ship-now">
   <ol class="ship-steps" aria-label="Shipping steps">
@@ -60,15 +61,36 @@
     </div>
 
   <% } else if (sn.rates.length) { %>
+    <% if (ar && ar.status === 'HELD' && ar.hold !== 'address') { %>
+      <p class="ship-now__warn" data-agent-rate><%= ar.reason %></p>
+    <% } else if (ar && ar.carrierName && !addressHeld) { %>
+      <div class="ship-now__wait" data-agent-rate>
+        <strong><%= ar.mode === 'watch' ? 'StockChief would choose' : ar.status === 'CHOSEN' ? 'StockChief chose' : 'StockChief suggests' %> <%= ar.carrierName %> <%= ar.service %> · <%= ar.price %></strong>
+        <span>Arrives <%= ar.arrival_date %>, promised by <%= ar.promised_date %>. It is the cheapest rate that arrives in time.<% if (ar.mode === 'watch') { %> StockChief is only watching for now.<% } %></span>
+        <% if (ar.status === 'CHOSEN' && ar.label_reason) { %><span><%= ar.label_reason %></span><% } %>
+        <% if (ar.tap && owner) { %>
+          <div class="ship-now__buy">
+            <form method="post" action="/fulfilment/<%= s.id %>/agent-label" class="ship-now__minor" data-busy>
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="order"><input type="hidden" name="runId" value="<%= ar.id %>">
+              <button class="btn btn--primary" type="submit">Buy this label</button>
+            </form>
+            <form method="post" action="/fulfilment/<%= s.id %>/agent-label/dismiss" class="ship-now__minor" data-busy>
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="order"><input type="hidden" name="runId" value="<%= ar.id %>">
+              <button class="ship-now__link" type="submit">Choose another rate</button>
+            </form>
+          </div>
+        <% } %>
+      </div>
+    <% } %>
     <form method="post" action="/fulfilment/<%= s.id %>/label" data-busy>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="order">
       <fieldset class="ship-rates">
         <legend>Rates from <%= accounts %></legend>
         <% sn.rates.forEach(function (rate, i) { %>
           <label class="ship-rate">
-            <input type="radio" name="rateId" value="<%= rate.id %>" <%= i === 0 ? 'checked' : '' %> required>
+            <input type="radio" name="rateId" value="<%= rate.id %>" <%= (chosenRate ? rate.id === chosenRate : i === 0) ? 'checked' : '' %> required>
             <span class="ship-rate__name"><strong><%= rate.carrierName %></strong> <%= rate.service %>
-              <% if (i === 0) { %><span class="ship-rate__tag">Cheapest</span><% } %></span>
+              <% if (i === 0) { %><span class="ship-rate__tag">Cheapest</span><% } %><% if (rate.id === chosenRate && i !== 0) { %><span class="ship-rate__tag">Arrives in time</span><% } %></span>
             <span class="ship-rate__days"><%= rate.delivery_date ? 'By ' + rate.delivery_date : rate.deliveryDays ? rate.deliveryDays + (rate.deliveryDays === 1 ? ' day' : ' days') : '' %></span>
             <strong class="ship-rate__price"><%= helpers.money(rate.amountMinor, rate.currency) %></strong>
           </label>
