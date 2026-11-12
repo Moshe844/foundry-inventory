@@ -776,7 +776,8 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
       [ctx.workspaceId, line.sku_id, order.fulfillment_location_id]);
       for (const balance of balances.rows) {
         if (needed <= 0) break;
-        const available = (await require('../transfers/postgres-transfer-service').sourceAvailable(client,ctx.workspaceId,line.sku_id,balance.location_id)).available;
+        // Stock protected for this customer (job 12) is available to its own order.
+        const available = (await require('../transfers/postgres-transfer-service').sourceAvailable(client,ctx.workspaceId,line.sku_id,balance.location_id,{customerId:order.customer_id})).available;
         const quantity = Math.min(needed, available);
         if (!quantity) continue;
         const rotationUpdate=existing.rows[0].has_rotation?`
@@ -797,6 +798,8 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
       }
       if (needed > 0&&!kitLines.has(line.id)) short = true;
     }
+    await require('../sales/agent-stock-protections').handOver(client,ctx,order,
+      allocations.map(a=>({...a,skuId:lines.rows.find(l=>l.id===a.lineId).sku_id})));
     const kitReservations=await require('./postgres-kit-allocations').reserve(client,ctx,salesOrderId,{lock:false,requireFull:input.requireFullAllocation===true});short=short||kitReservations.shortage;
     if (short && input.requireFullAllocation === true) throw new ValidationError(
       'The full order cannot be reserved from available stock. No confirmation or allocation was saved. Receive or transfer the missing stock, then try again.');

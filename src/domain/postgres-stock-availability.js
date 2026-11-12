@@ -12,16 +12,20 @@ const POSITION_SQL=` SELECT p.sku_id,p.location_id,loc.custody_agreement_id,coal
  LEFT JOIN lots chosen_lot ON chosen_lot.workspace_id=$1 AND chosen_lot.sku_id=s.id AND chosen_lot.id=$3
  LEFT JOIN lot_balances lb ON lb.workspace_id=$1 AND lb.lot_id=chosen_lot.id AND lb.location_id=loc.id
  LEFT JOIN LATERAL(SELECT sum(a.quantity) quantity FROM sales_stock_commitments a
-  WHERE a.workspace_id=$1 AND a.sku_id=s.id AND a.location_id=loc.id)sales ON true
+  WHERE a.workspace_id=$1 AND a.sku_id=s.id AND a.location_id=loc.id
+   AND ($5::text IS NULL OR a.reserved_for_customer_id IS DISTINCT FROM $5)
+   AND ($6::text IS NULL OR a.stock_reservation_id IS DISTINCT FROM $6))sales ON true
  LEFT JOIN LATERAL(SELECT sum(CASE WHEN t.status='REQUESTED' THEN l.requested_quantity ELSE l.approved_quantity END) quantity,
   sum(CASE WHEN t.status='REQUESTED' THEN l.requested_quantity ELSE l.approved_quantity END) FILTER(WHERE $3::text IS NULL OR l.lot_id=$3) lot_quantity
   FROM inventory_transfer_lines l JOIN inventory_transfers t ON t.workspace_id=l.workspace_id AND t.id=l.transfer_id
   WHERE l.workspace_id=$1 AND l.sku_id=s.id AND t.source_location_id=loc.id AND t.status IN ('REQUESTED','APPROVED','PICKED')
    AND ($4::text IS NULL OR t.id<>$4))transfers ON true`;
-async function readMany(c,workspaceId,positions,{lotId=null,excludeTransferId=null,excludeRentalAgreementId=null,rentalWindow=null,sellableOnly=false}={}){
+// customerId lets that customer's own order use stock protected for it (job 12);
+// reservationId reads a position as if that one protection were not held.
+async function readMany(c,workspaceId,positions,{lotId=null,excludeTransferId=null,excludeRentalAgreementId=null,rentalWindow=null,sellableOnly=false,customerId=null,reservationId=null}={}){
  if(!positions.length)return new Map();const requested=JSON.stringify(positions.map(p=>({sku_id:p.skuId,location_id:p.locationId})));
  const rows=(await c.query(`WITH requested AS (SELECT DISTINCT sku_id,location_id FROM jsonb_to_recordset($2::jsonb) AS p(sku_id text,location_id text))
- ${POSITION_SQL}`,[workspaceId,requested,lotId,excludeTransferId])).rows;
+ ${POSITION_SQL}`,[workspaceId,requested,lotId,excludeTransferId,customerId,reservationId])).rows;
  const goodStock=(lotId||sellableOnly)?new Map((await c.query(`WITH requested AS(SELECT DISTINCT sku_id,location_id FROM jsonb_to_recordset($2::jsonb) p(sku_id text,location_id text)) SELECT p.sku_id,p.location_id,CASE i.tracking_mode WHEN 'lot' THEN coalesce((SELECT sum(lb.quantity) FROM lot_balances lb JOIN lots l ON l.workspace_id=lb.workspace_id AND l.id=lb.lot_id WHERE lb.workspace_id=$1 AND l.sku_id=p.sku_id AND lb.location_id=p.location_id AND l.recalled_at IS NULL AND (l.expires_at IS NULL OR l.expires_at::date>=$3::date)),0) WHEN 'serial' THEN (SELECT count(*) FROM serial_units u LEFT JOIN lots l ON l.workspace_id=u.workspace_id AND l.id=u.lot_id WHERE u.workspace_id=$1 AND u.sku_id=p.sku_id AND u.location_id=p.location_id AND u.status='in_stock' AND u.condition='good' AND l.recalled_at IS NULL AND (l.expires_at IS NULL OR l.expires_at::date>=$3::date)) ELSE coalesce(b.on_hand,0) END::text quantity FROM requested p JOIN skus s ON s.workspace_id=$1 AND s.id=p.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id LEFT JOIN balances b ON b.workspace_id=$1 AND b.sku_id=p.sku_id AND b.location_id=p.location_id`,[workspaceId,requested,await require('../lib/business-time').today(c,workspaceId)])).rows.map(r=>[key(r.sku_id,r.location_id),Number(r.quantity)])):new Map();
  const rotation=lotId?new Map((await c.query(`SELECT sku_id,location_id,coalesce(sum(quantity) FILTER(WHERE lot_id=$3),0)::text selected,sum(quantity)::text bound FROM stockchief_runtime.sales_rotation_entries WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) GROUP BY sku_id,location_id`,[workspaceId,[...new Set(positions.map(p=>p.skuId))],lotId])).rows.map(r=>[key(r.sku_id,r.location_id),r])):new Map();
  const rentals=await require('../custody/postgres-bookings').heldMany(c,workspaceId,positions,{excludeAgreementId:excludeRentalAgreementId,rentalWindow}),returns=await require('../operations/postgres-return-holds').heldMany(c,workspaceId,positions,{lotId}),result=new Map();

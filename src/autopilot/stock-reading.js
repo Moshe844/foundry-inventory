@@ -34,6 +34,8 @@ async function lookup(c,ctx,{filter,page=1,today}){
  const values=(await c.query('SELECT sku_id,location_id,quantity_units::text,total_cost_minor FROM accounting_inventory_cost_balances WHERE workspace_id=$1 AND sku_id=ANY($2::text[])',[ctx.workspaceId,ids])).rows;
  const commitments=(await c.query(`SELECT a.sku_id,a.location_id,o.order_number reference,'Customer order' kind,sum(a.quantity)::text quantity
  FROM sales_stock_commitments a JOIN sales_orders o ON o.workspace_id=a.workspace_id AND o.id=a.sales_order_id WHERE a.workspace_id=$1 AND a.sku_id=ANY($2::text[]) GROUP BY a.sku_id,a.location_id,o.id,o.order_number
+ UNION ALL SELECT a.sku_id,a.location_id,c.name,'Protected for customer',sum(a.quantity)::text
+ FROM sales_stock_commitments a JOIN customers c ON c.workspace_id=a.workspace_id AND c.id=a.reserved_for_customer_id WHERE a.workspace_id=$1 AND a.sku_id=ANY($2::text[]) AND a.stock_reservation_id IS NOT NULL GROUP BY a.sku_id,a.location_id,c.id,c.name
  UNION ALL SELECT l.sku_id,t.source_location_id,coalesce(t.reference,t.id),'Internal transfer',sum(CASE t.status WHEN 'REQUESTED' THEN l.requested_quantity ELSE l.approved_quantity END)::text
  FROM inventory_transfer_lines l JOIN inventory_transfers t ON t.workspace_id=l.workspace_id AND t.id=l.transfer_id WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND t.status IN ('REQUESTED','APPROVED','PICKED') GROUP BY l.sku_id,t.source_location_id,t.id,t.reference
  ORDER BY sku_id,location_id,kind,reference`,[ctx.workspaceId,ids])).rows;
