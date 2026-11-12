@@ -1448,13 +1448,75 @@ function createPostgresAutopilotRouter(database,options={}){
     await require('../../warehouse/agent-putaway').teach(database,req.ctx,req.params.id,req.body);
     res.redirect(303,'/warehouse/putaway/'+req.params.id);
   }));
-  router.post('/autopilot/pick-release/recheck',requireAuth,owner,asyncRoute(async(req,res)=>{
-    await require('../../warehouse/agent-pick-release').recheck(database,req.ctx);res.redirect(303,'/autopilot/reviews/pick-release');
+  // Job 56: release ready orders to the warehouse in the best pick order.
+  const pickRelease=require('../../warehouse/agent-pick-release');
+  router.get(pickRelease.href,requireAuth,owner,starterAgentPage(56,'draft','Release ready orders',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    return res.page('autopilot/pick-release',{title:'Release ready orders',nav:'autopilot',backTo:{href:'/autopilot/reviews/pick-release',label:'Agent review'},
+      model:await pickRelease.page(database,req.ctx,{filter:String(req.query.filter||''),location:String(req.query.location||'')})});
+  },'Growth'));
+  router.post(pickRelease.href+'/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await pickRelease.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'The release rule is off. StockChief proposes each release here.':result.growth&&!result.automatic?'Saved. StockChief proposes each release here within this rule.':'Saved. StockChief releases orders here on its own within this rule.');
+    return res.redirect(303,pickRelease.href+'?location='+encodeURIComponent(req.body.locationId||''));
   }));
-  router.post('/autopilot/pick-release/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
-    const prepared=await require('../../assistant/postgres-service').prepareAction(database,req.ctx,'Release the next ready orders at this warehouse',{action:'warehouse.release_orders',recordReference:req.body.order,quantity:req.body.quantity,strategy:req.body.strategy});
-    if(prepared.status!=='PREPARED')throw new (require('../../domain/errors').ValidationError)(prepared.message||'Choose the first ready order at this warehouse.');
-    res.redirect(303,'/actions/'+prepared.proposal.id);
+  router.post(pickRelease.href+'/release',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const done=await pickRelease.releaseNow(database,req.ctx,req.body);
+    req.flash('success',done.replayed?'Those orders were already released.':done.orderIds.length+' orders released to '+done.location+'.');
+    return res.redirect(303,pickRelease.href);
+  }));
+  router.post(pickRelease.href+'/releases/:id/approve',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const done=await pickRelease.approve(database,req.ctx,req.params.id,req.body);
+    if(done.stale)req.flash('error','The orders changed since this release was proposed: '+done.reason+' Review a fresh release.');
+    else req.flash('success',done.replayed?'This release was already approved.':'Released '+done.orderIds.length+' orders to '+done.location+'.');
+    return res.redirect(303,pickRelease.href);
+  }));
+  router.post(pickRelease.href+'/releases/:id/discard',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await pickRelease.discard(database,req.ctx,req.params.id);req.flash('success','Release dismissed. Nothing was released.');
+    return res.redirect(303,pickRelease.href);
+  }));
+  router.post(pickRelease.href+'/releases/:id/undo',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const done=await pickRelease.undo(database,req.ctx,req.params.id);
+    req.flash('success',done.replayed?'This release was already undone.':'Release undone. Its orders are ready again'+(done.cancelledBoxes?' and '+done.cancelledBoxes+' unpicked boxes were cancelled.':'.'));
+    return res.redirect(303,pickRelease.href);
+  }));
+  router.post(pickRelease.href+'/releases/:id/teach',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await pickRelease.teach(database,req.ctx,req.params.id);req.flash('success','Taught. StockChief now releases orders at this warehouse on its own within its rule.');
+    return res.redirect(303,pickRelease.href);
+  }));
+  // Job 57: pick waves by zone.
+  const pickWaves=require('../../warehouse/agent-pick-waves');
+  router.get(pickWaves.href,requireAuth,owner,starterAgentPage(57,'draft','Pick waves by zone',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    return res.page('autopilot/pick-waves',{title:'Pick waves by zone',nav:'autopilot',backTo:{href:'/autopilot/reviews/pick-waves',label:'Agent review'},model:await pickWaves.page(database,req.ctx)});
+  },'Growth'));
+  router.post(pickWaves.href+'/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await pickWaves.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'The wave rule is off. Each wave here waits for a person to start it.':result.growth&&!result.automatic?'Saved. StockChief prepares waves here for a person to start.':'Saved. StockChief builds and starts waves here on its own within this rule.');
+    return res.redirect(303,pickWaves.href);
+  }));
+  router.post(pickWaves.href+'/build',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await pickWaves.buildNow(database,req.ctx,String(req.body.locationId||''));
+    req.flash('success',result.watching?'StockChief is only watching, so no wave was built.':result.built+' waves built, '+result.started+' started.');
+    return res.redirect(303,pickWaves.href);
+  }));
+  router.post(pickWaves.href+'/waves/:id/start',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const done=await pickWaves.start(database,req.ctx,{id:req.params.id});req.flash('success',done.replayed?'This wave was already started.':'Wave started. Pickers can scan now.');
+    return res.redirect(303,'/warehouse/waves/'+done.waveId);
+  }));
+  router.post(pickWaves.href+'/waves/:id/undo',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const done=await pickWaves.undo(database,req.ctx,req.params.id);
+    req.flash('success',done.replayed?'This wave was already undone.':'Wave undone. '+done.cancelledBoxes+' unpicked boxes were cancelled; the orders wait for a new wave.');
+    return res.redirect(303,pickWaves.href);
+  }));
+  router.post(pickWaves.href+'/waves/:id/teach',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await pickWaves.teach(database,req.ctx,req.params.id);req.flash('success','Taught. StockChief now starts waves at this warehouse on its own within its rule.');
+    return res.redirect(303,pickWaves.href);
+  }));
+  router.post(pickRelease.href+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await pickRelease.recheck(database,req.ctx);const result=await pickRelease.run(database,req.ctx.workspaceId);
+    req.flash('success',result.watching?'StockChief is only watching, so nothing was released.':'Checked. '+result.released+' orders released, '+result.proposed+' releases waiting for you, '+result.held+' warehouses held.');
+    return res.redirect(303,pickRelease.href);
   }));
   router.post('/autopilot/partner-stock-readings',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../connections/agent-partner-stock-reads').configure(database,req.ctx,req.body);

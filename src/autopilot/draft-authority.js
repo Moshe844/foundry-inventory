@@ -3,7 +3,7 @@ const policy=require('../commercial/agent-plan');
 const money=require('../domain/currency');
 const {hash}=require('../pricing/postgres-promotions');
 const {ValidationError}=require('../domain/errors');
-const jobs=new Map([['customer_return.send_label',112],['warehouse.release_partial_order',61],['sales_order.reserve_all',12],['sales_order.allocation_priority',65],['sales_quote.followup',74],['customer.statement',81],['landed_cost.apply',49],['warehouse.wave.create',57],['warehouse.release_orders',56],['supplier_invoice.dispute',100],['sales_order.reserve_arrived',48],['customer_payment.match_bank_line',103],['sales_order.create',null],['catalog.supplier_price_list',135],['manufacturing.create_work_order',14],['sales_quote.create',73],['sales_order.repeat',53],['purchase_order.combine_drafts',24],['purchase_order.split_draft',25]]);
+const jobs=new Map([['customer_return.send_label',112],['warehouse.release_partial_order',61],['sales_order.reserve_all',12],['sales_order.allocation_priority',65],['sales_quote.followup',74],['customer.statement',81],['landed_cost.apply',49],['supplier_invoice.dispute',100],['sales_order.reserve_arrived',48],['customer_payment.match_bank_line',103],['sales_order.create',null],['catalog.supplier_price_list',135],['manufacturing.create_work_order',14],['sales_quote.create',73],['sales_order.repeat',53],['purchase_order.combine_drafts',24],['purchase_order.split_draft',25]]);
 jobs.set('purchase_order.reorder_drafts',19);jobs.set('purchasing.select_supplier',22);
 function eligible(plan,action){
  return action==='sales_order.create'?['growth','pro','enterprise'].includes(plan):policy.permits(plan,jobs.get(action),'automatic',{trained:true});
@@ -102,6 +102,15 @@ async function trained(db,workspaceId,name,payload,proposalId){
   if(name==='sales_order.repeat'){
     if(!payload&&proposalId)payload=(await db.query('SELECT payload FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2 AND action_type=$3',[workspaceId,proposalId,name])).rows[0]?.payload;
     return require('../sales/agent-repeat-orders').trained(db,workspaceId,payload);
+  }
+  // Jobs 56 and 57 are taught per warehouse by the owner's release and wave rules.
+  if(name==='warehouse.wave.create'){
+    if(!payload&&proposalId)payload=(await db.query('SELECT payload FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2 AND action_type=$3',[workspaceId,proposalId,name])).rows[0]?.payload;
+    return require('../warehouse/agent-pick-waves').trained(db,workspaceId,payload);
+  }
+  if(name==='warehouse.release_orders'){
+    if(!payload&&proposalId)payload=(await db.query('SELECT payload FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2 AND action_type=$3',[workspaceId,proposalId,name])).rows[0]?.payload;
+    return require('../warehouse/agent-pick-release').trained(db,workspaceId,payload);
   }
   if(!jobs.has(name))return false;
   if(!payload&&proposalId)payload=(await db.query('SELECT payload FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2 AND action_type=$3',[workspaceId,proposalId,name])).rows[0]?.payload;

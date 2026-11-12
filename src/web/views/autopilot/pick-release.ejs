@@ -1,10 +1,60 @@
-<section class="card"><h2>Prepare a pick release</h2><p>Growth can handle a matching release after you approve an example and teach its goods-value limit. Pro and Custom can handle eligible releases within your saved authority. Every batch is limited to 20 orders.</p>
-<% if(form.orders.length){ %><form method="post" action="/autopilot/pick-release/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-<label>First ready order at this warehouse <select name="order" required><% for(const o of form.orders){ %><option value="<%= o.id %>"><%= o.order_number %> · <%= o.location %> · <%= o.customer %></option><% } %></select></label>
-<label>Maximum orders <input name="quantity" type="number" min="1" max="20" value="20" required></label>
-<label>Picking strategy <select name="strategy"><option value="BATCH">Batch</option><option value="WAVE">Wave</option><option value="CLUSTER">Cluster</option></select></label><% if(form.blocked){ %><p><%= form.blocked %></p><% } %><button class="btn" <%= form.blocked?'disabled':'' %>>Prepare for review</button></form>
-<% }else{ %><p>No eligible fully reserved orders in this view.</p><% } %>
-<h3>Automatic release</h3><p><%= form.routineReason||'Enabled for batches that fit the current plan, taught scope and saved limits.' %> <a href="/autopilot">Manage job authority</a></p>
-<p>Each warehouse is checked at most once every 15 minutes. A held warehouse does not stop checks at other warehouses. Physical picking, packing and handoff still need a person.</p>
-<% if(form.recent.length){ %><h3>Recent routine checks</h3><ul><% for(const r of form.recent){ %><li><strong><%= r.name %></strong> · <%= r.checked %>: <% if(r.problem){ %><%= r.problem %><% }else if(r.wave_id){ %><a href="/warehouse/waves/<%= r.wave_id %>">Picking wave released</a><% } %> Next check from <%= r.retry %>.</li><% } %></ul>
-<form method="post" action="/autopilot/pick-release/recheck"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Allow another routine check</button></form><% } %></section>
+<% const m=model,growth=m.mode==='trained',runBy=x=>x.authorization_kind==='AUTOMATIC'?'StockChief':'You';
+const size=s=>s.size.batch==null?'No batch size yet':s.size.batch+' at a time'+(s.size.source==='record'?' (the most it shipped in one day this month)':''); %>
+<div class="page-head"><div class="titles"><h1>Release ready orders</h1>
+<p><%= growth?'StockChief lines up ready orders in the best pick order and proposes each release to the warehouse. Teach it a warehouse’s rule and it releases there on its own.':'StockChief releases ready orders to each warehouse on its own, in the best pick order, within your rules. Every release can be undone until picking starts.' %></p></div></div>
+<% if(m.shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It shows what it would release and releases nothing.</p>
+<% }else if(m.blocked){ %><p class="notice notice--warn"><%= m.blocked %></p><% } %>
+
+<% if(m.waiting.length){ %><section class="card section" id="approvals"><h2>Waiting for you</h2><ul class="rm-list">
+<% for(const w of m.waiting){ %><li class="list-row" id="release-<%= w.id %>"><span><strong><%= w.plan.summary %></strong>
+<small><%= w.reason %></small>
+<ol class="cell-sub"><% for(const o of w.plan.orders.slice(0,10)){ %><li><%= o.orderNumber %> · <%= o.customer %> · <%= o.why %></li><% } %></ol>
+<% if(w.plan.orders.length>10){ %><small>And <%= w.plan.orders.length-10 %> more in this order.</small><% } %></span>
+<div class="btn-row"><form method="post" action="<%= m.href %>/releases/<%= w.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<input type="hidden" name="fingerprint" value="<%= w.fingerprint %>"><input type="hidden" name="confirmed" value="yes">
+<button class="btn btn--primary btn--sm" <%= m.blocked?'disabled':'' %>>Release</button></form>
+<form method="post" action="<%= m.href %>/releases/<%= w.id %>/discard"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm">Dismiss</button></form></div></li><% } %></ul></section><% } %>
+
+<section class="card section" id="ready"><h2>Ready to release, in pick order</h2>
+<p class="cell-sub">Your saved priority first (lower numbers first), then the ship-by date, then the warehouse’s carrier cut-off, then the oldest order.</p>
+<form method="get" action="<%= m.href %>" class="field-row"><label class="rm-field"><span>Warehouse or order number</span><input name="filter" value="<%= m.filter %>" maxlength="150"></label><div><button class="btn btn--sm">Show</button></div></form>
+<% if(m.ready.length){ %><ol class="rm-list"><% for(const o of m.ready){ %><li class="list-row"><span><strong><a href="/orders/<%= o.id %>"><%= o.order_number %></a> · <%= o.customer %></strong>
+<small><%= o.location %> · <%= o.why %></small></span></li><% } %></ol>
+<% if(m.more){ %><p class="cell-sub">And more ready orders after these.</p><% } %>
+<% }else{ %><p>No orders are ready to release right now.</p><% } %>
+<% if(m.next&&m.next.orders.length){ const n=m.next; %><form method="post" action="<%= m.href %>/release" class="form-stack" id="release-now">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= n.locationId %>">
+<input type="hidden" name="orders" value="<%= n.orders.map(o=>o.id).join(',') %>"><input type="hidden" name="count" value="<%= n.orders.length %>">
+<input type="hidden" name="fingerprint" value="<%= n.fingerprint %>"><input type="hidden" name="requestKey" value="<%= m.requestKey %>">
+<p><strong>Next release at <%= n.location.name %>:</strong> <%= n.orders.map(o=>o.orderNumber).join(', ') %></p>
+<button class="btn btn--primary">Release <%= n.orders.length %> order<%= n.orders.length===1?'':'s' %> to <%= n.location.name %> now</button></form>
+<% if(m.sites.filter(s=>s.ready).length>1){ %><p class="cell-sub">Release at another warehouse: <% m.sites.filter(s=>s.ready&&s.id!==n.locationId).forEach((s,i)=>{ %><%= i?', ':'' %><a href="<%= m.href %>?location=<%= encodeURIComponent(s.id) %>#release-now"><%= s.name %></a><% }) %></p><% } %><% } %>
+</section>
+
+<% if(m.held.length){ %><section class="card section" id="held"><h2>Not ready yet</h2><p class="cell-sub">StockChief does not release these until the problem is fixed. It never guesses.</p>
+<ul class="rm-list"><% for(const o of m.held){ %><li class="list-row"><span><strong><a href="/orders/<%= o.id %>"><%= o.order_number %></a> · <%= o.customer %></strong><small><%= o.reason %></small></span></li><% } %></ul></section><% } %>
+
+<section class="card section" id="rules"><h2>Your warehouses</h2>
+<% if(!m.sites.length){ %><p>Add a warehouse first.</p><% } %>
+<% for(const s of m.sites){ const on=s.enabled; %><div class="section" id="site-<%= s.id %>"><h3><%= s.name %></h3>
+<p><%= s.ready %> ready · <%= s.size.open %> released and waiting to be picked<%= s.size.capacity!=null?' (limit '+s.size.capacity+')':'' %> · <%= size(s) %><%= s.cutoffText?' · cut-offs '+s.cutoffText:'' %></p>
+<% if(s.automaticStop){ %><p><span class="badge">Proposes</span> <%= s.automaticStop %></p><% }else{ %><p><span class="badge badge--ok">On its own</span> StockChief releases orders here within this rule.</p><% } %>
+<% if(s.problem){ %><p class="cell-sub">Last check: <%= s.problem %></p><% } %>
+<details<%= on?'':' open' %>><summary><%= on?'Change the release rule':'Set a release rule' %></summary>
+<form method="post" action="<%= m.href %>/rules" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= s.id %>"><input type="hidden" name="revision" value="<%= s.revision||0 %>">
+<div class="field-row"><label class="rm-field"><span>Orders released at a time</span><input type="number" name="batchOrders" min="1" max="<%= m.maxBatch %>" step="1" required value="<%= on?s.batch_orders:'' %>"></label>
+<label class="rm-field"><span>Most orders waiting to be picked</span><input type="number" name="capacityOrders" min="1" max="100000" step="1" value="<%= on&&s.capacity_orders!=null?s.capacity_orders:'' %>" placeholder="No limit"></label></div>
+<label class="rm-field"><span>Carrier cut-off times</span><input name="cutoffs" value="<%= on?s.cutoffText:'' %>" placeholder="UPS 16:00, FedEx 17:30" maxlength="400"></label>
+<% if(growth){ %><label class="checkbox"><input type="checkbox" name="automatic" value="yes" <%= on&&s.automatic?'checked':'' %>><span class="checkbox-text">Release orders here on its own within this rule. This teaches StockChief.</span></label><% } %>
+<button class="btn btn--primary">Save rule</button></form>
+<% if(on){ %><form method="post" action="<%= m.href %>/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= s.id %>"><input type="hidden" name="revision" value="<%= s.revision %>">
+<button class="btn btn--ghost btn--sm" name="stop" value="yes">Turn off this rule</button></form><% } %></details></div><% } %>
+<% if(!m.shadow){ %><form method="post" action="<%= m.href %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" <%= m.blocked?'disabled':'' %>>Check warehouses now</button></form><% } %>
+<p class="cell-sub">StockChief also checks every 15 minutes. A release moves no stock and makes no boxes. Picking waves, scans, packing and handoff are done by your team. <a href="/autopilot/job-modes">Choose Watch only or Ask me first for this job</a></p></section>
+
+<% if(m.recent.length){ %><section class="card section" id="recent"><h2>Recent releases</h2><ul class="rm-list">
+<% for(const x of m.recent){ %><li class="list-row"><span><strong><%= runBy(x) %>: <%= x.plan.summary %></strong>
+<small><%= helpers.dateTime(x.released_at) %></small></span>
+<div class="btn-row"><% if(x.status==='UNDONE'){ %><span class="badge badge--muted">Undone</span><% }else if(!x.can_undo){ %><span class="badge badge--muted">Picking started</span><% }else{ %><form method="post" action="<%= m.href %>/releases/<%= x.id %>/undo"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<button class="btn btn--ghost btn--sm">Undo</button></form><% } %>
+<% if(x.can_teach){ %><form method="post" action="<%= m.href %>/releases/<%= x.id %>/teach"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm">Release like this on its own</button></form><% } %></div></li><% } %></ul></section><% } %>

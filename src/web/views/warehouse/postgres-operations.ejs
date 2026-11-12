@@ -17,7 +17,7 @@
   <div class="rm-panel__head"><div><p class="rm-kicker">High-volume fulfillment</p><h2>Pick several orders as one wave</h2><p>Scanning proves what was picked. Packing does not reduce inventory; only the shipment handoff records goods leaving.</p></div></div>
   <% if (waves.length) { %><div class="rm-list"><% waves.forEach(function(wave){ %>
     <a class="rm-row" href="/warehouse/waves/<%= wave.id %>"><span><strong>Wave #<%= wave.wave_number %> · <%= wave.title %></strong>
-      <small><%= wave.shipment_count %> shipments · <%= helpers.unitCount(wave.units,'unit') %></small></span><span class="rm-badge"><%= wave.status %></span></a>
+      <small><%= wave.shipment_count %> shipments · <%= helpers.unitCount(wave.units,'unit') %></small></span><span class="rm-badge"><%= wave.status==='RELEASED'?'WAITING TO START':wave.status %></span></a>
   <% }) %></div><% } else { %><div class="rm-empty"><p>No fulfillment waves on this page.</p></div><% } %>
 </section>
 

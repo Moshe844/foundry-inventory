@@ -1526,8 +1526,8 @@ const SPECS=Object.freeze([
     verify:async(client,ctx,r,p)=>Boolean(r.supplierCreditId&&r.amountMinor===p.amountMinor&&
       (await client.query(`SELECT 1 FROM accounting_supplier_credits WHERE workspace_id=$1 AND id=$2
         AND amount_minor=$3`,[ctx.workspaceId,r.supplierCreditId,p.amountMinor])).rows.length)},
-  {name:'warehouse.release_orders',agentJob:56,description:'Release the next one to 20 fully reserved shipping orders at the exact anchor order’s warehouse, sorted by owner priority, due date and creation order. Read the ready-order review first. Quantity is the maximum order count. People must scan and physically hand off goods.',record:'sales_order',fields:['recordReference','quantity','strategy'],permission:permissions.MANAGE_FULFILLMENT_WAVES,ownerOnly:true,capability:'warehouse.advanced',
-    resultReference:'waveId',resultDisplayReference:'waveNumber',resultRecordKind:'fulfillment_wave',resultingRecords:['fulfillment_wave'],build:(db,ctx,row,args)=>require('../warehouse/agent-pick-release').build(db,ctx,row,args),execute:(db,ctx,p)=>require('../warehouse/agent-pick-release').execute(db,ctx,p),verify:(db,ctx,r,p)=>require('../warehouse/agent-pick-release').verify(db,ctx,r,p)},
+  {name:'warehouse.release_orders',agentJob:56,description:'Release the next ready shipping orders at the exact anchor order’s chosen warehouse, in pick order: owner priority, ship-by date, the warehouse carrier cut-off, then order age. Ready means fully reserved there, a complete address, no overdue-invoice hold and nothing else holding it. Quantity is the most orders to release (up to 500); without it the warehouse release rule sizes the batch. Read the ready-order review first. Picking waves, scans, packing and handoff follow.',record:'sales_order',fields:['recordReference','quantity'],permission:permissions.MANAGE_FULFILLMENT_WAVES,ownerOnly:true,capability:'warehouse.advanced',
+    resultingRecords:['agent_pick_releases'],build:(db,ctx,row,args)=>require('../warehouse/agent-pick-release').build(db,ctx,row,args),execute:(db,ctx,p)=>require('../warehouse/agent-pick-release').execute(db,ctx,p),verify:(db,ctx,r,p)=>require('../warehouse/agent-pick-release').verify(db,ctx,r,p)},
   {name:'warehouse.wave.create',description:'Release one exact confirmed, allocated order as a warehouse picking wave. Strategy WAVE (one order, default), BATCH or CLUSTER. Stock remains on hand until actual shipping handoff.',
     resultReference:'waveId',resultDisplayReference:'waveNumber',resultRecordKind:'fulfillment_wave',resultingRecords:['fulfillment_wave'],
     record:'sales_order',fields:['recordReference','strategy'],permission:permissions.MANAGE_FULFILLMENT_WAVES,
@@ -1538,10 +1538,10 @@ const SPECS=Object.freeze([
       // warehouse enum. Keep the warehouse engine's three actual strategies.
       const strategy=requestedStrategy==='PICK_BY_ORDER'?'WAVE':requestedStrategy;
       if(!['WAVE','BATCH','CLUSTER'].includes(strategy))throw new ValidationError('Choose a wave, batch, or cluster picking strategy.');
-      const training=await require('../warehouse/agent-pick-release').single(_database,_ctx,row.id,strategy);
+      const training=await require('../warehouse/agent-pick-waves').single(_database,_ctx,row.id);
       return prepareResult({orderIds:[row.id],orderNumber:row.order_number,strategy,title:`${strategy} pick for ${row.order_number}`,...training},
         `Release ${row.order_number} to a ${strategy.toLowerCase()} pick. No stock leaves yet.`);},
-    execute:(client,ctx,p)=>require('../warehouse/agent-pick-release').executeSingle(client,ctx,p),
+    execute:(client,ctx,p)=>require('../warehouse/agent-pick-waves').executeSingle(client,ctx,p),
     verify:async(client,ctx,r)=>Boolean(r.waveId&&r.status==='PICKING'&&
       await state(client,ctx,'fulfillment_waves',r.waveId,['PICKING']))},
   {name:'warehouse.wave.scan',description:'Verify a physically scanned location, SKU and optional lot or serial on an open fulfillment wave. The canonical scan engine rejects mismatches and duplicates.',
