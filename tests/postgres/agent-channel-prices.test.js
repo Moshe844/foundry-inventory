@@ -1,7 +1,7 @@
 'use strict';
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
-test('channel price reviews compare verified provider observations and owner MAP terms without changing prices',{timeout:240000},async t=>{
+test('channel price reviews compare recorded catalogue and verified provider prices with owner MAP terms without changing prices',{timeout:240000},async t=>{
  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,subscribe,browser}=f;
  await subscribe('pro');
  const prices=require('../../src/pricing/postgres-service'),sync=require('../../src/connections/postgres-commerce-sync'),reviews=require('../../src/autopilot/job-reviews');
@@ -32,29 +32,35 @@ test('channel price reviews compare verified provider observations and owner MAP
    const locked=await browser.get('/autopilot/reviews/channel-prices').expect(402);assert(!locked.text.includes('Save supplier terms'));
    await assert.rejects(map.save(db,ctx,{sku:code,minimum:'10',currency:'USD',revision:0}),e=>e.code==='entitlement_required');continue;
   }
-  const result=await reviews.run(db,ctx,'channel-prices');assert.equal(result.rows.length,1);assert.equal(result.rows[0]['Recorded provider price'],'$8.00');
+  const result=await reviews.run(db,ctx,'channel-prices');assert.equal(result.rows.length,2,'The catalogue check and the verified price sync are both recorded channel prices');
+  assert.deepEqual(result.rows.map(r=>[r.Where,r['Recorded provider price']]).sort(),[['All locations','$8.00'],[f.location.name,'$8.00']]);
   const page=await browser.get('/autopilot/reviews/channel-prices').expect(200);assert.match(page.text,/Save supplier terms/);
  }
  await subscribe('growth');
+ await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
+ const bay=async()=>(await reviews.run(db,ctx,'channel-prices')).rows.find(r=>r.Where===f.location.name);
  const page=await browser.get('/autopilot/reviews/channel-prices').expect(200),input={sku:code,minimum:'10.00',currency:'USD',revision:0};
  await browser.post('/autopilot/map-terms').type('form').send({...input,_csrf:f.csrf(page.text)}).expect(303);
  await assert.rejects(map.save(db,ctx,input),/changed/);
- assert.equal((await reviews.run(db,ctx,'channel-prices')).rows[0].Finding,'Recorded price below MAP');
+ assert.equal((await bay()).Finding,'Recorded price below MAP');
  assert.equal((await prices.currentPrice(db,ctx.workspaceId,sku)).amount_minor,1200);
- const notices=require('../../src/autopilot/operational-notices');await notices.refresh(db,ctx.workspaceId);
- assert((await notices.inbox(db,ctx.workspaceId,ctx.actorId)).some(n=>n.sourceId==='agent-notice-87'));
+ const checks=require('../../src/pricing/agent-channel-price-checks'),needs=async()=>(await require('../../src/projections/postgres-service').needs(db,ctx.workspaceId,ctx.actorId)).filter(n=>String(n.sourceId).startsWith('channel-price'));
+ assert.equal((await checks.run(db,ctx.workspaceId)).opened.length,2);
+ assert((await needs()).some(n=>n.sourceId==='channel-price-map'&&/2 channel prices are below/.test(n.title)));
  await db.query("UPDATE connection_commerce_positions SET last_verified_at=now()-interval '25 hours' WHERE workspace_id=$1",[ctx.workspaceId]);
- assert.equal((await reviews.run(db,ctx,'channel-prices')).rows[0].Finding,'Refresh provider check');
+ assert.equal((await bay()).Finding,'Refresh provider check');
  await db.query("UPDATE connection_commerce_positions SET baseline_provider='{\"amount\":1200,\"currency\":\"EUR\"}',last_verified_at=now() WHERE workspace_id=$1",[ctx.workspaceId]);
- assert.equal((await reviews.run(db,ctx,'channel-prices')).rows[0].Finding,'MAP currency needs review');
+ assert.equal((await bay()).Finding,'MAP currency needs review');
  await db.query("UPDATE connection_commerce_positions SET baseline_provider='{\"amount\":1200,\"currency\":\"ZZZ\"}' WHERE workspace_id=$1",[ctx.workspaceId]);
- assert.equal((await reviews.run(db,ctx,'channel-prices')).rows[0]['Recorded provider price'],'Provider currency needs review');
+ assert.equal((await bay())['Recorded provider price'],'Provider currency needs review');
  await db.query("UPDATE connection_commerce_positions SET baseline_provider='{\"amount\":1200,\"currency\":\"USD\"}' WHERE workspace_id=$1",[ctx.workspaceId]);
- assert.equal((await reviews.run(db,ctx,'channel-prices')).rows[0].Finding,'Matches recorded catalogue price');
+ assert.equal((await bay()).Finding,'Matches recorded catalogue price');
  await db.query("UPDATE workspace_connectors SET provider_account_id='different-account' WHERE id=$1",[id]);
- assert.equal((await reviews.run(db,ctx,'channel-prices')).rows.length,0,'Old account observations cannot describe a newly connected provider account');
+ assert.equal(await bay(),undefined,'Old account observations cannot describe a newly connected provider account');
  await db.query("UPDATE workspace_connectors SET provider_account_id='fixture-account' WHERE id=$1",[id]);
- await notices.refresh(db,ctx.workspaceId);assert(!(await notices.inbox(db,ctx.workspaceId,ctx.actorId)).some(n=>n.sourceId==='agent-notice-87'));
+ // The channel's next catalogue check records the matching price; both flags clear.
+ await db.transaction(tx=>records.cacheRecord(tx,connector,{entityType:'sku',externalId:'part',code,displayName:'Test part',providerData:{priceMoney:{amount:1200,currency:'USD'}}}));
+ assert.equal((await checks.run(db,ctx.workspaceId)).cleared.length,2);assert.deepEqual(await needs(),[]);
  await db.query("UPDATE users SET role='staff' WHERE id=$1",[ctx.actorId]);
  await assert.rejects(map.save(db,ctx,{...input,revision:1}),e=>e.code==='forbidden');
  await db.query("UPDATE users SET role='owner' WHERE id=$1",[ctx.actorId]);

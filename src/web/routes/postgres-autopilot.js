@@ -1138,6 +1138,11 @@ function createPostgresAutopilotRouter(database,options={}){
     }
     res.redirect(303,'/autopilot/reviews/recurring-customer-orders');
   }));
+  router.post('/autopilot/channel-prices/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const r=await require('../../pricing/agent-channel-price-checks').checkNow(database,req.ctx);
+    req.flash('success',r.replayed?'Nothing changed since the last check.':r.outcome==='STOPPED'?r.reason:(r.opened?.length||0)+' new flag'+((r.opened?.length||0)===1?'':'s')+', '+(r.cleared?.length||0)+' cleared.');
+    res.redirect(303,'/autopilot/reviews/channel-prices');
+  }));
   router.post('/autopilot/map-terms',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../pricing/channel-price-review').save(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/channel-prices');
