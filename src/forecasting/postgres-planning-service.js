@@ -157,7 +157,6 @@ async function refreshRecommendations(database,workspaceId,options={}){
    await ensureRecommendations(database,workspaceId,agentTerms?rows.filter(row=>!row.location_id):rows);
    const selected=[...new Set(rows.map(r=>r.sku_id))];
    await require('./location-reorder-rules').queuePage(database,workspaceId,selected,{cycleId:options.cycleId});
-   await require('./agent-safety-stock').queuePage(database,workspaceId,selected);
    if(options.limitSkus!==undefined||!rows.coverage.partial)return rows.coverage;
    afterSkuId=rows.coverage.nextAfterSkuId;
   }

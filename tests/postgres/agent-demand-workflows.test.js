@@ -6,49 +6,6 @@ const {randomUUID}=require('node:crypto');
 const {addDays}=require('../../src/accounting/customer-money');
 const reviews=require('../../src/autopilot/job-reviews');
 
-test('service-level safety stock uses historical stocked periods and rechecks automatic ABC authority',{timeout:240000},async t=>{
-  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:2}),{db,ctx,browser,subscribe,csrf}=f;
-  const dates=require('../../src/accounting/customer-money'),time=require('../../src/lib/business-time'),today=await time.today(db,ctx.workspaceId);
-  const ago=days=>dates.addDays(today,-days)+'T16:00:00Z',catalog=require('../../src/domain/postgres-catalog-service');
-  await db.query('UPDATE accounting_settings SET accounting_start_date=$2 WHERE workspace_id=$1',[ctx.workspaceId,ago(191).slice(0,10)]);
-  await db.query("UPDATE accounts SET created_at=(now()-interval '195 days')::text WHERE id=$1",[f.owner.accountId]);
-  const skuId=(await catalog.createItem(db,ctx,{name:'Service level fixture',baseCode:'SAFETY-PART',trackingMode:'quantity'})).skuIds[0];
-  const locationId=f.location.id,where={skuId,locationId},safety=require('../../src/forecasting/agent-safety-stock');
-  await require('../../src/accounting/postgres-stock-receipt').receive(db,ctx,{...where,quantity:200,unitCost:1,occurredAt:ago(190),idempotencyKey:randomUUID()});
-  for(const [days,quantity] of [[40,2],[8,40]])await require('../../src/accounting/postgres-stock-removal').issue(db,ctx,{...where,quantity,reasonCode:'sold',occurredAt:ago(days),idempotencyKey:randomUUID()});
-  await subscribe('starter');const page=()=>browser.get('/planning/safety-stock').query({...where,serviceLevel:99});
-  await page().expect(402);await assert.rejects(safety.preview(db,ctx,{...where,serviceLevel:99}),/Growth/);
-  await subscribe('growth');const proposed=await page().expect(200);
-  assert.match(proposed.text,/38 units/);assert.match(proposed.text,/167 fully stocked periods of 14 days/);assert.match(proposed.text,/default supplier lead time/);
-  const digest=/name="digest" value="([^"]+)"/.exec(proposed.text)[1];
-  const accept=()=>browser.post('/planning/safety-stock').set('Accept','application/json').type('form').send({...where,serviceLevel:99,digest,_csrf:csrf(proposed.text)});
-  await accept().expect(303);await accept().expect(303);
-  await assert.rejects(safety.preview(db,ctx,{skuId:f.item.skuIds[0],locationId,serviceLevel:99}),/More stocked sales history/);
-  const classRule={locationId,class:'A',serviceLevel:50};
-  await assert.rejects(safety.setClassRule(db,ctx,classRule),/Pro/);
-  await subscribe('pro');await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
-  await db.transaction(c=>require('../../src/forecasting/monthly-product-classes').calculate(c,ctx.workspaceId));
-  const runtime=require('../../src/operations/postgres-runtime-handlers').create(),dispatch=async()=>{
-    await safety.queuePage(db,ctx.workspaceId,[skuId]);
-    return (await db.query("SELECT payload FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='planning.class-safety-stock' ORDER BY created_at DESC,id DESC LIMIT 1",[ctx.workspaceId])).rows[0].payload;
-  },processJob=payload=>db.transaction(c=>runtime['planning.class-safety-stock']({workspaceId:ctx.workspaceId,payload},c));
-  const now=async()=>Number((await db.query('SELECT safety_stock FROM reorder_policies WHERE workspace_id=$1 AND location_id=$2 AND sku_id=$3',[ctx.workspaceId,locationId,skuId])).rows[0].safety_stock);
-  await safety.setClassRule(db,ctx,classRule);const job=await dispatch();
-  await subscribe('growth');assert.ok((await processJob(job)).skipped);assert.equal(await now(),38);
-  await subscribe('pro');assert.match((await processJob(job)).held[0].reason,/lead time/);
-  await db.query('UPDATE reorder_policies SET lead_time_days=14 WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[ctx.workspaceId,skuId,locationId]);
-  assert.equal((await processJob(job)).updated,1);assert.equal(await now(),0);assert.equal((await processJob(job)).updated,0);
-  await subscribe('enterprise');await safety.setClassRule(db,ctx,{...classRule,serviceLevel:99});const custom=await dispatch();
-  assert.ok((await processJob(job)).skipped);assert.equal((await processJob(custom)).updated,1);assert.equal(await now(),38);
-  await safety.setClassRule(db,ctx,{...classRule,remove:'1'});assert.ok((await processJob(custom)).skipped);
-  const stock=require('../../src/domain/postgres-inventory-engine');
-  await stock.issue(db,ctx,{...where,quantity:158,reasonCode:'damaged',occurredAt:ago(6),idempotencyKey:randomUUID()});
-  await stock.receive(db,ctx,{...where,quantity:10,occurredAt:ago(1),idempotencyKey:randomUUID()});
-  const afterStockout=await safety.preview(db,ctx,{...where,serviceLevel:99});
-  assert.equal(afterStockout.windows,161,'Six windows cross the stockout, including the restocking day');
-  assert.equal(afterStockout.percentile,40,'Damaged units do not count as customer demand');
-});
-
 test('monthly ABC classes use costed physical sales across the four plans and prioritize the next count',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:3}),{db,ctx,subscribe,browser}=f;
   const time=require('../../src/lib/business-time'),dates=require('../../src/accounting/customer-money'),catalog=require('../../src/domain/postgres-catalog-service');
@@ -126,10 +83,14 @@ test('dated orders forecast weekly demand and posted stock issues quantify the m
       assert.equal(forecast.rows[0]['Holdout error (units/day)'],0);
     }
     const runout=(await reviews.run(db,ctx,'stockout-cost',{filter:await code(sku)})).rows[0];
-    assert.equal(runout['Estimated daily gross margin at risk'],'$0.30');
+    // Job 151 follows the weekly order forecast: 7 every week from today, so
+    // 142 free units last 20 weeks. 35 units in 30 days at $9.00 margin each.
     assert.equal(runout['Available now'],142);
-    assert.equal(runout['Estimated runout'],addDays(today,4260));
-    assert.ok((await browser.get('/autopilot/reviews/stockout-cost').expect(200)).text.includes('$0.30'));
+    assert.equal(runout['Demand from'],'Forecast · Day-of-week pattern');
+    assert.equal(runout['Runs out'],addDays(today,140));
+    assert.equal(runout['Gross margin lost a day'],'$10.50');
+    assert.equal(runout['Before the delivery'],'No');
+    assert.ok((await browser.get('/autopilot/reviews/stockout-cost').expect(200)).text.includes('$10.50'));
   }
 });
 

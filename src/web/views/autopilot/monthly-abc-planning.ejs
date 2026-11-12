@@ -16,18 +16,18 @@ const unit=product.unit_label==='unit'?'units':product.unit_label; %>
     <input type="hidden" name="page" value="<%= page %>">
     <label class="rm-field">SKU and location
       <select name="position" required>
-        <% for(const p of positions){ %><option value="<%= JSON.stringify([p.sku_id,p.location_id]) %>" <%= p===selected?'selected':'' %>><%= p.code %> · <%= p.location %> · <%= p.safety_stock==null?'Safety stock unset':p.safety_stock+' '+unit %><%= p.service_level?' · Class target '+p.service_level+'%':'' %></option><% } %>
+        <% for(const p of positions){ %><option value="<%= JSON.stringify([p.sku_id,p.location_id]) %>" <%= p===selected?'selected':'' %>><%= p.code %> · <%= p.location %> · <%= p.safety_stock==null?'Safety stock unset':Number(p.safety_stock)+' '+unit %><%= p.target?' · Class target: '+p.target:'' %></option><% } %>
       </select>
     </label>
-    <% if(['A','B','C'].includes(product.category)){ %><label class="rm-field">Coverage to review (%) <input name="serviceLevel" type="number" min="1" max="100" step="1" inputmode="numeric" value="<%= result?.serviceLevel??'' %>"></label>
-    <p>Leave coverage blank to use a saved class target at the selected location. Estimates are for planning.</p><% } %>
+    <% if(['A','B','C'].includes(product.category)){ %><label class="rm-field">Reorders without running out (%) <input name="serviceLevel" type="number" min="50" max="99.9" step="0.1" inputmode="decimal" value="<%= result?.targetPercent??'' %>"></label>
+    <p>Leave it blank to use your saved class target. Estimates are for planning. <a href="/planning/safety-stock">Safety stock targets</a></p><% } %>
     <button class="btn">Review selected position</button>
   </form>
   <% } %>
-  <% if(selected){ %><p><%= selected.code %> · <%= selected.location %>. Current safety stock <%= selected.safety_stock==null?'is unset':'is '+selected.safety_stock+' '+unit %>.<% if(selected.service_level){ %> Saved class <%= product.category %> target is <%= selected.service_level %>%.<% } %></p><% } %>
+  <% if(selected){ %><p><%= selected.code %> · <%= selected.location %>. Current safety stock <%= selected.safety_stock==null?'is unset':'is '+Number(selected.safety_stock)+' '+unit %>.<% if(selected.target){ %> Saved class <%= product.category %> target: <%= selected.target %>.<% } %></p><% } %>
   <% if(hold){ %><p role="status"><%= hold %></p><% } %>
-  <% if(selected&&!result&&!hold){ %><p>Enter a coverage percentage to estimate safety stock for this position.</p><% } %>
-  <% if(result){ %><p>Estimated safety stock is <strong><%= result.units %> <%= unit %></strong> at <%= result.serviceLevel %>% coverage. StockChief measured <%= result.windows %> fully stocked periods of <%= result.lead %> days. Periods with a stockout are excluded.</p>
-  <% if(result.assumedLead){ %><p>The estimate uses a default supplier lead time. Record the actual lead time for automatic safety-stock decisions.</p><% } %><% } %>
+  <% if(selected&&!result&&!hold){ %><p>Enter a percentage to estimate safety stock for this position.</p><% } %>
+  <% if(result){ %><p>Estimated safety stock is <strong><%= result.units %> <%= unit %></strong> for <%= result.target %> (<%= result.service %>%).</p>
+  <p>Sales stray from the forecast by about <%= result.spread %> <%= unit %> a day here, and the last <%= result.deliveries %> deliveries came within about <%= result.leadSpread %> days of their promised date. Lead time is <%= result.lead %> days.</p><% } %>
   <nav class="actions" aria-label="Safety-stock positions"><% if(page>1){ %><a href="?page=<%= page-1 %>">Previous page</a><% } %><% if(more){ %><a href="?page=<%= page+1 %>">Next page</a><% } %></nav>
 </section>

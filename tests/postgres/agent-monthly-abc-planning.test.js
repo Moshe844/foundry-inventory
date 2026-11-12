@@ -56,7 +56,7 @@ test('monthly cost classes drive native shelf and exact location safety planning
   const work=kind=>queue.processOne(db,handlers,{owner:'monthly-abc-test',kinds:[kind],leaseMs:120000});
   const schedule=(kind,idempotencyKey,payload={})=>queue.enqueue(db,{workspaceId,kind,idempotencyKey,payload});
   const assertDone=job=>assert.equal(job?.status,'COMPLETED',JSON.stringify(job?.lastError));
-  const monthlyKind='planning.monthly-product-classes',safetyKind='planning.class-safety-stock';
+  const monthlyKind='planning.monthly-product-classes';
   const reviewPath=monthly.path+'/products/'+a.itemId;
   const position=JSON.stringify([a.skuIds[0],top.id]);
   const nativeStock=async()=>Object.fromEntries((await db.query(`SELECT location_id,safety_stock FROM reorder_policies
@@ -95,14 +95,12 @@ test('monthly cost classes drive native shelf and exact location safety planning
     else assert.equal(count.Shelf,top.name);
     const rendered=await browser.get(reviewPath).query({position,serviceLevel:99}).expect(200);
     assert.match(rendered.text,/Class A/);
-    assert.match(rendered.text,/Estimated safety stock is <strong>1\.5 kg<\/strong>/);
+    // Job 150 works safety stock out from the forecast error and late
+    // deliveries; with two sales there is no tested forecast yet.
+    assert.match(rendered.text,/Needs a tested sales forecast first/);
     assert.match(rendered.text,/method="get"/i);
-    assert.doesNotMatch(rendered.text,/Approve 1\.5|action="\/planning\/safety-stock/);
-    if(tier==='starter'||tier==='growth'){
-      await assert.rejects(safety.setClassRule(db,ctx,{locationId:top.id,class:'A',serviceLevel:99}),e=>e.code==='entitlement_required');
-      await safety.queuePage(db,workspaceId,a.skuIds);
-      assert.equal(await work(safetyKind),null);
-    }
+    assert.doesNotMatch(rendered.text,/action="\/planning\/safety-stock/);
+    if(tier==='starter')await assert.rejects(safety.setTarget(db,ctx,{locationId:top.id,class:'A',kind:'percent',percent:'99'}),e=>e.code==='entitlement_required');
   }
   const noSales=await browser.get(monthly.path+'/products/'+quiet.itemId).expect(200);
   assert.match(noSales.text,/No recorded sales in that period/);
@@ -128,62 +126,34 @@ test('monthly cost classes drive native shelf and exact location safety planning
   await phone.locator('select[name=position]').selectOption(position);
   await phone.locator('input[name=serviceLevel]').fill('99');
   await Promise.all([phone.waitForNavigation(),phone.getByRole('button',{name:'Review selected position'}).click()]);
-  assert.match(await phone.textContent('body'),/Estimated safety stock is 1\.5 kg/);
+  assert.match(await phone.textContent('body'),/Needs a tested sales forecast first/);
   assert.equal(await phone.locator('body').evaluate(b=>b.scrollWidth<=innerWidth+2),true);
 
-  const rule={locationId:top.id,class:'A',serviceLevel:99},candidates=[...a.skuIds,...b.skuIds,...c.skuIds,...unknown.skuIds,...quiet.skuIds];
-  const apply=async()=>{
-    const job=await work(safetyKind);
-    assertDone(job);
-    return job.result;
-  };
-  const newest=async()=>(await db.query(`SELECT payload FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind=$2
-    ORDER BY created_at DESC,id DESC LIMIT 1`,[workspaceId,safetyKind])).rows[0].payload;
-  await subscribe('pro');
-  await autopilot.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
-  await safety.setClassRule(db,ctx,rule);
-  await safety.queuePage(db,workspaceId,candidates);
-  const pro=await newest();
-  assert.deepEqual(pro.skuIds,a.skuIds);
-  assert.deepEqual(await apply(),{updated:1,held:[]});
-  assert.deepEqual(await nativeStock(),{[top.id]:1.5,[other.id]:0});
-  await schedule(safetyKind,'abc-pro-replay',pro);
-  assert.deepEqual(await apply(),{updated:0,held:[]});
-  await schedule(safetyKind,'abc-pro-downgrade',pro);
+  // Each class has its own safety stock target (job 150); the product's class
+  // picks the one a position uses. Estimates here save nothing.
   await subscribe('growth');
-  assert.match((await apply()).skipped,/authority/);
+  await safety.setTarget(db,ctx,{locationId:top.id,class:'A',kind:'percent',percent:'99'});
+  await safety.setTarget(db,ctx,{class:'B',kind:'runouts',runouts:'2'});
+  const planned=await safety.classPlanning(db,ctx,a.itemId,{position});
+  assert.equal(planned.selected.target,'99% of reorders without running out');
+  assert.match(planned.hold,/Needs a tested sales forecast first/);
+  const second=await safety.classPlanning(db,ctx,b.itemId,{position:JSON.stringify([b.skuIds[0],mid.id])});
+  assert.equal(second.selected.target,'run out at most 2 times a year');
+  // With a tested forecast the next missing fact is the delivery record.
+  await db.query(`INSERT INTO stockchief_runtime.agent_demand_forecasts(workspace_id,sku_id,as_of,status,reason,holdout_error)
+    VALUES($1,$2,$3,'HELD','Test forecast',0.1)`,[workspaceId,a.skuIds[0],day]);
+  assert.match((await safety.classPlanning(db,ctx,a.itemId,{position})).hold,/Needs 3 deliveries received against a promised date/);
   const growth=await browser.get(reviewPath).query({position}).expect(200);
-  assert.match(growth.text,/Saved class A target is 99%/);
-  assert.match(growth.text,/<strong>1\.5 kg<\/strong>/);
-
+  assert.match(growth.text,/Saved class A target: 99% of reorders without running out/);
   await subscribe('enterprise');
-  await safety.setClassRule(db,ctx,{...rule,serviceLevel:50});
-  await safety.queuePage(db,workspaceId,candidates);
-  const custom=await newest();
-  assert.notEqual(custom.revision,pro.revision);
-  await modes.save(db,ctx,150,{mode:'watch',revision:0});
-  assert.match((await apply()).skipped,/authority/);
-  await modes.save(db,ctx,150,{mode:'routine',revision:1});
-  await schedule(safetyKind,'abc-stale-rule',pro);
-  assert.match((await apply()).skipped,/changed/);
-  await schedule(safetyKind,'abc-former-owner',custom);
   await db.query("UPDATE users SET role='staff' WHERE workspace_id=$1 AND id=$2",[workspaceId,ctx.actorId]);
-  assert.match((await apply()).skipped,/changed/);
   await assert.rejects(safety.classPlanning(db,ctx,a.itemId,{}),e=>e.code==='forbidden');
   await db.query("UPDATE users SET role='owner' WHERE workspace_id=$1 AND id=$2",[workspaceId,ctx.actorId]);
-  await schedule(safetyKind,'abc-stale-month',{...custom,day:addDays(day,-1)});
-  assert.match((await apply()).skipped,/expired/);
   await db.query("UPDATE stockchief_runtime.product_class_months SET currency='EUR' WHERE workspace_id=$1",[workspaceId]);
-  await schedule(safetyKind,'abc-stale-currency',custom);
-  assert.match((await apply()).skipped,/current authorized class/);
-  assert.equal((await safety.classPlanning(db,ctx,a.itemId,{position})).product.category,null);
+  const stale=await safety.classPlanning(db,ctx,a.itemId,{position});
+  assert.equal(stale.product.category,null);
+  assert.match(stale.hold,/verified current ABC class/);
   await db.query("UPDATE stockchief_runtime.product_class_months SET currency='USD' WHERE workspace_id=$1",[workspaceId]);
-  await schedule(safetyKind,'abc-custom-current',custom);
-  assert.deepEqual(await apply(),{updated:1,held:[]});
   assert.deepEqual(await nativeStock(),{[top.id]:0,[other.id]:0});
-  const audits=(await db.query(`SELECT after_state FROM security_event_history WHERE workspace_id=$1
-    AND action='Updated safety stock from service level' ORDER BY created_at,id`,[workspaceId])).rows.map(r=>r.after_state);
-  assert.deepEqual(audits.map(a=>[a.abcClass,a.abcMonth,a.locationId,a.serviceLevel,a.units]),
-    [['A',month,top.id,99,1.5],['A',month,top.id,50,0]]);
   assert.deepEqual(await effects(),before);
 });

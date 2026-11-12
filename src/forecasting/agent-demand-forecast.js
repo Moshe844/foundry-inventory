@@ -324,16 +324,21 @@ const feeds=[];
 function addFeed(feed){feeds.push(feed);}
 // Later feeds (new products, trends) take precedence over the product's own
 // forecast, each only on plans where its job may act on its own.
-async function attach(db,workspaceId,rows){
-  if(!rows.length||!await installed.has(db,forecasts))return rows;
-  const skuIds=[...new Set(rows.map(r=>r.sku_id))];
+// The forecast planning uses for each product (job 151 reads it too).
+async function planningSources(db,workspaceId,skuIds){
+  if(!skuIds.length||!await installed.has(db,forecasts))return new Map();
   const found=[...(await db.query(`SELECT sku_id,'HISTORY' AS basis,method,method_label AS label,shape FROM ${forecasts}
     WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) AND status='USED'`,[workspaceId,skuIds])).rows];
   for(const feed of feeds)found.push(...await feed(db,workspaceId,skuIds));
-  if(!found.length)return rows;
+  if(!found.length)return new Map();
   const account=await policy.accountState(db,workspaceId);
-  if(!policy.usesAgentTerms(account))return rows;
-  const sources=new Map(found.filter(r=>policy.permits(account.plan,r.job||JOB,'automatic')).map(r=>[r.sku_id,r]));
+  if(!policy.usesAgentTerms(account))return new Map();
+  return new Map(found.filter(r=>policy.permits(account.plan,r.job||JOB,'automatic')).map(r=>[r.sku_id,r]));
+}
+async function attach(db,workspaceId,rows){
+  if(!rows.length)return rows;
+  const sources=await planningSources(db,workspaceId,[...new Set(rows.map(r=>r.sku_id))]);
+  if(!sources.size)return rows;
   const today=await time.today(db,workspaceId),bySku=new Map();
   for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
   for(const [skuId,list] of bySku){
@@ -437,8 +442,10 @@ async function ownInbox(db,workspaceId){
 }
 
 module.exports={JOB,KIND,CAPABILITY,href,MODEL_VERSION,authority,demand,daysOf,fit,units,historyStart,ownerUser,member,process,schedule,requestCheck,
-  approve,approveAll,setExcluded,attach,addStep,addFeed,addSection,addInbox,review,page,inbox,statusWords};
+  approve,approveAll,setExcluded,attach,planningSources,addStep,addFeed,addSection,addInbox,review,page,inbox,statusWords};
 
 // Jobs 146 and 148 add their steps, feeds, page parts and Needs you items.
+// Job 150 sets safety stock in the same run, after each page's forecasts.
 require('./agent-launch-forecast');
 require('./agent-demand-trends');
+require('./agent-safety-stock');
