@@ -37,7 +37,7 @@ test('scheduled cost and adjustment watches honor current tier, local night hour
     assert.ok(current.includes('agent-notice-169'));
     const channelRows=(await reviews.run(db,ctx,'channel-alerts',{filter:'Test shop'})).rows;
     assert.deepEqual(new Set(channelRows.map(r=>r.Alert)),new Set(['No recent sync activity','Channel quantity exceeds available stock']));
-    assert.ok(Number(channelRows.find(r=>r.SKU)['Stock after sales commitments'])<40);
+    assert.ok(Number(channelRows.find(r=>r.Alert==='Channel quantity exceeds available stock')['You can sell'])<40);
     for(const [job,key,allowed] of [[170,'cost-alerts',tier!=='starter'],[171,'unusual-stock-activity',['enterprise','pro'].includes(tier)]]){
       const read=()=>reviews.run(db,ctx,key,{scheduled:true});assert.equal(current.includes('agent-notice-'+job),allowed,tier+' '+key);
       if(!allowed){await assert.rejects(read(),e=>e.code==='entitlement_required');await browser.get(root+key).expect(402);continue;}

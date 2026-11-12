@@ -1,6 +1,6 @@
 'use strict';
 
-// Jobs 166, 167 and 168 deliver their alerts the same way.
+// Jobs 166, 167, 168 and 169 deliver their alerts the same way.
 //
 // The alerts are agent notices: the routine check (operational-notices.refresh,
 // run by the worker) opens, updates and clears them. Every alert is shown in
@@ -36,7 +36,9 @@ const JOBS={
   167:{action:'alert.watch_rule',name:'Watch rules',module:'./watch-rules',
     subject:(n,first)=>n===1?'Watch rule: '+first.split(' (')[0]:n+' watch rule alerts',intro:'Your watch rules found something.'},
   168:{action:'alert.overdue',name:'Late orders, shipments and invoices',module:'./overdue-alerts',
-    subject:(n,first)=>n===1?'Overdue: '+first.split(' (')[0]:n+' overdue orders, shipments or invoices',intro:'StockChief found work that is past its date.'}
+    subject:(n,first)=>n===1?'Overdue: '+first.split(' (')[0]:n+' overdue orders, shipments or invoices',intro:'StockChief found work that is past its date.'},
+  169:{action:'alert.channel',name:'Sales channel problems',module:'../connections/agent-channel-alerts',
+    subject:(n,first)=>n===1?'Channel problem: '+first.split(' (')[0]:n+' sales channel problems',intro:'StockChief found a sales channel that may oversell or stopped syncing.'}
 };
 const plural=(n,one,many)=>n+' '+(Number(n)===1?one:many);
 const expected=error=>error instanceof DomainError&&[400,402,403,404,409,422].includes(error.status);
@@ -67,17 +69,29 @@ async function mailboxes(db,workspaceId){
     .map(b=>({id:b.id,name:b.display_name,address:b.provider_account_name}));
 }
 
+// The alert jobs this database can hold. Migration 480 added job 169; an
+// older database keeps tracking jobs 166 to 168 until it is upgraded.
+const upgraded=new WeakSet();
+async function tracked(db){
+  if(upgraded.has(db)||require('../db/migrate-postgres').hasVerifiedMigration(db,'480-agent-channel-alert-email.sql'))return Object.keys(JOBS).map(Number);
+  const ok=(await db.query(`SELECT coalesce(bool_or(position('169' IN pg_get_constraintdef(oid))>0),false) AS ok FROM pg_constraint
+    WHERE conname='agent_alert_deliveries_job_id_check' AND conrelid=to_regclass($1)`,[deliveries])).rows[0].ok;
+  if(ok){upgraded.add(db);return Object.keys(JOBS).map(Number);}
+  return [166,167,168];
+}
+
 // Records which alerts opened and cleared since the last check, audits that,
 // and emails new alerts. Runs after every routine check.
 async function track(db,workspaceId,account){
   if(!await installed.has(db,deliveries))return null;
+  const jobs=await tracked(db);
   return tx(db,async c=>{
     const cleared=(await c.query(`DELETE FROM ${deliveries} d WHERE d.workspace_id=$1 AND NOT EXISTS(
       SELECT 1 FROM stockchief_runtime.agent_operational_notices n WHERE n.workspace_id=d.workspace_id AND n.job_id=d.job_id
         AND n.kind=d.kind AND n.reference=d.reference AND n.link=d.link AND NOT n.resolved) RETURNING job_id`,[workspaceId])).rows;
     const raised=(await c.query(`INSERT INTO ${deliveries}(workspace_id,job_id,kind,reference,link)
       SELECT n.workspace_id,n.job_id,n.kind,n.reference,n.link FROM stockchief_runtime.agent_operational_notices n
-      WHERE n.workspace_id=$1 AND n.job_id IN (166,167,168) AND NOT n.resolved AND NOT EXISTS(SELECT 1 FROM ${deliveries} d
+      WHERE n.workspace_id=$1 AND n.job_id IN (${jobs.join(',')}) AND NOT n.resolved AND NOT EXISTS(SELECT 1 FROM ${deliveries} d
         WHERE d.workspace_id=n.workspace_id AND d.job_id=n.job_id AND d.kind=n.kind AND d.reference=n.reference AND d.link=n.link)
       ON CONFLICT DO NOTHING RETURNING job_id`,[workspaceId])).rows;
     if(raised.length||cleared.length){

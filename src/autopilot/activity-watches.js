@@ -43,8 +43,8 @@ const activity=`WITH selected AS (
 ) SELECT code AS "SKU",CASE WHEN large AND night THEN 'Large adjustment during watched hours' WHEN large THEN 'Large adjustment' ELSE 'Stock change during watched hours' END AS "Alert",
   operation AS "Movement",quantity_delta AS "Units changed",location AS "Location",actor AS "Recorded by",to_char(local_time,'YYYY-MM-DD HH24:MI') AS "Local time",
   id AS reference,'/inventory/'||item_id AS link FROM flags WHERE large OR night ORDER BY local_time DESC,id`;
-const spec={169:{key:'channel-alerts',label:'Sales channel alerts',usesDate:false,sql:require('../connections/agent-channel-alerts').sql,summary:'Flags stopped or overdue checks and channel quantities last verified above costed physical stock after sales commitments. Transfer and rental holds can reduce available stock further.'},
-  170:{key:'cost-alerts',label:'Cost and gross margin alerts',sql:cost,summary:'The latest recorded purchase cost is compared with the previous cost in the same currency. Cost increases are shown for 30 days. Margins compare the current catalog price and cost in the same currency.'},
+// Job 169's channel alerts live in connections/agent-channel-alerts.js.
+const spec={170:{key:'cost-alerts',label:'Cost and gross margin alerts',sql:cost,summary:'The latest recorded purchase cost is compared with the previous cost in the same currency. Cost increases are shown for 30 days. Margins compare the current catalog price and cost in the same currency.'},
   171:{key:'unusual-stock-activity',label:'Unusual stock activity',sql:activity,summary:'Shows stock changes in the last seven business-calendar days against the unit threshold and local hours selected by the owner.'}};
 function optional(value){return value==null||String(value).trim()===''?null:value;}
 function hour(value){

@@ -100,6 +100,7 @@ const definitions=[
   ...require('./activity-watches').definitions,
   ...require('./daily-briefs').definitions,
   require('./stock-alerts').definition,
+  require('../connections/agent-channel-alerts').definition,
   ...require('../forecasting/agent-service-levels').definitions,
   require('./watch-rules').definition,
   {id:124,key:'transfer-arrivals',label:'Check transfer arrivals and outstanding units',usesDate:true,sql:require('./operational-notices').transfers,

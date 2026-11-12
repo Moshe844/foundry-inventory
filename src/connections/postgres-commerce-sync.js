@@ -22,12 +22,7 @@ async function connection(db,ctx,id,{allowInactive=false}={}){
 }
 async function local(db,p){
  const row=(await db.query(`SELECT s.id,i.tracking_mode,b.on_hand,b.updated_at,loc.custody_agreement_id,
-   COALESCE(cost.quantity_units,0) AS costed,
-   COALESCE((SELECT SUM(a.quantity) FROM sales_order_allocations a JOIN sales_order_lines l ON l.id=a.sales_order_line_id AND l.workspace_id=a.workspace_id
-     JOIN sales_orders o ON o.id=l.sales_order_id AND o.workspace_id=l.workspace_id
-     WHERE a.workspace_id=s.workspace_id AND l.sku_id=s.id AND a.location_id=$3 AND o.status NOT IN ('CANCELLED','FULFILLED')),0)
-   +COALESCE((SELECT SUM(r.quantity) FROM sales_stock_commitments r WHERE r.workspace_id=s.workspace_id AND r.sku_id=s.id
-     AND r.location_id=$3 AND r.stock_reservation_id IS NOT NULL),0) AS committed
+   COALESCE(cost.quantity_units,0) AS costed
   FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
   JOIN locations loc ON loc.workspace_id=s.workspace_id AND loc.id=$3 AND loc.is_active=1
   LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=loc.id
@@ -47,10 +42,45 @@ async function local(db,p){
   ELSE (SELECT count(*) FROM serial_units u JOIN lots l ON l.workspace_id=u.workspace_id AND l.id=u.lot_id WHERE u.workspace_id=$1 AND u.sku_id=$2 AND u.location_id=$3
    AND u.status='in_stock' AND (l.recalled_at IS NOT NULL OR l.expires_at::date<$5::date)) END AS n`,
   [p.workspace_id,p.sku_id,p.location_id,row.tracking_mode,await require('../lib/business-time').today(db,p.workspace_id)])).rows[0].n):0;
- const physical=Number(row.on_hand||0),costed=Number(row.costed),committed=Number(row.committed);
- if(![physical,costed,committed].every(Number.isSafeInteger))throw new ValidationError('This stock position needs an exact quantity review.');
+ // Customer commitments are every order allocation, kit part and protected
+ // stock reservation (sales_stock_commitments), as stock availability reads them.
  const availability=await require('../transfers/postgres-transfer-service').sourceAvailable(db,p.workspace_id,p.sku_id,p.location_id);
+ const physical=Number(row.on_hand||0),costed=Number(row.costed),committed=Number(availability.committed||0);
+ if(![physical,costed,committed].every(Number.isSafeInteger))throw new ValidationError('This stock position needs an exact quantity review.');
  return require('./agent-channel-buffers').apply(db,p,{value:row.custody_agreement_id?0:Math.max(0,Math.min(physical-blocked,costed)-committed-Number(availability.reserved||0)),physical,blocked,costed,committed,reserved:Number(availability.reserved||0),tracking:row.tracking_mode,version:row.updated_at||null});
+}
+// Job 169: what each quantity position may show on its channel now, read for
+// many positions at once. The same figure as local(): costed physical stock
+// less recalled or expired batches, customer commitments (orders, kit parts and
+// protected stock), transfer, rental and return holds, then the channel buffer.
+// An archived product or location, and custody stock, may show nothing.
+async function sellableMany(db,workspaceId,positionIds){
+ const out=new Map();if(!positionIds.length)return out;
+ const today=await require('../lib/business-time').today(db,workspaceId);
+ const rows=(await db.query(`SELECT p.id,p.sku_id,p.location_id,(s.is_active=1 AND i.is_active=1 AND l.is_active=1) AS active,l.custody_agreement_id IS NOT NULL AS custody,
+   coalesce(b.on_hand,0)::text AS physical,coalesce(cost.quantity_units,0)::text AS costed,
+   CASE i.tracking_mode WHEN 'lot' THEN (SELECT coalesce(sum(lb.quantity),0) FROM lot_balances lb JOIN lots t ON t.workspace_id=lb.workspace_id AND t.id=lb.lot_id
+     WHERE lb.workspace_id=p.workspace_id AND t.sku_id=p.sku_id AND lb.location_id=p.location_id AND lb.quantity>0 AND (t.recalled_at IS NOT NULL OR t.expires_at::date<$3::date))
+    WHEN 'serial' THEN (SELECT count(*) FROM serial_units u JOIN lots t ON t.workspace_id=u.workspace_id AND t.id=u.lot_id WHERE u.workspace_id=p.workspace_id AND u.sku_id=p.sku_id
+     AND u.location_id=p.location_id AND u.status='in_stock' AND (t.recalled_at IS NOT NULL OR t.expires_at::date<$3::date)) ELSE 0 END::text AS blocked,
+   to_jsonb(buffer) AS buffer
+  FROM connection_commerce_positions p JOIN skus s ON s.workspace_id=p.workspace_id AND s.id=p.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+  JOIN locations l ON l.workspace_id=p.workspace_id AND l.id=p.location_id
+  LEFT JOIN balances b ON b.workspace_id=p.workspace_id AND b.sku_id=p.sku_id AND b.location_id=p.location_id
+  LEFT JOIN accounting_inventory_cost_balances cost ON cost.workspace_id=p.workspace_id AND cost.sku_id=p.sku_id AND cost.location_id=p.location_id
+  LEFT JOIN stockchief_runtime.agent_channel_buffers buffer ON buffer.workspace_id=p.workspace_id AND buffer.position_id=p.id AND buffer.enabled
+  WHERE p.workspace_id=$1 AND p.id=ANY($2::text[]) AND p.field='quantity'`,[workspaceId,positionIds,today])).rows;
+ const stock=require('../domain/postgres-stock-availability'),live=rows.filter(r=>r.active&&!r.custody);
+ const holds=await stock.readMany(db,workspaceId,live.map(r=>({skuId:r.sku_id,locationId:r.location_id})));
+ const buffers=require('./agent-channel-buffers');
+ for(const r of rows){
+  if(!r.active||r.custody){out.set(r.id,{value:0,unbuffered:0,buffer:0,physical:Number(r.physical),costed:Number(r.costed),committed:0,reserved:0,blocked:0});continue;}
+  const h=holds.get(stock.key(r.sku_id,r.location_id))||{committed:0,reserved:0};
+  const physical=Number(r.physical),costed=Number(r.costed),blocked=Number(r.blocked),committed=Number(h.committed),reserved=Number(h.reserved);
+  const base=Math.max(0,Math.min(physical-blocked,costed)-committed-reserved),buffer=r.buffer?buffers.held(r.buffer,base):0;
+  out.set(r.id,{value:Math.max(0,base-buffer),unbuffered:base,buffer,physical,costed,committed,reserved,blocked});
+ }
+ return out;
 }
 async function mapped(db,p){
  return Boolean((await db.query(`SELECT 1 FROM connection_mappings sku JOIN connection_mappings loc ON loc.workspace_id=sku.workspace_id AND loc.connector_id=sku.connector_id AND loc.entity_type='location'
@@ -356,4 +386,4 @@ async function acceptCountInTransaction(db,ctx,payload){
  return {...physical,positionId:p.id,journalEntryId:journal?.entry.id||null,verified:true};
 }
 async function readForReview(db,ctx,p,adapter){const c=await connection(db,ctx,p.connector_id);return providerRead(db,c,p,adapter,'buffer-review:'+newId('read'));}
-module.exports={prepare,configureInTransaction,reconcile,execute,verifyDelivery,list,local,same,prepareCount,acceptCountInTransaction,publishPriceChangesInTransaction,publishStockInTransaction,queue,readForReview};
+module.exports={prepare,configureInTransaction,reconcile,execute,verifyDelivery,list,local,sellableMany,same,prepareCount,acceptCountInTransaction,publishPriceChangesInTransaction,publishStockInTransaction,queue,readForReview};
