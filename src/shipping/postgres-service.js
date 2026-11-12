@@ -219,6 +219,8 @@ async function ratesFor(database,workspaceId,shipmentId){
 }
 
 async function quote(database,ctx,shipmentId,options={}){
+  // Job 69: the ship-to address is checked first, with the carrier where it can.
+  await require('./agent-address-checks').check(database,ctx,shipmentId,options);
   const current=await state(database,ctx.workspaceId,shipmentId);
   if(!current.ready)return {...current,rates:[]};
   if(!['PACKED','PICKING'].includes(current.shipment.status)||['PURCHASED','PENDING','REVIEW','VOID_PENDING'].includes(current.shipment.label_status)||current.labelOperation?.status==='REVIEW')
@@ -312,6 +314,7 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
       quoteFingerprint(approvedView)!==rate.parcel_fingerprint)
       throw new ValidationError('The parcel or shipping account changed. Request fresh rates before purchasing.');
     if(!approvedView.to.complete||!approvedView.from.complete)throw new ValidationError('Complete the delivery and dispatch addresses before buying a label.');
+    await require('./agent-address-checks').assertClear(client,ctx.workspaceId,approvedView,rate);
     await postage.assertPurchase(client,ctx.workspaceId,ctx.agentPostageScope,rate);
     await require('./postgres-purchase-policy').assertWithin(client,ctx,rate);
     const id=newId('shiptxn');const now=nowIso();
@@ -438,6 +441,7 @@ async function executeLabelPurchaseEffect(database,workspaceId,effectId,options=
     const freshView=await state(database,workspaceId,input.shipmentId);
     if(!freshView.to.complete||!freshView.from.complete||input.addressFingerprint&&postage.addressFingerprint(freshView)!==input.addressFingerprint)
       throw new ValidationError('The delivery or dispatch address changed or is incomplete. Review the address and request fresh rates.');
+    await require('./agent-address-checks').assertClear(database,workspaceId,freshView,rate);
     if(!shipment.customer_return_id)await require('../sales/agent-order-checks').assertCanRelease(database,workspaceId,shipment.sales_order_id);
     await require('./postgres-return-parcels').assertCurrent(database,workspaceId,shipment);
     bought=await require('../commercial/operations').run(database,workspaceId,{capability:'shipping.labels',key:effect.idempotencyKey,

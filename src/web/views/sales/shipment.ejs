@@ -359,6 +359,10 @@
         </div>
       <% } %>
 
+      <% if (ship.addressCheck && ['PURCHASED', 'PENDING', 'REVIEW', 'VOID_PENDING'].indexOf(s.label_status) < 0 && ['PICKING', 'PACKED'].indexOf(s.status) >= 0) { %>
+        <div class="card-body"><%- include('../shipping/address-check', { ac: ship.addressCheck, shipmentId: s.id, returnTo: '', fixHref: '/orders/' + s.sales_order_id + '#ship-now' }) %></div>
+      <% } %>
+
       <%# Once rates are in, choosing one comes first; the parcel and label settings follow. %>
       <% if (locals.postgresPlacement && ship.rates.length) { %>
       <% if (ship.rates.length) { %>

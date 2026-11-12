@@ -81,7 +81,7 @@ async function shipmentPage(database,workspaceId,shipmentId){
   return {kitTracking,shipment:s,paymentPosition,pickList:{shipment:s,stops},shipping:{ready:state.ready,blocked,packagePresets,
     provider:s.provider||state.account?.provider||null,to:state.to,from:state.from,boxes:state.boxes,rates,promised:s.needed_by||null,promise:null,
     handling:{mode},ruled,recommended,rules:ruleRows.rows,events:state.events,quoteProblems:state.quoteProblems,
-    transactions:transactionRows.rows,providerCapabilities},
+    transactions:transactionRows.rows,providerCapabilities,addressCheck:await require('../../shipping/agent-address-checks').view(database,workspaceId,shipmentId)},
     notices:noticeRows.rows.map((notice)=>({...notice,connectorId:notice.connector_id,errorMessage:notice.error_message,
       sentAt:notice.sent_at})),noticePolicy:{},mailboxes:mailboxRows.rows};
 }
@@ -342,6 +342,14 @@ function createPostgresShippingRouter(database,options={}){
     if(parcel.status==='PICKING')await shipping.markPacked(database,req.ctx,req.params.id,{});
     await quoteFlash(req,req.params.id,'reweigh:'+newId('quote'));
     }catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+    return backTo(req,res,'#carrier');
+  }));
+  // Job 69: a person answers a held address check, then rates are fetched again.
+  router.post('/fulfilment/:id/address-check',requirePermission(permissions.OPERATE,'confirm a delivery address'),asyncRoute(async(req,res)=>{
+    try{const decided=await require('../../shipping/agent-address-checks').decide(database,req.ctx,req.params.id,{checkId:req.body.checkId,action:req.body.action});
+      if(decided.addressChanged)await quoteFlash(req,req.params.id,'address-check:'+newId('quote'));
+      else req.flash('success','Address confirmed. You can buy the label.');}
+    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
     return backTo(req,res,'#carrier');
   }));
   router.post('/fulfilment/:id/buy',requireOwner,requireCapability(database,'shipping.labels'),asyncRoute(async(req,res)=>{

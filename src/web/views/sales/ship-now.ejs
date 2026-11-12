@@ -13,6 +13,7 @@
   var displayWeight = s.weight_grams ? (exactGrams ? s.weight_grams + ' g' : (Number(s.weight_grams) / 453.59237).toFixed(1) + ' lb') : null;
   var cheapest = sn.rates[0];
   var accounts = sn.accounts.join(', ');
+  var addressHeld = Boolean(sn.addressCheck && sn.addressCheck.held);
 %>
 <div class="card-body ship-now" id="ship-now">
   <ol class="ship-steps" aria-label="Shipping steps">
@@ -21,6 +22,7 @@
     <li class="<%= step === 3 ? 'is-now' : '' %>"><span>3</span>Print and hand over</li>
   </ol>
   <p class="ship-now__to"><span>Ship to</span><strong><%= s.ship_to_address || order.ship_to_address %></strong></p>
+  <% if (!labelReady && !working && !review) { %><%- include('../shipping/address-check', { ac: sn.addressCheck, shipmentId: s.id, returnTo: 'order' }) %><% } %>
 
   <% if (working) { %>
     <div class="ship-now__wait" data-ship-wait>
@@ -72,10 +74,10 @@
           </label>
         <% }) %>
       </fieldset>
-      <% if (owner) { %>
+      <% if (owner && !addressHeld) { %>
         <div class="ship-now__buy"><button class="btn btn--primary" type="submit">Buy label</button>
           <span class="hint">Charged to your <%= accounts %> account. Nothing leaves stock yet.</span></div>
-      <% } else { %>
+      <% } else if (!owner) { %>
         <p class="hint">Only an owner can buy a label.</p>
       <% } %>
     </form>
@@ -91,11 +93,11 @@
   <% } %>
 
   <% if (!labelReady && !working && !review) { %>
-    <details class="ship-now__size" <%= sn.rates.length ? '' : 'open' %>>
+    <details class="ship-now__size" <%= sn.rates.length && !addressHeld ? '' : 'open' %>>
       <summary><%= sn.rates.length ? 'Change weight or box' : 'Weight and box' %></summary>
       <form method="post" action="/fulfilment/<%= s.id %>/reweigh" class="ship-now__form" data-busy>
         <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="order">
-        <%- include('ship-needs', { needs: sn.rates.length ? null : sn.needs }) %>
+        <%- include('ship-needs', { needs: sn.rates.length ? (addressHeld ? { any: true, shipTo: { address: s.ship_to_address || '' } } : null) : sn.needs }) %>
         <label class="ship-now__field"><span>Weight <i class="ship-now__req" aria-hidden="true">*</i></span><span class="ship-now__pair"><input name="weight" inputmode="decimal" required value="<%= s.weight_grams ? (exactGrams ? s.weight_grams : (Number(s.weight_grams) / 453.59237).toFixed(2)) : '' %>" aria-label="New parcel weight">
           <select name="weightUnit" aria-label="New weight unit"><option value="lb">lb</option><option value="oz">oz</option><option value="kg">kg</option><option value="g" <%= exactGrams?'selected':'' %>>g</option></select></span></label>
         <label class="ship-now__field"><span>Box (L × W × H, optional)</span><span class="ship-now__pair"><input name="length" inputmode="decimal" placeholder="L" aria-label="New box length"><input name="width" inputmode="decimal" placeholder="W" aria-label="New box width"><input name="height" inputmode="decimal" placeholder="H" aria-label="New box height">
