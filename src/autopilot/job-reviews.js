@@ -22,6 +22,7 @@ const definitions=[
   require('../reports/agent-net-contribution').definition,
   require('../reports/agent-month-end-stock').definition,
   require('../reports/agent-change-explanations').definition,
+  require('../reports/agent-roi-report').definition,
   require('../purchasing/agent-purchase-fx').definition,
   require('../shipping/agent-export-papers').definition,
   require('../shipping/agent-carrier-claims').definition,
