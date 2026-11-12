@@ -31,21 +31,8 @@
   <button class="rm-btn rm-btn--ghost" name="remove" value="1">Remove rule</button>
 </form><% }} %></details>
 <% }else if(planLocksReorder&&canAdmin){ %><p>Automatic reorder limits by location <span class="badge">Growth</span> <a href="/billing">Upgrade</a></p><% } %>
-<% if(safetyPreview){ const positions=rows.filter(r=>r.location_id&&!r.planning_suppressed); const sites=new Map(positions.map(r=>[r.location_id,r.location_name])); %>
-<details class="owner-manual section" id="safety-stock"><summary>Set safety stock from a service level</summary>
-<% if(positions.length){ %><form method="get" action="/planning/safety-stock">
-  <label>Product and location <select name="position"><% for(const r of positions){ %><option value="<%= JSON.stringify([r.sku_id,r.location_id]) %>"><%= r.code %> · <%= r.location_name %></option><% } %></select></label>
-  <label>Lead-time periods to cover (%) <input type="number" min="1" max="100" name="serviceLevel" required></label><button class="rm-btn">Review safety stock</button>
-</form><% } %>
-<% if(safetyRoutine && sites.size){ %><form method="post" action="/planning/safety-stock/class"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-  <label>Warehouse <select name="locationId"><% for(const [id,name] of sites){ %><option value="<%= id %>"><%= name %></option><% } %></select></label>
-  <label>Product class <select name="class"><option>A</option><option>B</option><option>C</option></select></label>
-  <label>Lead-time periods to cover (%) <input type="number" min="1" max="100" name="serviceLevel" required></label>
-  <button class="rm-btn">Set automatic safety stock for this class</button>
-</form><% }else if(canAdmin && !safetyRoutine){ %><p>Automatic safety stock by class <span class="badge">Pro</span> <a href="/billing">Upgrade</a></p><% } %>
-<% for(const r of safetyRules){ %><form method="post" action="/planning/safety-stock/class"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= r.location_id %>"><input type="hidden" name="class" value="<%= r.class %>">
-  <%= r.name %> · class <%= r.class %> · <%= r.service_level %>% <button name="remove" value="1">Remove class rule</button></form><% } %>
-</details><% } %>
+<% if(safetyStock){ %><p class="rm-sub" id="safety-stock"><a class="rm-u" href="/planning/safety-stock">Safety stock</a> · Set for how often you can afford to run out, from forecast error and late deliveries.</p>
+<% }else if(planLocksReorder&&canAdmin){ %><p>Safety stock for how often you can afford to run out <span class="badge">Growth</span> <a href="/billing">Upgrade</a></p><% } %>
 <% if (recommendations.length) { %>
   <section class="owner-planning section" id="recommendations" aria-labelledby="planning-decisions-title">
     <div class="owner-outcomes__head"><h2 id="planning-decisions-title">Needs your decision</h2><span><%= recommendations.length %></span></div>

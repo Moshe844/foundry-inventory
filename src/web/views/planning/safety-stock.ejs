@@ -1,10 +1,73 @@
-<a href="/planning#safety-stock">Back to planning</a>
-<h1>Review safety stock</h1>
-<p><%= result.code %> · <%= result.location %></p>
-<% const unit=result.unit==='unit'?'units':result.unit; %>
-<p>For <%= result.serviceLevel %>% coverage, keep <strong><%= result.units %> <%= unit %></strong> of safety stock. The current setting is <%= result.current==null?'unset':result.current+' '+unit %>.</p>
-<p>StockChief measured <%= result.windows %> fully stocked periods of <%= result.lead %> days in the last 180 days. Mean sales were <%= result.mean %> <%= unit %>. Sales at your chosen coverage level were <%= result.percentile %> <%= unit %>. Periods with a stockout are excluded.</p>
-<% if(result.assumedLead){ %><p>This estimate uses the default supplier lead time of <%= result.lead %> days.</p><% } %>
-<form method="post" action="/planning/safety-stock"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-<% for(const key of ['skuId','locationId','serviceLevel','digest']){ %><input type="hidden" name="<%= key %>" value="<%= result[key] %>"><% } %>
-<button class="rm-btn">Approve <%= result.units %> <%= unit %></button></form>
+<% const m=model,base='/planning/safety-stock';
+   const qty=(value,unit)=>value==null?'not set':helpers.unitCount(Number(value),unit||'unit');
+   const when=value=>value?helpers.dateTime(new Date(value).toISOString()):'';
+   const why=e=>e.target?'Class '+e.class+' · '+e.target+' ('+e.service+'%) · sales swing about '+qty(e.spread,e.unit)+' a day · deliveries vary by about '+e.leadSpread+' days · '+e.lead+' lead days':'';
+   const lead={watch:'For now it only shows what it would set.',
+     draft:m.level==='draft'&&m.plan!=='growth'?'It asks you about each value for now.':'It drafts each value for your approval.',
+     alone:'It sets values inside your change limit and asks you about the rest.'}[m.level]; %>
+<header class="rm-head"><a href="/planning">← Planning</a>
+<h1>Safety stock</h1>
+<p>Safety stock covers sales swings and late deliveries, for how often you can afford to run out. Each day StockChief works it out from how far sales stray from the forecast and how far deliveries stray from the promised date. The reorder point builds on it. <%= lead %></p></header>
+<% if(m.reason){ %><p class="notice<%= m.level==='watch'?' notice--warn':'' %>"><%= m.reason %></p><% } %>
+
+<section class="rm-panel" id="targets"><div class="rm-panel__head"><h2>Your targets</h2></div><div class="rm-panel__body">
+<% if(!m.targets.length){ %><p>No targets yet. Set one for a product class to start.</p><% } %>
+<% if(m.targets.length){ %><ul class="rm-list"><% for(const t of m.targets){ %><li><div class="rm-told__t">
+  <p><strong>Class <%= t.class %></strong> · <%= t.location %> · <%= m.targetWords(t) %></p>
+  <% if(m.isOwner){ %><form method="post" action="<%= base %>/targets"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <input type="hidden" name="class" value="<%= t.class %>"><input type="hidden" name="locationId" value="<%= t.location_id||'' %>">
+  <button class="rm-btn rm-btn--ghost rm-btn--sm" name="remove" value="1">Remove</button></form><% } %>
+</div></li><% } %></ul><% } %>
+<% if(m.isOwner){ %><form method="post" action="<%= base %>/targets" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <label>Product class <select name="class"><option>A</option><option>B</option><option>C</option></select></label>
+  <label>Where <select name="locationId"><option value="">All locations</option><% for(const l of m.locations){ %><option value="<%= l.id %>"><%= l.name %></option><% } %></select></label>
+  <label class="choice"><input type="radio" name="kind" value="percent" checked> Reorders without running out (%) <input type="number" name="percent" min="50" max="99.9" step="0.1" placeholder="95"></label>
+  <label class="choice"><input type="radio" name="kind" value="runouts"> Times a year I can run out <input type="number" name="runouts" min="0.1" max="52" step="0.1" placeholder="1"></label>
+  <button class="rm-btn">Save target</button></form>
+<% }else{ %><p class="rm-muted">Only the business owner can set targets.</p><% } %>
+</div></section>
+
+<section class="rm-panel"><div class="rm-panel__body">
+<% if(m.run){ %><p>Last check <%= when(m.run.started_at) %><%= m.run.finished_at?'':' · still running' %></p><% }else{ %><p>No check has run yet.</p><% } %>
+<form method="post" action="<%= base %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost">Check now</button></form>
+</div></section>
+
+<% if(m.drafts.length){ %><section class="rm-panel" id="waiting"><div class="rm-panel__head"><h2>Waiting for you</h2></div><div class="rm-panel__body">
+<form method="post" action="<%= base %>/approve-all"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn" <%= m.level==='watch'?'disabled':'' %>>Approve all</button></form>
+<ul class="rm-list"><% for(const c of m.drafts){ const e=c.evidence; %><li><div class="rm-told__t">
+  <p><strong><%= e.code %></strong> · <%= e.location %></p>
+  <p>Safety stock <%= qty(c.before_safety,e.unit) %> → <%= qty(c.after_safety,e.unit) %></p>
+  <p class="rm-muted"><%= why(e) %><% if(c.reason){ %> · <%= c.reason %><% } %></p>
+  <div class="rm-actions">
+    <form method="post" action="<%= base %>/<%= c.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--sm" <%= m.level==='watch'?'disabled':'' %>>Approve</button></form>
+    <form method="post" action="<%= base %>/<%= c.id %>/decline"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm">Keep current</button></form>
+  </div>
+</div></li><% } %></ul>
+<% if(m.number>1||m.more){ %><p><% if(m.number>1){ %><a href="?page=<%= m.number-1 %>">Previous</a><% } %> <% if(m.more){ %><a href="?page=<%= m.number+1 %>">Next</a><% } %></p><% } %>
+</div></section><% } %>
+
+<% if(m.shown.length){ %><section class="rm-panel" id="shown"><div class="rm-panel__head"><h2>What it would set</h2></div><div class="rm-panel__body">
+<ul class="rm-list"><% for(const c of m.shown){ const e=c.evidence; %><li><div class="rm-told__t">
+  <p><strong><%= e.code %></strong> · <%= e.location %></p>
+  <p>Safety stock <%= qty(c.before_safety,e.unit) %> → <%= qty(c.after_safety,e.unit) %></p>
+  <p class="rm-muted"><%= why(e) %></p>
+</div></li><% } %></ul></div></section><% } %>
+
+<% if(m.history.length){ %><section class="rm-panel" id="changes"><div class="rm-panel__head"><h2>Recent decisions</h2></div><div class="rm-panel__body">
+<ul class="rm-list"><% for(const c of m.history){ const e=c.evidence; %><li><div class="rm-told__t">
+  <p><strong><%= e.code %></strong> · <%= e.location %> · <%= c.status==='UNDONE'?'Undone':c.status==='DECLINED'?'Kept current':c.authority==='PERSON'?'Approved':'Changed on its own' %></p>
+  <p>Safety stock <%= qty(c.before_safety,e.unit) %> → <%= qty(c.after_safety,e.unit) %></p>
+  <p class="rm-muted"><%= when(c.undone_at||c.decided_at||c.created_at) %><% if(c.authority==='RULE'){ %> · inside your change limit<% } %></p>
+  <% if(c.status==='APPLIED'){ %><% if(c.undoable){ %><form method="post" action="<%= base %>/<%= c.id %>/undo"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm">Undo</button></form>
+  <% }else{ %><p class="rm-muted">Changed again since. Undo is no longer available.</p><% } %><% } %>
+</div></li><% } %></ul></div></section><% } %>
+
+<% if(m.held.length){ %><section class="rm-panel" id="held"><div class="rm-panel__head"><h2>Held and why</h2></div><div class="rm-panel__body">
+<ul class="rm-list"><% for(const c of m.held){ const e=c.evidence; %><li><div class="rm-told__t">
+  <p><strong><%= e.code %></strong> · <%= e.location %></p><p class="rm-muted"><%= c.reason %></p>
+</div></li><% } %></ul></div></section><% } %>
+
+<section class="rm-panel" id="limit"><div class="rm-panel__head"><h2>Changes on its own</h2></div><div class="rm-panel__body">
+<% if(m.plan==='growth'){ %><p>On Growth every new value waits for your approval. Pro and Custom can set values on its own inside your change limit.</p>
+<% }else{ %><p>It uses the change limit and locked settings from <a href="/planning/reorder-refresh#rule">Keep reorder points up to date</a>.<% if(m.rule){ %> Current limit: <strong><%= m.rule.max_change_percent %>%</strong> per change<%= m.rule.fill_missing?' · also sets missing values':'' %>.<% }else{ %> No limit is saved yet, so every value waits for you.<% } %></p><% } %>
+</div></section>

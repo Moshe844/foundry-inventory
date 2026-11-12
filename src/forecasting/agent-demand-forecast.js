@@ -440,5 +440,7 @@ module.exports={JOB,KIND,CAPABILITY,href,MODEL_VERSION,authority,demand,daysOf,f
   approve,approveAll,setExcluded,attach,addStep,addFeed,addSection,addInbox,review,page,inbox,statusWords};
 
 // Jobs 146 and 148 add their steps, feeds, page parts and Needs you items.
+// Job 150 sets safety stock in the same run, after each page's forecasts.
 require('./agent-launch-forecast');
 require('./agent-demand-trends');
+require('./agent-safety-stock');

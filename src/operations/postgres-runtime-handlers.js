@@ -758,7 +758,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'planning.monthly-product-classes':Object.assign((job,c)=>require('../forecasting/monthly-product-classes').calculate(c,job.workspaceId),{workerLane:'maintenance'}),
   'planning.automation-opportunities':Object.assign((job,c)=>require('../autopilot/automation-opportunities').generate(c,job.workspaceId),{workerLane:'maintenance'}),
   'sales.recurring-order':(job,c)=>require('../sales/recurring-orders').run(c,job.workspaceId,job.payload),
-  'planning.class-safety-stock':Object.assign((job,c)=>require('../forecasting/agent-safety-stock').processBatch(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
+  // Safety stock now runs in the daily forecast run (job 150); older queued work ends quietly.
+  'planning.class-safety-stock':Object.assign(async()=>({skipped:'Safety stock is now set in the daily forecast run.'}),{workerLane:'maintenance'}),
   'planning.open-to-buy.v1':Object.assign((job,c)=>require('../purchasing/agent-open-to-buy').run(job,c),{workerLane:'maintenance'}),
   'planning.warehouse-slotting.v1':Object.assign((job,c)=>require('../forecasting/warehouse-slotting').run(job,c),{workerLane:'maintenance'}),
   'agent.daily-cycle-count.v1':Object.assign((job,c)=>require('./agent-daily-cycle-counts').work(c,job.workspaceId,job.payload),{workerLane:'maintenance'}),
