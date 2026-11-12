@@ -26,6 +26,9 @@ test('shadow mode watches every automatic job for 14 days, reports what it would
   const needs=async()=>(await require('../../src/projections/postgres-service').needs(db,ws,ctx.actorId)).filter(n=>n.sourceId==='shadow-report');
   const csrfFor=async path=>f.csrf((await browser.get(path).expect(200)).text);
 
+  // An account still on its older terms sees the shared plan card, not an error.
+  assert.match((await browser.get(shadow.path).expect(200)).text,/data-agent-plan-locked/);
+  assert.deepEqual(await shadow.inbox(db,ws),[]);
   await subscribe('pro');
   const account=await policy.accountState(db,ws);
   assert.equal(account.shadow,true,'a new account starts in shadow mode');
