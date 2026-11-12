@@ -16,33 +16,6 @@ function period(today,filter,length){
   const [year,month]=closing.split('-').map(Number);
   return {closing,start,end:new Date(Date.UTC(year,month,0)).toISOString().slice(0,10),months};
 }
-async function board(db,ctx,{today,filter}){
-  const span=period(today,filter,6);
-  const {rows:lines}=await db.query(`SELECT substr(e.posting_date,1,7) AS month,l.currency,
-    sum(CASE WHEN a.account_type='INCOME' THEN l.credit_minor-l.debit_minor ELSE 0 END) AS revenue,
-    sum(CASE WHEN a.account_type='COGS' THEN l.debit_minor-l.credit_minor ELSE 0 END) AS cost
-    FROM accounting_journal_entries e JOIN accounting_journal_lines l ON l.workspace_id=e.workspace_id AND l.entry_id=e.id
-    JOIN accounting_accounts a ON a.workspace_id=l.workspace_id AND a.id=l.account_id
-    WHERE e.workspace_id=$1 AND e.status='POSTED' AND e.posting_date BETWEEN $2 AND $3 AND a.account_type IN ('INCOME','COGS')
-    GROUP BY 1,2 ORDER BY 2,1`,[ctx.workspaceId,span.start,span.end]);
-  const settings=(await db.query('SELECT accounting_start_date FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0];
-  const rows=[],series=[];
-  for(const currency of new Set(lines.map(l=>l.currency))){
-    const points=[];
-    for(const month of span.months){
-      const line=lines.find(l=>l.currency===currency&&l.month===month);
-      if(!line&&(!settings?.accounting_start_date||settings.accounting_start_date>month+'-01'))continue;
-      const revenue=money.integer(line?.revenue??0,'Revenue',{signed:true}),cost=money.integer(line?.cost??0,'Cost of goods',{signed:true});
-      const gross=money.sum([revenue,-cost]),end=period(today,month,1).end;
-      rows.push({Month:month,Currency:currency,Revenue:money.format(revenue,currency),'Cost of goods':money.format(cost,currency),
-        'Gross profit':money.format(gross,currency),Coverage:settings?.accounting_start_date&&settings.accounting_start_date<=month+'-01'?'Full month':'Partial records',
-        link:'/accounting/reports/general-ledger?'+new URLSearchParams({from:month+'-01',to:end})});
-      points.push({month,revenue,cost,gross});
-    }
-    series.push({currency,points});
-  }
-  return {span,rows,series,more:false,summary:'Six months of posted revenue, cost of goods sold and gross profit through '+span.end+'. Each currency is reported separately.'};
-}
 async function yearEnd(db,ctx,{today,filter,page=1,download=false}){
   const span=period(today,filter,12);
   const {rows:balances}=await db.query(`SELECT l.currency,a.system_key,k.code,
@@ -73,13 +46,13 @@ async function yearEnd(db,ctx,{today,filter,page=1,download=false}){
     more:!download&&balances.length>100,summary:'Posted stock valuation at '+span.end+' and '+total.rows[0].n+' approved count lines from '+span.start+' through '+span.end+'. The workbook includes the supporting count lines.'};
 }
 const definitions=[
-  {id:159,key:'board-pack',label:'Board or investor pack',filterLabel:'Closing month (YYYY-MM)',readPage:board},
+  {id:159,key:'board-pack',label:'Board or investor pack',filterLabel:'Closing month (YYYY-MM)',readPage:(...args)=>require('../reports/agent-board-pack').readPage(...args)},
   {id:164,key:'quarterly-supplier-pack',label:'Quarterly pack for a supplier',filterLabel:'Exact supplier name or ID',readPage:require('../purchasing/agent-supplier-pack').report},
   {id:165,key:'year-end-stocktake',label:'Year-end stocktake and valuation pack',filterLabel:'Fiscal year closing month (YYYY-MM)',readPage:yearEnd}
 ];
 const downloads={
-  'board-pack':{extension:'pdf',label:'Download board pack with charts (PDF)',render:require('./agent-report-pack-files').boardPdf},
+  'board-pack':{extension:'pdf',label:'Download board pack with charts (PDF)',render:report=>require('../reports/agent-board-pack').pdf(report)},
   'quarterly-supplier-pack':{extension:'pdf',label:'Download supplier pack (PDF)',render:require('../purchasing/agent-supplier-pack').pdf},
   'year-end-stocktake':{extension:'xlsx',label:'Download stocktake and valuation (Excel)',render:require('./agent-report-pack-files').stocktakeWorkbook}
 };
-module.exports={definitions,board,yearEnd,downloads};
+module.exports={definitions,yearEnd,downloads};

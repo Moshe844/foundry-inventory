@@ -302,7 +302,17 @@ const notes={
  178:{common:'Writes app procedures from completed receiving, ordinary dispatch and quantity-count workflows. Every staff publication requires the owner’s separate review.',
   growth:'Prepares app procedures from completed receiving, dispatch and count records. You approve each saved draft and every staff publication.',
   pro:'Maintains private app-procedure drafts from completed workflows without training. Staff see a version only after your separate approval.',
-  enterprise:'Maintains private app-procedure drafts from completed workflows without training. Staff see a version only after your separate approval.'}
+  enterprise:'Maintains private app-procedure drafts from completed workflows without training. Staff see a version only after your separate approval.'},
+ 157:{common:summaries[157],
+  growth:'Answers on its own, without training, from your posted records. After each month ends the worker flags changes of 20% or more in Needs you with their causes. Pause holds that check; Watch only, Ask me first and the first 14 days check with no flags, and Ask me first lets you check by hand.',
+  pro:'Answers on its own, without training, from your posted records. After each month ends the worker flags changes of 20% or more in Needs you with their causes. Pause holds that check; Watch only, Ask me first and the first 14 days check with no flags, and Ask me first lets you check by hand.',
+  enterprise:'Answers on its own, without training, from your posted records. After each month ends the worker flags changes of 20% or more in Needs you with their causes. Pause holds that check; Watch only, Ask me first and the first 14 days check with no flags, and Ask me first lets you check by hand.'},
+ 159:{common:summaries[159],
+  enterprise:'Builds the pack on its own, without training, through the worker on the day each month you choose, and tells you in Needs you. Pause holds it; Watch only, Ask me first and the first 14 days build it without telling you. You can also download it or keep a copy at any time.'},
+ 158:{common:summaries[158],
+  growth:'Makes the report on its own, without training, after each month ends, and checks a month again each day while it differs from your books. Pause holds it; Watch only, Ask me first and the first 14 days make the report with no flags, and Ask me first lets you check by hand.',
+  pro:'Makes the report on its own, without training, after each month ends, and checks a month again each day while it differs from your books. Pause holds it; Watch only, Ask me first and the first 14 days make the report with no flags, and Ask me first lets you check by hand.',
+  enterprise:'Makes the report on its own, without training, after each month ends, and checks a month again each day while it differs from your books. Pause holds it; Watch only, Ask me first and the first 14 days make the report with no flags, and Ask me first lets you check by hand.'}
 };
 function current(id,tier){const note=notes[id];return note?(tier&&note[tier]||note.common):summaries[id]||null;}
 module.exports={current};

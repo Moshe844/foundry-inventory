@@ -20,6 +20,8 @@ const definitions=[
   require('../sales/agent-customer-order-pages').preorderDefinition,
   require('../operations/agent-return-disposition').definition,
   require('../reports/agent-net-contribution').definition,
+  require('../reports/agent-month-end-stock').definition,
+  require('../reports/agent-change-explanations').definition,
   require('../purchasing/agent-purchase-fx').definition,
   require('../shipping/agent-export-papers').definition,
   require('../shipping/agent-carrier-claims').definition,
@@ -118,7 +120,7 @@ const definitions=[
   require('../purchasing/agent-supplier-returns').definition,
   require('../sales/agent-stock-protections').definition,
   ...require('./exception-reviews'),
-  ...require('./inventory-reviews'),...require('./planning-reviews'),...require('../accounting/agent-month-end'),...require('./commercial-reviews'),...require('./traceability-reviews'),
+  ...require('./inventory-reviews'),...require('./planning-reviews'),...require('./commercial-reviews'),...require('./traceability-reviews'),
   {id:104,key:'payment-run',label:'Prepare this week’s supplier payment run',read:cash.payments},
   {id:108,key:'early-discounts',label:'Find early-payment discounts',read:(db,ctx,options)=>cash.payments(db,ctx,{...options,discountsOnly:true})},
   {id:109,key:'cash-forecast',label:'Forecast thirteen weeks of cash flow',read:cash.forecast}

@@ -1,0 +1,51 @@
+<% const r=report,fmt=money,stamp=v=>helpers.dateTime(v),open=flags.filter(f=>f.status==='OPEN'),seen=flags.filter(f=>f.status==='DISMISSED'),cleared=flags.filter(f=>f.status==='CLEARED'); %>
+<div class="page-head"><div class="titles"><h1>Month-end stock value and cost of goods</h1>
+<p>Each location’s stock value through the month: what it started with, what came in, what was sold, counted, written off or moved, and what was left. The totals are checked against Inventory in your books. Postings after the month end are left out. StockChief never closes a month in your books; that stays with you.</p></div></div>
+<% if(shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It makes the report each month and raises no flags.</p>
+<% }else if(automatic){ %><p class="notice notice--info"><%= automatic %></p><% } %>
+
+<section class="card section"><form method="get" action="/autopilot/reviews/month-end-stock" class="form-stack">
+<label class="rm-field"><span>Month</span><select name="month" aria-label="Month"><% months.forEach(m=>{ %><option value="<%= m %>" <%= m===month?'selected':'' %>><%= m %></option><% }) %></select></label>
+<button class="btn">Show month</button></form>
+<% if(!r.problem){ %><p><a class="btn" href="<%= downloads.xlsx %>">Download Excel</a> <a class="btn" href="<%= downloads.pdf %>">Download PDF</a></p><% } %>
+<% if(stored){ %><p class="cell-sub">StockChief made this month’s report <%= stamp(stored.created_at) %><%= stored.outcome==='WATCHED'?' while watching only':'' %>.<% if(changed){ %> Postings dated in this month have changed since then; the figures below are current.<% } %></p><% } %>
+</section>
+
+<% if(r.problem){ %><p class="notice notice--warn"><%= r.problem %> <a href="/accounting">Open accounting</a></p><% } %>
+<% const short={receipts:'Received',cogs:'Sold, at cost',adjustments:'Counted',writeoffs:'Written off',transfers:'Moved',other:'Other'};
+r.currencies.forEach(c=>{ const shown=categories.filter(([key])=>c.locations.some(p=>p[key]!==0n)),hidden=categories.filter(x=>!shown.includes(x)); %>
+<section class="card section"><h2><%= r.name %> · <%= c.currency %></h2>
+<% if(r.partial){ %><p class="cell-sub">Accounting began on <%= r.accountingStart %>, partway through this month.</p><% } %>
+<% if(!c.locations.length){ %><p>No stock value recorded at any location<%= c.currency===r.base?'':' in '+c.currency %>.</p><% }else{ %>
+<div class="table-wrap"><table class="table table--stack"><thead><tr><th>Location</th><th>Opening</th><% shown.forEach(([key,label])=>{ %><th title="<%= label %>"><%= short[key] %></th><% }) %><th>Closing</th></tr></thead><tbody>
+<% [...c.locations,{id:'',name:'All locations',...c.totals}].forEach(p=>{ %><tr><td class="cell-main"><span class="cell-title"><%= p.name %></span></td><td data-label="Opening value"><%= fmt(p.opening,c.currency) %></td>
+<% shown.forEach(([key,label])=>{ %><td data-label="<%= label %>"><%= fmt(p[key],c.currency) %></td><% }) %><td data-label="Closing value"><strong><%= fmt(p.closing,c.currency) %></strong></td></tr><% }) %>
+</tbody></table></div>
+<% if(hidden.length){ %><p class="cell-sub">Nothing this month for: <%= hidden.map(([,label])=>label.toLowerCase()).join(', ') %>.</p><% } %><% } %>
+<h3>Checked against your books</h3>
+<ul class="rm-list">
+<li class="list-row"><span>Inventory in your books at <%= r.end %></span><strong><%= fmt(c.books.closing,c.currency) %></strong></li>
+<li class="list-row"><span>Your stock records at <%= r.end %></span><strong><%= fmt(c.totals.closing,c.currency) %></strong></li>
+<li class="list-row" id="difference-<%= c.currency %>"><span>Difference <% if(c.difference.closing!==0n){ %><span class="badge badge--warn">Check</span><% }else{ %><span class="badge badge--ok">Matches</span><% } %></span><strong><%= fmt(c.difference.closing,c.currency) %></strong></li>
+<% if(c.books.transit!==0n){ %><li class="list-row"><span>Stock in transit between locations (kept apart in your books)</span><strong><%= fmt(c.books.transit,c.currency) %></strong></li><% } %>
+<li class="list-row"><span>Cost of goods sold in your books this month</span><strong><%= fmt(c.cogs.books,c.currency) %></strong></li>
+<li class="list-row"><span>Cost of goods taken from your stock</span><strong><%= fmt(c.cogs.fromStock,c.currency) %></strong></li>
+<% if(c.cogs.notFromStock!==0n){ %><li class="list-row"><span>Cost of goods not taken from your stock, such as goods shipped by a supplier</span><strong><%= fmt(c.cogs.notFromStock,c.currency) %></strong></li><% } %>
+</ul>
+<% if(c.booksOnly.length){ %><h3>Only in your books</h3><p class="cell-sub">These postings changed Inventory with no stock record behind them.</p><ul class="rm-list">
+<% c.booksOnly.forEach(e=>{ %><li class="list-row"><span><a href="<%= e.href %>">Entry <%= e.number %></a> <small><%= e.date %> · <%= e.description %></small></span><strong><%= fmt(e.amount,c.currency) %></strong></li><% }) %></ul>
+<% if(c.booksOnlyMore){ %><p class="cell-sub">More postings are only in your books. <a href="/accounting/reports/general-ledger?<%= new URLSearchParams({from:r.start,to:r.end}) %>">Open the general ledger</a></p><% } %><% } %>
+<% if(c.recordsOnly.count){ %><p class="cell-sub"><%= c.recordsOnly.count %> stock value change<%= c.recordsOnly.count===1?' is':'s are' %> only in your stock records (<%= fmt(c.recordsOnly.amount,c.currency) %>).</p><% } %>
+<p class="cell-sub"><a href="/accounting/reports/general-ledger?<%= new URLSearchParams({from:r.start,to:r.end}) %>">Open this month’s postings</a></p>
+</section><% }) %>
+
+<section class="card section" id="month-end-flags"><h2>Differences to your books</h2>
+<% if(open.length){ %><ul class="rm-list"><% open.forEach(f=>{ %><li class="list-row" id="flag-<%= f.id %>"><span><strong><%= f.detail.title %></strong><small><%= f.detail.happened %></small></span>
+<form method="post" action="/autopilot/reviews/month-end-stock/flags/<%= f.id %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm">Mark as seen</button></form></li><% }) %></ul>
+<% }else{ %><p class="cell-sub">No open differences.</p><% } %>
+<% if(seen.length){ %><p class="cell-sub">Seen: <%= seen.map(f=>f.detail.title).join('; ') %>.</p><% } %>
+<% if(cleared.length){ %><p class="cell-sub">Recently cleared: <%= cleared.map(f=>f.detail.title+' ('+f.cleared_reason+')').join('; ') %></p><% } %>
+<form method="post" action="/autopilot/reviews/month-end-stock/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="month" value="<%= month %>"><button class="btn btn--ghost">Check <%= month %> against my books now</button></form>
+<p class="cell-sub">StockChief makes this report on its own after each month ends and checks it again each day while a difference is open. <a href="/autopilot/job-modes">Choose Watch only or Ask me first for this job</a></p>
+<% if(runs.length){ %><ul class="rm-list"><% runs.forEach(run=>{ %><li class="list-row"><span><%= run.period %> · <%= run.outcome==='PRODUCED'?'Made':run.outcome==='WATCHED'?'Made while watching':'Stopped' %><small><%= stamp(run.created_at) %><%= run.authorization_kind==='AUTOMATIC'?' · on its own':' · by you' %><%= run.reason?' · '+run.reason:'' %></small></span></li><% }) %></ul><% } %>
+</section>
