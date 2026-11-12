@@ -139,7 +139,7 @@ function offers(state){
 const suggestions={
   118:r=>r.Quantity?'Request '+r.Quantity+' '+r.Unit+' of '+r.SKU+' from '+r.From+' to '+r.To+' while protecting the source target.':r.SKU+' at '+r.To+' · '+r.Review,
   85:r=>'Order '+r.Order+' has '+r['Posted net sales']+' posted net sales and '+r['Net contribution']+' net contribution after checked costs. '+r.Review,
-  40:r=>r.Order?'The open recorded goods on '+r.Order+' are '+r['Open recorded goods']+'. Latest ECB reference estimate: '+r['Reference estimate']+'. '+r.Review:r.Review,
+  40:r=>r.Review,
   13:r=>require('../purchasing/agent-kit-reorders').suggestion(r),
   162:r=>r['Days of supply']==null?'Check the sales and valuation records for '+r.SKU+'.':'Review '+r.SKU+' with '+r['Days of supply']+' days of stock at its recorded sales rate.',
   126:r=>'Review '+r.Product+'. '+r['What to fix']+'.',

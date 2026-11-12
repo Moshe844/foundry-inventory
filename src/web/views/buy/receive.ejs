@@ -34,6 +34,7 @@
   <% if (warnings && warnings.length) { %><div class="ox-error" role="alert"><% warnings.forEach(function (w) { %><%= w %> <% }) %></div><% } %>
   <% if (sourceEvent) { %><div class="ox-note"><%= sourceEvent.attachmentName ? 'Prepared from ' + sourceEvent.attachmentName + '.' : 'From what you said: “' + sourceEvent.statedAs + '”.' %> Check what physically arrived; nothing has changed yet.</div><% } %>
 
+  <% if(locals.fx){ %><div class="ox-note"><% if(fx.missing){ %>No <%= fx.currency %> to <%= fx.base %> exchange rate is recorded for <%= fx.date %>. The owner can get or enter one on <a href="/autopilot/purchase-fx#rates">Foreign purchase costs</a> before these goods are booked in.<% }else{ %><input type="hidden" name="fxRate" value="<%= fx.rate %>">Stock value is booked in <%= fx.base %> at 1 <%= fx.currency %> = <%= fx.shown %> <%= fx.base %> (<%= fx.label %>, <%= fx.date %>).<% } %></div><% } %>
   <% if(locals.qualityConfigured){ %><div class="ox-note"><p>Some of these goods are covered by a QC rule. Held goods stay unavailable until a person physically inspects them. <a href="/autopilot/delivery-quality">Review delivery QC checks</a>.</p><label><input type="checkbox" name="qcConfirmed" value="yes"> Hold these goods for QC now, even where StockChief would only suggest a hold. Leave this unticked to let the owner decide.</label></div><% } %>
   <div class="ox-2col">
    <div class="ox-2col__main">

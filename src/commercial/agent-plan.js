@@ -195,6 +195,7 @@ const actionJobs=new Map([
   ['supplier.email_terms',96],
   ['purchase_order.update_delivery_date',31],
   ['purchase_order.close_stale_incoming',32],
+  ['purchasing.fx_alert',40],
   ['inventory.correct_bin',11],
   ['customer_return.from_email',111],
   ['supplier.share_forecast',36],
