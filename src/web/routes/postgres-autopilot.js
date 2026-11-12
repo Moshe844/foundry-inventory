@@ -1384,7 +1384,11 @@ function createPostgresAutopilotRouter(database,options={}){
       if(['combine-draft-orders','split-draft-orders'].includes(req.params.job))result.purchaseGrouping=req.params.job;
       if(req.params.job==='combine-draft-orders')result.freightCombine=await require('../../purchasing/agent-freight-combine').screen(database,req.ctx);
       if(req.params.job==='split-draft-orders')result.purchaseSplits=await require('../../purchasing/agent-purchase-splitting').screen(database,req.ctx);
-      if(req.params.job==='overdue-customer-orders')result.overdueRule=await require('../../sales/agent-order-checks').rule(database,req.ctx.workspaceId);
+      if(req.params.job==='overdue-customer-orders'){
+        const holds=require('../../sales/agent-credit-holds'),saved=await holds.rule(database,req.ctx.workspaceId);
+        result.overdueRule=saved;result.overdueRuleText=holds.describeRule(saved);
+        result.overdueAmount=saved&&Number(saved.minimum_overdue_minor)?require('../../domain/currency').fromMinor(saved.minimum_overdue_minor,saved.currency):'';
+      }
       if(req.params.job==='sales-order-checks'&&result.mode!=='suggest')result.orderCheckSettings=await require('../../sales/agent-order-screening').settings(database,req.ctx);
       return {title:result.label,result,filter:req.query.filter||''};
     },402);
@@ -1438,7 +1442,7 @@ function createPostgresAutopilotRouter(database,options={}){
     res.redirect(303,'/autopilot/reviews/sales-order-checks');
   }));
   router.post('/autopilot/reviews/overdue-customer-orders/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
-    await require('../../sales/agent-order-checks').configure(database,req.ctx,req.body.mode);
+    await require('../../sales/agent-credit-holds').configure(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/overdue-customer-orders');
   }));
   router.post('/autopilot/reviews/margin-prices/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{

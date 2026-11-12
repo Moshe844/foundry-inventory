@@ -96,8 +96,12 @@ async function creditProblems(db,ctx,order,today){
       AND balance_minor>0 AND due_date<$3 GROUP BY currency ORDER BY currency`,[ctx.workspaceId,order.customer_id,today])).rows;
   if(late.length){
     const count=late.reduce((n,r)=>n+r.n,0),oldest=late.map(r=>r.oldest).sort()[0];
+    const state=await policy.accountState(db,ctx.workspaceId),plan=policy.usesAgentTerms(state)?state.plan:null;
+    const held=(await db.query(`SELECT 1 FROM stockchief_runtime.agent_order_credit_holds WHERE workspace_id=$1 AND sales_order_id=$2 AND status='HELD'`,
+      [ctx.workspaceId,order.id])).rowCount;
     problems.push({check:'credit',kind:'overdue',problem:plural(count,'overdue invoice','overdue invoices')+' ('+
-      late.map(r=>money.format(r.owed,r.currency)).join(' and ')+'), the oldest due '+oldest+'.'});
+      late.map(r=>money.format(r.owed,r.currency)).join(' and ')+'), the oldest due '+oldest+'.'+
+      (held?' The order is on credit hold.':policy.permits(plan,55,'suggest')?' Consider holding this order until they pay.':'')});
   }
   const limit=await require('./order-credit-exposure').forAnyOrder(db,ctx,order.id);
   if(limit?.Result==='Over limit')problems.push({check:'credit',kind:'limit',problem:'Over the credit limit: '+limit['Exposure with this order']+
@@ -233,8 +237,11 @@ async function run(database,workspaceId,{orderId,trigger='routine'}={}){
   if(!['created','confirmed','changed','routine'].includes(trigger))throw new ValidationError('Choose a supported order check.');
   return database.transaction(async c=>{
     const state=await policy.accountState(c,workspaceId);
+    // Job 55 has its own authority: it may hold even while checks only watch.
+    // It runs first so the credit finding says whether the order is held.
+    const hold=await require('./agent-credit-holds').reconcileOrder(c,workspaceId,orderId);
     const result=await automatic(c,workspaceId,state)?await check(c,workspaceId,orderId,trigger):{checked:false,watching:true};
-    return result;
+    return {...result,hold};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 

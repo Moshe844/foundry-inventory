@@ -1243,6 +1243,17 @@ function createPostgresCommerceRouter(database,options={}){
       return res.redirect(303,req.body.returnTo==='routing'?shipFrom().href:'/orders/'+req.params.id+(step==='undo'||result.stale?'/ship-from':''));
     }));
   }
+  // Job 55: a person releases a credit hold, or puts an order on hold.
+  router.post('/orders/:id/credit-hold/release',requirePermission(permissions.VIEW_SALES,'see customer orders'),asyncRoute(async(req,res)=>{
+    const result=await require('../../sales/agent-credit-holds').releaseByPerson(database,req.ctx,req.params.id,{note:req.body.note});
+    req.flash('success',result.released?'The credit hold is released. The order can be picked and shipped.':'This order is not on credit hold.');
+    return res.redirect(303,'/orders/'+req.params.id+'#credit-hold');
+  }));
+  router.post('/orders/:id/credit-hold/hold',requirePermission(permissions.VIEW_SALES,'see customer orders'),asyncRoute(async(req,res)=>{
+    const result=await require('../../sales/agent-credit-holds').holdByPerson(database,req.ctx,req.params.id);
+    req.flash('success',result.replayed?'This order is already on credit hold.':'The order is on credit hold. Nothing can be picked or shipped until it is released.');
+    return res.redirect(303,'/orders/'+req.params.id+'#credit-hold');
+  }));
   router.get(['/orders/:id','/sales/orders/:id'],requirePermission(permissions.VIEW_SALES,'see customer orders'),asyncRoute(async(req,res)=>{
     const [page,returnRows,locationRows]=await Promise.all([
       salesOrderPage(database,req.ctx.workspaceId,req.params.id),
@@ -1259,6 +1270,8 @@ function createPostgresCommerceRouter(database,options={}){
       ?{available:plans.permits(agentState.plan,121,'draft'),applied:Boolean(shipFromApplied)}:null;
     const orderScreening=['FULFILLED','CANCELLED'].includes(page.order.status)?null
       :await require('../../sales/agent-order-screening').forOrderPage(database,req.ctx,page.order.id,agentState);
+    const creditHold=await require('../../sales/agent-credit-holds').forOrderPage(database,req.ctx,
+      {id:page.order.id,status:page.order.status,customer_id:page.order.customer.id},agentState,req.user);
     const bankDetails=await require('../../sales/postgres-bank-transfer-details').get(database,req.ctx.workspaceId);
     const shippingAccounts=page.order.delivery_method==='SHIP'?await require('../../shipping/postgres-accounts').describeAll(database,req.ctx.workspaceId):[];
     const shippingReady=shippingAccounts.length>0;
@@ -1278,7 +1291,7 @@ function createPostgresCommerceRouter(database,options={}){
     return res.page('sales/order',{canEditLocation,shipConnectHref,shipNeeds,shipNoAccount:Boolean(openParcel&&!shippingReady),depositRefundKey:newId('deposit-refund'),shippingReady,shipNow,shippingAccountNames:shippingAccounts.map(a=>a.providerName),shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       canRecordPayments:permissions.can(req.user,permissions.RECORD_PAYMENTS),canEdit:permissions.can(req.user,permissions.OPERATE),title:`${page.order.order_number} · ${page.order.customer.name}`,nav:'sales',room:false,
       suppressBack:true,screenGuide:null,story:null,evidenceTrace:null,order:page.order,shortButAvailable:0,postgresPlacement:true,
-      shipFromReview,orderCredit,orderCreditDetailed:plans.permits(agentState.plan,80,'automatic'),orderScreening,
+      shipFromReview,orderCredit,orderCreditDetailed:plans.permits(agentState.plan,80,'automatic'),orderScreening,creditHold,
       agentOrderChecks:req.user.role==='owner'&&plans.usesAgentTerms(agentState),
       shortageDetails:[],cameFromEmail:null,goneWord:require('../../sales/order-status').handoff(page.order.delivery_method),
       accounting:page.accounting,money:page.money,orderNext:null,openSection:['fulfilment','money'].includes(req.query.open)?req.query.open:null,

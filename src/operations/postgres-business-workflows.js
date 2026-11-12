@@ -1293,6 +1293,8 @@ async function recordPaymentInTransaction(client, rawContext, input, bankReceipt
     const result = { paymentId: id, paymentNumber, direction, amountMinor, balanceMinor, status,
       ...(bankReceipt?{allocations:allocations.map(a=>({invoiceId:a.recordId,amountMinor:a.amountMinor,balanceMinor:a.balanceMinor,status:a.status}))}:{}),
       journalEntryId: posted.entry.id };
+    // Full payment releases credit holds on the customer's orders (job 55).
+    if(customer)await require('../sales/agent-credit-holds').queueForCustomer(client,ctx.workspaceId,customer.id);
     await completeOperation(client, operation, result);
     return { ...result, replayed: false };
 }

@@ -44,6 +44,39 @@
 <% if(locals.postgresPlacement){ %><%- include('../partials/filed-documents-link',{documentTargetKind:'sales_order',documentTargetId:order.id}) %><% } %>
 <div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= order.order_number %></span></div>
 <% if(locals.agentOrderChecks){ %><nav aria-label="Order checks"><a href="/autopilot/reviews/order-credit-limits?filter=<%= encodeURIComponent(order.order_number) %>">Check customer credit</a> · <a href="/autopilot/reviews/order-price-exceptions?filter=<%= encodeURIComponent(order.order_number) %>">Check prices and discounts</a></nav><% } %>
+<% if(locals.creditHold){ const hold=locals.creditHold; %>
+  <section class="card card-body" id="credit-hold" aria-label="Credit hold">
+  <% if(hold.active){ %>
+    <h2>On credit hold</h2>
+    <div class="notice notice--warn"><div>
+      <strong>Nothing on this order can be picked or shipped until the hold ends.</strong><br>
+      <%= hold.active.reason %>
+      <span class="t-xs t-muted">Held by <%= hold.active.byPerson ? (hold.active.placedByName || 'a person') : 'StockChief under your overdue rule' %>, <%= helpers.dateTime(new Date(hold.active.placedAt).toISOString()) %>.</span>
+    </div></div>
+    <p>The hold ends on its own when the overdue invoices are paid in full.</p>
+    <% if(hold.canRelease){ %>
+      <form method="post" action="/orders/<%= order.id %>/credit-hold/release" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label class="field"><span class="field-label">Why release it now <span class="t-muted">(optional)</span></span>
+          <input class="input" type="text" name="note" maxlength="300" placeholder="Paying on Friday"></label>
+        <button class="btn" type="submit">Release the hold</button>
+      </form>
+    <% }else{ %><p class="t-muted">A person with accounting access can release it.</p><% } %>
+  <% }else{ %>
+    <h2>Customer credit</h2>
+    <% if(hold.overdue){ %><p><%= hold.overdue.count === 1 ? '1 overdue invoice' : hold.overdue.count + ' overdue invoices' %>, the oldest due <%= hold.overdue.oldest %>. Consider holding this order until they pay.</p><% } %>
+    <% if(hold.released && hold.released.kind === 'PERSON'){ %><p class="t-muted">A person released the credit hold<%= hold.released.note ? ': ' + hold.released.note : '' %>.</p><% } %>
+    <% if(hold.released && hold.released.kind === 'PAYMENT'){ %><p class="t-muted">The credit hold ended when the overdue invoices were paid.</p><% } %>
+    <% if(hold.canHold){ %>
+      <form method="post" action="/orders/<%= order.id %>/credit-hold/hold" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn" type="submit">Hold this order</button>
+      </form>
+    <% } %>
+    <% if(!hold.automatic){ %><p class="t-muted">Automatic holds need Pro. <a href="/billing">Upgrade</a></p><% }else if(hold.rule){ %><p class="t-xs t-muted">Your rule: <%= hold.rule %></p><% } %>
+  <% } %>
+  </section>
+<% } %>
 <% if(locals.orderScreening){ const screening=locals.orderScreening,checked=screening.result; %>
   <section class="card card-body" id="order-checks" aria-label="Order checks">
     <h2>Order checks</h2>
@@ -1060,7 +1093,7 @@
   </div></details>
 <% } %>
 
-<% var eventLabels = { ship_from_chosen: 'Shipping warehouse chosen', ship_from_undone: 'Shipping warehouse choice undone', CREATED: 'Order created', CONFIRMED: 'Customer order confirmed and stock checked', CHANGED: 'Order changed and reservations recalculated', ALLOCATION_CHANGED: 'Stock reservation updated automatically', PARTIALLY_FULFILLED: 'Part of the order left', FULFILLED: 'The whole order left', ALLOCATED_FROM_STOCK: 'Stock that arrived was committed to this customer', CANCELLED: 'Remaining order cancelled' }; %>
+<% var eventLabels = { CREDIT_HOLD_PLACED: 'Put on credit hold', CREDIT_HOLD_RELEASED: 'Credit hold released', ship_from_chosen: 'Shipping warehouse chosen', ship_from_undone: 'Shipping warehouse choice undone', CREATED: 'Order created', CONFIRMED: 'Customer order confirmed and stock checked', CHANGED: 'Order changed and reservations recalculated', ALLOCATION_CHANGED: 'Stock reservation updated automatically', PARTIALLY_FULFILLED: 'Part of the order left', FULFILLED: 'The whole order left', ALLOCATED_FROM_STOCK: 'Stock that arrived was committed to this customer', CANCELLED: 'Remaining order cancelled' }; %>
 <% if (!locals.room && !(locals.postgresPlacement && ['FULFILLED','CANCELLED'].includes(order.status))) { %><%- include('allocation-settings') %><% } %>
 <details class="card order-activity fold"><summary class="card-head"><h2>Order activity</h2><span class="spacer"></span><span class="fold-note"><%= order.events.length %> <%= order.events.length === 1 ? 'entry' : 'entries' %></span></summary><div class="list-rows"><% order.events.slice().reverse().forEach(function(event){ %><div class="list-row"><span><strong><%= eventLabels[event.event_type] || event.event_type.replace(/_/g,' ').toLowerCase() %></strong><small><%= event.actor_name || 'StockChief' %> · <time data-local-time datetime="<%= event.created_at %>"><%= helpers.dateTime(event.created_at) %></time></small></span></div><% }) %></div></details>
 
