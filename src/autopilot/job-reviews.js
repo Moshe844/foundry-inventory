@@ -102,8 +102,7 @@ const definitions=[
   {id:131,key:'product-categories',label:'Suggest categories and tags for new products',readPage:require('./product-classification').review},
   {id:129,key:'supplier-specifications',label:'Fill missing product specifications from a supplier file',filterLabel:'Approved supplier file name or import ID',readPage:require('../domain/agent-supplier-specs').review},
   {id:200,key:'catalog-health',label:'Check your catalog health score',readPage:require('./catalog-health').health},
-  {id:126,key:'catalog-fixes',label:'Find duplicates and missing product data',readPage:async(db,ctx,options)=>({
-    ...await require('./catalog-health').findings(db,ctx,options),summary:'Review the flagged fields against the product or supplier record.'})},
+  require('../catalog/agent-catalog-fixes').definition,
   {id:17,key:'stock-age',label:'Review stock by age for a possible write-down',readPage:require('../forecasting/agent-stock-age').review},
   {id:9,key:'slow-stock',label:'Find dead and slow stock',readPage:require('../forecasting/agent-excess-stock').slowStock},
   {id:106,key:'cash-in-stock',label:'Review cash tied up in stock',readPage:require('../forecasting/agent-excess-stock').cashInStock},

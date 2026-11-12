@@ -129,4 +129,4 @@ async function verify(db,ctx,r,p){
   return rows.length===p.changes.length&&rows.every(row=>row.stored===String(row.after_state.value)&&row.after_state.sourceImport===p.sourceImport);
 }
 
-module.exports={review,build,execute,verify,labels};
+module.exports={review,build,execute,verify,labels,aliases,decode};

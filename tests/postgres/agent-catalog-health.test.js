@@ -71,7 +71,7 @@ test('day-one health scores active product records and exposes exact fixes at ea
     assert.match(result.rows[0]['What to fix'],/duplicate/);
     const list=await reviews.run(db,ctx,'catalog-fixes',{filter:'HEALTH-2'});
     if(tier==='starter')assert.deepEqual(Object.keys(list.rows[0]),['Suggestion']);
-    else assert.match(list.rows[0]['What to fix'],/duplicate.*cost.*weight/);
+    else assert.match(list.rows[0]['What to fix'],/Looks like a duplicate of HEALTH-1 \(same barcode 000031\)\. Merge it into HEALTH-1/);
     const classify=()=>reviews.run(db,ctx,'product-categories',{filter:'HEALTH-2',scheduled:true});
     if(tier==='starter')await assert.rejects(classify(),e=>e.code==='entitlement_required');
     else{

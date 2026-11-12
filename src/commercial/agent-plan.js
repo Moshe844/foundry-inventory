@@ -215,6 +215,7 @@ const actionJobs=new Map([
   ['planning.safety_stock',150],['planning.location_reorder',120],['planning.reorder_refresh',21],['inventory.plan_daily_cycle_count',4],['planning.open_to_buy',26],['inventory.plan_warehouse_slotting',122],
   ['supplier.negotiation_draft',94],
   ['catalog.fill_supplier_specs',129],
+  ['catalog.fix_data',126],
   ['purchase_order.combine_drafts',24],['purchase_order.split_draft',25],
   ['catalog.restore_margin',77],
   ['catalog.clearance_plan',86],

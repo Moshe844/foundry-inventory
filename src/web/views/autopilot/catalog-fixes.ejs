@@ -1,0 +1,101 @@
+<% const base='/autopilot/catalog-fixes', ready=screen.waiting.filter(f=>f.status==='DRAFT'); %>
+<header class="rm-head">
+  <h1>Fix product data</h1>
+  <p><%= {draft:'StockChief finds duplicate products, missing purchase costs and weights, and SKUs sales channels reject. It prepares each fix; nothing changes until you approve it.',
+    trained:'StockChief prepares each fix for you. Once you approve one of a kind yourself and save a daily limit, it makes those fixes on its own.',
+    alone:'StockChief makes clear fixes on its own inside your daily limits and leaves the rest for you.'}[screen.mode] %>
+    Every fix can be undone. StockChief never moves or writes off stock to merge products.</p>
+</header>
+<form method="post" action="<%= base %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost">Check now</button>
+  <a href="/autopilot/reviews/catalog-fixes">See every product with a problem</a></form>
+<% if(screen.stop){ %><p class="notice notice--warn"><%= screen.stop %></p><% } %>
+
+<nav class="segmented" aria-label="Kind of fix" data-catalog-kinds>
+  <a class="segmented__item <%= !screen.kind?'is-on':'' %>" href="<%= base %>">All</a>
+  <% for(const k of screen.kinds){ %><a class="segmented__item <%= screen.kind===k.kind?'is-on':'' %>" href="<%= base %>?kind=<%= k.kind %>"><%= k.label %><% if(k.ready+k.held){ %><span class="segmented__count"><%= k.ready+k.held %></span><% } %></a><% } %>
+</nav>
+
+<h2>Waiting for you</h2>
+<% if(!screen.waiting.length){ %><p>Nothing is waiting.</p><% } %>
+<% if(ready.length&&!screen.stop){ %><form method="post" action="<%= base %>/approve" id="bulk-fixes" data-catalog-bulk>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+  <p><button class="rm-btn">Approve the ticked fixes</button> <small><%= ready.length %> ready <%= ready.length===1?'fix':'fixes' %> on this page are ticked.</small></p>
+</form><% } %>
+<ul class="rm-list" data-catalog-waiting>
+<% for(const f of screen.waiting){ const d=f.details, href=base+'/fixes/'+encodeURIComponent(f.id); %>
+  <li class="list-row" data-catalog-fix="<%= f.id %>" data-catalog-kind="<%= f.kind %>" data-catalog-status="<%= f.status %>">
+    <span>
+      <strong><% if(f.status==='DRAFT'&&!screen.stop){ %><input type="checkbox" form="bulk-fixes" name="fix" value="<%= f.id %>:<%= f.fingerprint %>" checked aria-label="Approve this fix"> <% } %><a href="/inventory/<%= encodeURIComponent(d.itemId) %>"><%= d.code||'(blank SKU)' %></a> · <%= d.name %></strong>
+      <small><%= f.text %>.</small>
+      <% if(f.reason){ %><small><%= f.reason %></small><% } %>
+      <% if(f.would_apply){ %><small>StockChief would make this fix on its own once it may.</small><% } %>
+      <% if(f.status==='HELD'&&!f.blocked&&!screen.stop){ %><details>
+        <summary><%= f.kind==='MERGE'?'Merge them':'Answer this fix' %></summary>
+        <form method="post" action="<%= href %>/approve" class="form-inline">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="fingerprint" value="<%= f.fingerprint %>"><input type="hidden" name="confirmed" value="yes">
+          <% if(f.kind==='COST'||f.kind==='WEIGHT'){ for(const [i,c] of (d.candidates||[]).entries()){ %>
+            <label><input type="radio" name="choice" value="<%= i %>"> <%= f.kind==='COST'?helpers.money(c.amountMinor,c.currency):c.grams+' g' %> from <%= c.label %></label>
+          <% } } %>
+          <% if(f.kind==='COST'){ %><label class="field"><span class="field-label">Purchase cost</span><input class="input" name="amount" inputmode="decimal"></label>
+            <label class="field"><span class="field-label">Currency</span><input class="input" name="currency" maxlength="3" value="<%= (d.candidates&&d.candidates[0]&&d.candidates[0].currency)||'' %>"></label><% } %>
+          <% if(f.kind==='WEIGHT'){ %><label class="field"><span class="field-label">Weight (g)</span><input class="input" name="grams" inputmode="decimal"></label><% } %>
+          <% if(f.kind==='SKU'){ %><label class="field"><span class="field-label">New SKU</span><input class="input" name="code" maxlength="120" required value="<%= d.suggestion||'' %>"></label><% } %>
+          <button class="rm-btn"><%= f.kind==='MERGE'?'Merge into '+d.keeper.code:'Save' %></button>
+        </form>
+      </details><% }else if(f.status==='DRAFT'&&!screen.stop){ %><form method="post" action="<%= href %>/approve">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="fingerprint" value="<%= f.fingerprint %>"><input type="hidden" name="confirmed" value="yes">
+        <button class="rm-btn rm-btn--ghost">Approve this fix</button>
+      </form><% } %>
+      <form method="post" action="<%= href %>/dismiss">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+        <button class="rm-btn rm-btn--ghost">Keep it as it is</button>
+      </form>
+    </span>
+    <span class="badge <%= f.status==='DRAFT'?'badge--info':'badge--warn' %>"><%= f.label %></span>
+  </li>
+<% } %>
+</ul>
+<% if(screen.page>1||screen.more){ const q=screen.kind?'&kind='+screen.kind:''; %><nav class="actions" aria-label="Fix pages"><% if(screen.page>1){ %><a href="<%= base %>?page=<%= screen.page-1 %><%= q %>">Previous page</a><% } %> <% if(screen.more){ %><a href="<%= base %>?page=<%= screen.page+1 %><%= q %>">Next page</a><% } %></nav><% } %>
+
+<% if(screen.done.length){ %>
+<h2>Recent fixes</h2>
+<ul class="rm-list" data-catalog-done>
+<% for(const f of screen.done){ %>
+  <li class="list-row" data-catalog-done-fix="<%= f.id %>">
+    <span><strong><a href="<%= f.link %>"><%= f.details.code %></a></strong>
+      <small><%= f.text %></small>
+      <% if(f.undoable&&f.status==='DONE'){ %><form method="post" action="<%= base %>/fixes/<%= encodeURIComponent(f.id) %>/undo">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+        <button class="rm-btn rm-btn--ghost">Undo</button>
+      </form><% } %></span>
+    <span class="badge <%= f.status==='UNDONE'?'badge--muted':'badge--ok' %>"><%= f.label %></span>
+  </li>
+<% } %>
+</ul>
+<% } %>
+
+<% if(screen.limits.length){ %>
+<h2>Fixes it makes on its own</h2>
+<ul class="rm-list" data-catalog-limits>
+<% for(const l of screen.limits){ const r=l.rule, form=base+'/limits/'+l.kind.toLowerCase(); %>
+  <li class="list-row" data-catalog-limit="<%= l.kind %>">
+    <span><strong><%= l.label %></strong>
+      <small><%= l.on?'Up to '+l.dailyLimit+' a day when the fix is clear. The rest wait for you.':
+        l.canTeach?'Every fix of this kind waits for you.':'Approve one of these yourself first. Then you can save a daily limit.' %></small>
+      <% if(l.canTeach){ %><details><summary><%= l.on?'Change the limit':'Set a limit' %></summary>
+        <form method="post" action="<%= form %>" class="form-inline">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r?r.revision:0 %>">
+          <label class="field"><span class="field-label">Most fixes a day</span><input class="input" name="dailyLimit" type="number" inputmode="numeric" min="1" max="1000" step="1" required value="<%= l.dailyLimit||'' %>"></label>
+          <label><input type="checkbox" name="confirmed" value="yes" required> Let StockChief make these fixes on its own within this limit.</label>
+          <button class="rm-btn">Save</button>
+        </form>
+      </details><% } %>
+      <% if(l.on){ %><form method="post" action="<%= form %>">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r?r.revision:0 %>">
+        <button class="rm-btn rm-btn--ghost" name="stop" value="yes">Ask me every time</button>
+      </form><% } %></span>
+    <span class="badge <%= l.on?'badge--ok':'badge--muted' %>"><%= l.on?'On':'Off' %></span>
+  </li>
+<% } %>
+</ul>
+<% } %>

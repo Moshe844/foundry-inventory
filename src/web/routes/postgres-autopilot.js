@@ -570,6 +570,36 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',result.stopped?'Every step of this kind now waits for you.':'Limit saved.');
     res.redirect(303,slowStock.path);
   }));
+  // Job 126: bulk fixes for duplicates, missing cost or weight and bad SKUs.
+  const catalogFixes=require('../../catalog/agent-catalog-fixes');
+  router.get(catalogFixes.path,requireAuth,owner,starterAgentPage(126,'draft','Fix product data',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/catalog-fixes',{title:'Fix product data',nav:'autopilot',
+      screen:await catalogFixes.page(database,req.ctx,{page:req.query.page||1,kind:req.query.kind||''}),
+      backTo:{href:'/autopilot/reviews/catalog-fixes',label:'Duplicates and missing product data'}});
+  },'Growth'));
+  router.post(catalogFixes.path+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await catalogFixes.check(database,req.ctx);
+    req.flash('success','StockChief is checking your products for duplicates and missing data.');
+    res.redirect(303,catalogFixes.path);
+  }));
+  router.post(catalogFixes.path+'/approve',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await catalogFixes.approveMany(database,req.ctx,req.body);
+    req.flash(result.failed.length?'error':'success',(result.done?result.done+(result.done===1?' fix was made.':' fixes were made.'):'No fixes were made.')+
+      (result.failed.length?' '+result.failed.length+' stopped: '+result.failed[0].reason:''));
+    res.redirect(303,catalogFixes.path);
+  }));
+  const catalogDone={approve:'The fix was made.',dismiss:'The product stays as it is.',undo:'The fix was undone.'};
+  for(const step of Object.keys(catalogDone))router.post(catalogFixes.path+'/fixes/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await catalogFixes[step](database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.replayed?'This was already done.':catalogDone[step]);
+    res.redirect(303,catalogFixes.path);
+  }));
+  router.post(catalogFixes.path+'/limits/:kind',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await catalogFixes.configure(database,req.ctx,String(req.params.kind).toUpperCase(),req.body);
+    req.flash('success',result.stopped?'Every fix of this kind now waits for you.':'Limit saved.');
+    res.redirect(303,catalogFixes.path);
+  }));
   for(const step of ['approve','stop','replaceUnposted','clarify'])router.post('/autopilot/supplier-invoices/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{await supplierInvoices[step](database,req.ctx,req.params.id,req.body);if(step==='replaceUnposted')await supplierInvoices.requestRecheck(database,req.ctx,req.params.id);req.flash('success',step==='approve'?'The exact reviewed invoice was posted. Stock and payments are unchanged.':step==='clarify'?'Source fields confirmed. Review the fresh comparison before posting.':step==='stop'?'Source stopped; its original is retained.':'Unposted original retained and voided; corrected source queued for a fresh match.');res.redirect(303,'/autopilot/supplier-invoices/'+req.params.id);}));
   router.post('/autopilot/supplier-invoices/:id/recheck',requireAuth,owner,asyncRoute(async(req,res)=>{await supplierInvoices.requestRecheck(database,req.ctx,req.params.id);req.flash('success','Current receipts and earlier invoices will be checked again.');res.redirect(303,'/autopilot/supplier-invoices/'+req.params.id);}));
   const supplierCosts=require('../../purchasing/agent-supplier-comparison-terms');
@@ -1449,6 +1479,7 @@ function createPostgresAutopilotRouter(database,options={}){
       }
       if(req.params.job==='clearance-plan'&&result.mode!=='suggest')result.clearancePlanPath=require('../../pricing/agent-clearance-plans').path;
       if(req.params.job==='slow-stock'&&result.mode!=='suggest')result.slowStockPath=require('../../forecasting/agent-slow-stock-steps').path;
+      if(req.params.job==='catalog-fixes'&&result.mode!=='suggest')result.catalogFixesPath=require('../../catalog/agent-catalog-fixes').path;
       if(req.params.job==='expiring-lots')result.expiryPath=require('../../operations/agent-expiry-warnings').path;
       if(req.params.job==='recall-audit')result.compliancePath=require('../../reports/agent-compliance-reports').path;
       if(req.params.job==='count-sources')result.countSourcePath=require('../../imports/physical-count-sources').path;
