@@ -30,12 +30,12 @@ module.exports=[
       l.promised_days AS "Average promised days",l.measured_days AS "Average actual days",l.effective_lead AS "Supplier planning days"
     FROM stockchief_runtime.supplier_planning_leads l JOIN skus k ON k.id=l.sku_id JOIN suppliers s ON s.id=l.supplier_id
     WHERE l.workspace_id=$1 AND ($2='' OR lower(k.code)=lower($2) OR lower(s.name)=lower($2)) ORDER BY k.code,s.name,s.id`},
-  {id:32,key:'overdue-incoming',label:'Review uncertain incoming stock',summary:'Review overdue deliveries, orders without a delivery promise and recorded supplier unavailability. A supplier-reported hold removes its remaining units from dependable incoming. Original order, receipt and invoice records retain their history.',sql:`
+  {id:32,key:'overdue-incoming',label:'Review uncertain incoming stock',summary:'Review overdue deliveries, orders without a delivery promise and recorded supplier unavailability. A supplier-reported hold removes its remaining units from dependable incoming. Late goods count as incoming until they are closed on Goods that will not arrive. Original order, receipt and invoice records retain their history.',sql:`
     SELECT p.po_number AS "Order",v.name AS "Supplier",p.expected_date AS "Promised",s.code AS "SKU",
       l.quantity_units-l.quantity_received_units AS "Still due",
       CASE WHEN to_jsonb(l)->>'supplier_supply_hold_id' IS NOT NULL THEN 'Supplier reported unavailable'
         WHEN p.expected_date IS NULL THEN 'No delivery promise' ELSE 'Delivery overdue' END AS "Reason",
-      'No' AS "Dependable incoming",'/purchasing/orders/'||p.id AS link
+      CASE WHEN to_jsonb(l)->>'supplier_supply_hold_id' IS NOT NULL THEN 'No' ELSE 'Yes, until closed' END AS "Dependable incoming",'/purchasing/orders/'||p.id AS link
     FROM purchase_orders p JOIN purchase_order_lines l ON l.workspace_id=p.workspace_id AND l.purchase_order_id=p.id
     JOIN skus s ON s.id=l.sku_id JOIN suppliers v ON v.id=p.supplier_id
     JOIN workspaces w ON w.id=p.workspace_id JOIN accounts a ON a.id=w.owner_account_id

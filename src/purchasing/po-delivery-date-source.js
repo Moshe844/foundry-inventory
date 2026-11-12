@@ -2,7 +2,7 @@
 const {hash}=require('../pricing/postgres-promotions'),policy=require('../commercial/agent-plan'),{ValidationError,NotFoundError}=require('../domain/errors');
 const owner=require('./supplier-email-terms-source').owner;
 const instant=value=>new Date(value).getTime();
-const orderSnapshotSql="md5((to_jsonb(po)-'updated_at'-'expected_date')::text||coalesce((SELECT string_agg((to_jsonb(captured_line)-ARRAY['supplier_supply_hold_id','supplier_supply_hold_at','supplier_amendment_parent_line_id']::text[])::text,'|' ORDER BY captured_line.id) FROM purchase_order_lines captured_line WHERE captured_line.workspace_id=po.workspace_id AND captured_line.purchase_order_id=po.id),''))";
+const orderSnapshotSql="md5((to_jsonb(po)-'updated_at'-'expected_date')::text||coalesce((SELECT string_agg((to_jsonb(captured_line)-ARRAY['supplier_supply_hold_id','supplier_supply_hold_at','supplier_amendment_parent_line_id','incoming_close_id']::text[])::text,'|' ORDER BY captured_line.id) FROM purchase_order_lines captured_line WHERE captured_line.workspace_id=po.workspace_id AND captured_line.purchase_order_id=po.id),''))";
 async function currentSnapshot(db,workspaceId,orderId){
  return (await db.query(`SELECT po.expected_date,po.status,${orderSnapshotSql} AS snapshot
    FROM purchase_orders po WHERE po.workspace_id=$1 AND po.id=$2`,[workspaceId,orderId])).rows[0];

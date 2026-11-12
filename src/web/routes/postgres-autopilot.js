@@ -324,6 +324,33 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',result.tier?result.customer+' is now tier '+result.tier+'.':result.customer+' has no tier.');
     return res.redirect(303,stockSharing.href);
   }));
+  const staleIncoming=require('../../purchasing/agent-stale-incoming');
+  router.get(staleIncoming.href,requireAuth,owner,starterAgentPage(32,'suggest','Goods that will not arrive',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    return res.page('autopilot/stale-incoming',{title:'Goods that will not arrive',nav:'autopilot',backTo:{href:'/autopilot/reviews/overdue-incoming',label:'Uncertain incoming stock'},
+      model:await staleIncoming.page(database,req.ctx)});
+  }));
+  router.post(staleIncoming.href+'/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await staleIncoming.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'StockChief no longer closes late goods.':result.unchanged?'This rule is already saved.':'Your rule is saved.');
+    return res.redirect(303,staleIncoming.href);
+  }));
+  router.post(staleIncoming.href+'/orders/:id/close',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await staleIncoming.closeNow(database,req.ctx,req.params.id,req.body);
+    if(result.stale)req.flash('error','The order changed. Review its late goods again.');
+    else req.flash('success','The goods still due are closed. A note to the supplier is drafted for you to send.');
+    return res.redirect(303,staleIncoming.href);
+  }));
+  router.post(staleIncoming.href+'/closes/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await staleIncoming.dismiss(database,req.ctx,req.params.id);
+    req.flash('success','These goods still count as incoming.');
+    return res.redirect(303,staleIncoming.href);
+  }));
+  router.post(staleIncoming.href+'/closes/:id/reopen',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await staleIncoming.reopen(database,req.ctx,req.params.id,req.body);
+    req.flash('success','The goods count as incoming again.');
+    return res.redirect(303,staleIncoming.href);
+  }));
   const supplierCredits = require('../../purchasing/agent-supplier-credit-notes');
   const supplierCreditPage = starterAgentPage(105,'suggest','Supplier credit notes',async (req,res) => res.page('autopilot/supplier-credits', {
     title:'Supplier credit notes', nav:'autopilot', backTo:{href:'/autopilot/reviews/supplier-credits',label:'Credit review'},
