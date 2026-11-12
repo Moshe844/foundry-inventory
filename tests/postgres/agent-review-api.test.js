@@ -84,7 +84,7 @@ test('only Custom can start an agent review by API and receive the signed comple
   }}});
   assert.equal((await queue.processOne(db,handlers,{owner:'agent-review-test',kinds:['agent.api_review']})).status,'COMPLETED');
   const ready=(await status(client.token).expect(200)).body;
-  assert.equal(ready.status,'COMPLETED');assert.match(ready.result.summary,/Catalog health/);
+  assert.equal(ready.status,'COMPLETED');assert.match(ready.result.summary,/Data health/);
   const check=await browser.get('/settings/connections?section=developers').expect(200);assert.match(check.text,/value="agent:run"/);
   const pending=await submit(client.token,'other-review').expect(202);
   await subscribe('pro');
