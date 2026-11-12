@@ -184,6 +184,13 @@ async function refreshInTransaction(client,workspaceId,workId,{now=new Date()}={
 async function refresh(database,workspaceId,workId,options){return database.transaction(client=>refreshInTransaction(client,workspaceId,workId,options),{isolation:'SERIALIZABLE',retrySafe:true});}
 async function scheduleDue(client,now=Date.now()){
  const due=(await client.query(`SELECT w.id,w.workspace_id FROM work_items w JOIN workspaces b ON b.id=w.workspace_id WHERE b.deletion_requested_at IS NULL AND w.execution_status='EXECUTING' AND (w.source=$1 OR w.source='postgres_autopilot') AND w.due_at IS NOT NULL AND w.due_at<=$2 ORDER BY w.due_at,w.id LIMIT 200`,[SOURCE,new Date(now).toISOString()])).rows;
- let count=0;for(const work of due){const queued=await enqueue(client,work.workspace_id,work.id,'due-'+Math.floor(now/60000));if(queued.created)count++;}return count;
+ if(!due.length)return 0;
+ // A check already waiting covers the item. Without this, a busy worker gets a
+ // new duplicate per item every minute (the key holds the minute), and the queue
+ // grows faster than it drains.
+ const waiting=new Set((await client.query(`SELECT DISTINCT payload->>'workId' AS work_id FROM stockchief_runtime.jobs
+  WHERE workspace_id=ANY($1::text[]) AND kind='workflow.follow-through' AND status IN ('PENDING','RUNNING','RETRY')`,
+  [[...new Set(due.map(work=>work.workspace_id))]])).rows.map(row=>row.work_id));
+ let count=0;for(const work of due){if(waiting.has(work.id))continue;const queued=await enqueue(client,work.workspace_id,work.id,'due-'+Math.floor(now/60000));if(queued.created)count++;}return count;
 }
 module.exports={SOURCE,kinds,capture,captureResult,refresh,refreshInTransaction,scheduleDue,kindOf,purchaseSnapshot:purchase};
