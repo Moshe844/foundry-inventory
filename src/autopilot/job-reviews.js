@@ -176,7 +176,7 @@ const suggestions={
   105:r=>'Check '+r['Credit or return']+' with '+r.Supplier+(r.Amount?' for '+r.Amount:'')+(r.Bill?' against bill '+r.Bill:'')+'. '+r.Status+'.',
   108:r=>'Review bill '+r.Bill+' before '+r['Discount deadline']+' for an early-payment discount.',
   109:r=>r['Week beginning']+' · '+r.Currency+'. '+r.Review,
-  148:r=>'Review replenishment for '+r.SKU+' because its shipped units rose in the last week.'
+  148:r=>r.SKU+' is selling '+(r.Direction==='Faster'?'faster':'slower')+': '+r['Last 14 days']+' units in the last 14 days against about '+r.Expected+' expected. Review its reorder point.'
 };
 
 function firstSuggestion(def,rows){

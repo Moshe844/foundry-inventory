@@ -53,6 +53,19 @@
 <% if(m.number>1||m.more){ %><p><% if(m.number>1){ %><a href="?page=<%= m.number-1 %>">Previous</a><% } %> <% if(m.more){ %><a href="?page=<%= m.number+1 %>">Next</a><% } %></p><% } %>
 </div></section>
 <% } %>
+<% if(m.trends){ %><section class="rm-panel" id="trends"><div class="rm-panel__head"><h2>Selling faster or slower</h2></div><div class="rm-panel__body">
+<p>Each day StockChief compares every product's last 14 days with its own forecast. One unusually large order is left out as a one-off. While a trend lasts, planning follows the recent pace, keeping the seasons.</p>
+<% if(!m.trends.length){ %><p class="rm-muted">No product has changed pace.</p><% } %>
+<ul class="rm-list"><% for(const t of m.trends){ const e=t.evidence; %><li><div class="rm-told__t">
+  <p><strong><%= t.code %></strong> · <%= e.direction==='FASTER'?'Selling faster':'Selling slower' %> · <%= t.status==='APPLIED'?'Planning follows it':t.authority_verdict==='needs_approval'?'Waiting for you':'Shown only' %></p>
+  <p><%= qty(e.observed,t.unit_label) %> in the last 14 days against about <%= qty(e.expected,t.unit_label) %> expected · next 30 days at this pace <%= qty(e.next30,t.unit_label) %></p>
+  <% if(e.ignored&&e.ignored.length){ %><p class="rm-muted">Left out as a one-off: <%= e.ignored.map(o=>o.label+' ('+o.units+')').join(', ') %></p><% } %>
+  <% if(t.status==='OPEN'&&t.detail.reason){ %><p class="rm-muted"><%= t.detail.reason %></p><% } %>
+  <div class="rm-actions">
+    <% if(t.status==='OPEN'&&t.authority_verdict==='needs_approval'){ %><form method="post" action="<%= base %>/trends/<%= t.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--sm">Follow in planning</button></form><% } %>
+    <form method="post" action="<%= base %>/trends/<%= t.id %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm">Dismiss</button></form>
+  </div>
+</div></li><% } %></ul></div></section><% } %>
 <% if(m.launchLocked){ %><section class="rm-panel" id="new-products"><div class="rm-panel__head"><h2>New products</h2></div><div class="rm-panel__body">
 <p class="rm-muted">Forecasting new products from similar items starts on Growth. <a href="/billing">Review plans</a></p></div></section>
 <% }else if(m.launches){ %><section class="rm-panel" id="new-products"><div class="rm-panel__head"><h2>New products</h2></div><div class="rm-panel__body">

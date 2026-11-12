@@ -107,7 +107,7 @@ async function ensureRecommendations(database, workspaceId, rows) {
 async function openRecommendations(database, workspaceId) {
   return (await database.query(`SELECT recommendation.*,item.name,sku.code FROM planning_recommendations recommendation
     LEFT JOIN skus sku ON sku.id=recommendation.sku_id LEFT JOIN items item ON item.id=sku.item_id
-    WHERE recommendation.workspace_id=$1 AND recommendation.status='OPEN'
+    WHERE recommendation.workspace_id=$1 AND recommendation.status='OPEN' AND recommendation.kind<>'demand_trend'
     ORDER BY recommendation.created_at DESC,recommendation.id DESC LIMIT 100`, [workspaceId])).rows.map(row => ({
       ...row,currentValue:number(row.current_value),recommendedValue:number(row.recommended_value),
       evidence:object(row.evidence),authorityDetail:object(row.authority_detail),
@@ -169,6 +169,7 @@ async function decide(database, ctx, id, decision) {
     const row = (await client.query(`SELECT * FROM planning_recommendations WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,
       [ctx.workspaceId,id])).rows[0];
     if (!row) throw new NotFoundError('That planning recommendation is not in this inventory.');
+    if (row.kind === 'demand_trend') throw new ValidationError('Review this sales trend on the demand forecasts page.');
     const agent=require('../commercial/agent-plan'),account=await agent.accountState(client,ctx.workspaceId);
     if(agent.usesAgentTerms(account)&&decision==='accept'){
       const job=row.kind==='safety_stock'?150:object(row.evidence).locationId?120:21;

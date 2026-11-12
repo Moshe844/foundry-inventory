@@ -441,3 +441,4 @@ module.exports={JOB,KIND,CAPABILITY,href,MODEL_VERSION,authority,demand,daysOf,f
 
 // Jobs 146 and 148 add their steps, feeds, page parts and Needs you items.
 require('./agent-launch-forecast');
+require('./agent-demand-trends');

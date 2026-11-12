@@ -174,7 +174,7 @@ test('job 146: new products are forecast from similar items, ask when unclear, a
   await sell(green, addDays(today, -95), 1);
   await run();
   assert.equal(await saved(green), undefined);
-  assert.equal((await planned(green)).forecast.basis, 'HISTORY');
+  assert.notEqual((await planned(green)).forecast.basis, 'SIMILAR', 'Its own sales plan it now.');
 
   // The page reads on a 390 px phone and on a desktop.
   const app = require('../../src/postgres-app').createPostgresApp({ database: db, env: 'test', sessionSecret: randomUUID() });

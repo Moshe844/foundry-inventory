@@ -127,6 +127,8 @@ test('job 144: every product is forecast with its seasons, and on Growth and up 
   result = await run();
   assert.equal(result.level, 'alone');
   assert.deepEqual([(await saved(season)).status, (await saved(short)).status], ['USED', 'USED']);
+  assert.equal((await require('../../src/forecasting/agent-demand-trends').scan(db, ws, [season], today)).size, 0,
+    'A busy month the yearly pattern expects is not a sudden trend (job 148).');
   assert.equal(await audits('Updated demand forecasts used for planning'), 1);
   const changed = (await db.query("SELECT after_state FROM security_event_history WHERE workspace_id=$1 AND action='Updated demand forecasts used for planning'", [ws])).rows[0].after_state;
   assert.deepEqual(changed.products.map(p => p.skuId), [short]);

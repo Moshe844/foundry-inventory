@@ -212,7 +212,7 @@ const actionJobs=new Map([
   ['import.supplier_catalog',127],['import.variants',130],
   ['kit.replenish_parts',13],
   ['sales_quote.create',73],['sales_quote.accept',75],['customer.check_in',78],['sales_quote.add_companions',79],
-  ['planning.safety_stock',150],['planning.location_reorder',120],['planning.reorder_refresh',21],['planning.demand_forecast',144],['planning.launch_forecast',146],['inventory.plan_daily_cycle_count',4],['planning.open_to_buy',26],['inventory.plan_warehouse_slotting',122],
+  ['planning.safety_stock',150],['planning.location_reorder',120],['planning.reorder_refresh',21],['planning.demand_forecast',144],['planning.launch_forecast',146],['planning.demand_trend',148],['inventory.plan_daily_cycle_count',4],['planning.open_to_buy',26],['inventory.plan_warehouse_slotting',122],
   ['supplier.negotiation_draft',94],
   ['catalog.fill_supplier_specs',129],
   ['purchase_order.combine_drafts',24],['purchase_order.split_draft',25],

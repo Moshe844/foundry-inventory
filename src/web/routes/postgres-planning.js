@@ -141,6 +141,13 @@ function createPostgresPlanningRouter(database) {
     req.flash('success',result.replayed?'That forecast was already approved.':'Planning now uses this new product forecast.');
     return res.redirect(303,forecastPath+'#new-products');
   }));
+  for(const [action,message] of [['approve','Planning now follows this trend.'],['dismiss','Dismissed. Planning goes back to the forecast.']]){
+    router.post(forecastPath+'/trends/:id/'+action,manageReorders,asyncRoute(async(req,res)=>{
+      const result=await require('../../forecasting/agent-demand-trends')[action](database,req.ctx,req.params.id);
+      req.flash('success',result.replayed?'That was already done.':message);
+      return res.redirect(303,forecastPath+'#trends');
+    }));
+  }
   router.post(forecastPath+'/use',manageReorders,asyncRoute(async(req,res)=>{
     const result=await forecast().setExcluded(database,req.ctx,req.body);
     req.flash('success',result.status==='EXCLUDED'?'Planning uses plain sales history for this product.':'The forecast can plan this product again.');
