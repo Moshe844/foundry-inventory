@@ -20,6 +20,7 @@ const definitions=[
   require('../sales/agent-customer-order-pages').preorderDefinition,
   require('../operations/agent-return-disposition').definition,
   require('../reports/agent-net-contribution').definition,
+  require('../reports/agent-month-end-stock').definition,
   require('../purchasing/agent-purchase-fx').definition,
   require('../shipping/agent-export-papers').definition,
   require('../shipping/agent-carrier-claims').definition,

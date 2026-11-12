@@ -46,6 +46,5 @@ async function monthly(db,ctx,options,margin){
     'Month-end balances and cost of goods sold use posted journal entries through '+dates.end+'. In-transit stock is listed separately.')+note};
 }
 module.exports=[
-  {id:157,key:'margin-change',label:'Explain a change in gross profit',filterLabel:'Completed month (YYYY-MM)',readPage:(db,ctx,opts)=>monthly(db,ctx,opts,true)},
-  {id:158,key:'month-end-stock',label:'Month-end stock value and cost of goods sold',filterLabel:'Completed month (YYYY-MM)',readPage:(db,ctx,opts)=>monthly(db,ctx,opts,false)}
+  {id:157,key:'margin-change',label:'Explain a change in gross profit',filterLabel:'Completed month (YYYY-MM)',readPage:(db,ctx,opts)=>monthly(db,ctx,opts,true)}
 ];

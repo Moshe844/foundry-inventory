@@ -285,7 +285,11 @@ const notes={
  178:{common:'Writes app procedures from completed receiving, ordinary dispatch and quantity-count workflows. Every staff publication requires the owner’s separate review.',
   growth:'Prepares app procedures from completed receiving, dispatch and count records. You approve each saved draft and every staff publication.',
   pro:'Maintains private app-procedure drafts from completed workflows without training. Staff see a version only after your separate approval.',
-  enterprise:'Maintains private app-procedure drafts from completed workflows without training. Staff see a version only after your separate approval.'}
+  enterprise:'Maintains private app-procedure drafts from completed workflows without training. Staff see a version only after your separate approval.'},
+ 158:{common:summaries[158],
+  growth:'Makes the report on its own, without training, after each month ends, and checks a month again each day while it differs from your books. Pause holds it; Watch only, Ask me first and the first 14 days make the report with no flags, and Ask me first lets you check by hand.',
+  pro:'Makes the report on its own, without training, after each month ends, and checks a month again each day while it differs from your books. Pause holds it; Watch only, Ask me first and the first 14 days make the report with no flags, and Ask me first lets you check by hand.',
+  enterprise:'Makes the report on its own, without training, after each month ends, and checks a month again each day while it differs from your books. Pause holds it; Watch only, Ask me first and the first 14 days make the report with no flags, and Ask me first lets you check by hand.'}
 };
 function current(id,tier){const note=notes[id];return note?(tier&&note[tier]||note.common):summaries[id]||null;}
 module.exports={current};
