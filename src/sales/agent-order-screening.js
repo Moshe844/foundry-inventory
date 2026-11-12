@@ -273,6 +273,8 @@ async function schedule(database,workspaceId){
 }
 
 async function latest(db,workspaceId,orderId){
+  // Order checks came with migration 437; an older database has none to show.
+  if(!await require('../db/schema-installed').has(db,'stockchief_runtime.agent_order_checks'))return null;
   const row=(await db.query(`SELECT k.*,o.version FROM stockchief_runtime.agent_order_checks k JOIN sales_orders o ON o.workspace_id=k.workspace_id
     AND o.id=k.sales_order_id WHERE k.workspace_id=$1 AND k.sales_order_id=$2`,[workspaceId,orderId])).rows[0];
   if(!row)return null;

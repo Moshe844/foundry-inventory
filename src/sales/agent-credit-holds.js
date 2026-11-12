@@ -86,7 +86,10 @@ async function lastHold(db,workspaceId,orderId){
     [workspaceId,orderId])).rows[0]||null;
 }
 
+// Credit holds came with migration 438; older databases have none.
+const ready=db=>require('../db/schema-installed').has(db,holds);
 async function assertCanRelease(db,workspaceId,orderId){
+  if(!await ready(db))return;
   const held=(await db.query(`SELECT reason FROM ${holds} WHERE workspace_id=$1 AND sales_order_id=$2 AND status='HELD'`,[workspaceId,orderId])).rows[0];
   if(held)throw new ValidationError('This order is on credit hold: '+held.reason+' Nothing can be picked or shipped until a person releases it on the order.');
   // Between a customer falling overdue and the worker recording the hold.
@@ -168,6 +171,7 @@ async function sweep(database,workspaceId){
 
 // A recorded customer payment checks that customer's held orders at once.
 async function queueForCustomer(c,workspaceId,customerId){
+  if(!await ready(c))return;
   const held=await c.query(`SELECT 1 FROM ${holds} WHERE workspace_id=$1 AND customer_id=$2 AND status='HELD' LIMIT 1`,[workspaceId,customerId]);
   if(!held.rowCount)return;
   const state=await policy.accountState(c,workspaceId);
@@ -275,6 +279,7 @@ async function configure(db,ctx,input){
 
 // What the order page shows about credit holds for this order.
 async function forOrderPage(db,ctx,order,state,user){
+  if(!await ready(db))return null;
   const active=(await db.query(`SELECT h.*,u.name placed_by_name FROM ${holds} h LEFT JOIN users u ON u.workspace_id=h.workspace_id AND u.id=h.placed_by
     WHERE h.workspace_id=$1 AND h.sales_order_id=$2 AND h.status='HELD'`,[ctx.workspaceId,order.id])).rows[0];
   const plan=policy.usesAgentTerms(state)?state.plan:null;
@@ -305,8 +310,9 @@ async function inbox(db,workspaceId){
     sourceId:'credit-hold-'+row.sales_order_id,createdAt:row.placed_at,timeLabel:'Held',at:row.placed_at}));
 }
 
-const activeHoldSql=alias=>`EXISTS(SELECT 1 FROM ${holds} credit_hold WHERE credit_hold.workspace_id=${alias}.workspace_id
+// Pass installed=false on a database without credit holds; nothing is held there.
+const activeHoldSql=(alias,installed=true)=>!installed?'false':`EXISTS(SELECT 1 FROM ${holds} credit_hold WHERE credit_hold.workspace_id=${alias}.workspace_id
   AND credit_hold.sales_order_id=${alias}.id AND credit_hold.status='HELD')`;
 
 module.exports={JOB,KIND,ACTION,rule,describeRule,configure,assertCanRelease,reconcileOrder,sweep,queueForCustomer,work,
-  releaseByPerson,holdByPerson,forOrderPage,inbox,activeHoldSql};
+  releaseByPerson,holdByPerson,forOrderPage,inbox,activeHoldSql,ready};

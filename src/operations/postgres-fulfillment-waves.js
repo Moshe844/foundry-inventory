@@ -72,6 +72,7 @@ async function list(database,workspaceId,options={}){
 }
 
 async function readyOrders(database,workspaceId,options={}){
+  const creditHolds=await require('../sales/agent-credit-holds').ready(database);
   const limit=pageSize(options);
   const result=await database.query(`WITH ready AS MATERIALIZED (SELECT orders.* FROM sales_orders orders
     WHERE orders.workspace_id=$1 AND orders.status IN ('CONFIRMED','PARTIALLY_FULFILLED')
@@ -82,7 +83,7 @@ async function readyOrders(database,workspaceId,options={}){
         WHERE line.workspace_id=orders.workspace_id AND line.sales_order_id=orders.id AND allocation.quantity>0)
       AND NOT EXISTS(SELECT 1 FROM sales_shipments shipment WHERE shipment.workspace_id=orders.workspace_id AND shipment.sales_order_id=orders.id AND shipment.status IN ('PICKING','PACKED'))
       AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.shipbob_sandbox_orders delegated WHERE delegated.workspace_id=orders.workspace_id AND delegated.sales_order_id=orders.id)
-      AND NOT ${require('../sales/agent-credit-holds').activeHoldSql('orders')}
+      AND NOT ${require('../sales/agent-credit-holds').activeHoldSql('orders',creditHolds)}
     ORDER BY orders.needed_by NULLS LAST,orders.order_number,orders.id LIMIT $3)
     SELECT orders.id,orders.order_number,orders.needed_by,customer.name AS customer_name,
       (SELECT COALESCE(SUM(allocation.quantity),0)::bigint FROM sales_order_lines line
