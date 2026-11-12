@@ -14,8 +14,8 @@ test('kit planning checks available components, packs, current tiers, stale stoc
   await commerce.linkSupplierItem(db,ctx,{supplierId:'fixture-supplier',skuId:part.skuIds[0],purchaseUnit:'case',unitsPerPurchaseUnit:3,lastUnitCost:2,isPreferred:true});
   const args={action:'kit.replenish_parts',sku:'PLANNED-KIT',quantity:4,location:'Dispatch'},prepare=()=>assistant.prepareAction(db,ctx,'Replenish parts for four kits',args);
   await subscribe('starter');const suggestion=await require('../../src/autopilot/job-reviews').run(db,ctx,'kit-capacity');
-  assert.equal(suggestion.rows.length,1);assert.match(suggestion.rows[0].Suggestion,/build 1 /);await assert.rejects(prepare(),e=>e.code==='entitlement_required');
-  for(const tier of ['growth','pro','enterprise']){await subscribe(tier);const review=await require('../../src/autopilot/job-reviews').run(db,ctx,'kit-capacity');assert.equal(review.rows[0]['Build at one warehouse'],1);assert.equal((await prepare()).status,'PREPARED');}
+  assert.equal(suggestion.rows.length,1);assert.match(suggestion.rows[0].Suggestion,/^Build 1 PLANNED-KIT at Dispatch now\. Limited by KIT-PART: 1 available, 1 per kit\.$/);await assert.rejects(prepare(),e=>e.code==='entitlement_required');
+  for(const tier of ['growth','pro','enterprise']){await subscribe(tier);const review=await require('../../src/autopilot/job-reviews').run(db,ctx,'kit-capacity');assert.equal(review.rows[0]['Build now'],1);assert.equal((await prepare()).status,'PREPARED');}
   await subscribe('growth');const p=await prepare();
   await subscribe('starter');await assert.rejects(assistant.executeProposal(db,ctx,p.proposal.id),e=>e.code==='entitlement_required');
   await subscribe('growth');await require('../../src/accounting/postgres-stock-receipt').receive(db,ctx,{skuId:sku,locationId:f.location.id,quantity:1,unitCost:1,idempotencyKey:randomUUID()});

@@ -3,16 +3,6 @@ const {ValidationError}=require('../domain/errors');
 const policy=require('../commercial/agent-plan'),exact=require('../domain/exact-quantity');
 const kits=require('../domain/postgres-kit-service'),availability=require('../domain/postgres-kit-availability');
 const {hash}=require('../pricing/postgres-promotions');
-async function review(db,ctx,{filter='',page=1}){
-  const rows=(await db.query(`SELECT s.id,s.item_id,s.code FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
-    WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND ($2='' OR lower(s.code)=lower($2))
-    AND EXISTS(SELECT 1 FROM kit_components k WHERE k.workspace_id=s.workspace_id AND k.kit_sku_id=s.id AND k.stock_basis='components')
-    ORDER BY s.code,s.id LIMIT 26 OFFSET $3`,[ctx.workspaceId,filter,(page-1)*25])).rows;
-  const more=rows.length>25,selected=rows.slice(0,25),stock=await availability.read(db,ctx.workspaceId,selected.map(r=>r.id));
-  return {rows:selected.map(r=>({Kit:r.code,'Build at one warehouse':Math.max(0,...(stock.get(r.id)?.locations||[]).map(l=>l.buildable)),
-    'Build after moving parts':stock.get(r.id)?.buildable||0,Review:stock.get(r.id)?.reason||'Excludes expired, recalled and promised components.',link:'/inventory/'+r.item_id})),more,
-    summary:'Buildable kits use the saved recipe and available component stock. Choose a warehouse and target number of kits to prepare missing-part purchase orders.'};
-}
 async function build(db,ctx,_row,args){
   await policy.requireWorkspaceJob(db,ctx.workspaceId,13,'draft');
   await require('../operations/postgres-warehouse-access').assertInventoryWide(db,ctx);
@@ -75,4 +65,6 @@ const spec={name:'kit.replenish_parts',description:'Prepare supplier purchase dr
     const rows=(await db.query("SELECT id,status FROM purchase_orders WHERE workspace_id=$1 AND id=ANY($2::text[])",[ctx.workspaceId,result.drafts])).rows;
     return rows.length===result.drafts.length&&rows.every(r=>r.status==='DRAFT');
   }};
-module.exports={review,spec};
+// The kit review lives in agent-kit-reorders; this Ask action drafts the parts
+// for an exact number of kits at one warehouse.
+module.exports={review:(...args)=>require('./agent-kit-reorders').review(...args),spec};

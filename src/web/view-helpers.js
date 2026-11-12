@@ -170,6 +170,12 @@ const COLUMN_LABELS = {
   book_cost_change_minor: 'Book cost change',
   book_cost_minor: 'Book value',
   recorded_on: 'Recorded on',
+  used_in_kits: 'Used in kits',
+  kit_sales_90_days: 'Used in kits sold (90 days)',
+  kit_assembly_90_days: 'Used to assemble kits (90 days)',
+  other_use_90_days: 'Other use (90 days)',
+  saved_kit_targets: 'Saved kit targets',
+  already_waiting: 'Already waiting for approval',
 };
 
 /*

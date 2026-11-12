@@ -335,11 +335,18 @@ async function evaluate(database,workspaceId,candidate,state,{committedPurchaseO
   if(candidate.type==='purchase'&&policy.locationScope.length&&!policy.locationScope.includes(candidate.destinationLocationId))return {decision:'needs_approval',reason:'The receiving location is outside the approved purchasing scope.',policy};
   if(evidence?.level==='low')return {decision:'needs_approval',reason:evidence.reason,policy};
   const account=await agentPlan.accountState(database,workspaceId);
+  if(candidate.kitDemand&&!agentPlan.usesAgentTerms(account))return {decision:'needs_approval',reason:'Kit part orders need your approval on this plan.',policy};
   if(agentPlan.usesAgentTerms(account) || !account.plan && (account.subscribed || require('../config').commercial.requirePaidWorkspace)){
     if(account.shadow || !agentPlan.permits(account.plan,candidate.type==='transfer'?119:20,'automatic'))
       return {decision:'needs_approval',reason:'Your current plan or shadow period requires approval for this action.',policy};
     const restriction=await require('./job-modes').restriction(database,workspaceId,candidate.type==='transfer'?119:20,true);
     if(restriction)return {decision:'needs_approval',reason:restriction,policy};
+    // Kit part orders also need the kits job's own plan level and job mode.
+    if(candidate.kitDemand){
+      if(!agentPlan.permits(account.plan,13,'automatic'))return {decision:'needs_approval',reason:'Your plan prepares kit part orders for you to approve.',policy};
+      const kitRestriction=await require('./job-modes').restriction(database,workspaceId,13,true);
+      if(kitRestriction)return {decision:'needs_approval',reason:kitRestriction,policy};
+    }
     const ruleRestriction=Object.hasOwn(state,planningRuleQuota)?state[planningRuleQuota]:await require('../commercial/agent-rule-quota').restriction(database,account);
     if(ruleRestriction)return {decision:'needs_approval',reason:ruleRestriction,policy};
     if(candidate.type==='purchase'){
@@ -391,7 +398,7 @@ async function persistPlannedWork(database,workspaceId,entries){
    policy_evaluation:{decision:evaluation.decision,reason:evaluation.reason,policyVersion:evaluation.policy?.version||null,policyHash:evaluation.policy?.integrityHash||null},
    approval_requirement:automatic?'NONE':'REQUIRED',execution_status:automatic?STATUSES.AUTHORIZED:STATUSES.WAITING,
    idempotency_key:'autopilot:'+hash({candidate,balance:candidate.destinationAvailable,incoming:candidate.incoming,
-    ...(candidate.exactSource?{authorized:automatic,policyId:evaluation.policy?.id||null}:{})}).slice(0,40),
+    ...(candidate.exactSource||candidate.kitDemand?{authorized:automatic,policyId:evaluation.policy?.id||null}:{})}).slice(0,40),
    event_detail:{automatic,reason:evaluation.reason}};});
   const save=async client=>{const ids=[...new Set(batch.map(row=>row.recommended_action.skuId))].sort();await client.query(`INSERT INTO stockchief_runtime.replenishment_source_versions(workspace_id,sku_id,version)
    SELECT $1,id,0 FROM unnest($2::text[]) id ORDER BY id ON CONFLICT DO NOTHING`,[workspaceId,ids]);
@@ -424,10 +431,17 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
   const selected=Array.from(bySku.entries()).slice(0,limitSkus??bySku.size),partial=limitSkus!==null&&bySku.size>limitSkus;
   const prepared=[];const considered=[];const suppliers=await planningSuppliers(database,workspaceId,selected.map(([id])=>id));
   const selectedPositions=selected.flatMap(([,locations])=>locations);
+  // On plans with the kits job, parts with kit demand are bought by that job,
+  // and a warehouse never gives away parts its own kits need.
+  const kitOwned=state.agentTerms&&agentPlan.permits(state.plan,13,'draft')?await require('../purchasing/agent-kit-reorders').owned(database,workspaceId,
+    selectedPositions.filter(row=>row.reorder!==null&&row.projected<=row.reorder)):null;
   const exactChoices=state.agentTerms?await routineTransfers.choices(database,workspaceId,
-    selectedPositions.filter(row=>row.location_id&&row.shortage),await activePolicy(database,workspaceId,ACTIONS.TRANSFER)):null;
+    selectedPositions.filter(row=>row.location_id&&row.shortage),await activePolicy(database,workspaceId,ACTIONS.TRANSFER),
+    {protect:kitOwned?(skuId,locationId)=>kitOwned(skuId,locationId)==='part':null}):null;
   const transferChoices=exactChoices||new Map(require('../purchasing/replenishment-decision').transferPlan(selectedPositions).map(entry=>[entry.skuId+':'+entry.destination.location_id,entry]));
   for(const [,locations] of selected){for(const shortage of locations.filter((row)=>row.reorder!==null&&row.projected<=row.reorder)){
+    // A part with kit demand here is planned, moved or bought by the kits job.
+    if(kitOwned&&kitOwned(shortage.sku_id,shortage.location_id)==='part'){considered.push({skuId:shortage.sku_id,locationId:shortage.location_id,reason:'kit_parts_reorder'});continue;}
     const needed=require('../purchasing/replenishment-decision').requiredUnits(shortage);if(!needed&&!shortage.default_order_quantity){considered.push({skuId:shortage.sku_id,locationId:shortage.location_id,reason:'replenishment_quantity_required'});continue;}
     const transfer=transferChoices.get(shortage.sku_id+':'+shortage.location_id),source=transfer?.source;let candidate;
     if(transfer?.reason){considered.push({skuId:shortage.sku_id,locationId:shortage.location_id,reason:transfer.reason});continue;}
@@ -441,6 +455,10 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
           {fact:'destination_available',value:shortage.available},{fact:'destination_reorder_point',value:shortage.reorder},
           {fact:'source_available',value:source.available},{fact:'source_safety_stock',value:source.safety}]};
     }else{
+      if(kitOwned&&kitOwned(shortage.sku_id,shortage.location_id)==='kit'){
+        considered.push({skuId:shortage.sku_id,locationId:shortage.location_id,reason:'kit_parts_reorder'});
+        continue;
+      }
       if(shortage.supplier_supply_held){
         considered.push({skuId:shortage.sku_id,locationId:shortage.location_id,reason:'supplier_availability_needs_review'});
         continue;
@@ -506,7 +524,9 @@ async function handleReorderSignal(client,job){
   for(const item of planned.created.filter(w=>w.approval_requirement==='NONE')){
     await execute(db,{workspaceId,actorId:owner.id},item.id);executed++;
   }
-  return {prepared:planned.created.length,executed};
+  // Kit parts among the signalled products are planned by the kits job.
+  const kitParts=await require('../purchasing/agent-kit-reorders').run(db,{workspaceId,actorId:owner.id},{partIds:skuIds});
+  return {prepared:planned.created.length+(kitParts.planned||0),executed:executed+(kitParts.executed||0)};
 }
 
 async function queueSupplierPurchaseOrder(client,ctx,item,purchase){const scoped=scopedDatabase(client);
@@ -557,6 +577,13 @@ async function execute(database,ctx,workId,{approvedBy=null,worker=false}={}){
     const restricted=await purchasingJobRestriction(scoped,ctx.workspaceId,item.recommendedAction,item.approval_requirement==='NONE');
     if(restricted)throw new ValidationError(restricted);
   }
+  if(item.recommendedAction.kitDemand){
+    // Kit part orders keep the kits job's plan level, Watch only and pause.
+    const kitAutomatic=item.approval_requirement==='NONE';
+    const account=await agentPlan.requireWorkspaceJob(scoped,ctx.workspaceId,13,kitAutomatic?'automatic':'draft');
+    const stop=await agentPlan.stopped(scoped,ctx.workspaceId,account,'kit.replenish_parts',kitAutomatic);
+    if(stop)throw new ValidationError(stop);
+  }
   const scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
   await entitlements.assertCapability(client,scope,item.recommendedAction.type==='transfer'?'inventory.transfers':'purchasing.core');
   const automatic=item.approval_requirement==='NONE';const usageKey=`autopilot-work:${item.id}`;
@@ -576,7 +603,8 @@ async function execute(database,ctx,workId,{approvedBy=null,worker=false}={}){
         WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,item.id,error.message]);
       return getWork(scoped,ctx.workspaceId,item.id);
     }
-  }else await revalidate(scoped,ctx.workspaceId,action);
+  }else if(action.kitDemand)await require('../purchasing/agent-kit-reorders').revalidate(scoped,ctx.workspaceId,action,item.id);
+  else await revalidate(scoped,ctx.workspaceId,action);
   const at=nowIso();
   await client.query(`UPDATE work_items SET execution_status='EXECUTING',approved_by_user_id=COALESCE(approved_by_user_id,$3),
     approved_at=COALESCE(approved_at,$4),attempts=attempts+1 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,workId,approvedBy,at]);
@@ -606,7 +634,12 @@ async function execute(database,ctx,workId,{approvedBy=null,worker=false}={}){
       const delivery=await queueSupplierPurchaseOrder(client,ctx,item,purchase);
       result={kind:'purchase',purchaseOrderId:purchase.purchaseOrderId,poNumber:purchase.poNumber,status:approved.status,
         value:action.value,verified:true,phase:'SUPPLIER_DELIVERY_PENDING',effectId:delivery.effectId,
-        communicationId:delivery.communicationId};}
+        communicationId:delivery.communicationId};
+      if(action.kitDemand)await require('../operations/postgres-security-audit').record(client,ctx,{
+        action:automatic?'Kit parts ordered on their own':'Kit part order approved',reference:purchase.poNumber,
+        after:{workItemId:item.id,purchaseOrderId:purchase.purchaseOrderId,skuId:action.skuId,locationId:action.destinationLocationId,
+          quantity:action.quantity,value:action.value,currency:action.currency,kits:(action.kitDemand.kits||[]).map(kit=>kit.code),
+          approvedBy:automatic?null:approvedBy}});}
     if(result.phase==='SUPPLIER_DELIVERY_PENDING'||result.physicalExecutionPending){
       await client.query(`UPDATE work_items SET execution_status='EXECUTING',verification_status='PENDING',
         purchase_order_id=$3,outcome=$4,error_message=NULL,due_at=$5 WHERE workspace_id=$1 AND id=$2`,
@@ -690,6 +723,7 @@ async function run(database,ctx,options={}){const followThrough=await reconcileS
     },{isolation:'SERIALIZABLE',retrySafe:true}):await execute(database,ctx,item.id);
     if(completed.execution_status===STATUSES.COMPLETED)executed+=1;
   }
+  const kitParts=options.afterSkuId?{skipped:'planning_continuation'}:await require('../purchasing/agent-kit-reorders').run(database,ctx);
   // A large catalogue is planned in many SKU pages. Receipt work has its own
   // bounded batch and runs once per evaluation, rather than on every SKU page.
   const customerReceipts=options.afterSkuId?{skipped:'planning_continuation'}:await require('../accounting/agent-customer-payment-matches').run(database,ctx.workspaceId);
@@ -720,7 +754,7 @@ async function run(database,ctx,options={}){const followThrough=await reconcileS
   const stockReadyUpdates=options.afterSkuId?{skipped:'planning_continuation'}:await require('../sales/agent-stock-ready').run(database,ctx.workspaceId);
   const pickReleases=options.afterSkuId?{skipped:'planning_continuation'}:await require('../warehouse/agent-pick-release').run(database,ctx.workspaceId);
   const putawayInstructions=options.afterSkuId?{skipped:'planning_continuation'}:await require('../warehouse/agent-putaway').run(database,ctx.workspaceId);
-  return {planned:planned.created.length,executed,waiting:planned.created.length-executed,customerReceipts,customerInvoices,invoiceReminders,customerCheckins,quoteFollowups,supplierForecasts,supplierBenefits,supplierDates,containerPlans,teamProcedures,channelCopy,blanketReleases,directShipments,supplierShutdowns,promotionStock,supplierInvoices,supplierInvoiceSources,supplierCreditNotes,supplierReturns,supplierDisputes,backupSupplierSwitches,channelRecovery,arrivedStock,arrivedPreorders,stockReadyUpdates,pickReleases,putawayInstructions,
+  return {planned:planned.created.length,executed,waiting:planned.created.length-executed,kitParts,customerReceipts,customerInvoices,invoiceReminders,customerCheckins,quoteFollowups,supplierForecasts,supplierBenefits,supplierDates,containerPlans,teamProcedures,channelCopy,blanketReleases,directShipments,supplierShutdowns,promotionStock,supplierInvoices,supplierInvoiceSources,supplierCreditNotes,supplierReturns,supplierDisputes,backupSupplierSwitches,channelRecovery,arrivedStock,arrivedPreorders,stockReadyUpdates,pickReleases,putawayInstructions,
     considered:planned.considered.length,followThrough,partial:planned.partial,refreshRequested:planned.refreshRequested,planningRevision:planned.planningRevision,nextAfterSkuId:planned.nextAfterSkuId,processedSkus:planned.processedSkus};}
 async function approve(database,ctx,membership,id,{destinationLocationId=null}={}){assertOperate(membership);
  if(destinationLocationId)await database.transaction(async client=>{const work=(await client.query('SELECT * FROM work_items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];if(!work)throw new NotFoundError('That prepared work is not in this inventory.');const action=parse(work.recommended_action,{});if(work.execution_status!=='WAITING_FOR_APPROVAL'||action.type!=='purchase'||action.quantityScope!=='workspace'||action.destinationLocationId)throw new ValidationError('This work is not waiting for a receiving-location choice.');const place=(await client.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL',[ctx.workspaceId,destinationLocationId])).rows[0];if(!place)throw new ValidationError('Choose an active receiving location in this inventory.');await client.query('UPDATE work_items SET recommended_action=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify({...action,destinationLocationId:place.id,destinationLocationName:place.name})]);await client.query("INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at) VALUES($1,$2,$3,'receiving_location_selected',$4,$5,$6)",[newId('wievt'),ctx.workspaceId,id,JSON.stringify({locationId:place.id}),ctx.actorId,nowIso()]);},{isolation:'SERIALIZABLE',retrySafe:true});
@@ -776,5 +810,5 @@ async function lowestStockDraft(database,workspaceId){
 }
 module.exports={supplierDeliveryReadiness,lowestStockDraft,MODES,ACTIONS,STATUSES,ensure,getState,setMode,pause,resume,configureRoutine,replacePolicy,listPolicies,dashboard,workHistory,plan,run,handleReorderSignal,
   listCapabilities,setCapability,capabilityMay,getWork,approve,cancel,execute,evaluate,revalidate,
-  supplierDeliveryReadiness,reconcileSupplierFollowThrough};
+  supplierDeliveryReadiness,reconcileSupplierFollowThrough,supplierChoice,persistPlannedWork};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{plan:'planning.basic',run:'planning.basic'});
