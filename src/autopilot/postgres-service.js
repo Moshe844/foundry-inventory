@@ -288,23 +288,10 @@ async function supplierChoice(database,workspaceId,shortage,state,cached=null){c
   const resultQty=buying.quantities(selected,Math.max(shortage.default_order_quantity??0,shortage.needed),state.agentTerms);
   return {...selected,...resultQty,restriction:buying.restriction(state,resultQty),topUpSignature:buying.topUpSignature(selected,resultQty.topUp)};}
 
+// Job 199: how sure StockChief is about a planned order or transfer, from the
+// facts it checks (the shared confidence helper).
 function decisionEvidence(candidate){
-  if(!candidate||!['purchase','transfer'].includes(candidate.type))return null;
-  const measured=value=>(typeof value==='number'||(typeof value==='string'&&value.trim()!==''))&&Number.isFinite(Number(value));
-  if(!candidate.skuId||!measured(candidate.quantity)||Number(candidate.quantity)<=0)
-    return {level:'low',reason:'The item or quantity needs verification.'};
-  if(candidate.type==='purchase'){
-    if(!candidate.supplierId||!measured(candidate.unitCost)||Number(candidate.unitCost)<0||!measured(candidate.value)||Number(candidate.value)<0||!candidate.currency)
-      return {level:'low',reason:'Confirm the supplier, currency and unit cost before sending this order.'};
-    if(!candidate.destinationLocationId)return {level:'medium',reason:'The quantity and supplier price are recorded. Choose the receiving location.'};
-    if(![candidate.destinationAvailable,candidate.incoming,candidate.reorderPoint].every(measured))
-      return {level:'low',reason:'Refresh the available stock, incoming stock and reorder point before sending this order.'};
-    return {level:'high',reason:'The supplier price, receiving location, available stock and reorder quantity are recorded.'};
-  }
-  if(!candidate.sourceLocationId||!candidate.destinationLocationId||![candidate.sourceAvailable,candidate.sourceSafety].every(measured)
-    ||require('../transfers/agent-transfer-balance-source').cmp(require('../domain/exact-quantity').subtract(candidate.sourceAvailable,candidate.sourceSafety),candidate.quantity)<0)
-    return {level:'low',reason:'Verify the source, destination and stock the source needs to keep.'};
-  return {level:'high',reason:'The source and destination are known and the available stock covers the transfer and protected quantity.'};
+  return require('./confidence').forAction(candidate);
 }
 async function purchasingJobRestriction(db,workspaceId,candidate,automatic){
   const buying=require('../purchasing/agent-order-quantities'),jobs=require('./job-modes');
@@ -334,6 +321,9 @@ async function evaluate(database,workspaceId,candidate,state,{committedPurchaseO
   if(candidate.type==='purchase'&&!candidate.destinationLocationId)return {decision:'needs_approval',reason:'Choose the receiving location for this inventory-wide purchase. Its target is shared across all locations.',policy};
   if(candidate.type==='purchase'&&policy.locationScope.length&&!policy.locationScope.includes(candidate.destinationLocationId))return {decision:'needs_approval',reason:'The receiving location is outside the approved purchasing scope.',policy};
   if(evidence?.level==='low')return {decision:'needs_approval',reason:evidence.reason,policy};
+  // Below the owner's chosen level StockChief asks instead of acting.
+  const unsure=await require('./confidence').stop(database,workspaceId,evidence);
+  if(unsure)return {decision:'needs_approval',reason:unsure,policy};
   const account=await agentPlan.accountState(database,workspaceId);
   if(candidate.kitDemand&&!agentPlan.usesAgentTerms(account))return {decision:'needs_approval',reason:'Kit part orders need your approval on this plan.',policy};
   if(agentPlan.usesAgentTerms(account) || !account.plan && (account.subscribed || require('../config').commercial.requirePaidWorkspace)){
@@ -430,6 +420,8 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
   const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
   const selected=Array.from(bySku.entries()).slice(0,limitSkus??bySku.size),partial=limitSkus!==null&&bySku.size>limitSkus;
   const prepared=[];const considered=[];const suppliers=await planningSuppliers(database,workspaceId,selected.map(([id])=>id));
+  // Job 199: earlier sent orders per item and supplier, for how sure StockChief is about each order.
+  const histories=await require('./confidence').purchaseHistory(database,workspaceId,selected.map(([id])=>id));
   const selectedPositions=selected.flatMap(([,locations])=>locations);
   // On plans with the kits job, parts with kit demand are bought by that job,
   // and a warehouse never gives away parts its own kits need.
@@ -468,6 +460,7 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
         code:shortage.code,quantity:supplier.quantity,purchaseUnits:supplier.purchaseUnits,unitsPerPurchaseUnit:supplier.unitsPer,
         purchaseUnit:supplier.purchase_unit,purchaseMultiple:supplier.purchaseMultiple,topUpSignature:supplier.topUpSignature,
         supplierId:supplier.supplier_id,supplierName:supplier.supplier_name,supplierSku:supplier.supplier_sku,
+        history:histories.get(shortage.sku_id+':'+supplier.supplier_id)||{orders:0,lastUnitCost:null,lastCurrency:null},
         destinationLocationId:shortage.location_id||(shortage.receivingOptions?.length===1?shortage.receivingOptions[0].id:null),destinationLocationName:shortage.location_id?shortage.location_name:shortage.receivingOptions?.length===1?shortage.receivingOptions[0].name:'Choose where this delivery should arrive',quantityScope:shortage.scope==='workspace'?'workspace':'location',receivingOptions:shortage.receivingOptions||null,unitCost:supplier.unitCost,
         value:supplier.value,currency:supplier.currency||'USD',destinationAvailable:shortage.available,incoming:shortage.incoming,
         reorderPoint:shortage.reorder,targetStock:shortage.target,priority:88,urgency:shortage.available<=0?'immediate':'soon',evidence:[
@@ -815,6 +808,7 @@ async function dashboard(database,workspaceId){const [state,policies,capabilitie
   const trustedCodes=purchasePolicy?.itemScope.length ? (await database.query('SELECT code FROM skus WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY code',[workspaceId,purchasePolicy.itemScope])).rows.map(row=>row.code) : [];
   return {state,policies,capabilities,trustedCodes,locations:locations.rows,suppliers:suppliers.rows,recent:recent.rows.map(workFrom),
     maintenanceProgress:await require('../operations/postgres-maintenance-progress').read(database,workspaceId),
+    confidence:await require('./confidence').settings(database,workspaceId),
     transferPolicy:policies.find((policy)=>policy.active&&policy.actions.includes(ACTIONS.TRANSFER))||null,
     purchasePolicy:policies.find((policy)=>policy.active&&policy.actions.includes(ACTIONS.PURCHASE))||null};}
 

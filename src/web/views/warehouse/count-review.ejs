@@ -5,6 +5,7 @@
 <% if(review.agent_decision?.action==='post'){ %>
 <p>StockChief posted this count under the owner's <%= helpers.money(review.agent_decision.limitMinor,review.payload.currency) %> limit.</p>
 <% } %>
+<%- include('../components/confidence',{confidence:review.confidence,asked:review.agent_decision?.action==='review'?'StockChief left this count for you: it is not as sure as you asked it to be before posting on its own.':null}) %>
 <% if(review.recount_required&&!review.recounted_at){ %>
 <form method="post" action="/warehouse/counts/reviews/<%= review.id %>/recount"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
  <h2>Recount required</h2><p>The differences exceed the owner's limit. Count each changed item again and enter what you find.</p>

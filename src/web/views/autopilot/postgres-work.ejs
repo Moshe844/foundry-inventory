@@ -22,7 +22,7 @@
   <% if(action.kitDemand?.kits?.length){ %><p>Part for <%= action.kitDemand.kits.map(k=>k.code).join(', ') %>.</p><% } %></header>
 <div class="aw-cols"><div class="aw-main">
   <section class="card aw-card"><h2>Why StockChief suggests this</h2>
-    <% if(item.evidenceQuality){ %><p><strong>Confidence: <%= item.evidenceQuality.level %>.</strong> <%= item.evidenceQuality.reason %></p><% } %>
+    <%- include('../components/confidence',{confidence:item.evidenceQuality}) %>
     <p class="aw-lead"><% if(transfer){ %><%= action.destinationLocationName %> has <%= action.destinationAvailable %> available against a reorder point of <%= action.reorderPoint %>. <%= action.sourceLocationName %> has <%= action.sourceAvailable %> available and keeps <%= action.sourceSafety %> protected, so moving stock avoids buying more.<% }else if(available!==undefined&&reorderPoint!==undefined){ %><%= Number(available)<=0?'Nothing is available':available+' available' %><%= Number(incoming)>0?' and '+incoming+' on the way':Number(incoming)===0?', and nothing is on the way':'' %>. Your reorder point is <%= reorderPoint %>.<% }else{ %><%= action.reason||'This product reached its reorder point.' %><% } %></p>
     <% if(facts.length){ %><div class="aw-facts"><% for(const entry of facts){ %><div><span><%= helpers.columnLabel(entry.fact) %></span><strong><%= entry.value %></strong></div><% } %></div><% } %>
   </section>

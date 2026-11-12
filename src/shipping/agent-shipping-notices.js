@@ -75,6 +75,29 @@ async function authority(db,workspaceId,rule){
       ||row.customer_email?.toLowerCase()!==row.contact_email.toLowerCase()))
     throw new ValidationError('The shipping notice needs individual approval under the current customer or mailbox settings.');
 }
+// Job 199: how sure StockChief is about a tracking email: a valid address and
+// tracking number (required), the order's email matching the customer record,
+// a known tracking link and earlier delivered email to the same address.
+function noticeConfidence(r){
+  return require('../autopilot/confidence').shippingNotice({recipient:r.recipient,customerEmail:r.customer_email,trackingNumber:r.tracking_number,
+    trackingLink:r.tracking_url||require('../sales/carriers').trackingUrlFor(r.carrier,r.tracking_number),earlierSent:r.earlier});
+}
+const earlierSql=`(SELECT count(*)::int FROM customer_communications m WHERE m.workspace_id=$1 AND lower(m.recipient)=lower(%s)
+  AND m.status='SENT' AND m.external_message_id IS NOT NULL)`;
+async function confidence(db,workspaceId,row,recipient){
+  const earlier=(await db.query(`SELECT ${earlierSql.replace('%s','$2')} AS n`,[workspaceId,recipient||''])).rows[0].n;
+  return noticeConfidence({...row,recipient,earlier});
+}
+// Tracking emails written and waiting for a person, with how sure StockChief is about each.
+async function waiting(db,workspaceId,{shipmentId=null,limit=25}={}){
+  const {rows}=await db.query(`SELECT n.id,n.shipment_id,n.recipient,n.created_at,n.updated_at,o.order_number,c.name customer_name,c.email customer_email,
+      s.tracking_number,s.tracking_url,s.carrier,${earlierSql.replace('%s','n.recipient')} AS earlier
+    FROM customer_communications n JOIN sales_shipments s ON s.workspace_id=n.workspace_id AND s.id=n.shipment_id
+    JOIN sales_orders o ON o.workspace_id=s.workspace_id AND o.id=s.sales_order_id LEFT JOIN customers c ON c.workspace_id=o.workspace_id AND c.id=o.customer_id
+    WHERE n.workspace_id=$1 AND n.message_kind='shipping_notice' AND n.status='PREPARED' AND ($2::text IS NULL OR n.shipment_id=$2)
+    ORDER BY n.created_at,n.id LIMIT $3`,[workspaceId,shipmentId,limit]);
+  return rows.map(r=>({...r,confidence:noticeConfidence(r)}));
+}
 async function queue(db,ctx,note,row,connector,automatic){
   const rule={kind:'shipment_notice',shipmentId:row.id,customerId:row.customer_id,recipient:note.recipient,tracking:row.tracking_number,
     carrier:row.carrier,connector:connector.id,mailboxAccount:connector.provider_account_id,revision:row.policy_revision,actorId:ctx.actorId,automatic};
@@ -87,6 +110,16 @@ async function queue(db,ctx,note,row,connector,automatic){
       summary:'Email '+note.recipient+' that order '+row.order_number+' shipped, with '+(row.carrier?row.carrier+' ':'')+'tracking '+row.tracking_number,
       evidence:{shipment:row.shipment_number,tracking:row.tracking_number},href:'/fulfilment/'+row.id+'#notice'},account);
     return {prepared:note.id,reason:error.message};
+  }
+  if(automatic){
+    // Job 199: how sure StockChief is about this email. Below the owner's level it asks.
+    const sure=await confidence(db,ctx.workspaceId,row,note.recipient);
+    const unsure=await require('../autopilot/confidence').stop(db,ctx.workspaceId,sure);
+    if(unsure){
+      await audit.record(db,ctx,{action:'Tracking email left for a person: StockChief was not sure enough',reference:row.shipment_number,
+        after:{level:sure.level,reasons:sure.missing,orderNumber:row.order_number,recipient:note.recipient}});
+      return {prepared:note.id,reason:unsure};
+    }
   }
   const at=nowIso();
   await db.query(`UPDATE customer_communications SET status='QUEUED',connector_id=$3,transport=$4,approved_by_user_id=$5,
@@ -176,15 +209,12 @@ async function saveChannels(db,ctx,choices,user){
 async function inbox(db,workspaceId){
   const state=await policy.accountState(db,workspaceId);
   if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,60,'draft'))return [];
-  const {rows}=await db.query(`SELECT n.id,n.shipment_id,n.recipient,n.created_at,n.updated_at,o.order_number,c.name customer_name
-    FROM customer_communications n JOIN sales_shipments s ON s.workspace_id=n.workspace_id AND s.id=n.shipment_id
-    JOIN sales_orders o ON o.workspace_id=s.workspace_id AND o.id=s.sales_order_id LEFT JOIN customers c ON c.workspace_id=o.workspace_id AND c.id=o.customer_id
-    WHERE n.workspace_id=$1 AND n.message_kind='shipping_notice' AND n.status='PREPARED' ORDER BY n.created_at,n.id LIMIT 25`,[workspaceId]);
+  const rows=await waiting(db,workspaceId);
   return rows.map(r=>({kind:'shipping',importance:'Needs You',priority:58,title:'Send the tracking email for order '+r.order_number,
     happened:r.recipient?'It is written and ready to send to '+r.recipient+'.':'There is no email address for '+(r.customer_name||'this customer')+'.',
     why:'Customers are told their order shipped, with the carrier, tracking number and link.',
-    recommendation:r.recipient?'Read it and send it with one tap.':'Add the customer’s email to the order, then send it.',
+    recommendation:r.recipient?'Read it and send it with one tap.':'Add the customer’s email to the order, then send it.',confidence:r.confidence,
     href:'/fulfilment/'+r.shipment_id+'#notice',actionLabel:'Send the tracking email',sourceId:'shipment-notice:'+r.id,at:r.updated_at,createdAt:r.created_at}));
 }
 
-module.exports={processJob,edit,authority,mailbox,channels,saveChannels,channelFor,inbox,CHANNEL_TYPES};
+module.exports={processJob,edit,authority,mailbox,channels,saveChannels,channelFor,inbox,waiting,CHANNEL_TYPES};

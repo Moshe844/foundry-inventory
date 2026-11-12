@@ -853,6 +853,7 @@
           <input type="hidden" name="messageId" value="<%= notice.id %>">
           <input type="hidden" name="version" value="<%= notice.updated_at %>">
           <div class="card-body">
+            <% if (notice.status === 'PREPARED' && locals.noticeConfidence) { %><%- include('../components/confidence', { confidence: noticeConfidence }) %><% } %>
             <label class="field">
               <span class="field-label">Subject</span>
               <input class="input" type="text" name="subject" value="<%= notice.subject %>">

@@ -332,6 +332,7 @@ async function needsUncached(database,workspaceId,actorId,actor){
       : stockSentence(row,action)),
     why:row.error_message || authority.reason || 'Your authority policy requires approval.',
     recommendation:action.type==='transfer'?(action.reason||'Review the prepared work and its evidence.'):'Order '+number(action.quantity)+' '+(number(action.quantity)===1?'unit':'units')+' from '+(action.supplierName||'the selected supplier')+'.',href:`/autopilot/work/${row.id}`,
+    confidence:require('../autopilot/confidence').forAction(action),
     actionLabel:'Review decision',sourceId:row.id,createdAt:row.created_at,timeLabel:'Proposed',at:row.created_at});}
   for(const row of imports.rows)items.push({kind:'import',importance:'Important',priority:80,title:`Import failed: ${row.source_name}`,
     happened:'Completed import batches are saved. Open the import to see the stopping reason and resume from its checkpoint.',why:row.error_message || 'The import could not be verified.',

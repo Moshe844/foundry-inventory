@@ -64,7 +64,10 @@ async function prepare(db,ctx,input){return db.transaction(async c=>{
  if(effective?.action==='post'&&!paired)await post(c,{...ctx,actorId:effective.owner},id,integrityHash);
  return {id};
 },{isolation:'SERIALIZABLE',retrySafe:true});}
-async function get(db,ctx,id){await authorize(db,ctx);const row=(await db.query('SELECT * FROM physical_count_reviews WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id])).rows[0];if(!row)throw new NotFoundError('This count review is not in this inventory.');await require('./postgres-warehouse-access').assertLocations(db,ctx,[row.payload.location.id]);return row;}
+async function get(db,ctx,id){await authorize(db,ctx);const row=(await db.query('SELECT * FROM physical_count_reviews WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id])).rows[0];if(!row)throw new NotFoundError('This count review is not in this inventory.');await require('./postgres-warehouse-access').assertLocations(db,ctx,[row.payload.location.id]);
+ // Job 199: how sure StockChief was about posting this count, or is now for one still waiting.
+ row.confidence=row.agent_decision?.confidence||(row.status==='PENDING'?await require('../autopilot/confidence').forCount(db,ctx.workspaceId,row.payload,null,row.id):null);
+ return row;}
 async function assertUnchanged(db,ctx,review,message){
  const current=await positions(db,ctx,review.payload.location.id,review.payload.lines.map(line=>line.skuId));
  const byId=new Map(current.map(row=>[row.id,row]));

@@ -108,6 +108,7 @@ const definitions=[
   {id:129,key:'supplier-specifications',label:'Fill missing product specifications from a supplier file',filterLabel:'Approved supplier file name or import ID',readPage:require('../domain/agent-supplier-specs').review},
   {id:200,key:'catalog-health',label:'Check your data health score',readPage:require('./catalog-health').health},
   require('./shadow-mode').definition,
+  require('./confidence').definition,
   require('../catalog/agent-catalog-fixes').definition,
   require('../catalog/agent-supplier-catalog').definition,
   {id:17,key:'stock-age',label:'Review stock by age for a possible write-down',readPage:require('../forecasting/agent-stock-age').review},
