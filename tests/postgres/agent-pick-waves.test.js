@@ -44,7 +44,7 @@ async function setup(t){
   await native.setAside(db,ctx,o.salesOrderId,{expectedVersion:await version(),idempotencyKey:randomUUID(),lines:lines.map((l,i)=>({lineId:o.lineIds[i],locationId:l.bin,quantity:l.quantity}))});
   if(priority!==100)await db.query('UPDATE sales_orders SET allocation_priority=$2 WHERE id=$1',[o.salesOrderId,priority]);
   return o;};
- const rows=async(where='true')=>(await db.query(`SELECT a.*,f.status native,f.wave_number FROM stockchief_runtime.agent_pick_waves a JOIN fulfillment_waves f ON f.id=a.wave_id WHERE a.workspace_id=$1 AND ${where} ORDER BY a.created_at,a.id`,[ws])).rows;
+ const rows=async(where='true')=>(await db.query(`SELECT a.*,f.status native,f.wave_number FROM stockchief_runtime.agent_pick_waves a JOIN fulfillment_waves f ON f.id=a.wave_id WHERE a.workspace_id=$1 AND ${where} ORDER BY a.created_at,f.wave_number,a.id`,[ws])).rows;
  const ordersOf=w=>w.plan.orders.map(o=>o.id);
  const audits=async action=>Number((await db.query('SELECT count(*) n FROM security_event_history WHERE workspace_id=$1 AND action=$2',[ws,action])).rows[0].n);
  return {...f,ws,dispatch,a1,a2,b1,plain,blue,syrup,scanner,cheese,order,rows,ordersOf,audits,today,rotation:require('../../src/operations/postgres-stock-rotation')};
