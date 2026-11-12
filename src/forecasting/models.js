@@ -43,8 +43,34 @@ function stdev(values) {
   return Math.sqrt(variance);
 }
 
+const weekdayOf = (date) => new Date(`${date}T00:00:00.000Z`).getUTCDay();
+const monthOf = (date) => Number(String(date).slice(5, 7)) - 1;
+
+/**
+ * Every fitted model also carries a plain `shape`: the few numbers it needs to
+ * answer any later date. Stored once, the same shape gives the same forecast
+ * again, which is what lets a saved forecast drive planning reproducibly.
+ */
+function rateFor(shape, date) {
+  if (!shape) return 0;
+  switch (shape.kind) {
+    case 'flat': return Math.max(0, round(shape.rate));
+    case 'trend': {
+      const ahead = Math.max(0, Math.round((Date.parse(`${date}T00:00:00.000Z`) - Date.parse(`${shape.last}T00:00:00.000Z`)) / DAY_MS));
+      const damped = ahead === 0 ? 0 : shape.slope * shape.damping * (1 - shape.damping ** ahead) / (1 - shape.damping);
+      return Math.max(0, round(shape.level + damped));
+    }
+    case 'weekday': return Math.max(0, round(shape.rate * shape.factors[weekdayOf(date)]));
+    case 'seasonal': return Math.max(0, round(shape.level * shape.month[monthOf(date)] * shape.weekday[weekdayOf(date)]));
+    default: throw new TypeError(`Unknown forecast shape: ${shape.kind}`);
+  }
+}
+
 /** A flat rate, wrapped so every model answers the same question. */
-const flat = (rate) => ({ rate: round(rate), dailyRateFor: () => Math.max(0, round(rate)) });
+const flat = (rate) => {
+  const shape = { kind: 'flat', rate: round(rate) };
+  return { rate: round(rate), shape, dailyRateFor: (date) => rateFor(shape, date) };
+};
 
 /**
  * Mean of the last `window` days that could actually sell.
@@ -90,18 +116,14 @@ function dampedTrend({ damping = 0.85, window = 56 } = {}) {
       const slope = xs.reduce((sum, x, i) => sum + (x - xBar) * (values[i] - yBar), 0) / denominator;
       const level = yBar + slope * (n - 1 - xBar);      // the line at "today"
       const lastDate = rows[rows.length - 1].date;
-      const lastMs = Date.parse(`${lastDate}T00:00:00.000Z`);
+      // Geometric damping: each day ahead contributes less of the slope
+      // than the one before, so the sum converges instead of diverging.
+      const shape = { kind: 'trend', level, slope, damping, last: lastDate };
       return {
         rate: round(Math.max(0, level)),
         slope: round(slope),
-        dailyRateFor(date) {
-          const ahead = Math.max(0, Math.round((Date.parse(`${date}T00:00:00.000Z`) - lastMs) / DAY_MS));
-          // Geometric damping: each day ahead contributes less of the slope
-          // than the one before, so the sum converges instead of diverging.
-          const damped = ahead === 0 ? 0
-            : slope * damping * (1 - damping ** ahead) / (1 - damping);
-          return Math.max(0, round(level + damped));
-        },
+        shape,
+        dailyRateFor: (date) => rateFor(shape, date),
       };
     },
   };
@@ -141,13 +163,68 @@ function weekdaySeasonal({ minimumPerWeekday = 3, minimumRatio = 1.6 } = {}) {
       if (!(between > 0) || (within > 0 && between / within < minimumRatio)) return null;
 
       const factors = weekdayMeans.map((value) => (overall > 0 ? value / overall : 1));
+      const shape = { kind: 'weekday', rate: overall, factors };
       return {
         rate: round(overall),
         factors: factors.map((f) => round(f, 3)),
-        dailyRateFor(date) {
-          const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
-          return Math.max(0, round(overall * factors[weekday]));
-        },
+        shape,
+        dailyRateFor: (date) => rateFor(shape, date),
+      };
+    },
+  };
+}
+
+/**
+ * The year's shape, from at least one full year of history.
+ *
+ * Each calendar month gets an index: its average day against the average of
+ * all twelve months, so a year with more days of one month cannot tilt it.
+ * Each weekday gets one too, but only when the same gate as the weekday model
+ * says the difference is real; otherwise every weekday counts the same. The
+ * level is the last four weeks with both patterns taken out, so the forecast
+ * starts from where sales are now and follows last year's months from there.
+ * It is only one more candidate: the held-out comparison still decides.
+ */
+function yearlySeasonal({ minimumDays = 365, minimumPerMonth = 28, recent = 28, minimumRatio = 1.6 } = {}) {
+  return {
+    id: 'yearly_seasonal',
+    label: 'Yearly and weekday pattern',
+    needs: minimumDays,
+    fit(days) {
+      const rows = usable(days);
+      if (rows.length < this.needs) return null;
+      const months = Array.from({ length: 12 }, () => []);
+      for (const day of rows) months[monthOf(day.date)].push(valueOf(day));
+      if (months.some((bucket) => bucket.length < minimumPerMonth)) return null;
+      const monthMeans = months.map(mean);
+      const overall = mean(monthMeans);
+      if (!(overall > 0)) return null;
+      const month = monthMeans.map((value) => value / overall);
+
+      // Weekdays are compared after the months are taken out. A month with
+      // no sales says nothing about weekdays, so it is left out here.
+      const buckets = Array.from({ length: 7 }, () => []);
+      for (const day of rows) {
+        const factor = month[monthOf(day.date)];
+        if (factor > 0) buckets[weekdayOf(day.date)].push(valueOf(day) / factor);
+      }
+      let weekday = Array(7).fill(1);
+      if (buckets.every((bucket) => bucket.length >= 3)) {
+        const means = buckets.map(mean), all = mean(means);
+        const between = stdev(means), within = mean(buckets.map((bucket) => stdev(bucket)));
+        if (all > 0 && between > 0 && (within === 0 || between / within >= minimumRatio)) weekday = means.map((value) => value / all);
+      }
+
+      const tail = rows.slice(-recent);
+      const expected = tail.reduce((sum, day) => sum + month[monthOf(day.date)] * weekday[weekdayOf(day.date)], 0);
+      if (!(expected > 0)) return null;
+      const level = tail.reduce((sum, day) => sum + valueOf(day), 0) / expected;
+      const shape = { kind: 'seasonal', level, month, weekday };
+      return {
+        rate: round(level),
+        factors: month.map((f) => round(f, 3)),
+        shape,
+        dailyRateFor: (date) => rateFor(shape, date),
       };
     },
   };
@@ -165,4 +242,4 @@ const ALL = [
 
 const byId = (id) => ALL.find((model) => model.id === id) || null;
 
-module.exports = { ALL, BASELINE_ID, byId, movingAverage, dampedTrend, weekdaySeasonal, mean, stdev, usable, valueOf };
+module.exports = { ALL, BASELINE_ID, byId, movingAverage, dampedTrend, weekdaySeasonal, yearlySeasonal, rateFor, mean, stdev, usable, valueOf };

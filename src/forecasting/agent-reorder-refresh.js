@@ -85,6 +85,8 @@ async function positions(db,workspaceId,skuIds){
   if(!skuIds.length)return [];
   const {clock,start,recorded}=await source.sales(db,workspaceId,skuIds);
   const rows=await require('../purchasing/postgres-replenishment-state').rows(db,workspaceId,{onlySkuIds:skuIds});
+  // A forecast in use (jobs 144 and 146) replaces the flat 90-day rate.
+  await require('./agent-demand-forecast').attach(db,workspaceId,rows);
   const args=[workspaceId,skuIds];
   const products=new Map((await db.query(`SELECT s.id sku_id,s.created_at,i.unit_label,i.quantity_precision,i.quantity_increment::text,
     i.secondary_unit_label,i.secondary_precision,i.secondary_increment::text,i.tracking_mode
@@ -113,12 +115,15 @@ async function positions(db,workspaceId,skuIds){
         current:{minimum:amount(row.reorder_point),maximum:amount(row.target_stock)}};
       const stocked=locationId?first.get(k):Math.min(...sites.map(r=>first.get(source.key(skuId,r.location_id))).filter(Number.isFinite));
       const sold=locationId?recorded.get(k):combine(sites.map(r=>recorded.get(source.key(skuId,r.location_id))).filter(Boolean));
+      // A new product forecast from similar items (job 146) stands in for the
+      // 90 days of history; any forecast stands in for local sales it shares.
+      const forecast=row.forecast,launch=forecast?.basis==='SIMILAR';
       let skip=null;
       if(locked.has(k))skip='You locked these settings.';
-      else if(created>opened&&!(stocked<=opened))skip='Added '+days(created,now)+' ago. It needs '+WINDOW_DAYS+' days of sales history.';
-      else if(!Number.isFinite(stocked))skip='No stock or sales recorded '+(locationId?'here':'for this product')+' yet.';
-      else if(stocked>opened)skip='First stocked '+(locationId?'here ':'')+days(stocked,now)+' ago. It needs '+WINDOW_DAYS+' days of sales history.';
-      else if(!sold)skip='No sales '+(locationId?'here ':'')+'in the last '+WINDOW_DAYS+' days.';
+      else if(created>opened&&!(stocked<=opened)&&!launch)skip='Added '+days(created,now)+' ago. It needs '+WINDOW_DAYS+' days of sales history.';
+      else if(!Number.isFinite(stocked)&&!forecast)skip='No stock or sales recorded '+(locationId?'here':'for this product')+' yet.';
+      else if(stocked>opened&&!launch)skip='First stocked '+(locationId?'here ':'')+days(stocked,now)+' ago. It needs '+WINDOW_DAYS+' days of sales history.';
+      else if(!sold&&!(forecast&&forecast.share>0))skip='No sales '+(locationId?'here ':'')+'in the last '+WINDOW_DAYS+' days.';
       if(skip){result.push({...base,skip});continue;}
       const facts=locationId?{...row,...profile}:{...row,...profile,local_lead:null,
         lead_time_assumed:row.global_policy?.lead_time_days==null&&!supplierLead.has(skuId)};
@@ -142,7 +147,7 @@ const valueKey=p=>hash([p.skuId,p.locationId,p.estimate.current.minimum,p.estima
 function evidence(p){
   const e=p.estimate;
   return {code:p.code,name:p.name,location:p.location,unit:p.unit,...(e?{issued:e.issued,events:e.events,lead:e.lead,cover:e.cover,
-    safety:e.safety,soldWeight:e.soldWeight,secondaryUnit:e.secondaryUnit,day:e.day}:{})};
+    safety:e.safety,soldWeight:e.soldWeight,secondaryUnit:e.secondaryUnit,day:e.day,...(e.forecast?{forecast:e.forecast}:{})}:{})};
 }
 
 function decide(auth,p,learned){
@@ -194,7 +199,7 @@ async function apply(c,ctx,p,{runId,changeId=null,authority,ruleRevision=null,de
   if(amount(saved?.reorder_point)!==e.current.minimum||amount(saved?.target_stock)!==e.current.maximum)
     throw new ValidationError('The reorder point or target changed since this check. The next check starts from the new values.');
   if(!locationId&&!saved)throw new ValidationError('The reorder point for all locations was removed.');
-  const at=nowIso(),note='Kept up to date from recorded sales';
+  const at=nowIso(),note=e.forecast?'Kept up to date from the demand forecast':'Kept up to date from recorded sales';
   let policyId=saved?.id,created=false;
   if(saved)await c.query(`UPDATE reorder_policies SET reorder_point=$3,target_stock=$4,source='foundry',notes=$5,updated_at=$6
     WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,policyId,e.minimum,e.maximum,note,at]);
@@ -212,7 +217,7 @@ async function apply(c,ctx,p,{runId,changeId=null,authority,ruleRevision=null,de
   await audit.record(c,ctx,{action:'Updated reorder point and target from sales',reference:id,
     before:{skuId,locationId,reorderPoint:e.current.minimum,target:e.current.maximum},
     after:{skuId,locationId,reorderPoint:e.minimum,target:e.maximum,unit:e.unit,issued:e.issued,lead:e.lead,
-      percent:p.size?.percent??null,authority,ruleRevision,runId,routine:!decidedBy}});
+      percent:p.size?.percent??null,authority,ruleRevision,runId,routine:!decidedBy,...(e.forecast?{forecast:e.forecast}:{})}});
   return {id,policyId};
 }
 

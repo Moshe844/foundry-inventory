@@ -1,46 +1,6 @@
 'use strict';
 
 const {addDays} = require('../accounting/customer-money');
-const {ALL, byId, mean} = require('./models');
-const {evaluate} = require('./backtest');
-
-// Evidence must cover at least two observations of every season. Compare it
-// against the same held-out dates as the existing weekday and trend models.
-const annual = {
-  id:'calendar_month', label:'Calendar-month seasonality',
-  fit(days) {
-    const buckets=Array.from({length:12},()=>[]);
-    for(const day of days) buckets[Number(day.date.slice(5,7))-1].push(day.demand);
-    if(buckets.some(bucket=>bucket.length<56))return null;
-    const averages=buckets.map(mean);
-    return {dailyRateFor:date=>averages[Number(date.slice(5,7))-1]};
-  }
-};
-
-async function demand(db,ctx,{filter,page,today}){
-  const selected=await db.query(`SELECT s.id,s.code,s.item_id FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
-    WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND ($2='' OR lower(s.code)=lower($2))
-    ORDER BY s.code,s.id LIMIT 26 OFFSET $3`,[ctx.workspaceId,filter,(page-1)*25]);
-  const skus=selected.rows.slice(0,25),firstDay=addDays(today,-1096);
-  const {rows:history}=await db.query(`SELECT l.sku_id,o.order_date AS day,sum(l.quantity_ordered) AS units
-    FROM sales_order_lines l JOIN sales_orders o ON o.workspace_id=l.workspace_id AND o.id=l.sales_order_id
-    WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND o.status NOT IN ('DRAFT','CANCELLED')
-      AND o.order_date >= $3 AND o.order_date < $4 GROUP BY l.sku_id,o.order_date ORDER BY l.sku_id,o.order_date`,
-    [ctx.workspaceId,skus.map(s=>s.id),firstDay,today]);
-  const series=new Map(skus.map(s=>[s.id,new Map()]));
-  for(const r of history)series.get(r.sku_id).set(r.day,Number(r.units));
-  const rows=skus.map(sku=>{
-    const sales=series.get(sku.id),first=sales.keys().next().value;
-    const days=[];
-    if(first)for(let date=first;date<today;date=addDays(date,1))days.push({date,demand:sales.get(date)||0});
-    const tested=evaluate(days,{models:[...ALL,annual]});
-    const model=tested.chosenId===annual.id?annual:byId(tested.chosenId);
-    const fitted=model.fit(days), forecast=length=>fitted?Math.round(Array.from({length},(_,i)=>fitted.dailyRateFor(addDays(today,i))).reduce((a,b)=>a+b,0)*100)/100:null;
-    return {SKU:sku.code,'Complete calendar days':days.length,'Order days':sales.size,'Forecast method':fitted?model.label:'More history needed',
-      'Next 7 days':forecast(7),'Next 30 days':forecast(30),'Holdout error (units/day)':tested.detail?.mae??null,link:'/inventory/'+sku.item_id};
-  });
-  return {rows,more:selected.rows.length>25,summary:'Estimated units from confirmed customer orders. The comparison tests weekday and annual patterns against simpler forecasts on held-out dates. The history begins at the first recorded order in the last three years and excludes today.'};
-}
 
 async function similarProducts(db,ctx,{page,filter,today}){
   const start=addDays(today,-90),latestFirstSale=addDays(today,-30);
@@ -75,4 +35,4 @@ async function similarProducts(db,ctx,{page,filter,today}){
     more:result.rows.length>25,summary:'New SKUs created in the last 90 days with no confirmed orders. The estimate uses median daily demand from variants or products in the same category with matching units, at least two order dates and 30 days of observed history. Missing comparisons leave the forecast blank.'};
 }
 
-module.exports={demand,similarProducts};
+module.exports={similarProducts};

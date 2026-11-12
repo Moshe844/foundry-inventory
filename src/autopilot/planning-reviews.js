@@ -37,7 +37,7 @@ async function reorder(db,ctx,options){
    const costKnown=r.onHand<=0||cost.filter(v=>v.sku_id===r.sku_id&&(!r.location_id||v.location_id===r.location_id)).reduce((n,v)=>n+Number(v.quantity_units),0)>=r.onHand;
    const target=r.targetStock??r.effectiveReorder,projected=exact.safeNumber(exact.add(String(available),String(r.incoming))),short=r.effectiveReorder!==null&&projected<=r.effectiveReorder;
    return {SKU:r.code,Warehouse:r.location_name,Available:available,Incoming:r.incoming,
-    'Issued in 90 days':r.issued,'Daily sales speed':r.dailyRate,'Lead days':r.lead_time_assumed?'Unknown':r.leadTimeDays,'Reorder point':r.effectiveReorder,'Target stock':target,
+    'Issued in 90 days':r.issued,'Daily sales speed':r.dailyRate,'Demand from':r.forecast?'Forecast · '+r.forecast.label:'Sales in the last 90 days','Lead days':r.lead_time_assumed?'Unknown':r.leadTimeDays,'Reorder point':r.effectiveReorder,'Target stock':target,
     'Open drafts':drafts.map(l=>l.po_number).join(', ')||null,'Incoming dates':pending.filter(l=>!['DRAFT','AWAITING_APPROVAL'].includes(l.status)).map(l=>l.po_number+': '+(l.expected_date||'Unknown')+' ('+l.remaining+')').join('; ')||null,
     'Units to order':!costKnown||uncertain.length||drafts.length||r.lead_time_assumed&&r.reorderPoint===null?null:short?Math.max(0,exact.safeNumber(exact.subtract(String(target??0),String(projected)),{signed:true})):0,
     Reason:!costKnown?'Complete the recorded stock cost before reordering':uncertain.length?'Confirm overdue or undated incoming and supplier availability before ordering again':drafts.length?'Review existing unsent purchase drafts':r.lead_time_assumed&&r.reorderPoint===null?'Record supplier lead time before deriving a stock target':r.effectiveReorder===null?'Set a reorder point or record more demand':short?'Usable available stock plus incoming is at or below the reorder point':'Usable available stock plus incoming exceeds the reorder point',link:'/inventory/'+r.item_id};
@@ -72,7 +72,7 @@ async function demandScenario(db,ctx,options){
 }
 
 module.exports=[
-  {id:144,key:'seasonal-demand',label:'Forecast sales by SKU',readPage:require('../forecasting/postgres-agent-forecast').demand},
+  {id:144,key:'seasonal-demand',label:'Forecast sales by SKU',readPage:require('../forecasting/agent-demand-forecast').review},
   {id:146,key:'new-product-forecast',label:'Forecast a new product from similar items',readPage:require('../forecasting/postgres-agent-forecast').similarProducts},
   {id:151,key:'stockout-cost',label:'Estimate stockout dates and margin at risk',readPage:stockout},
   {id:19,key:'reorder-drafts',label:'Draft reorders grouped by supplier',readPage:async(c,ctx,o)=>({...await reorder(c,ctx,o),reorderForm:true})},

@@ -14,6 +14,7 @@
 
 <%- include('../partials/owner-direct-line', { directLineContext: 'Ask what might run short or tell StockChief what you want to protect.' }) %>
 
+<% if(demandForecasts){ %><p class="rm-sub" id="demand-forecasts"><a class="rm-u" href="/planning/forecasts">Demand forecasts</a> · Each product's forecast with its seasons, and how it compared with what sold.</p><% } %>
 <% if(reorderRefresh){ %><p class="rm-sub" id="reorder-refresh"><a class="rm-u" href="/planning/reorder-refresh">Keep reorder points up to date</a> · A daily check of every stocked product against its recorded sales.</p><% } %>
 <% if(manageRules||rules.length){ const positions=rows.filter(r=>r.location_id && !r.planning_suppressed); %>
 <details class="owner-manual section" id="location-rules"><summary>Automatic reorder limits by location</summary>

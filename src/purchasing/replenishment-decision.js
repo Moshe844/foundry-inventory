@@ -4,10 +4,22 @@
 // These are defaults for missing settings, never substitute source facts.
 const WINDOW_DAYS=90,DEFAULT_LEAD_DAYS=14,SAFETY_DAYS=7,COVER_DAYS=30,MIN_ISSUE_EVENTS=2;
 const optional=value=>value===null||value===undefined?null:Number(value);
+// A saved demand forecast (job 144 or 146) replaces the flat 90-day rate when
+// the plan lets it drive planning. Its daily values already carry this
+// location's share of sales, so lead, cover and safety demand follow the
+// forecast's seasons day by day.
+function forecastUnits(forecast,days){
+ const daily=forecast.daily;let total=0;
+ for(let i=0;i<days&&i<daily.length;i++)total+=daily[i];
+ if(days>daily.length&&daily.length){const tail=daily.slice(-28);total+=(days-daily.length)*tail.reduce((a,b)=>a+b,0)/tail.length;}
+ return Math.round(total*1e6)/1e6;
+}
 function derive(row){
- const onHand=Number(row.on_hand||0),committed=Number(row.committed||0),incoming=Number(row.incoming||0),issued=Number(row.issued??row.sold_90??0),issueEvents=Number(row.issue_events||0),rate=issued/WINDOW_DAYS,lead=optional(row.lead_time_days)??DEFAULT_LEAD_DAYS,coverDays=optional(row.cover_days)??COVER_DAYS;
- const safety=row.planning_suppressed?0:optional(row.safety_stock)??Math.ceil(rate*SAFETY_DAYS),inferredReorder=row.planning_suppressed?null:issueEvents>=MIN_ISSUE_EVENTS?Math.ceil(rate*lead)+safety:null,reorder=row.planning_suppressed?null:optional(row.reorder_point)??inferredReorder,target=row.planning_suppressed?null:optional(row.target_stock)??(reorder===null?null:Math.max(reorder+safety,Math.ceil(rate*coverDays))),available=onHand-committed,projected=available+incoming;
- return {onHand,committed,incoming,available,projected,issued,issueEvents,rate,lead,safety,reorder,target,inferredReorder,windowDays:WINDOW_DAYS,coverDays,shortage:reorder!==null&&projected<=reorder,daysOfSupply:rate>0?available/rate:null};
+ const onHand=Number(row.on_hand||0),committed=Number(row.committed||0),incoming=Number(row.incoming||0),issued=Number(row.issued??row.sold_90??0),issueEvents=Number(row.issue_events||0),lead=optional(row.lead_time_days)??DEFAULT_LEAD_DAYS,coverDays=optional(row.cover_days)??COVER_DAYS;
+ const forecast=!row.planning_suppressed&&Array.isArray(row.forecast?.daily)?row.forecast:null,rate=forecast?forecastUnits(forecast,coverDays)/coverDays:issued/WINDOW_DAYS,demand=days=>forecast?forecastUnits(forecast,days):rate*days;
+ const safety=row.planning_suppressed?0:optional(row.safety_stock)??Math.ceil(demand(SAFETY_DAYS)),inferredReorder=row.planning_suppressed?null:forecast||issueEvents>=MIN_ISSUE_EVENTS?Math.ceil(demand(lead))+safety:null,reorder=row.planning_suppressed?null:optional(row.reorder_point)??inferredReorder,target=row.planning_suppressed?null:optional(row.target_stock)??(reorder===null?null:Math.max(reorder+safety,Math.ceil(demand(coverDays)))),available=onHand-committed,projected=available+incoming;
+ return {onHand,committed,incoming,available,projected,issued,issueEvents,rate,lead,safety,reorder,target,inferredReorder,windowDays:WINDOW_DAYS,coverDays,shortage:reorder!==null&&projected<=reorder,daysOfSupply:rate>0?available/rate:null,
+  ...(forecast?{forecast:{basis:forecast.basis,method:forecast.method,label:forecast.label}}:{})};
 }
 function requiredUnits(position){return Math.max(0,(position.target??position.reorder??0)-position.projected);}
 function retainedUnits(position){return Math.max(position.safety,position.reorder??0);}
@@ -29,4 +41,4 @@ function transferPlan(rows){
  }
  return result;
 }
-module.exports={WINDOW_DAYS,DEFAULT_LEAD_DAYS,SAFETY_DAYS,COVER_DAYS,MIN_ISSUE_EVENTS,derive,requiredUnits,retainedUnits,transferPlan};
+module.exports={WINDOW_DAYS,DEFAULT_LEAD_DAYS,SAFETY_DAYS,COVER_DAYS,MIN_ISSUE_EVENTS,derive,forecastUnits,requiredUnits,retainedUnits,transferPlan};

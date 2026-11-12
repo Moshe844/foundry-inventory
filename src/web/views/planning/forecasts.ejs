@@ -1,0 +1,55 @@
+<% const m=model,base='/planning/forecasts';
+   const qty=(value,unit)=>value==null?'none yet':helpers.unitCount(Number(value),unit||'unit');
+   const when=value=>value?helpers.dateTime(new Date(value).toISOString()):'';
+   const counts=m.run?.counts||{};
+   const lead={suggest:'On Starter it suggests a forecast for one product.',
+     watch:'For now it only shows forecasts. Planning still uses plain sales history.',
+     draft:'Each forecast waits for your approval before planning uses it.',
+     alone:'Forecasts drive the reorder list and reorder points on their own.'}[m.level]; %>
+<header class="rm-head"><a href="/planning">← Planning</a>
+<h1>Demand forecasts</h1>
+<p>Every day StockChief forecasts each product from its own confirmed orders and recorded sales, with yearly and weekday patterns when the history shows them. <%= lead %></p></header>
+<% if(m.level==='watch'){ %><p class="notice notice--warn"><%= m.reason %></p><% }else if(m.level==='draft'){ %><p class="notice"><%= m.reason %></p><% } %>
+
+<% if(m.level==='suggest'){ %>
+<section class="rm-panel"><div class="rm-panel__body">
+<% if(m.suggestion){ %><p>Plan for about <strong><%= m.suggestion.next7 %> units</strong> of <strong><%= m.suggestion.code %></strong> over the next week. Method: <%= m.suggestion.method.toLowerCase() %>.</p>
+<% }else{ %><p>Record a few weeks of sales to get a forecast.</p><% } %>
+<p class="rm-muted">Growth forecasts every product each day and lets the forecasts drive planning. <a href="/billing">Review plans</a></p>
+</div></section>
+<% }else{ %>
+
+<section class="rm-panel"><div class="rm-panel__body">
+<% if(m.run){ %><p>Last forecast <%= when(m.run.started_at) %><%= m.run.finished_at?'':' · still running' %></p>
+<p class="rm-muted"><%= Number(counts.used||0) %> used for planning · <%= Number(counts.proposed||0) %> waiting for you · <%= Number(counts.watched||0) %> shown only · <%= Number(counts.excluded||0) %> on plain sales history · <%= Number(counts.held||0) %> need more history</p>
+<% }else{ %><p>No forecast has run yet.</p><% } %>
+<% if(m.accuracy){ %><p>Last 13 weeks: <%= m.accuracy.predicted %> units forecast, <%= m.accuracy.actual %> sold. Off by <%= m.accuracy.error %> units a week on average, across <%= m.accuracy.n %> product weeks.</p><% } %>
+<form method="post" action="<%= base %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost">Forecast now</button></form>
+</div></section>
+
+<% if(m.waiting.length){ %><section class="rm-panel" id="waiting"><div class="rm-panel__head"><h2>Waiting for you</h2></div><div class="rm-panel__body">
+<form method="post" action="<%= base %>/approve-all"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn">Use all for planning</button></form>
+<ul class="rm-list"><% for(const f of m.waiting){ %><li><div class="rm-told__t">
+  <p><strong><%= f.code %></strong> · <%= f.method_label %></p>
+  <p>Next 7 days <%= qty(f.next_7,f.unit_label) %> · Next 30 days <%= qty(f.next_30,f.unit_label) %></p>
+  <% if(f.week){ %><p class="rm-muted">Week from <%= f.week.as_of %>: forecast <%= qty(f.week.predicted,f.unit_label) %>, sold <%= qty(f.week.actual,f.unit_label) %></p><% } %>
+  <div class="rm-actions">
+    <form method="post" action="<%= base %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="skuId" value="<%= f.sku_id %>"><button class="rm-btn rm-btn--sm">Use for planning</button></form>
+    <form method="post" action="<%= base %>/use"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="skuId" value="<%= f.sku_id %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" name="excluded" value="yes">Keep sales history</button></form>
+  </div>
+</div></li><% } %></ul></div></section><% } %>
+
+<section class="rm-panel" id="forecasts"><div class="rm-panel__head"><h2>Forecasts</h2></div><div class="rm-panel__body">
+<% if(!m.forecasts.length){ %><p class="rm-muted">Forecasts appear after the first daily run.</p><% } %>
+<ul class="rm-list"><% for(const f of m.forecasts){ %><li><div class="rm-told__t">
+  <p><strong><%= f.code %></strong> · <%= m.statusWords[f.status] %></p>
+  <% if(f.shape){ %><p>Next 7 days <%= qty(f.next_7,f.unit_label) %> · Next 30 days <%= qty(f.next_30,f.unit_label) %></p>
+  <p class="rm-muted"><%= f.method_label %><% if(f.holdout_error!=null){ %> · off by <%= f.holdout_error %> a day on held-out days<% } %> · <%= f.history_days %> days of history</p><% } %>
+  <% if(f.week){ %><p class="rm-muted">Week from <%= f.week.as_of %>: forecast <%= qty(f.week.predicted,f.unit_label) %>, sold <%= qty(f.week.actual,f.unit_label) %></p><% } %>
+  <% if(f.reason&&f.status!=='USED'){ %><p class="rm-muted"><%= f.reason %></p><% } %>
+  <% if(f.status==='EXCLUDED'){ %><form method="post" action="<%= base %>/use"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="skuId" value="<%= f.sku_id %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" name="excluded" value="no">Use the forecast again</button></form>
+  <% }else if(f.status==='USED'){ %><form method="post" action="<%= base %>/use"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="skuId" value="<%= f.sku_id %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" name="excluded" value="yes">Use plain sales history</button></form><% } %>
+</div></li><% } %></ul>
+<% if(m.number>1||m.more){ %><p><% if(m.number>1){ %><a href="?page=<%= m.number-1 %>">Previous</a><% } %> <% if(m.more){ %><a href="?page=<%= m.number+1 %>">Next</a><% } %></p><% } %>
+</div></section>
+<% } %>
