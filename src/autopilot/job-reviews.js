@@ -158,7 +158,7 @@ const suggestions={
     ' were returned. '+r.Finding+'.',
   110:r=>'Review the '+r.Month+' purchase budget for '+r.Category+' in '+r.Currency+'.',
   144:r=>r['Next 7 days']==null?'Record more customer orders for '+r.SKU+' before forecasting.':'Plan for about '+r['Next 7 days']+' units of '+r.SKU+' over the next week.',
-  146:r=>r['Estimated units in 30 days']==null?'No comparable sales history for '+r.SKU+' yet.':'Consider about '+r['Estimated units in 30 days']+' units for '+r.SKU+' over its first 30 days.',
+  146:r=>r['Estimated units in 30 days']==null?'Choose a similar item for '+r.SKU+' so StockChief can forecast it.':'Consider about '+r['Estimated units in 30 days']+' units for '+r.SKU+' over its first 30 days.',
   4:r=>'Count '+r.Shelf+' at '+r.Warehouse+' first. Start with '+r.SKU+'. '+r.Reason+'.',
   21:r=>'Consider a reorder point of '+r['Reorder point']+' units for '+r.SKU+' based on '+r['Sold in 90 days']+' units sold in 90 days.',
   22:r=>'Consider '+r.Supplier+' for '+r['Compared quantity']+' '+r.Unit+' of '+r.SKU+'. Recorded goods total: '+(r['Goods total']||'unknown')+'; delivery days: '+(r['Lead days']??'unknown')+'. '+r.Status+'.',
@@ -176,7 +176,7 @@ const suggestions={
   105:r=>'Check '+r['Credit or return']+' with '+r.Supplier+(r.Amount?' for '+r.Amount:'')+(r.Bill?' against bill '+r.Bill:'')+'. '+r.Status+'.',
   108:r=>'Review bill '+r.Bill+' before '+r['Discount deadline']+' for an early-payment discount.',
   109:r=>r['Week beginning']+' · '+r.Currency+'. '+r.Review,
-  148:r=>'Review replenishment for '+r.SKU+' because its shipped units rose in the last week.'
+  148:r=>r.SKU+' is selling '+(r.Direction==='Faster'?'faster':'slower')+': '+r['Last 14 days']+' units in the last 14 days against about '+r.Expected+' expected. Review its reorder point.'
 };
 
 function firstSuggestion(def,rows){

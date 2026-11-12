@@ -27,7 +27,8 @@ function createPostgresPlanningRouter(database) {
       JOIN locations l ON l.workspace_id=r.workspace_id AND l.id=r.location_id WHERE r.workspace_id=$1 ORDER BY l.name,r.class`,[req.ctx.workspaceId])).rows:[];
     const recommendations=agentTerms?overview.recommendations.filter(r=>r.kind!=='reorder_point'||!r.evidence.locationId):overview.recommendations;
     const reorderRefresh=agentTerms&&permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)&&agent.permits(state.plan,21,'suggest');
-    return res.page('planning/postgres-index',{title:'What happens next',nav:'inventory',room:true,...overview,recommendations,agentTerms,manageRules,rules,safetyPreview,safetyRoutine,safetyRules,reorderRefresh,planLocksReorder:agentTerms&&state.plan==='starter',
+    const demandForecasts=agentTerms&&permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)&&agent.permits(state.plan,144,'suggest');
+    return res.page('planning/postgres-index',{title:'What happens next',nav:'inventory',room:true,...overview,recommendations,agentTerms,manageRules,rules,safetyPreview,safetyRoutine,safetyRules,reorderRefresh,demandForecasts,planLocksReorder:agentTerms&&state.plan==='starter',
       mayAccept:row=>!agentTerms||permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)&&agent.permits(state.plan,row.kind==='safety_stock'?150:row.evidence.locationId?120:21,'draft'),
       canOperate:permissions.can(req.user,permissions.OPERATE),canAdmin:permissions.can(req.user,permissions.ADMIN)});
   }));
@@ -100,6 +101,58 @@ function createPostgresPlanningRouter(database) {
       return res.redirect(303,refreshPath);
     }));
   }
+  const forecast=()=>require('../../forecasting/agent-demand-forecast'),forecastPath='/planning/forecasts';
+  router.get(forecastPath,manageReorders,asyncRoute(async(req,res)=>{
+    const view={title:'Demand forecasts',nav:'inventory'};
+    const agent=require('../../commercial/agent-plan'),state=await agent.accountState(database,req.ctx.workspaceId);
+    if(!agent.usesAgentTerms(state)&&req.accepts('html'))return res.page('autopilot/agent-plan-locked',{...view,tier:'Starter',
+      reviewTerms:agent.permits(state.plan,forecast().JOB,'suggest'),backTo:{href:'/planning',label:'Planning'}});
+    try{
+      const model=await forecast().page(database,req.ctx,{number:req.query.page||1});
+      return res.page('planning/forecasts',{...view,model});
+    }catch(error){
+      if(error.code!=='entitlement_required'||!req.accepts('html'))throw error;
+      res.status(402);
+      return res.page('autopilot/locked',{...view,message:error.message});
+    }
+  }));
+  router.post(forecastPath+'/check',manageReorders,asyncRoute(async(req,res)=>{
+    const result=await forecast().requestCheck(database,req.ctx);
+    req.flash('success',result.queued?'StockChief will refresh every forecast shortly.':'A forecast is already on its way.');
+    return res.redirect(303,forecastPath);
+  }));
+  router.post(forecastPath+'/approve-all',manageReorders,asyncRoute(async(req,res)=>{
+    const result=await forecast().approveAll(database,req.ctx);
+    req.flash('success','Planning now uses '+result.approved+' approved forecast'+(result.approved===1?'':'s')+'.');
+    return res.redirect(303,forecastPath);
+  }));
+  router.post(forecastPath+'/approve',manageReorders,asyncRoute(async(req,res)=>{
+    const result=await forecast().approve(database,req.ctx,req.body.skuId);
+    req.flash('success',result.replayed?'That forecast was already approved.':'Planning now uses this forecast.');
+    return res.redirect(303,forecastPath);
+  }));
+  router.post(forecastPath+'/similar',manageReorders,asyncRoute(async(req,res)=>{
+    const result=await require('../../forecasting/agent-launch-forecast').choose(database,req.ctx,req.body);
+    req.flash('success',result.replayed?'That similar item was already chosen.':result.status==='ASK'?'Cleared. StockChief will look for similar items again.':'Similar item saved. The new product is forecast from it.');
+    return res.redirect(303,forecastPath+'#new-products');
+  }));
+  router.post(forecastPath+'/new/approve',manageReorders,asyncRoute(async(req,res)=>{
+    const result=await require('../../forecasting/agent-launch-forecast').approve(database,req.ctx,req.body.skuId);
+    req.flash('success',result.replayed?'That forecast was already approved.':'Planning now uses this new product forecast.');
+    return res.redirect(303,forecastPath+'#new-products');
+  }));
+  for(const [action,message] of [['approve','Planning now follows this trend.'],['dismiss','Dismissed. Planning goes back to the forecast.']]){
+    router.post(forecastPath+'/trends/:id/'+action,manageReorders,asyncRoute(async(req,res)=>{
+      const result=await require('../../forecasting/agent-demand-trends')[action](database,req.ctx,req.params.id);
+      req.flash('success',result.replayed?'That was already done.':message);
+      return res.redirect(303,forecastPath+'#trends');
+    }));
+  }
+  router.post(forecastPath+'/use',manageReorders,asyncRoute(async(req,res)=>{
+    const result=await forecast().setExcluded(database,req.ctx,req.body);
+    req.flash('success',result.status==='EXCLUDED'?'Planning uses plain sales history for this product.':'The forecast can plan this product again.');
+    return res.redirect(303,forecastPath+'#forecasts');
+  }));
   router.get('/planning/safety-stock',requirePermission(permissions.MANAGE_REPLENISHMENT,'review safety stock'),asyncRoute(async(req,res)=>{
     const view={title:'Review safety stock',nav:'inventory'};
     try{

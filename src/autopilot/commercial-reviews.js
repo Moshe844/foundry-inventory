@@ -55,13 +55,5 @@ module.exports=[
     filterLabel:'Exact SKU, supplier, purchase order or source reference',
     readPage:require('../purchasing/agent-supplier-price-increases').readPage},
   {id:135,key:'supplier-price-updates',label:'Update costs from supplier price lists',readPage:require('../pricing/agent-supplier-price-updates').readPage},
-  {id:148,key:'rising-demand',label:'Find items selling faster',summary:'Shipped units in the last seven days compared with the preceding seven days. Products with no earlier shipments are identified separately.',sql:`
-    WITH demand AS (SELECT l.sku_id,coalesce(sum(l.quantity) FILTER(WHERE h.shipped_at::timestamptz>=now()-interval '7 days'),0) AS current_units,
-      coalesce(sum(l.quantity) FILTER(WHERE h.shipped_at::timestamptz<now()-interval '7 days'),0) AS previous_units FROM sales_shipments h
-      JOIN sales_shipment_lines l ON l.workspace_id=h.workspace_id AND l.shipment_id=h.id WHERE h.workspace_id=$1 AND h.status IN ('SHIPPED','DELIVERED')
-      AND h.shipped_at::timestamptz BETWEEN now()-interval '14 days' AND now() GROUP BY l.sku_id)
-    SELECT s.code AS "SKU",i.name AS "Product",d.previous_units AS "Previous 7 days",d.current_units AS "Last 7 days",
-      CASE WHEN d.previous_units=0 THEN 'New sales' ELSE round(100*(d.current_units-d.previous_units)::numeric/d.previous_units,1)::text||'%' END AS "Increase"
-    FROM demand d JOIN skus s ON s.id=d.sku_id JOIN items i ON i.id=s.item_id WHERE d.current_units>d.previous_units AND ($2='' OR lower(s.code)=lower($2))
-    ORDER BY d.current_units-d.previous_units DESC,s.id`}
+  {id:148,key:'rising-demand',label:'Find items selling faster or slower',filterLabel:'SKU',readPage:require('../forecasting/agent-demand-trends').review}
 ];
