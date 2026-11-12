@@ -26,9 +26,11 @@
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <input type="hidden" name="comparisonId" value="<%= record.id %>">
             <input type="hidden" name="lineId" value="<%= row.lineId %>">
+            <fieldset><legend>Ask the supplier for</legend><label><input type="radio" name="remedy" value="credit" checked required> A credit note</label> <label><input type="radio" name="remedy" value="replacement" required> Replacement goods</label> <label><input type="radio" name="remedy" value="refund" required> A refund</label></fieldset>
             <label>Connected sending mailbox <select name="connectorId" required><option value="">Choose mailbox</option>
               <% claimMailboxes.forEach(box=>{ %><option value="<%= box.id %>"><%= box.display_name %></option><% }) %>
             </select></label>
+            <% if(checkPhotos.length){ %><p>Attach up to three photo copies:</p><% checkPhotos.forEach(photo=>{ %><label><input type="checkbox" name="photoIds" value="<%= photo.id %>"> <%= photo.filename %> <%= photo.caption %></label><% }) %><% } %>
             <label><input type="checkbox" name="shortageConfirmed" value="yes" required> These goods were due in this delivery and I confirmed the shortage.</label>
             <button class="btn" type="submit">Save confirmed shortage</button>
           </form><% } %>
@@ -42,6 +44,8 @@
         <p><%= row.issue %></p>
       </div></section><% }) %>
     <% } %>
+    <h3>Photos of this delivery</h3><% if(!checkPhotos.length){ %><p>No photos yet.</p><% } %><% for(const photo of checkPhotos){ %><p><a href="/autopilot/quality-photos/<%= photo.id %>"><%= photo.filename %></a> · <a href="/autopilot/quality-photos/<%= photo.id %>?copy=email">Email copy</a> <%= photo.caption %></p><% } %>
+    <% if(canAddPhotos){ %><form method="post" enctype="multipart/form-data" action="/autopilot/delivery-checks/<%= record.id %>/photos" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="rm-field"><span>Photo of the boxes as they arrived</span><input type="file" name="photo" accept="image/jpeg,image/png" capture="environment" required></label><label class="rm-field"><span>Photo note</span><input name="caption" maxlength="500"></label><button class="btn">Save photo</button></form><% }else{ %><p><span class="badge">Growth</span> Adding delivery photos requires Growth or above.</p><% } %>
     <p>This comparison is saved with its original rows. Book the physically accepted goods through the purchase order.</p>
     <a class="btn btn--primary" href="/purchasing/orders/<%= record.purchase_order_id %>">Open purchase order and receiving</a>
     <a class="btn" href="/autopilot/delivery-checks?orderId=<%= record.purchase_order_id %>">Compare another delivery</a>

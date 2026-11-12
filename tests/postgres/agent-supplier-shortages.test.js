@@ -13,7 +13,7 @@ async function recorded(f,order,{actual,weight,code,reference=randomUUID()}){
   if(weight!=null)row.secondaryQuantity=weight;
   const comparison=await checks.save(f.db,f.ctx,{orderId:order.purchaseOrderId,observations:[row],
     sourceReference:reference,requestKey:randomUUID(),sourceHash:hash(snapshot),physicallyChecked:'yes'});
-  const input={comparisonId:comparison.id,lineId:order.lineIds[0],connectorId:f.connectorId,shortageConfirmed:'yes'};
+  const input={comparisonId:comparison.id,lineId:order.lineIds[0],connectorId:f.connectorId,shortageConfirmed:'yes',remedy:'credit'};
   return {comparison,reference,input};
 }
 

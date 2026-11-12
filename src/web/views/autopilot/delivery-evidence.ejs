@@ -1,0 +1,24 @@
+<div class="page-head"><div class="titles"><h1>Delivery damage</h1><p><%= receipt.supplier_name %> · <%= receipt.po_number %> · received <%= helpers.dateTime(receipt.received_at) %><% if(receipt.reference){ %> · <%= receipt.reference %><% } %></p></div></div>
+<% if(receipt.note){ %><p>Receiving note: <%= receipt.note %></p><% } %>
+<section class="card section"><h2><%= canAddPhotos&&owner&&!canClaim?'Photo set for your claim':'Photos of this delivery' %></h2>
+<p>Take photos of damaged boxes on your phone. The original is kept unchanged and a smaller copy is prepared for the claim email.<% if(!canClaim&&canAddPhotos&&owner){ %> Supplier claims need Pro or Custom: download the email copies and attach them to your own claim email.<% } %></p>
+<% if(!receiptPhotos.length&&!holdPhotos.length){ %><p>No photos yet.</p><% } %>
+<% for(const photo of [...receiptPhotos,...holdPhotos]){ %><p style="overflow-wrap:anywhere"><a href="/autopilot/quality-photos/<%= photo.id %>"><%= photo.filename %></a> · <a href="/autopilot/quality-photos/<%= photo.id %>?copy=email">Email copy</a> <%= photo.caption %><%= photo.hold_id?' · QC inspection':'' %></p><% } %>
+<% if(canAddPhotos){ %><form method="post" enctype="multipart/form-data" action="/autopilot/delivery-evidence/<%= receipt.id %>/photos" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="rm-field"><span>Photo of the damaged boxes</span><input type="file" name="photo" accept="image/jpeg,image/png" capture="environment" required></label><label class="rm-field"><span>Photo note</span><input name="caption" maxlength="500"></label><button class="btn">Save photo</button></form><% }else{ %><p><span class="badge">Growth</span> Adding delivery photos requires Growth or above. <a href="/settings/billing">Upgrade</a></p><% } %></section>
+<% if(!reports.length){ %><section class="card section"><p>No units were marked damaged on this delivery.</p></section><% } %>
+<% for(const d of reports){ %><section class="card section">
+ <h2><%= d.product %> · <%= d.code %></h2>
+ <p><strong><%= d.quantity %> <%= d.unit_label %> damaged</strong> · reported by <%= d.reporter %> · <%= helpers.dateTime(d.created_at) %>. These units were written off when they were received.</p>
+ <p style="overflow-wrap:anywhere"><%= d.note %></p>
+ <% if(d.claim){ %><p><a href="/autopilot/supplier-claims/<%= d.claim.id %>">Claim <%= d.claim.reference %></a> · <%= d.claim.outcome?'Closed':d.claim.sent?'Sent':'Draft, not sent' %></p>
+ <% }else if(!owner){ %><p>The owner decides whether to claim these units from the supplier.</p>
+ <% }else if(!canClaim){ %><p><span class="badge">Pro</span> Supplier claims require Pro or Custom. <a class="btn" href="/settings/billing">Upgrade</a></p>
+ <% }else if(!claimMailboxes.length){ %><p>Connect a sending mailbox in <a href="/settings/connections">Connections</a> to prepare a claim.</p>
+ <% }else{ %><form method="post" action="/autopilot/supplier-claims/preview" class="form-stack">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="reportId" value="<%= d.id %>">
+  <fieldset><legend>Ask the supplier for</legend><% Object.entries(remedies).forEach(([value,label],i)=>{ %><label><input type="radio" name="remedy" value="<%= value %>" <%= i===0?'checked':'' %> required> <%= label %></label> <% }) %></fieldset>
+  <label class="rm-field"><span>Connected sending mailbox</span><select name="connectorId" required><option value="">Choose mailbox</option><% claimMailboxes.forEach(box=>{ %><option value="<%= box.id %>"><%= box.display_name %></option><% }) %></select></label>
+  <% if(receiptPhotos.length){ %><p>Attach up to three photo copies:</p><% receiptPhotos.forEach(photo=>{ %><label><input type="checkbox" name="photoIds" value="<%= photo.id %>" <%= receiptPhotos.length<=3?'checked':'' %>> <%= photo.filename %> <%= photo.caption %></label><% }) %><% } %>
+  <button class="btn" type="submit">Prepare damage claim for review</button>
+ </form><% } %>
+</section><% } %>

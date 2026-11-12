@@ -910,11 +910,14 @@ function createPostgresCommerceRouter(database,options={}){
       await require('../../accounting/postgres-stock-removal').issue(database,req.ctx,{skuId:source.sku_id,locationId:line.locationId,
         quantity:line.quantity,reasonCode:'damaged',notes:`Arrived damaged on ${detail.order.po_number}`,reference:detail.order.po_number,
         idempotencyKey:`${receiptKey}:damaged:${line.lineId}`});
+      // The staff report stays with the receipt line as supplier-claim evidence.
+      await require('../../purchasing/receipt-damage-reports').record(database,req.ctx,{receiptId:receipt.receiptId,
+        purchaseOrderLineId:line.lineId,quantity:line.quantity,note:trimOrNull(req.body.note),removalKey:`${receiptKey}:damaged:${line.lineId}`});
       damaged+=Number(line.quantity);}
     const units=lines.reduce((sum,line)=>sum+Number(line.quantity),0);
     const places=[...new Set(lines.map((line)=>line.locationId))];
     const placeName=places.length===1?(await database.query('SELECT name FROM locations WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,places[0]])).rows[0]?.name:null;
-    req.flash('success',`${receipt.qualityHoldIds?.length?'QC holds applied. Matching goods are unavailable until physical inspection passes. ':''}${receipt.qualitySuggestionIds?.length?'QC holds suggested to the owner; those goods stay available until the owner decides. ':''}${units} unit${units===1?'':'s'} received.${damaged?` ${damaged} damaged written off.`:''} Stock updated${placeName?` at ${placeName}`:''}.`);
+    req.flash('success',`${receipt.qualityHoldIds?.length?'QC holds applied. Matching goods are unavailable until physical inspection passes. ':''}${receipt.qualitySuggestionIds?.length?'QC holds suggested to the owner; those goods stay available until the owner decides. ':''}${units} unit${units===1?'':'s'} received.${damaged?` ${damaged} damaged written off. Add photos of the damage under Deliveries on this order.`:''} Stock updated${placeName?` at ${placeName}`:''}.`);
     return res.redirect(303,`/purchasing/orders/${req.params.id}`);
   }));
 
