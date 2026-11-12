@@ -739,6 +739,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.warehouse-routing.v1':external((job,database)=>require('../sales/agent-ship-from').onQueued(database,job)),
   'agent.order-splits.v1':external((job,database)=>require('../sales/agent-order-splits').onQueued(database,job)),
   'return.disposition-plan.v1':external((job,database)=>require('./agent-return-disposition').onObservation(database,job.workspaceId,job.payload.assessmentId,job.payload.ownerId)),
+  'return.disposition-apply.v1':external((job,database)=>require('./agent-return-disposition').applyRoutine(database,job.workspaceId,job.payload.assessmentId,job.payload.ownerId)),
   'mail.supplier-terms.v1':external((job,database)=>require('../purchasing/agent-supplier-email-terms').onArrival(database,job.workspaceId,job.payload.messageId)),
   'mail.supplier-rfq-reply.v1':external((job,database)=>require('../purchasing/agent-rfq-competition').captureReply(database,job.workspaceId,job.payload)),
   'agent.rfq-competition.v1':external((job,database)=>require('../purchasing/agent-rfq-competition').run(database,job.workspaceId,job.payload)),
