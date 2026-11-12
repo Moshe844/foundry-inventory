@@ -445,13 +445,16 @@ async function setTarget(db,ctx,input){
     await policy.requireWorkspaceJob(c,ctx.workspaceId,JOB,'draft');
     if(locationId&&!(await c.query('SELECT 1 FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL FOR SHARE',[ctx.workspaceId,locationId])).rowCount)
       throw new ValidationError('Choose an active location from this inventory.');
+    // The page sends one number with the kind of target; callers may name it.
     let percent=null,runouts=null;
     if(input.kind==='runouts'){
-      runouts=Number(input.runouts);
-      if(!/^\d{1,2}(\.\d)?$/.test(String(input.runouts||'').trim())||!(runouts>0)||runouts>52)throw new ValidationError('Choose how many times a year you can run out, from 0.1 to 52.');
+      const raw=String(input.runouts??input.value??'').trim();
+      runouts=Number(raw);
+      if(!/^\d{1,2}(\.\d)?$/.test(raw)||!(runouts>0)||runouts>52)throw new ValidationError('Choose how many times a year you can run out, from 0.1 to 52.');
     }else{
-      percent=Number(input.percent);
-      if(!/^\d{2}(\.\d)?$/.test(String(input.percent||'').trim())||percent<50||percent>99.9)throw new ValidationError('Choose a percentage from 50 to 99.9.');
+      const raw=String(input.percent??input.value??'').trim();
+      percent=Number(raw);
+      if(!/^\d{2}(\.\d)?$/.test(raw)||percent<50||percent>99.9)throw new ValidationError('Choose a percentage from 50 to 99.9.');
     }
     const number=v=>v==null?null:Number(v);
     if(prior&&prior.authorized_by===ctx.actorId&&number(prior.service_level)===percent&&number(prior.runouts_per_year)===runouts)return {saved:false};

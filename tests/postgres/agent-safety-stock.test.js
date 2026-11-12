@@ -69,7 +69,8 @@ test('job 150: safety stock follows forecast error and late deliveries for the o
   const audits = async action => (await db.query('SELECT count(*)::int n FROM security_event_history WHERE workspace_id=$1 AND action=$2', [ws, action])).rows[0].n;
   const target = async (input) => {
     const page = await browser.get(safety.href).expect(200);
-    return browser.post(safety.href + '/targets').type('form').send({ _csrf: csrf(page.text), locationId: '', ...input }).expect(303);
+    const { percent, runouts, ...rest } = input;
+    return browser.post(safety.href + '/targets').type('form').send({ _csrf: csrf(page.text), locationId: '', ...rest, value: percent ?? runouts }).expect(303);
   };
   // The formula, worked from the recorded inputs.
   const expected = e => Math.ceil(Math.round(e.z * Math.sqrt(e.lead * e.spread ** 2 + e.demand ** 2 * e.leadSpread ** 2) * 1e6) / 1e6);
