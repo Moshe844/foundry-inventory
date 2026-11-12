@@ -86,7 +86,9 @@ function createPostgresMailRouter(database,options={}){
     const canReviewOrder=customerOrderMail&&require('../../commercial/agent-plan').permits(plan.plan,52,'draft');
     const customerReturnMail=req.user?.role==='owner'&&message.classification==='customer'&&returnSubject;
     const canReviewReturn=customerReturnMail&&require('../../commercial/agent-plan').usesAgentTerms(plan)&&require('../../commercial/agent-plan').permits(plan.plan,111,'draft');
-    const supplierDetailsMail=req.user?.role==='owner'&&message.classification==='supplier'&&require('../../purchasing/supplier-email-terms-source').isSubject(message.subject);
+    const supplierDetailsMail=req.user?.role==='owner'&&message.classification==='supplier'&&(require('../../purchasing/supplier-email-terms-source').isSubject(message.subject)
+      ||require('../../purchasing/supplier-detail-text').mentions(message.subject,message.body_text)
+      ||(await database.query('SELECT 1 FROM stockchief_runtime.agent_supplier_term_sources WHERE workspace_id=$1 AND message_id=$2',[req.ctx.workspaceId,message.id])).rowCount>0);
     const canReviewSupplierDetails=supplierDetailsMail&&require('../../commercial/agent-plan').usesAgentTerms(plan)&&require('../../commercial/agent-plan').permits(plan.plan,96,'draft');
     const supplierPurchaseMail=req.user?.role==='owner'&&message.classification==='supplier'&&
       Boolean(require('../../purchasing/po-amendment-email-parser').subject(message.subject));
@@ -130,6 +132,8 @@ function createPostgresMailRouter(database,options={}){
   router.post('/mail/:id/supplier-details',requireOwner,asyncRoute(async(req,res)=>{await require('../../purchasing/agent-supplier-email-terms').apply(database,req.ctx,req.params.id,req.body);res.redirect(303,'/mail/'+req.params.id+'/supplier-details');}));
   router.post('/mail/:id/supplier-details-settings',requireOwner,asyncRoute(async(req,res)=>{const message=await mail.get(database,req.ctx.workspaceId,req.params.id);await require('../../purchasing/agent-supplier-email-terms').configure(database,req.ctx,message.supplier_id,{...req.body,skuIds:[].concat(req.body.skuIds||[]),fields:[].concat(req.body.fields||[])});res.redirect(303,'/mail/'+req.params.id+'/supplier-details');}));
   router.post('/mail/:id/supplier-details-rule',requireOwner,asyncRoute(async(req,res)=>{await require('../../purchasing/agent-supplier-email-terms').teach(database,req.ctx,req.params.id,req.body);res.redirect(303,'/mail/'+req.params.id+'/supplier-details');}));
+  router.post('/mail/:id/supplier-details-undo',requireOwner,asyncRoute(async(req,res)=>{await require('../../purchasing/agent-supplier-email-terms').undo(database,req.ctx,req.params.id,req.body);res.redirect(303,'/mail/'+req.params.id+'/supplier-details');}));
+  router.post('/mail/:id/supplier-details-keep',requireOwner,asyncRoute(async(req,res)=>{await require('../../purchasing/agent-supplier-email-terms').dismiss(database,req.ctx,req.params.id,req.body);res.redirect(303,'/mail/'+req.params.id+'/supplier-details');}));
   router.get('/mail/:id/return',requireOwner,asyncRoute(async(req,res)=>res.page('mail/return-review',{title:'Review customer return email',nav:'mail',...(await require('../../sales/agent-customer-return-emails').page(database,req.ctx,req.params.id,req.query.locationId))})));
   router.post('/mail/:id/return',requireOwner,asyncRoute(async(req,res)=>{
     await require('../../sales/agent-customer-return-emails').create(database,req.ctx,req.params.id,req.body);res.redirect(303,'/mail/'+req.params.id+'/return');

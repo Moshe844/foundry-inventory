@@ -750,6 +750,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     const certificate=await require('../autopilot/lot-certificate-evidence').queueMessage(database,job.workspaceId,job.payload.messageId);
     const order=await require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId);
     const filing=await require('../documents/document-filing-scopes').queueMessage(database,job.workspaceId,job.payload.messageId);
+    // Job 96: supplier details can be stated in an attached file.
+    await require('../purchasing/agent-supplier-email-terms').queueMessage(database,job.workspaceId,job.payload.messageId);
     return {...result,...(certificate.queued?{certificate}:{}),...(order.skipped?{}:{order}),...(filing.queued||filing.stopped?{filing}:{})};
   }),
   'mail.supplier-review':external((job,database)=>require('../connections/postgres-document-review').prepare(database,job.workspaceId,job.payload.messageId,{allowTextMessage:true})),

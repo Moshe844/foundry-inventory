@@ -37,6 +37,7 @@ function undoable(p,state){
   return {allowed:Boolean(safe),reason:safe?'Restore the preceding purchase costs':'Purchase costs changed or had no previous value; review their current state'};
  }
  if(p.origin==='warehouse-routing')return {allowed:false,reason:'Undo it on the order until picking starts'};
+ if(p.origin==='supplier-details')return {allowed:false,reason:'Undo it on the supplier email while nothing changed it since'};
  return {allowed:false,reason:'Open the recorded work to review a correction'};
 }
 async function report(db,ctx,{filter='',page=1}={}){
@@ -60,7 +61,7 @@ async function report(db,ctx,{filter='',page=1}={}){
  ), supplier_details AS (
   SELECT 'supplier-details' AS origin,s.message_id AS id,'supplier.email_terms' AS action_type,
    'Updated '||s.changed_count||' supplier fields from '||coalesce(p.name,'a known supplier') AS summary,
-   '{}'::jsonb AS result,s.processed_at AS executed_at,'{}'::jsonb AS payload,false AS undone
+   '{}'::jsonb AS result,s.processed_at AS executed_at,'{}'::jsonb AS payload,s.undone_at IS NOT NULL AS undone
   FROM stockchief_runtime.agent_supplier_term_sources s JOIN suppliers p ON p.workspace_id=s.workspace_id AND p.id=s.supplier_id
   WHERE s.workspace_id=$1 AND s.processed_at>=$2::timestamptz AND s.processed_at<$3::timestamptz AND s.changed_count>0
    AND ($5::text IS NULL OR s.processed_at>=$5::timestamptz) ORDER BY s.processed_at,s.message_id LIMIT $7
