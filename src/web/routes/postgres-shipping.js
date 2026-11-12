@@ -83,7 +83,10 @@ async function shipmentPage(database,workspaceId,shipmentId){
     handling:{mode},ruled,recommended,rules:ruleRows.rows,events:state.events,quoteProblems:state.quoteProblems,
     transactions:transactionRows.rows,providerCapabilities,addressCheck:await require('../../shipping/agent-address-checks').view(database,workspaceId,shipmentId)},
     notices:noticeRows.rows.map((notice)=>({...notice,connectorId:notice.connector_id,errorMessage:notice.error_message,
-      sentAt:notice.sent_at})),noticePolicy:{},mailboxes:mailboxRows.rows};
+      sentAt:notice.sent_at})),noticePolicy:{},mailboxes:mailboxRows.rows,
+    // Job 199: how sure StockChief is about the tracking email waiting to be sent.
+    noticeConfidence:noticeRows.rows.some(n=>n.message_kind==='shipping_notice'&&n.status==='PREPARED')
+      ?(await require('../../shipping/agent-shipping-notices').waiting(database,workspaceId,{shipmentId,limit:1}))[0]?.confidence||null:null};
 }
 
 function createPostgresShippingRouter(database,options={}){

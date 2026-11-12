@@ -223,7 +223,8 @@ async function run(db,workspaceId){
  const watch=account.shadow?'StockChief is watching during its first 14 days and did not send reminders.':autopilot.mode==='OBSERVE'?'StockChief is set to Watch only and did not send reminders.'
   :autopilot.paused||autopilot.suspended?'Automatic work is paused, so StockChief did not send reminders.':await modes.restriction(db,workspaceId,102,false);
  const {calendarDate:today,timeZone}=await require('../lib/business-time').forWorkspace(db,workspaceId),disputed=await has(db,DISPUTES);
- const candidates=(await db.query(`SELECT i.id,i.invoice_number,to_jsonb(r) rule,d.offset_days FROM stockchief_runtime.agent_invoice_reminder_rules r
+ const candidates=(await db.query(`SELECT i.id,i.invoice_number,i.balance_minor::text balance_minor,i.currency,
+   (SELECT cu.name FROM customers cu WHERE cu.workspace_id=i.workspace_id AND cu.id=i.customer_id) customer_name,to_jsonb(r) rule,d.offset_days FROM stockchief_runtime.agent_invoice_reminder_rules r
   JOIN accounting_customer_invoices i ON i.workspace_id=r.workspace_id AND i.customer_id=r.customer_id AND i.currency=r.currency
    AND i.status IN ('OPEN','PARTIALLY_PAID') AND i.balance_minor BETWEEN 1 AND r.maximum_minor AND i.due_date IS NOT NULL
   CROSS JOIN LATERAL(SELECT max(n) AS offset_days FROM unnest(r.days_after_due) n WHERE i.due_date::date+n<=$2::date)d
@@ -238,6 +239,11 @@ async function run(db,workspaceId){
   // Watch: say what would have gone out; nothing is drafted or sent.
   const per=new Map();for(const c of candidates)per.set(c.rule.customer_id,(per.get(c.rule.customer_id)||0)+1);
   for(const [customerId,n] of per)await db.query('UPDATE stockchief_runtime.agent_invoice_reminder_rules SET problem=$3 WHERE workspace_id=$1 AND customer_id=$2',[workspaceId,customerId,watch+' It would have sent '+n+(n===1?' reminder.':' reminders.')]);
+  // Job 198: the first 14 days also go into the shadow-mode report, on plans where reminders go out alone.
+  if(account.shadow&&policy.permits(account.plan,102,'automatic',{trained:true}))for(const c of candidates)
+   await require('../autopilot/shadow-mode').record(db,workspaceId,{job:102,kind:'message',key:'invoice-reminder:'+c.id+':'+c.offset_days,
+    summary:'Remind '+(c.customer_name||'the customer')+' about invoice '+c.invoice_number+' ('+money.format(Number(c.balance_minor),c.currency)+' unpaid)',
+    amountMinor:Number(c.balance_minor),currency:c.currency,evidence:{daysFromDue:c.offset_days},href:'/money/invoices/'+c.id},account);
   result.watched=candidates.length;return result;
  }
  const askFirst=await modes.restriction(db,workspaceId,102,true),quota=await require('../commercial/agent-rule-quota').restriction(db,account);

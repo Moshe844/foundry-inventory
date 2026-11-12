@@ -43,6 +43,7 @@
           <% if (n > 1) { %>
             <small><% var refs = group.members.map(function (m) { var t = String(m.title || (m.item && m.item.title) || ''); var r = t.match(/(?:PO|SO|RMA|BILL|INV|SHP)-[0-9]+/); return r ? r[0] : null; }).filter(Boolean); %><% if (refs.length) { %>The same fix also clears <%= refs.slice(0, 5).join(', ') %><%= refs.length > 5 ? ' and ' + (refs.length - 5) + ' more' : '' %>.<% } else { %>The same fix clears <%= n %> decisions.<% } %></small>
           <% } else if (entry.happened) { %><small><%= entry.happened %></small><% } %>
+          <% if (entry.confidence) { %><small data-confidence="<%= entry.confidence.level %>">How sure: <%= entry.confidence.label %>. <%= entry.confidence.missing && entry.confidence.missing[0] || '' %></small><% } %>
         </span>
         <span class="rm-told__m <%= entry.importance === 'Urgent' ? 'is-paused' : '' %>">
           <% if (n > 1) { %><span class="rm-pillbadge"><%= n %> in one</span> <% } %><%= entry.importance === 'Needs You' ? '' : entry.importance %>

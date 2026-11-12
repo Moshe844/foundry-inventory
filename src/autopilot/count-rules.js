@@ -47,6 +47,15 @@ async function evaluate(client, ctx, payload, supplied) {
   if (!rule || !payload.lines.some(line => line.delta !== 0)) return null;
   const account = await plan.accountState(client, ctx.workspaceId);
   if (!plan.usesAgentTerms(account) || !plan.permits(account.plan,8,'automatic')) return null;
+  if (account.shadow) {
+    // Job 198: StockChief only watches for its first 14 days. It records whether it
+    // would have posted this count under the limit or asked for a recount.
+    const exposure = money.sum(payload.lines.map(line => Math.abs(line.costDeltaMinor || 0)));
+    const priced = !supplied.some(line => String(line.unitCost ?? '').trim()) && !payload.lines.some(line => line.delta && !line.costDeltaMinor);
+    const action = exposure > Number(rule.limit_minor) ? 'recount' : rule.automatic && plan.permits(account.plan,6,'automatic') && priced ? 'post' : null;
+    await require('./shadow-mode').fromCount(client, ctx.workspaceId, account, rule, payload, exposure, action);
+    return null;
+  }
   const state = await require('./postgres-service').getState(client, ctx.workspaceId);
   if (state.paused || state.suspended || state.mode === 'OBSERVE' || account.shadow) return null;
   const exposure = money.sum(payload.lines.map(line => Math.abs(line.costDeltaMinor)));
@@ -59,7 +68,15 @@ async function evaluate(client, ctx, payload, supplied) {
   if(await require('./job-modes').restriction(client,ctx.workspaceId,6,true))return null;
   // A counter cannot bring an adjustment below the ceiling by entering a lower price.
   if (supplied.some(line => String(line.unitCost ?? '').trim()) || payload.lines.some(line => line.delta && !line.costDeltaMinor)) return null;
-  return {...evidence, action:'post'};
+  // Job 199: how sure StockChief is about posting this count. Below the owner's level it asks.
+  const confidence = require('./confidence'), sure = await confidence.forCount(client, ctx.workspaceId, payload, supplied);
+  const unsure = await confidence.stop(client, ctx.workspaceId, sure);
+  if (unsure) {
+    await audit.record(client, ctx, {action:'Count left for a person: StockChief was not sure enough', reference:payload.location?.id || null,
+      after:{level:sure.level, reasons:sure.missing, exposureMinor:exposure, currency:rule.currency}});
+    return {...evidence, action:'review', reason:unsure, confidence:sure};
+  }
+  return {...evidence, action:'post', confidence:sure};
 }
 
 module.exports = {settings, configure, evaluate};

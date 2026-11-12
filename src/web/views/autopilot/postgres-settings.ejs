@@ -6,7 +6,7 @@
 <% if(state.agentTerms){ %><p><a href="/autopilot/job-modes">Set authority by job</a></p><% } %>
 <% if(state.agentTerms){ %><p><% if(['growth','pro','enterprise'].includes(state.plan)){ %><a href="/autopilot/supplier-delivery-chases">Authorize late supplier delivery reminders</a><% }else{ %><span class="badge">Growth</span> Late supplier delivery reminders <a href="/billing">Upgrade</a><% } %></p><% } %>
 <% if(state.agentTerms){ %><p><% if(['growth','pro','enterprise'].includes(state.plan)){ %><a href="/autopilot/supplier-confirmations">Supplier confirmations and ship dates</a><% }else{ %><span class="badge">Growth</span> Supplier confirmations and ship dates <a href="/billing">Upgrade</a><% } %></p><% } %>
-<% if(state.shadowEndsAt){ %><div class="notice">StockChief is watching until <%= new Date(state.shadowEndsAt).toISOString().slice(0,10) %> (UTC). After that, the owner can authorize routine work.</div><% } %>
+<% if(state.shadowEndsAt){ %><div class="notice">StockChief is watching until <%= new Date(state.shadowEndsAt).toISOString().slice(0,10) %> (UTC). After that, the owner can authorize routine work. <a href="/autopilot/shadow">See what it would have done so far</a></div><% }else if(state.agentTerms){ %><p><a href="/autopilot/shadow">What StockChief would have done in its first 14 days</a></p><% } %>
 <% if(state.suspended){ %><div class="notice notice--warn"><div><strong>Automatic work is stopped.</strong><p><%= state.suspendedReason || 'A business check needs attention before automatic work can continue.' %></p></div></div><% } %>
 <% if(state.paused){ %><div class="notice notice--warn"><div><strong>Automatic work is paused.</strong><p><%= state.pausedReason || 'Read-only monitoring continues.' %></p></div>
   <form method="post" action="/autopilot/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary">Resume safely</button></form></div><% } %>
@@ -17,6 +17,12 @@
     <label class="choice"><input type="radio" name="mode" value="SUPERVISED" <%= state.mode==='SUPERVISED'?'checked':'' %>><span><strong>Ask me first</strong><small>Prepare exact work and wait for approval.</small></span></label>
     <label class="choice"><input type="radio" name="mode" value="POLICY_AUTOMATED" <%= state.shadowEndsAt || locals.planGates?.[routineGate]?.enabled===false?'disabled':'' %> <%= state.mode==='POLICY_AUTOMATED'?'checked':'' %>><span><strong>Handle routine work</strong><small>Execute only inside approved limits below.</small></span></label>
     <div class="form-actions"><button class="btn btn--primary" type="submit">Save control level</button></div></form></div></section>
+
+<% if(state.agentTerms&&locals.confidence){ %><section class="card" id="confidence" data-confidence="<%= confidence.minimum %>"><div class="card-head"><div><h2>How sure StockChief must be</h2>
+  <p class="muted">Every order, transfer, count and tracking email shows how sure StockChief is: high, medium or low, with its reasons. When it is unsure, it always asks you.</p></div></div>
+  <div class="card-body"><form method="post" action="/autopilot/confidence" class="grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <% for(const choice of confidence.choices){ %><label class="choice"><input type="radio" name="minimum" value="<%= choice.key %>" <%= confidence.minimum===choice.key?'checked':'' %>><span><strong>Act on its own <%= choice.label.charAt(0).toLowerCase()+choice.label.slice(1) %></strong><small><%= choice.key==='high'?'It asks you when it is only fairly sure.':'It asks you when it is unsure.' %></small></span></label><% } %>
+    <div class="form-actions"><button class="btn btn--primary" type="submit">Save</button></div></form></div></section><% } %>
 
 <% if(locals.user?.role==='owner'||locals.currentUser?.role==='owner'){ %><p><a href="/autopilot/reviews">Agent reviews</a> &middot; <a href="/autopilot/playbooks">Manage scheduled playbooks</a> &middot; <a href="/autopilot/time-saved">Time saved</a></p><% } %>
 <% if(['growth','pro','enterprise'].includes(state.plan)){ %><p><a href="/purchasing/requests">Staff purchase requests</a></p><% } else { %><p>Staff purchase requests require Growth. <a href="/billing">Review plans</a></p><% } %>

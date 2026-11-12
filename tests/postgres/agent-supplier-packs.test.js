@@ -184,7 +184,8 @@ test('a stock issue or sales reservation queues a ready PO before the next catal
   assert.equal((await remaining()).rows[0].n,0);
   for(const tier of ['starter','growth','pro','enterprise']){
     await subscribe(tier);const detail=await browser.get('/autopilot/work/'+id).expect(200);
-    assert.match(detail.text,/Send to supplier/);assert.match(detail.text,/Confidence: high/);
+    // Job 199: the supplier's recorded $2.00 differs from the last order's $1.00, so StockChief is only fairly sure.
+    assert.match(detail.text,/Send to supplier/);assert.match(detail.text,/Confidence: medium/);assert.match(detail.text,/The price differs from your last order \(USD 1 then, USD 2 now\)/);
   }
   const signal=(await db.query("SELECT payload FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='agent.reorder-signal'",[ctx.workspaceId])).rows[0].payload;
   assert.equal((await db.transaction(c=>runtime['agent.reorder-signal']({workspaceId:ctx.workspaceId,payload:signal},c))).prepared,0);
