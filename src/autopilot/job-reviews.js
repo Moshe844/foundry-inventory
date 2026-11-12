@@ -76,7 +76,7 @@ const definitions=[
   require('../sales/recurring-orders').definition,
   require('../actions/financial-visibility').definition,
   ...require('./automation-opportunities').definitions,
-  {id:13,key:'kit-capacity',label:'Buildable kits and missing parts',filterLabel:'Kit SKU',readPage:require('../purchasing/agent-kit-parts').review},
+  {id:13,key:'kit-capacity',label:'Kits you can build now',filterLabel:'Kit SKU',readPage:require('../purchasing/agent-kit-reorders').review},
   require('../forecasting/warehouse-slotting').definition,
   {id:15,key:'monthly-product-classes',label:'Review monthly ABC product classes',filterLabel:'Product code, name or class',readPage:require('../forecasting/monthly-product-classes').review},
   {id:21,key:'reorder-settings',label:'Review reorder settings from local sales',filterLabel:'SKU',readPage:require('../forecasting/location-reorder-rules').review},
@@ -139,7 +139,7 @@ const suggestions={
   118:r=>r.Quantity?'Request '+r.Quantity+' '+r.Unit+' of '+r.SKU+' from '+r.From+' to '+r.To+' while protecting the source target.':r.SKU+' at '+r.To+' · '+r.Review,
   85:r=>'Order '+r.Order+' has '+r['Posted net sales']+' posted net sales and '+r['Net contribution']+' net contribution after checked costs. '+r.Review,
   40:r=>r.Order?'The open recorded goods on '+r.Order+' are '+r['Open recorded goods']+'. Latest ECB reference estimate: '+r['Reference estimate']+'. '+r.Review:r.Review,
-  13:r=>'You can build '+r['Build at one warehouse']+' '+r.Kit+' kits at a single warehouse from available components.',
+  13:r=>require('../purchasing/agent-kit-reorders').suggestion(r),
   162:r=>r['Days of supply']==null?'Check the sales and valuation records for '+r.SKU+'.':'Review '+r.SKU+' with '+r['Days of supply']+' days of stock at its recorded sales rate.',
   126:r=>'Review '+r.Product+'. '+r['What to fix']+'.',
   17:r=>r.SKU+' at '+r.Location+(r['Days since receipt']===null?' has unconfirmed age.':
@@ -178,6 +178,8 @@ const suggestions={
 
 function firstSuggestion(def,rows){
   if(def.id===97)return rows.slice(0,1).map(row=>({Suggestion:row.Suggestion}));
+  // Build counts are answers, so Starter sees every kit and warehouse on the page.
+  if(def.id===13)return rows.slice(0,100).map(row=>({Suggestion:suggestions[13](row)}));
   const describe=suggestions[def.id];
   if(!describe)return [];
   return rows.slice(0,1).map(row=>({Suggestion:describe(row)}));

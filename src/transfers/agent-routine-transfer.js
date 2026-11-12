@@ -93,7 +93,7 @@ function candidate(p, raw, profile, maximum) {
   };
 }
 
-async function choices(db, workspaceId, shortages, policy) {
+async function choices(db, workspaceId, shortages, policy, { protect = null } = {}) {
   const ctx = { workspaceId };
   const ids = [...new Set(shortages.map(row => row.sku_id))];
   const kits = await recipes(db, workspaceId, ids);
@@ -116,7 +116,9 @@ async function choices(db, workspaceId, shortages, policy) {
       const profile = all.get(part.skuId);
       if (!profile) continue;
       const kit = kitParts ? { skuId: raw.sku_id, code: targetProfile.code, target: destination.target, parts: kitParts, part } : null;
-      const donors = (facts.bySku.get(part.skuId) || []).filter(p => p.id !== destination.id && balance.cmp(p.spare, '0') > 0);
+      // A part the source warehouse needs for its own kits is not spare there.
+      const donors = (facts.bySku.get(part.skuId) || []).filter(p => p.id !== destination.id && balance.cmp(p.spare, '0') > 0 &&
+        !(protect && protect(part.skuId, p.id)));
       donors.sort((a, b) => Number(inScope(policy, part.skuId, b.id, destination.id, kit?.skuId)) -
         Number(inScope(policy, part.skuId, a.id, destination.id, kit?.skuId)) || balance.cmp(b.spare, a.spare) || a.id.localeCompare(b.id));
       for (const from of donors) {

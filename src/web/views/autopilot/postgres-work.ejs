@@ -18,7 +18,8 @@
 <header class="aw-head"><p class="aw-kicker"><span class="level-label" data-tone="<%= item.urgency==='immediate'?'urgent':'normal' %>"><%= item.approval_requirement==='NONE'?'Automatic decision':statusWord %></span></p>
   <h1><%= transfer?'Move':'Order' %> <%= helpers.unitCount(action.quantity,action.unit||'unit') %> of <%= action.displayName %></h1>
   <p><%= transfer?'Move '+helpers.unitCount(action.quantity,action.unit||'unit')+' from '+action.sourceLocationName+' to '+action.destinationLocationName+'.':'From '+action.supplierName+'.' %></p>
-  <% if(action.kitCode){ %><p>Stocked component for <%= action.kitCode %>.</p><% } %></header>
+  <% if(action.kitCode){ %><p>Stocked component for <%= action.kitCode %>.</p><% } %>
+  <% if(action.kitDemand?.kits?.length){ %><p>Part for <%= action.kitDemand.kits.map(k=>k.code).join(', ') %>.</p><% } %></header>
 <div class="aw-cols"><div class="aw-main">
   <section class="card aw-card"><h2>Why StockChief suggests this</h2>
     <% if(item.evidenceQuality){ %><p><strong>Confidence: <%= item.evidenceQuality.level %>.</strong> <%= item.evidenceQuality.reason %></p><% } %>
