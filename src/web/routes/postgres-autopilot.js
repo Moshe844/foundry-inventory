@@ -647,6 +647,31 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success','StockChief is checking your product data. The new score appears here in a minute.');
     res.redirect(303,dataHealth.path);
   }));
+  // Job 127: products from a supplier catalog or price list.
+  const supplierCatalogs=require('../../catalog/agent-supplier-catalog'),catalogBack={href:supplierCatalogs.path,label:'Supplier catalogs'};
+  router.get(supplierCatalogs.path,requireAuth,owner,starterAgentPage(127,'draft','Products from a supplier catalog',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/supplier-catalogs',{title:'Products from a supplier catalog',nav:'autopilot',screen:await supplierCatalogs.list(database,req.ctx),
+      backTo:{href:'/autopilot/reviews',label:'Agent reviews'}});
+  },'Growth'));
+  router.post(supplierCatalogs.path,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const file=(req.files||[]).find(f=>f.field==='catalog');
+    const result=await supplierCatalogs.start(database,req.ctx,{buffer:file?.buffer,filename:file?.filename,supplierId:req.body.supplierId,importId:req.body.importId});
+    req.flash('success',result.replayed?'This catalog was already read for this supplier.':'StockChief read the catalog.');
+    res.redirect(303,supplierCatalogs.path+'/'+encodeURIComponent(result.id));
+  }));
+  router.get(supplierCatalogs.path+'/:id',requireAuth,owner,starterAgentPage(127,'draft','Products from a supplier catalog',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/supplier-catalog',{title:'Supplier catalog',nav:'autopilot',
+      screen:await supplierCatalogs.page(database,req.ctx,req.params.id,{page:req.query.page||1,show:String(req.query.show||'')}),backTo:catalogBack});
+  },'Growth'));
+  const catalogSteps={check:'StockChief read the catalog again.',approve:'Approved. StockChief is saving the products.',undo:'The catalog was undone.',cancel:'The catalog is closed.'};
+  for(const step of Object.keys(catalogSteps))router.post(supplierCatalogs.path+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const decisions=Object.fromEntries(Object.entries(req.body).filter(([key])=>/^line_\d+$/.test(key)).map(([key,value])=>[key.slice(5),String(value||'')]));
+    const result=step==='approve'?await supplierCatalogs.approve(database,req.ctx,req.params.id,{decisions,revision:req.body.revision}):await supplierCatalogs[step](database,req.ctx,req.params.id);
+    req.flash('success',step==='undo'&&result.kept?.length?'Undone where possible. '+result.kept[0]:step==='approve'&&!result.ready?'Your answers are saved.':catalogSteps[step]);
+    res.redirect(303,supplierCatalogs.path+'/'+encodeURIComponent(req.params.id));
+  }));
   router.post(catalogFixes.path+'/limits/:kind',requireAuth,owner,asyncRoute(async(req,res)=>{
     const result=await catalogFixes.configure(database,req.ctx,String(req.params.kind).toUpperCase(),req.body);
     req.flash('success',result.stopped?'Every fix of this kind now waits for you.':'Limit saved.');
@@ -1704,6 +1729,7 @@ function createPostgresAutopilotRouter(database,options={}){
       if(req.params.job==='clearance-plan'&&result.mode!=='suggest')result.clearancePlanPath=require('../../pricing/agent-clearance-plans').path;
       if(req.params.job==='slow-stock'&&result.mode!=='suggest')result.slowStockPath=require('../../forecasting/agent-slow-stock-steps').path;
       if(req.params.job==='catalog-fixes'&&result.mode!=='suggest')result.catalogFixesPath=require('../../catalog/agent-catalog-fixes').path;
+      if(req.params.job==='supplier-catalogs'&&result.mode!=='suggest')result.supplierCatalogsPath=require('../../catalog/agent-supplier-catalog').path;
       if(req.params.job==='catalog-health')result.dataHealthPath=require('../../autopilot/data-health').path;
       if(req.params.job==='expiring-lots')result.expiryPath=require('../../operations/agent-expiry-warnings').path;
       if(req.params.job==='recall-audit')result.compliancePath=require('../../reports/agent-compliance-reports').path;

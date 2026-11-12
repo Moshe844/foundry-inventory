@@ -1,0 +1,49 @@
+<% const c=screen.catalog,t=screen.totals,base='/autopilot/supplier-catalogs/'+encodeURIComponent(c.id),open=['WAITING','QUEUED','DONE'].includes(c.status); %>
+<header class="rm-head">
+  <h1 dir="auto"><%= c.source_name %></h1>
+  <p><%= c.supplier_name %> · <span class="badge <%= c.status==='WAITING'||c.status==='COLUMNS'?'badge--warn':c.status==='DONE'?'badge--ok':'badge--info' %>" data-catalog-status="<%= c.status %>"><%= c.label %></span></p>
+</header>
+<% if(screen.reason&&c.status!=='DONE'&&c.status!=='UNDONE'){ %><p class="notice notice--warn"><%= screen.reason %></p><% } %>
+<% if(c.status==='COLUMNS'){ %><section class="card section"><div class="card-body">
+  <p>StockChief has a question about this file before it can sort the lines.</p>
+  <div class="btn-row"><a class="btn btn--primary" href="/imports/<%= encodeURIComponent(c.import_id) %>#import-approval-review">Answer it on the file</a>
+  <form method="post" action="<%= base %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">I answered it. Read again</button></form></div>
+</div></section><% } %>
+<div class="stat-grid" data-catalog-totals>
+  <div class="stat"><span>Lines</span><strong><%= t.lines %></strong></div>
+  <div class="stat"><span>New products</span><strong><%= t.new %></strong></div>
+  <div class="stat"><span>Already in your products</span><strong><%= t.link+t.same %></strong></div>
+  <div class="stat"><span>Waiting for you</span><strong><%= t.waiting %></strong></div>
+  <div class="stat"><span>Saved</span><strong><%= t.done %></strong></div>
+</div>
+<% if(t.creating){ %><p class="notice" data-catalog-creating>StockChief is saving <%= t.creating %> <%= t.creating===1?'line':'lines' %>. This page shows the result when it is done.</p><% } %>
+<nav class="segmented" aria-label="Show lines">
+  <% for(const [key,label] of [['','All'],['UNCLEAR','Needs you'],['NEW','New'],['LINK','Already yours'],['DONE','Saved']]){ %><a class="segmented__item <%= screen.show===key?'is-on':'' %>" href="<%= base %><%= key?'?show='+key:'' %>"><%= label %></a><% } %>
+</nav>
+<% const deciding=c.status==='WAITING'||c.status==='QUEUED'; if(deciding&&t.waiting){ %><form method="post" action="<%= base %>/approve" id="catalog-approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= c.revision %>"></form><% } %>
+<div class="table-scroll"><table class="table table--tight" data-catalog-lines>
+  <thead><tr><th>Line</th><th>Product</th><th>SKU</th><th>Pack</th><th>Cost</th><th>Result</th></tr></thead>
+  <tbody>
+  <% for(const r of screen.rows){ %><tr data-catalog-line="<%= r.row_number %>" data-catalog-kind="<%= r.kind %>" data-catalog-line-status="<%= r.status %>">
+    <td><%= r.row_number %></td>
+    <td dir="auto"><%= r.name||'—' %><% if((r.options||[]).length){ %><small class="muted"> <%= r.options.map(o=>o.value).join(' / ') %></small><% } %></td>
+    <td dir="auto"><%= r.code||'—' %><% if(r.barcode){ %><small class="muted"> <%= r.barcode %></small><% } %></td>
+    <td><%= r.pack?Number(r.pack)+' per '+r.purchase_unit:'—' %></td>
+    <td><%= r.cost||'—' %></td>
+    <td><span class="badge <%= r.status==='DONE'?'badge--ok':r.kind==='UNCLEAR'&&r.status==='PENDING'?'badge--warn':'badge--info' %>"><%= r.status==='DONE'?(r.created_sku_id?'Created':r.kind==='SAME'?'Already linked':'Linked'):r.status==='UNDONE'?'Undone':r.status==='SKIPPED'?'Left out':r.status==='PENDING'?r.kindLabel:'Being saved' %></span>
+      <% if(r.target_code){ %><small><a href="/inventory/<%= encodeURIComponent(r.target_item_id) %>"><%= r.target_code %></a> <%= r.target_name %></small><% } %>
+      <% if(r.reason&&r.status!=='DONE'){ %><small><%= r.reason %></small><% } %>
+      <% if(deciding&&r.status==='PENDING'&&r.kind==='UNCLEAR'){ %><label class="field"><span class="field-label">Your answer for line <%= r.row_number %></span>
+        <select class="select" name="line_<%= r.row_number %>" form="catalog-approve"><option value="">Decide later</option>
+          <% if(r.code&&r.name&&r.cost_minor!==null&&(!r.target_sku_id||/same name/i.test(r.reason||''))){ %><option value="CREATE">Create a new product</option><% } %>
+          <% if(r.target_sku_id){ %><option value="LINK">It is <%= r.target_code %>: link the supplier</option><% } %>
+          <option value="SKIP">Leave it out</option></select></label><% } %>
+    </td></tr><% } %>
+  </tbody></table></div>
+<% if(screen.page>1||screen.more){ const q=screen.show?'&show='+screen.show:''; %><nav class="actions" aria-label="Line pages"><% if(screen.page>1){ %><a href="<%= base %>?page=<%= screen.page-1 %><%= q %>">Previous page</a><% } %> <% if(screen.more){ %><a href="<%= base %>?page=<%= screen.page+1 %><%= q %>">Next page</a><% } %></nav><% } %>
+<div class="btn-row">
+  <% if(deciding&&t.waiting){ %><button class="btn btn--primary" type="submit" form="catalog-approve" data-catalog-approve><%= t.waiting-t.unclear>0?'Approve the product list':'Save my answers' %></button><% } %>
+  <% if(open&&t.done){ %><form method="post" action="<%= base %>/undo"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Undo this catalog</button></form><% } %>
+  <% if(['COLUMNS','WAITING'].includes(c.status)){ %><form method="post" action="<%= base %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Close without saving the rest</button></form><% } %>
+</div>
+<p class="hint">Products you already have keep their own cost and price. A changed supplier price or new terms always wait for you.</p>

@@ -263,6 +263,14 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     req.flash('success','The earlier column mapping was submitted for this preview. Review the updated rows before importing.');
     return res.redirect(303,'/imports/'+req.params.id);
   }));
+  router.post('/imports/:id/columns',asyncRoute(async(req,res)=>{
+    try{
+      const choices=Object.fromEntries(Object.entries(req.body).filter(([key])=>/^column_\d+$/.test(key)).map(([key,value])=>[key.slice(7),String(value||'')]));
+      const result=await require('../../imports/agent-column-mapping').confirm(database,req.ctx,req.params.id,{expectedHash:trimOrNull(req.body.integrityHash),choices});
+      req.flash('success',result.queued?'Your answers are saved. StockChief is checking the rows again.':'Columns confirmed. Nothing is imported until you approve.');
+    }catch(error){if(!(error instanceof ValidationError)&&error.code!=='entitlement_required')throw error;res.status(error.status||400);return renderPreview(req,res,{reviewError:error.message});}
+    return res.redirect(303,'/imports/'+req.params.id+'#import-approval-review');
+  }));
   router.post('/imports/:id/reanalyse',asyncRoute(async(req,res)=>{
     const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);
     if(plan.status!=='READY'||plan.approvalStatus!=='AWAITING_APPROVAL'||req.body.integrityHash!==plan.integrityHash)
@@ -315,7 +323,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
         ...(req.body.confirmImageReading==='yes'?{reviewedRowNumbers:[...new Set([...Object.keys(codeOverrides),...Object.keys(imageCellOverrides)])]}:{}),
         trackingReview:Object.hasOwn(req.body,'tracking_serial')||Object.hasOwn(req.body,'tracking_lot')
           ?Object.fromEntries(['serial','lot'].filter(mode=>Object.hasOwn(req.body,'tracking_'+mode)).map(mode=>[mode,req.body['tracking_'+mode]])):undefined,
-        confirmTrackingChange:req.body.confirmTrackingChange==='yes',
+        confirmTrackingChange:req.body.confirmTrackingChange==='yes',...(req.body.confirmColumns==='yes'?{confirmColumns:true}:{}),
         defaultLocationId:Object.hasOwn(req.body,'defaultLocationId')?trimOrNull(req.body.defaultLocationId):undefined,
         confirmCatalogOnly:Object.hasOwn(req.body,'confirmCatalogOnly')?req.body.confirmCatalogOnly==='yes':undefined,
         confirmWorksheetScope:Object.hasOwn(req.body,'confirmWorksheetScope')?req.body.confirmWorksheetScope==='yes':undefined,

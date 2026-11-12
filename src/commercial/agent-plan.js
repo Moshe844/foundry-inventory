@@ -214,7 +214,7 @@ const actionJobs=new Map([
   ['purchase_order.receive_from_document',43],
   ['catalog.supplier_price_list',135],
   ['sales_order.recurring',67],
-  ['import.supplier_catalog',127],['import.variants',130],
+  ['import.supplier_catalog',127],['import.variants',130],['import.map_columns',133],['onboarding.old_system_migration',190],
   ['kit.replenish_parts',13],
   ['sales_quote.create',73],['sales_quote.accept',75],['customer.check_in',78],['sales_quote.add_companions',79],
   ['planning.safety_stock',150],['planning.location_reorder',120],['planning.reorder_refresh',21],['planning.demand_forecast',144],['planning.launch_forecast',146],['planning.demand_trend',148],['inventory.plan_daily_cycle_count',4],['planning.open_to_buy',26],['inventory.plan_warehouse_slotting',122],

@@ -650,6 +650,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.supplier-price-update.v1':external((job,database)=>require('../pricing/agent-supplier-price-updates').run(job,database)),
   'agent.slow-stock.v1':external((job,database)=>require('../forecasting/agent-slow-stock-steps').run(job,database)),
   'agent.catalog-fixes.v1':external((job,database)=>require('../catalog/agent-catalog-fixes').run(job,database)),
+  'agent.supplier-catalog.v1':external((job,database)=>require('../catalog/agent-supplier-catalog').run(job,database)),
   'agent.data-health.v1':external((job,database)=>require('../autopilot/data-health').run(job,database)),
   'agent.expiry-warnings.v1':external((job,database)=>require('./agent-expiry-warnings').run(job,database)),
   'agent.compliance-reports.v1':external((job,database)=>require('../reports/agent-compliance-reports').run(job,database)),

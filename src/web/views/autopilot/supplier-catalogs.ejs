@@ -1,0 +1,25 @@
+<% const base='/autopilot/supplier-catalogs'; %>
+<header class="rm-head">
+  <h1>Products from a supplier catalog</h1>
+  <p><%= {draft:'StockChief reads a supplier’s catalog or price list and drafts the product list: new products, products you already have, and lines it is not sure about. Nothing is created until you approve.',
+    alone:'StockChief reads a supplier’s catalog or price list, creates the new products and links the ones you already have on its own when every line is exact. Unclear lines wait for you.'}[screen.mode]||'' %>
+    It never changes the cost or price of a product you already have, and every catalog can be undone.</p>
+</header>
+<% if(screen.reason){ %><p class="notice"><%= screen.reason %></p><% } %>
+<section class="card section"><div class="card-body">
+  <h2>Read a catalog</h2>
+  <% if(!screen.suppliers.length){ %><p>Add the supplier first. A new supplier is always added by a person. <a href="/purchasing/suppliers">Suppliers</a></p><% }else{ %>
+  <form method="post" action="<%= base %>" enctype="multipart/form-data" class="stack-form" data-supplier-catalog-upload>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="field"><span class="field-label">Supplier</span><select class="select" name="supplierId" required><% for(const s of screen.suppliers){ %><option value="<%= s.id %>"><%= s.name %></option><% } %></select></label>
+    <label class="field"><span class="field-label">Catalog or price list (CSV, Excel or PDF)</span><input class="input" type="file" name="catalog" required accept=".csv,.tsv,.txt,.xlsx,.xls,.xlsm,.pdf"></label>
+    <button class="btn btn--primary" type="submit">Read this catalog</button>
+  </form><% } %>
+</div></section>
+<h2>Your catalogs</h2>
+<% if(!screen.catalogs.length){ %><p>No supplier catalogs yet.</p><% } %>
+<ul class="rm-list" data-supplier-catalogs>
+<% for(const c of screen.catalogs){ %><li class="list-row"><span><strong><a href="<%= base %>/<%= encodeURIComponent(c.id) %>" dir="auto"><%= c.source_name %></a></strong>
+  <small><%= c.supplier_name %> · <%= c.done %> saved<% if(c.waiting){ %> · <%= c.waiting %> waiting for you<% } %></small></span>
+  <span class="badge <%= c.status==='WAITING'||c.status==='COLUMNS'?'badge--warn':c.status==='DONE'?'badge--ok':'badge--info' %>"><%= c.label %></span></li><% } %>
+</ul>
