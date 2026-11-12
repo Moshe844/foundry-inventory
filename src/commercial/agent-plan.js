@@ -190,7 +190,7 @@ const actionJobs=new Map([
   ['purchasing.plan_supplier_shutdown',147],
   ['purchasing.plan_promotion_stock',145],
   ['catalog.retire_discontinued',132],
-  ['team.write_procedure',178],
+  ['team.write_procedure',178],['team.assign_task',177],
   ['purchasing.plan_container',38],
   ['supplier.email_terms',96],
   ['supplier.claim_benefit',97],
