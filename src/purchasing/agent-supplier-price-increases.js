@@ -96,4 +96,4 @@ async function readPage(db,ctx,{filter,page,adviceOnly}){
   }))};
 }
 
-module.exports={summary,notices,readPage,format};
+module.exports={summary,notices,findings,readPage,format};

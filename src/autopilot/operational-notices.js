@@ -92,9 +92,11 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   // Job 166 needs migration 459 (its notice job number and alert levels).
   const stockAlerts=await require('../db/schema-installed').has(db,'stockchief_runtime.agent_alert_channels');
   const watchRules=await require('./watch-rules').candidates(db);
-  const watched=require('./activity-watches').spec;
-  const watchQueries=Object.entries(watched).filter(([job])=>policy.permits(account.plan,Number(job),'automatic'))
-    .map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('');
+  const watched=[];
+  // Jobs 170 and 171 need migration 473 (their settings and sources).
+  for(const [job,d] of Object.entries(require('./activity-watches').spec))
+    if(policy.permits(account.plan,Number(job),'automatic')&&(!d.ready||await d.ready(db)))watched.push([job,d]);
+  const watchQueries=watched.map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('');
   // Job 87's channel price checks run through the worker (agent-channel-price-checks.js).
   const candidates='SELECT 168 AS job,"Type" AS kind,"Reference" AS ref,link,"Due"::date AS due FROM ('+overdue.sql+') x'+
     (policy.permits(account.plan,50,'suggest')?` UNION ALL SELECT 50,'Stock ready',o.order_number,'/autopilot/reviews/stock-ready-updates',$3::date FROM sales_orders o
@@ -138,7 +140,7 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
     UPDATE stockchief_runtime.agent_operational_notices n SET resolved=true WHERE n.workspace_id=$1 AND NOT n.resolved
       AND NOT EXISTS(SELECT 1 FROM current c WHERE c.job=n.job_id AND c.kind=n.kind AND c.ref=n.reference AND c.link=n.link)`,
   args);
-  // Jobs 166 to 168: record what opened and cleared, and email new alerts.
+  // Jobs 166 to 168 and 170: record what opened and cleared, and email new alerts.
   return require('./agent-alerts').track(db,workspaceId,account);
 }
 
@@ -230,6 +232,9 @@ async function inbox(db,workspaceId,actorId=null){
     if(Number(r.job_id)===50)return {kind:'inventory',grouped:true,importance:'Information',priority:55,title:'Waiting customer orders now have reserved stock',
       happened:r.n+' previously backordered order'+(r.n===1?' is':'s are')+' confirmed.',why:'The order records show a backorder followed by confirmation, with no queued or sent stock-ready update.',
       recommendation:'Review the current reservation and its customer update.',href:'/autopilot/reviews/stock-ready-updates',actionLabel:'Review ready orders',sourceId:'agent-notice-50'};
+    if(Number(r.job_id)===170)return {kind:'inventory',grouped:true,importance:'Important',priority:78,title:'Costs went up or margins fell',
+      happened:r.n+' cost or margin alert'+(r.n===1?'':'s')+'.',why:'StockChief compares each new cost with the one before it, and gross margins (before fees and shipping) with your minimum, through the day.',
+      recommendation:'Review the costs and selling prices. StockChief has not changed any price.',href:require('./cost-alerts').path,actionLabel:'Review cost and margin alerts',sourceId:'agent-notice-170'};
     const watch=require('./activity-watches').spec[r.job_id];
     if(watch)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:watch.label,happened:r.n+' matching stock or price record'+(r.n===1?'':'s')+'.',
       why:watch.summary,recommendation:'Review the matching records.',href:'/autopilot/reviews/'+watch.key,actionLabel:'Review alerts',sourceId:'agent-notice-'+r.job_id};

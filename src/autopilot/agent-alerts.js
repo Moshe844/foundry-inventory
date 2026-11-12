@@ -1,6 +1,6 @@
 'use strict';
 
-// Jobs 166, 167 and 168 deliver their alerts the same way.
+// Jobs 166, 167, 168 and 170 deliver their alerts the same way.
 //
 // The alerts are agent notices: the routine check (operational-notices.refresh,
 // run by the worker) opens, updates and clears them. Every alert is shown in
@@ -36,13 +36,22 @@ const JOBS={
   167:{action:'alert.watch_rule',name:'Watch rules',module:'./watch-rules',
     subject:(n,first)=>n===1?'Watch rule: '+first.split(' (')[0]:n+' watch rule alerts',intro:'Your watch rules found something.'},
   168:{action:'alert.overdue',name:'Late orders, shipments and invoices',module:'./overdue-alerts',
-    subject:(n,first)=>n===1?'Overdue: '+first.split(' (')[0]:n+' overdue orders, shipments or invoices',intro:'StockChief found work that is past its date.'}
+    subject:(n,first)=>n===1?'Overdue: '+first.split(' (')[0]:n+' overdue orders, shipments or invoices',intro:'StockChief found work that is past its date.'},
+  // Needs migration 473.
+  170:{action:'alert.cost_margin',name:'Cost and margin alerts',module:'./cost-alerts',needs473:true,
+    subject:(n,first)=>n===1?first.split(':')[0]:n+' cost and margin alerts',
+    intro:'StockChief found costs that went up or margins under your minimum. Margins are gross margins, before fees and shipping.'}
 };
 const plural=(n,one,many)=>n+' '+(Number(n)===1?one:many);
 const expected=error=>error instanceof DomainError&&[400,402,403,404,409,422].includes(error.status);
 const tx=(db,fn)=>typeof db.transaction==='function'?db.transaction(fn,{isolation:'SERIALIZABLE',retrySafe:true}):fn(db);
 const job=value=>{const id=Number(value);if(!JOBS[id])throw new NotFoundError('That alert is not available.');return id;};
 const pathFor=id=>require(JOBS[id].module).path;
+// The alert jobs this database can record: 170 and later need migration 473.
+async function tracked(db){
+  const later=await installed.has(db,'stockchief_runtime.agent_alert_settings','cost_rise_pct');
+  return Object.keys(JOBS).map(Number).filter(id=>later||!JOBS[id].needs473);
+}
 // The alert job behind a review page, if any.
 const forKey=key=>Object.keys(JOBS).map(Number).find(id=>require(JOBS[id].module).key===key)||null;
 
@@ -77,9 +86,9 @@ async function track(db,workspaceId,account){
         AND n.kind=d.kind AND n.reference=d.reference AND n.link=d.link AND NOT n.resolved) RETURNING job_id`,[workspaceId])).rows;
     const raised=(await c.query(`INSERT INTO ${deliveries}(workspace_id,job_id,kind,reference,link)
       SELECT n.workspace_id,n.job_id,n.kind,n.reference,n.link FROM stockchief_runtime.agent_operational_notices n
-      WHERE n.workspace_id=$1 AND n.job_id IN (166,167,168) AND NOT n.resolved AND NOT EXISTS(SELECT 1 FROM ${deliveries} d
+      WHERE n.workspace_id=$1 AND n.job_id=ANY($2::int[]) AND NOT n.resolved AND NOT EXISTS(SELECT 1 FROM ${deliveries} d
         WHERE d.workspace_id=n.workspace_id AND d.job_id=n.job_id AND d.kind=n.kind AND d.reference=n.reference AND d.link=n.link)
-      ON CONFLICT DO NOTHING RETURNING job_id`,[workspaceId])).rows;
+      ON CONFLICT DO NOTHING RETURNING job_id`,[workspaceId,await tracked(c)])).rows;
     if(raised.length||cleared.length){
       const count=rows=>{const out={};for(const r of rows)out[r.job_id]=(out[r.job_id]||0)+1;return out;};
       const person=await currentOwner(c,workspaceId);
@@ -164,6 +173,7 @@ async function configure(database,ctx,raw,input={}){
   return database.transaction(async c=>{
     await owner(c,ctx);
     await policy.requireWorkspaceJob(c,ctx.workspaceId,id,'suggest');
+    if(!(await tracked(c)).includes(id))throw new ValidationError('These alerts are being upgraded. Try again shortly.');
     const prior=(await c.query(`SELECT * FROM ${channels} WHERE workspace_id=$1 AND job_id=$2 FOR UPDATE`,[ctx.workspaceId,id])).rows[0];
     if(input.revision!=null&&input.revision!==''&&Number(input.revision)!==(prior?.revision||0))
       throw new ValidationError('These alert settings changed. Reload the page to see them.');
@@ -216,7 +226,7 @@ async function sendNow(database,ctx,raw){
 // What the alert page shows about sending.
 async function panel(db,ctx,raw){
   const id=job(raw);
-  if(!await installed.has(db,channels))return null;
+  if(!await installed.has(db,channels)||!(await tracked(db)).includes(id))return null;
   const account=await policy.accountState(db,ctx.workspaceId);
   const setting=(await db.query(`SELECT a.*,m.status AS last_status FROM ${channels} a
     LEFT JOIN customer_communications m ON m.workspace_id=a.workspace_id AND m.id=a.last_communication_id
