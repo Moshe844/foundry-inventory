@@ -644,7 +644,8 @@
     <% } %>
 
     <% if (order.status === 'CANCELLED' && boxes.some(function (box) { return ['PICKING', 'PACKED'].includes(box.status); })) { %>
-      <div class="card-body"><p class="ship-now__warn">This order is cancelled, but a parcel still has a saved label. <a href="/fulfilment/<%= boxes.filter(function (box) { return ['PICKING', 'PACKED'].includes(box.status); })[0].id %>#label">Void the label</a></p></div>
+      <% var savedBox = boxes.filter(function (box) { return ['PICKING', 'PACKED'].includes(box.status); })[0]; %>
+      <div class="card-body"><% if (savedBox.label_status === 'VOID_PENDING') { %><p class="ship-now__wait" data-cancel-void><strong>This order is cancelled.</strong><span>Its unused label is being voided with the carrier, so the postage comes back to your account.</span></p><% } else { %><p class="ship-now__warn">This order is cancelled, but a parcel still has a saved label. <a href="/fulfilment/<%= savedBox.id %>#label">Void the label</a></p><% } %></div>
     <% } else if (locals.shipNow) { %>
       <%- include('ship-now', { sn: shipNow, order: order }) %>
     <% } else if (locals.shipNoAccount) { %>

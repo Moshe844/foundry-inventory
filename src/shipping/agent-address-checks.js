@@ -194,6 +194,7 @@ async function decide(database,ctx,shipmentId,input={}){
 
 // Needs you: parcels whose label is waiting on an address answer.
 async function inbox(db,workspaceId){
+  if(!await installed(db))return [];
   const {rows}=await db.query(`SELECT DISTINCT ON (a.shipment_id) a.id,a.hold_reason,a.checked_at,s.shipment_number,s.sales_order_id,o.order_number
     FROM ${table} a JOIN sales_shipments s ON s.workspace_id=a.workspace_id AND s.id=a.shipment_id
     JOIN sales_orders o ON o.workspace_id=s.workspace_id AND o.id=s.sales_order_id

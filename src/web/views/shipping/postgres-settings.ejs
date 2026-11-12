@@ -108,7 +108,7 @@
 </section>
 
 <section class="ox-card ox-ship__card" id="limits">
-  <div class="ox-ship__card-h"><h2>Postage spending limits <small>optional</small></h2><p>Caps on what can be spent on labels, including batches. Blank means no limit beyond your own approval.</p></div>
+  <div class="ox-ship__card-h"><h2>Postage spending limits <small>optional</small></h2><p>Caps on what can be spent on labels, including batches. Blank means no limit beyond your own approval.<% if (locals.agentRates && agentRates.buysAlone) { %> StockChief buys labels on its own only within these<%= agentRates.plan === 'growth' ? ', and never over $25 a label' : ', and only once a maximum per parcel is set' %>.<% } %></p></div>
   <form method="post" action="/settings/shipping/limits" class="ox-ship__form" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="currency" value="<%= purchaseLimits?.currency||currency %>">
     <div class="ox-ship__grid">
       <label class="ox-ship__field"><span>Maximum per parcel (<%= purchaseLimits?.currency||currency %>)</span><input name="perLabel" inputmode="decimal" value="<%= purchaseLimits?.per_label_minor!=null?fromMinor(purchaseLimits.per_label_minor,purchaseLimits.currency):'' %>" <%= owner?'':'disabled' %>></label>

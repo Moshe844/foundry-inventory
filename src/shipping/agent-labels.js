@@ -7,6 +7,12 @@
 // currency are never compared. Starter sees the suggestion; Growth suggests
 // until the owner approves one or saves the rule; Pro and Custom choose on
 // their own. A person's one tap buys the label at the suggested rate.
+//
+// Job 59: a chosen rate's label is bought through the carrier adapter within
+// the owner's limits: Growth up to $25 a label (or the owner's lower limit),
+// Pro and Custom within the owner's saved $ per label, and any 24-hour limit.
+// Starter prepares each label for one tap. Anything over a limit, under Ask me
+// first, paused or watching waits for that tap instead.
 const policy=require('../commercial/agent-plan');
 const audit=require('../operations/postgres-security-audit');
 const jobs=require('../operations/postgres-job-queue');
@@ -16,7 +22,7 @@ const {allowed}=require('./service-eligibility');
 const {ValidationError,AuthorizationError}=require('../domain/errors');
 const {newId,nowIso}=require('../lib/util');
 
-const CHOOSE=58,KIND='agent.shipping-labels.v1',FRESH_MS=30*60_000,RETRY_MS=60*60_000;
+const CHOOSE=58,BUY=59,KIND='agent.shipping-labels.v1',FRESH_MS=30*60_000,RETRY_MS=60*60_000,ANYWAY=' Approve it to buy it anyway.';
 const runs='stockchief_runtime.agent_label_runs',rules='stockchief_runtime.agent_shipping_rate_rules';
 const LABEL_BUSY=['PURCHASED','PENDING','REVIEW','VOID_PENDING'];
 const shipping=()=>require('./postgres-service');
@@ -77,7 +83,19 @@ async function authority(db,workspaceId){
     if(!hold&&!(await require('../autopilot/postgres-service').getState(db,workspaceId)).canAutomate)
       hold='Routine work is off. Choose Handle routine work in StockChief AI to let it choose rates on its own.';
   }
-  return {account,plan,watch,hold,rule,examples};
+  return {account,plan,watch,hold,rule,examples,labelHold:await labelAuthority(db,workspaceId,account,plan)};
+}
+// Why a chosen label cannot be bought without a person right now, or null.
+async function labelAuthority(db,workspaceId,account,plan){
+  if(!policy.permits(plan,BUY,'automatic'))return 'Approve this label to buy it.';
+  const stop=await policy.stopped(db,workspaceId,account,'shipping.label',true);
+  if(stop)return stop;
+  if(!(await require('../autopilot/postgres-service').getState(db,workspaceId)).canAutomate)
+    return 'Routine work is off. Approve this label, or choose Handle routine work in StockChief AI.';
+  // "Within your $ per label": Growth's plan limit is $25; Pro and Custom use the owner's own.
+  if(plan!=='growth'&&(await require('./postgres-purchase-policy').get(db,workspaceId))?.per_label_minor==null)
+    return 'Set your $ per label in Shipping settings so StockChief can buy labels on its own. Until then, approve each one.';
+  return null;
 }
 // Growth is taught by the saved rule, or by an approved example at least as costly.
 function level(auth,pick){
@@ -130,7 +148,13 @@ async function evaluate(database,workspaceId,shipmentId,{auth,owner,providerReso
   let fingerprint=svc.quoteFingerprint(view),run=await current(database,workspaceId,shipmentId,fingerprint);
   const promised=view.shipment.needed_by||null,baseMode=level(auth,null);
   if(run&&['QUEUED','DECLINED'].includes(run.status))return run;
-  if(run&&['SUGGESTED','CHOSEN'].includes(run.status)&&run.promised_date===promised&&(run.mode==='automatic'||level(auth,run.carrier?{currency:run.currency,amount_minor:run.amount_minor}:null)===run.mode))return run;
+  if(run?.status==='CHOSEN'&&run.promised_date===promised&&auth.labelHold){
+    if(run.label_reason===auth.labelHold)return run;
+    return (await database.query(`UPDATE ${runs} SET label_reason=$3,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND status='CHOSEN' RETURNING *`,[workspaceId,run.id,auth.labelHold])).rows[0]||run;
+  }
+  // A label refused for this rate (over a limit) is tried again hourly, not every cycle.
+  if(run?.status==='CHOSEN'&&run.promised_date===promised&&String(run.label_reason||'').endsWith(ANYWAY)&&Date.now()-Date.parse(run.updated_at)<RETRY_MS)return run;
+  if(run?.status==='SUGGESTED'&&run.promised_date===promised&&level(auth,{currency:run.currency,amount_minor:run.amount_minor})===run.mode)return run;
   if(!promised)return held(database,ctx,view,fingerprint,baseMode,'promise','Add the promised delivery date to the order so StockChief can pick a rate that arrives in time.');
   if(!view.ready)return held(database,ctx,view,fingerprint,baseMode,'parcel',view.blocked.join(' '));
   const fresh=view.rates.some(r=>r.parcel_fingerprint===fingerprint&&Date.now()-Date.parse(r.quoted_at)<=FRESH_MS);
@@ -150,8 +174,27 @@ async function evaluate(database,workspaceId,shipmentId,{auth,owner,providerReso
   if(!pick)return held(database,ctx,view,fingerprint,baseMode,'late',!usable.length?'No current carrier rates came back for this parcel.':
     'No rate arrives by the promised date, '+promised+'.'+(fastest?' The fastest, '+label(fastest)+', arrives '+fastest.arrival+'.':' The carriers gave no delivery estimate.'));
   const mode=level(auth,pick);
-  return save(database,ctx,view,fingerprint,{status:mode==='automatic'?'CHOSEN':'SUGGESTED',mode,pick,
-    labelReason:mode==='automatic'?'Approve this label to buy it.':null});
+  const row=await save(database,ctx,view,fingerprint,{status:mode==='automatic'?'CHOSEN':'SUGGESTED',mode,pick,labelReason:mode==='automatic'?auth.labelHold:null});
+  return row.status==='CHOSEN'&&!auth.labelHold?buyAlone(database,ctx,view,row):row;
+}
+
+// Job 59 alone: the carrier adapter buys the chosen label through the worker.
+// The plan and owner limits are checked here and again just before the carrier.
+async function buyAlone(database,ctx,view,run){
+  let queued;
+  try{queued=await shipping().queueLabelPurchase(database,{...ctx,agentPostageScope:'automatic'},view.shipment.id,run.rate_id,{idempotencyKey:'agent-label:'+run.id});}
+  catch(error){
+    if(!expected(error))throw error;
+    return (await database.query(`UPDATE ${runs} SET label_reason=$3,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND status='CHOSEN' RETURNING *`,
+      [ctx.workspaceId,run.id,error.message+ANYWAY])).rows[0]||run;
+  }
+  return tx(database,async c=>{
+    const row=(await c.query(`UPDATE ${runs} SET status='QUEUED',effect_id=$3,transaction_id=$4,label_reason=NULL,updated_at=now()
+      WHERE workspace_id=$1 AND id=$2 AND status='CHOSEN' RETURNING *`,[ctx.workspaceId,run.id,queued.effectId||null,queued.transactionId||null])).rows[0]||run;
+    await audit.record(c,ctx,{action:'Bought a shipping label within your limits',reference:view.shipment.shipment_number,before:{status:'CHOSEN'},
+      after:{carrier:run.carrier,service:run.service,amountMinor:Number(run.amount_minor),currency:run.currency,arrival:run.arrival_date,promised:run.promised_date,effectId:queued.effectId||null}});
+    return row;
+  });
 }
 
 const CANDIDATES=`SELECT s.id FROM sales_shipments s JOIN sales_orders o ON o.workspace_id=s.workspace_id AND o.id=s.sales_order_id
@@ -250,7 +293,8 @@ async function settings(db,workspaceId){
   const account=await policy.accountState(db,workspaceId),plan=policy.usesAgentTerms(account)?account.plan:null;
   if(!plan)return null;
   const rule=(await db.query(`SELECT enabled FROM ${rules} WHERE workspace_id=$1`,[workspaceId])).rows[0];
-  return {plan,mode:policy.allowance(plan,CHOOSE),ruleEnabled:Boolean(rule?.enabled),canTeach:policy.permits(plan,CHOOSE,'automatic',{trained:true})&&policy.allowance(plan,CHOOSE)==='trained'};
+  return {plan,mode:policy.allowance(plan,CHOOSE),ruleEnabled:Boolean(rule?.enabled),canTeach:policy.permits(plan,CHOOSE,'automatic',{trained:true})&&policy.allowance(plan,CHOOSE)==='trained',
+    buysAlone:policy.permits(plan,BUY,'automatic')};
 }
 
 // What the order's Ship panel shows for this parcel.
