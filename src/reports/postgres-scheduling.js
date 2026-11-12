@@ -35,6 +35,11 @@ async function enqueueDueInTransaction(client,at){const when=new Date(at),local=
  for(const t of initialize)await client.query('UPDATE stockchief_runtime.report_templates SET next_send_at=$2 WHERE id=$1',[t.id,local.next(local.fromTemplate(t),when)?.toISOString()||null]);
  const due=(await client.query("SELECT * FROM stockchief_runtime.report_templates WHERE next_send_at<=$1 AND schedule_frequency<>'none' AND NOT schedule_paused AND deleted_at IS NULL ORDER BY next_send_at,id LIMIT 500 FOR UPDATE SKIP LOCKED",[when.toISOString()])).rows;
  for(const t of due){const key=new Date(t.next_send_at).toISOString(),result=await controls.queue(client,{workspaceId:t.workspace_id},t,key);if(!result.replayed)queued++;await client.query('UPDATE stockchief_runtime.report_templates SET next_send_at=$2 WHERE id=$1',[t.id,local.next(local.fromTemplate(t),when).toISOString()]);}
+  await client.query(`UPDATE stockchief_runtime.report_deliveries d
+    SET status='FAILED',error_message=coalesce(j.last_error->>'message','Report generation failed.'),completed_at=now()
+    FROM stockchief_runtime.jobs j WHERE j.workspace_id=d.workspace_id AND j.kind='report.generate-delivery'
+      AND j.idempotency_key='report-delivery:'||d.template_id||':'||d.schedule_key
+      AND j.payload->>'deliveryId'=d.id AND j.status='DEAD' AND d.status='PENDING' AND d.email_job_id IS NULL`);
   await client.query(`UPDATE stockchief_runtime.report_deliveries d SET
       status=CASE WHEN j.status='COMPLETED' AND EXISTS(SELECT 1 FROM commercial_email_deliveries e WHERE e.job_id=d.email_job_id AND e.provider_id IS NOT NULL AND e.accepted_at IS NOT NULL) THEN 'SENT' ELSE 'FAILED' END,
       provider_message_id=COALESCE((SELECT provider_id FROM commercial_email_deliveries

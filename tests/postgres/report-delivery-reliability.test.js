@@ -59,6 +59,17 @@ test('scheduled reports deliver once per due slot on every plan and hold changed
    }
    await require('../../src/reports/postgres-delivery-controls').change(db,ctx,actor,report.id,{action:'pause',expectedRevision:change==='definition'?Number(report.revision)+1:report.revision});
  }
+ const report=await reports.save(db,ctx,actor,{dataset:'stock',title:'Unusable report',columns:['sku','on_hand']},{schedule});
+ const due=new Date(report.next_send_at);
+ assert.equal((await scheduling.enqueueDue(db,due)).queued,1);
+ const pending=await delivery(report);
+ await db.query(`UPDATE stockchief_runtime.jobs SET status='DEAD',last_error=$3::jsonb
+   WHERE workspace_id=$1 AND kind='report.generate-delivery' AND payload->>'deliveryId'=$2`,
+ [ctx.workspaceId,pending.id,JSON.stringify({message:'Unable to build the report'})]);
+ await scheduling.enqueueDue(db,due);
+ const failed=await delivery(report);
+ assert.equal(failed.status,'FAILED');
+ assert.equal(failed.error_message,'Unable to build the report');
 });
 test('every current report delivery exposes its durable identity in the service and visible review',{timeout:90000},async t=>{
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,reports=require('../../src/reports/postgres-service'),controls=require('../../src/reports/postgres-delivery-controls'),actor={role:'owner',permissions:[],email:f.email};
