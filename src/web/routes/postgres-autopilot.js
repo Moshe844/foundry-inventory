@@ -1385,6 +1385,7 @@ function createPostgresAutopilotRouter(database,options={}){
       if(req.params.job==='combine-draft-orders')result.freightCombine=await require('../../purchasing/agent-freight-combine').screen(database,req.ctx);
       if(req.params.job==='split-draft-orders')result.purchaseSplits=await require('../../purchasing/agent-purchase-splitting').screen(database,req.ctx);
       if(req.params.job==='overdue-customer-orders')result.overdueRule=await require('../../sales/agent-order-checks').rule(database,req.ctx.workspaceId);
+      if(req.params.job==='sales-order-checks'&&result.mode!=='suggest')result.orderCheckSettings=await require('../../sales/agent-order-screening').settings(database,req.ctx);
       return {title:result.label,result,filter:req.query.filter||''};
     },402);
   }));
@@ -1430,6 +1431,11 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/reviews/repeat-loss/shifts',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../autopilot/stock-loss-patterns').save(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/repeat-loss');
+  }));
+  router.post('/autopilot/reviews/sales-order-checks/settings',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../sales/agent-order-screening').saveSettings(database,req.ctx,req.body);
+    req.flash('success','Discount limit saved. New and changed orders are checked against it.');
+    res.redirect(303,'/autopilot/reviews/sales-order-checks');
   }));
   router.post('/autopilot/reviews/overdue-customer-orders/rule',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../sales/agent-order-checks').configure(database,req.ctx,req.body.mode);

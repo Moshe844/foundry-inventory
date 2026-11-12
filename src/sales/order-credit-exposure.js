@@ -69,8 +69,14 @@ async function forOrder(db,ctx,id){
   return row?present(row):null;
 }
 
+// Any open order, used by the automatic order check (job 54).
+async function forAnyOrder(db,ctx,id){
+  const {rows:[row]}=await db.query(exposure("o.id=$2"),[ctx.workspaceId,id]);
+  return row?present(row):null;
+}
+
 const notices=`SELECT 80,'Order credit',order_number,'/orders/'||id,$3::date
   FROM (${exposure("o.status='DRAFT'")}) checks
   WHERE unknown OR foreign_debt OR debt+unbilled>credit_limit_minor`;
 
-module.exports={review,forOrder,notices};
+module.exports={review,forOrder,forAnyOrder,notices};

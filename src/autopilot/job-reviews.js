@@ -148,7 +148,8 @@ const suggestions={
   9:r=>r.SKU+' at '+r.Location+' · '+r.Finding+'. '+r['Suggested next step'],
   86:r=>'Review '+r['Clearance units']+' units of '+r.SKU+' at '+r.Location+' for clearance.',
   58:r=>r.Service?'Consider '+r.Service+' at '+r.Price+' for '+r.Shipment+'. Carrier arrival '+r['Carrier arrival']+'.':r.Shipment+' · '+r.Status+'.',
-  54:r=>'Check order '+r.Order+' for '+r.Customer+'. '+r['Unreserved units']+' unreserved units and '+r['Overdue invoices']+' overdue invoices.',
+  54:r=>'Check order '+r.Order+' for '+r.Customer+'. '+r['Unreserved units']+' unreserved units and '+r['Overdue invoices']+' overdue invoices.'+
+    (r['Problems found']?' Sample check: '+r['Problems found']+' Checking every order on its own needs Growth.':''),
   55:r=>'Review a credit hold for '+r.Order+'. The customer has '+r['Overdue invoices']+' overdue invoices.',
   3:r=>'Check '+r.SKU+' at '+r.Location+'. '+r.Problem+'.',
   64:r=>'Review '+r.Order+' for '+r.Customer+'. '+r['Waiting units']+' units of '+r.SKU+' are still waiting for stock.',

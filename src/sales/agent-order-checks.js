@@ -2,7 +2,6 @@
 const policy=require('../commercial/agent-plan');
 const {ValidationError}=require('../domain/errors');
 const {parse}=require('../shipping/address');
-const money=require('../domain/currency');
 
 // Use the same open receivables as the Money page. Fulfillment posts its
 // journals per order line and legitimately has no journal ID on the header.
@@ -35,7 +34,7 @@ async function assertCanRelease(db,workspaceId,orderId){
     WHERE o.id=$2 AND bill.due_date<$3 LIMIT 1`,[workspaceId,orderId,today]);
   if(due.rowCount)throw new ValidationError('This order is on hold because the customer has an overdue invoice. Review the customer balance before releasing the order.');
 }
-async function check(db,ctx,{filter,page,today},overdueOnly=false){
+async function check(db,ctx,{filter,page,today,adviceOnly},overdueOnly=false){
   const {rows}=await db.query(`WITH bills AS (${unpaid}),
     orders AS (SELECT o.*,c.name FROM sales_orders o JOIN customers c ON c.id=o.customer_id AND c.workspace_id=o.workspace_id
       WHERE o.workspace_id=$1 AND o.status IN ('DRAFT','CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
@@ -44,7 +43,8 @@ async function check(db,ctx,{filter,page,today},overdueOnly=false){
       ORDER BY o.needed_by NULLS LAST,o.order_date,o.id LIMIT 51 OFFSET $5)
     SELECT o.id,o.order_number,o.name,o.delivery_method,o.ship_to_address,o.status,o.currency,
       a.late,a.oldest,a.same_currency_debt,a.other_currency,t.credit_limit_minor,books.base_currency,
-      p.no_price,p.unreserved FROM orders o
+      p.no_price,p.unreserved,ck.status check_status,ck.findings check_findings,ck.order_version=o.version check_current FROM orders o
+    LEFT JOIN stockchief_runtime.agent_order_checks ck ON ck.workspace_id=o.workspace_id AND ck.sales_order_id=o.id
     LEFT JOIN accounting_settings books ON books.workspace_id=o.workspace_id AND books.enabled=1
     LEFT JOIN LATERAL (SELECT credit_limit_minor FROM customer_payment_terms t WHERE t.workspace_id=o.workspace_id
       AND (t.customer_id=o.customer_id OR t.customer_id IS NULL) ORDER BY (t.customer_id IS NOT NULL) DESC LIMIT 1)t ON true
@@ -59,16 +59,22 @@ async function check(db,ctx,{filter,page,today},overdueOnly=false){
         WHERE k.workspace_id=l.workspace_id AND k.sales_order_line_id=l.id) kits ON true
       WHERE l.workspace_id=o.workspace_id AND l.sales_order_id=o.id)p
     ORDER BY o.needed_by NULLS LAST,o.order_date,o.id`,[ctx.workspaceId,filter,today,overdueOnly,(page-1)*50]);
-  return {rows:rows.slice(0,50).map(r=>{
-    const shared={Order:r.order_number,Customer:r.name,'Overdue invoices':Number(r.late),'Oldest due date':r.oldest,link:'/orders/'+r.id};
-    if(overdueOnly)return shared;
-    return {...shared,'Unreserved units':Number(r.unreserved||0),'Missing line prices':Number(r.no_price),
+  const screening=require('./agent-order-screening');
+  // Starter's one sample check runs every check on the first order shown.
+  const sample=adviceOnly&&!overdueOnly&&rows[0]?(await screening.evaluate(db,ctx,rows[0].id))?.findings:null;
+  return {rows:rows.slice(0,50).map((r,index)=>{
+    const shared={Order:r.order_number,Customer:r.name,'Overdue invoices':Number(r.late),link:'/orders/'+r.id};
+    if(overdueOnly)return {...shared,'Oldest due date':r.oldest};
+    // Kept to the columns a person acts on, so the table fits beside the menu.
+    return {...shared,'Automatic check':r.check_status==null?'Not checked yet':r.check_status==='CLEAR'?'No problems found':
+        screening.summary(r.check_findings)+(r.check_current?'':' before the latest change'),
+      ...(index===0&&sample?{'Problems found':sample.length?screening.describe(sample):'No stock, credit, address or price problems.'}:{}),
+      'Unreserved units':Number(r.unreserved||0),'Missing line prices':Number(r.no_price),
       'Delivery address':r.delivery_method==='PICKUP'?'Pickup':parse(r.ship_to_address).complete?'Complete':'Needs review',
       'Credit limit check':r.credit_limit_minor==null?'No saved limit':r.base_currency!==r.currency||r.other_currency?'Currency conversion needed':
-        Number(r.same_currency_debt)>Number(r.credit_limit_minor)?'Outstanding invoices exceed limit':'Existing invoices within limit',
-      'Outstanding in order currency':money.format(r.same_currency_debt,r.currency)};
+        Number(r.same_currency_debt)>Number(r.credit_limit_minor)?'Outstanding invoices exceed limit':'Existing invoices within limit'};
   }),more:rows.length>50,summary:overdueOnly?'Open orders from customers with an unpaid invoice past its due date. Settled invoices clear automatically.':
-    'Checks current reservations, line prices, delivery address, overdue invoices and recorded credit limits. Draft orders have not yet reserved stock.'};
+    'Checks current reservations, line prices, delivery address, overdue invoices and recorded credit limits. Draft orders have not yet reserved stock. On Growth and above, the worker also checks each new or changed order for stock, credit, address and price problems and flags them on the order and in Needs you.'};
 }
 module.exports={rule,configure,assertCanRelease,definitions:[
   {id:54,key:'sales-order-checks',label:'Check open customer orders',readPage:check},

@@ -646,6 +646,8 @@ async function createSalesOrderInTransaction(client, rawContext, input, {quotedC
     await event(client, 'sales_order_events', null, { workspaceId: ctx.workspaceId, recordId: id,
       type: 'created', detail: { lineCount: lineIds.length }, actorId: ctx.actorId,
       key: `${input.idempotencyKey}:event`, at });
+    // Every new order is checked by the worker once it is committed (job 54).
+    await require('../sales/agent-order-screening').queue(client,ctx,id,'created');
     const result = { salesOrderId: id, orderNumber, status: 'DRAFT', lineIds,pricing:{subtotalMinor:quote.subtotalMinor,discountMinor:quote.discountMinor,taxMinor:quote.taxMinor,totalMinor:quote.totalMinor,currency:quote.currency} };
     await completeOperation(client, operation, result);
     return { ...result, replayed: false };
@@ -670,6 +672,7 @@ async function replaceDraftContents(client,ctx,id,order,input,eventType,eventKey
   await promotions.saveQuote(client,ctx,id,quote,lineIds);
   await require('../domain/postgres-kit-service').captureOrder(client,ctx,id);
   await event(client,'sales_order_events',null,{workspaceId:ctx.workspaceId,recordId:id,type:eventType,detail:{previousVersion:order.version},actorId:ctx.actorId,key:eventKey+':'+id+':'+order.version,at:nowIso()});
+  await require('../sales/agent-order-screening').queue(client,ctx,id,'changed');
   return quote;
 }
 
@@ -747,6 +750,7 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
         [salesOrderId,ctx.workspaceId,status,at]);
       await event(client,'sales_order_events',null,{workspaceId:ctx.workspaceId,recordId:salesOrderId,type:'confirmed',
         detail:{status,...arrived},actorId:ctx.actorId,key:input.idempotencyKey+':event',at});
+      await require('../sales/agent-order-screening').queue(client,ctx,salesOrderId,'confirmed');
       await completeOperation(client,operation,result);
       return {...result,replayed:false};
     }
@@ -816,6 +820,7 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
     const result = { salesOrderId, status, allocations,kitAllocations:kitReservations.allocations, shortage: short };
     // An order still without a ship-from warehouse gets one chosen by the owner's routing rules (job 121).
     await require('../sales/agent-ship-from').queueAfterConfirmation(client,ctx,order,input.idempotencyKey);
+    await require('../sales/agent-order-screening').queue(client,ctx,salesOrderId,'confirmed');
     await completeOperation(client, operation, result);
     if(Object.hasOwn(lines.rows[0]||{},'direct_committed_quantity'))
       await require('../purchasing/direct-shipment-routines').queueForOrder(client,ctx.workspaceId,salesOrderId);

@@ -1257,6 +1257,8 @@ function createPostgresCommerceRouter(database,options={}){
     const shipFromOpen=shipFrom().eligible(page.order)&&!page.order.totals.fulfilled&&!(page.shipments||[]).some(s=>s.status!=='CANCELLED');
     const shipFromReview=plans.usesAgentTerms(agentState)&&permissions.can(req.user,permissions.OPERATE)&&(shipFromOpen||shipFromApplied)
       ?{available:plans.permits(agentState.plan,121,'draft'),applied:Boolean(shipFromApplied)}:null;
+    const orderScreening=['FULFILLED','CANCELLED'].includes(page.order.status)?null
+      :await require('../../sales/agent-order-screening').forOrderPage(database,req.ctx,page.order.id,agentState);
     const bankDetails=await require('../../sales/postgres-bank-transfer-details').get(database,req.ctx.workspaceId);
     const shippingAccounts=page.order.delivery_method==='SHIP'?await require('../../shipping/postgres-accounts').describeAll(database,req.ctx.workspaceId):[];
     const shippingReady=shippingAccounts.length>0;
@@ -1276,7 +1278,7 @@ function createPostgresCommerceRouter(database,options={}){
     return res.page('sales/order',{canEditLocation,shipConnectHref,shipNeeds,shipNoAccount:Boolean(openParcel&&!shippingReady),depositRefundKey:newId('deposit-refund'),shippingReady,shipNow,shippingAccountNames:shippingAccounts.map(a=>a.providerName),shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       canRecordPayments:permissions.can(req.user,permissions.RECORD_PAYMENTS),canEdit:permissions.can(req.user,permissions.OPERATE),title:`${page.order.order_number} · ${page.order.customer.name}`,nav:'sales',room:false,
       suppressBack:true,screenGuide:null,story:null,evidenceTrace:null,order:page.order,shortButAvailable:0,postgresPlacement:true,
-      shipFromReview,orderCredit,orderCreditDetailed:plans.permits(agentState.plan,80,'automatic'),
+      shipFromReview,orderCredit,orderCreditDetailed:plans.permits(agentState.plan,80,'automatic'),orderScreening,
       agentOrderChecks:req.user.role==='owner'&&plans.usesAgentTerms(agentState),
       shortageDetails:[],cameFromEmail:null,goneWord:require('../../sales/order-status').handoff(page.order.delivery_method),
       accounting:page.accounting,money:page.money,orderNext:null,openSection:['fulfilment','money'].includes(req.query.open)?req.query.open:null,

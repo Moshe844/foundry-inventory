@@ -44,6 +44,26 @@
 <% if(locals.postgresPlacement){ %><%- include('../partials/filed-documents-link',{documentTargetKind:'sales_order',documentTargetId:order.id}) %><% } %>
 <div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= order.order_number %></span></div>
 <% if(locals.agentOrderChecks){ %><nav aria-label="Order checks"><a href="/autopilot/reviews/order-credit-limits?filter=<%= encodeURIComponent(order.order_number) %>">Check customer credit</a> · <a href="/autopilot/reviews/order-price-exceptions?filter=<%= encodeURIComponent(order.order_number) %>">Check prices and discounts</a></nav><% } %>
+<% if(locals.orderScreening){ const screening=locals.orderScreening,checked=screening.result; %>
+  <section class="card card-body" id="order-checks" aria-label="Order checks">
+    <h2>Order checks</h2>
+    <% if(!screening.automatic){ %>
+      <p>StockChief can check this order for stock, credit, address and price problems. <a href="<%= screening.review %>?filter=<%= encodeURIComponent(order.order_number) %>">See a sample check</a></p>
+      <p class="t-muted">Checking every order on its own needs Growth. <a href="/billing">Upgrade</a></p>
+    <% }else if(!checked){ %>
+      <p class="t-muted">Not checked yet. StockChief checks each new or changed order for stock, credit, address and price problems.</p>
+    <% }else if(!checked.findings.length){ %>
+      <p>No stock, credit, address or price problems found<%= checked.current ? '' : ' before the latest change' %>.</p>
+    <% }else{ %>
+      <div class="notice notice--warn"><div>
+        <strong><%= checked.findings.length === 1 ? '1 problem needs a person' : checked.findings.length + ' problems need a person' %><%= checked.current ? '' : ' (checked before the latest change)' %></strong>
+        <ul><% checked.findings.forEach(function(finding){ %><li><strong><%= finding.label %>:</strong> <%= finding.problem %></li><% }) %></ul>
+        <span class="t-xs t-muted">StockChief flags problems only. It does not change or cancel the order.</span>
+      </div></div>
+    <% } %>
+    <% if(checked){ %><p class="t-xs t-muted">Checked <time data-local-time datetime="<%= new Date(checked.checkedAt).toISOString() %>"><%= helpers.dateTime(new Date(checked.checkedAt).toISOString()) %></time></p><% } %>
+  </section>
+<% } %>
 <% if(locals.orderCredit){ %>
   <% const credit=locals.orderCredit; %>
   <section class="card card-body" aria-label="Customer credit check">
