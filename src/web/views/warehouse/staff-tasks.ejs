@@ -1,0 +1,48 @@
+<% const when=v=>helpers.dateTime(v),window=t=>Math.max(1,Math.round((new Date(t.due_at)-new Date(t.created_at))/3600000)); %>
+<div class="page-head"><div class="titles"><h1>Staff tasks</h1>
+<p>Picks, put-aways, delivery checks, stock moves and counts for your team. Each task shows on the person’s phone and is checked off only when its own record shows the work is done.</p></div></div>
+<% if(held.why){ %><p class="notice notice--info"><%= held.why %></p>
+<% }else if(rule?.enabled&&held.draft){ %><p class="notice notice--info"><%= held.draft %></p>
+<% }else if(rule?.enabled){ %><p class="notice notice--info">StockChief hands out waiting work on its own, within your limits below.</p><% } %>
+<% if(rule?.enabled&&rule.last_issue){ %><p class="notice notice--warn"><%= rule.last_issue %></p><% } %>
+
+<% if(drafts.length){ %><section class="card section" id="drafts"><h2>Waiting for your approval</h2>
+<p class="cell-sub">StockChief chose someone who can do each piece of work and reach its warehouse. Nothing reaches their phone until you approve.</p>
+<ul class="rm-list"><% drafts.forEach(t=>{ %><li class="list-row"><span><a href="<%= t.href %>"><%= t.title %></a><small><%= t.person %> · due <%= window(t) %> hour<%= window(t)===1?'':'s' %> after you approve</small></span>
+<form method="post" action="/warehouse/staff-tasks/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="ids" value="<%= t.id %>"><button class="btn btn--sm">Approve</button></form>
+<form method="post" action="/warehouse/staff-tasks/<%= t.id %>/withdraw"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= t.revision %>"><button class="btn btn--sm btn--ghost">Decline</button></form></li><% }) %></ul>
+<form method="post" action="/warehouse/staff-tasks/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="all" value="yes"><button class="btn btn--primary">Approve all <%= drafts.length %></button></form>
+</section><% } %>
+
+<section class="card section" id="open"><h2>Open tasks</h2>
+<% if(!open.length){ %><p class="cell-sub">No open tasks.</p><% }else{ %><ul class="rm-list"><% open.forEach(t=>{ %><li class="list-row"><span><a href="<%= t.href %>"><%= t.title %></a>
+<small><%= t.person %> · due <%= when(t.due_at) %><%= t.automatic?' · given by StockChief':'' %></small></span>
+<% if(t.late){ %><span class="badge badge--danger">Late</span><% } %>
+<form method="post" action="/warehouse/staff-tasks/<%= t.id %>/withdraw"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= t.revision %>"><button class="btn btn--sm btn--ghost">Withdraw</button></form></li><% }) %></ul><% } %>
+</section>
+
+<section class="card section" id="waiting"><h2>Work waiting for someone</h2>
+<% if(!waiting.length){ %><p class="cell-sub">No pick waves, put-aways, held deliveries or bin moves are waiting.</p><% }else{ %>
+<% waiting.forEach((w,i)=>{ %><form method="post" action="/warehouse/staff-tasks" class="form-stack">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= requestKey+':'+i %>"><input type="hidden" name="kind" value="<%= w.kind %>"><input type="hidden" name="sourceId" value="<%= w.source_id %>">
+<p><a href="<%= w.href %>"><%= w.title %></a></p>
+<% if(!w.team.length){ %><p class="cell-sub">No team member can do this work and reach its warehouse. Check their permissions in Team settings.</p><% }else{ %>
+<label class="rm-field"><span>Give to</span><select name="assigneeId"><% w.team.forEach(p=>{ %><option value="<%= p.id %>" <%= w.suggested?.id===p.id?'selected':'' %>><%= p.name %> · <%= p.open %> open</option><% }) %></select></label>
+<label class="rm-field"><span>Due in hours</span><input name="dueHours" type="number" min="1" max="168" inputmode="numeric" value="<%= rule?.due_hours||24 %>"></label>
+<button class="btn">Assign</button><% } %></form><% }) %><% } %>
+<p class="cell-sub">Counts go to the counter you choose. <a href="/autopilot/reviews/staff-count-lists">Assign or schedule a count</a></p>
+</section>
+
+<section class="card section" id="limits"><h2>Your limits</h2>
+<p class="cell-sub"><%= automatic?'StockChief hands out the kinds of work you tick, on its own, to the person with the fewest open tasks.':'StockChief drafts each assignment for the kinds of work you tick, and you approve it.' %> This counts as one saved rule.</p>
+<form method="post" action="/warehouse/staff-tasks/limits" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule?.revision||0 %>">
+<fieldset><legend>Work StockChief may hand out</legend><% Object.entries(kinds).forEach(([k,s])=>{ %><label class="checkbox"><input type="checkbox" name="kinds" value="<%= k %>" <%= !rule||rule.kinds.includes(k)?'checked':'' %>> <%= s.plural %></label><% }) %></fieldset>
+<label class="rm-field"><span>Staff have this many hours</span><input name="dueHours" type="number" min="1" max="168" inputmode="numeric" value="<%= rule?.due_hours||24 %>" required></label>
+<label class="rm-field"><span>Most open tasks per person</span><input name="maxOpen" type="number" min="1" max="50" inputmode="numeric" value="<%= rule?.max_open||5 %>" required></label>
+<button class="btn btn--primary"><%= rule?.enabled?'Save limits':'Start handing out work' %></button></form>
+<% if(rule?.enabled){ %><form method="post" action="/warehouse/staff-tasks/limits"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule.revision %>"><button class="btn btn--ghost" name="stop" value="yes">Stop handing out work</button></form><% } %>
+<p class="cell-sub"><a href="/autopilot/job-modes">Choose Watch only or Ask me first for this job</a></p>
+</section>
+
+<% if(done.length){ %><section class="card section" id="done"><h2>Done</h2><ul class="rm-list"><% done.forEach(t=>{ %><li class="list-row"><span><%= t.title %>
+<small><%= t.person %> · <%= t.done %><%= t.finisher&&t.finisher!==t.person?' by '+t.finisher:'' %> · <%= when(t.done_at) %><%= t.overdue_at?' · late':'' %></small></span></li><% }) %></ul></section><% } %>

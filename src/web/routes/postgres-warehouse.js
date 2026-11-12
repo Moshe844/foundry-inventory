@@ -10,6 +10,30 @@ function createPostgresWarehouseRouter(database){
   const router=express.Router();
   router.use('/warehouse',requireAuth);
   const corrections=require('../../warehouse/agent-bin-corrections');
+  // Job 177: staff tasks. The owner hands out and checks work; staff see their own.
+  const staffTasks=require('../../operations/agent-staff-tasks');
+  router.get('/warehouse/staff-tasks',asyncRoute(async(req,res)=>{
+    if(req.user.role!=='owner')return res.render('warehouse/my-tasks',await staffTasks.mine(database,req.ctx));
+    // An account still on its older terms sees the plan card; Agent plans below Growth get the lock.
+    const policy=require('../../commercial/agent-plan'),state=await policy.accountState(database,req.ctx.workspaceId);
+    if(!policy.usesAgentTerms(state))return res.page('autopilot/agent-plan-locked',{title:'Staff tasks',nav:'warehouse',tier:'Growth',reviewTerms:policy.permits(state.plan,staffTasks.JOB,'draft')});
+    try{return res.page('warehouse/staff-tasks',{title:'Staff tasks',nav:'warehouse',requestKey:newId('staff-task'),...await staffTasks.page(database,req.ctx)});}
+    catch(error){if(error.code!=='entitlement_required')throw error;res.status(402);return res.page('autopilot/locked',{title:'Staff tasks',nav:'warehouse',message:error.message});}
+  }));
+  router.post('/warehouse/staff-tasks',requireOwner,asyncRoute(async(req,res)=>{
+    const made=await staffTasks.assign(database,req.ctx,req.body);req.flash('success',made.replayed?'That task was already assigned.':'Task assigned. It shows on their phone.');res.redirect(303,staffTasks.path+'#open');
+  }));
+  router.post('/warehouse/staff-tasks/limits',requireOwner,asyncRoute(async(req,res)=>{
+    const saved=await staffTasks.saveRule(database,req.ctx,req.body);req.flash('success',saved.stopped?'StockChief stopped handing out work.':saved.unchanged?'Nothing changed.':'Limits saved.');res.redirect(303,staffTasks.path+'#limits');
+  }));
+  router.post('/warehouse/staff-tasks/approve',requireOwner,asyncRoute(async(req,res)=>{
+    const done=await staffTasks.approve(database,req.ctx,req.body);
+    req.flash(done.approved?'success':'error',(done.approved===1?'1 task approved.':done.approved+' tasks approved.')+(done.closed?' '+done.closed+(done.closed===1?' no longer fit and was closed.':' no longer fit and were closed.'):''));
+    res.redirect(303,staffTasks.path+'#open');
+  }));
+  router.post('/warehouse/staff-tasks/:id/withdraw',requireOwner,asyncRoute(async(req,res)=>{
+    await staffTasks.withdraw(database,req.ctx,req.params.id,req.body);req.flash('success','Task withdrawn. The work itself is unchanged.');res.redirect(303,staffTasks.path);
+  }));
   router.get('/warehouse/bin-corrections',requirePermission(permissions.REQUEST_TRANSFER,'correct stock bins'),asyncRoute(async(req,res)=>{
     res.page('warehouse/bin-correction',{title:'Correct a stock bin',nav:'warehouse',...await corrections.page(database,req.ctx,null,req.query)});
   }));
