@@ -35,6 +35,28 @@
   <% if(label.route){ %><form method="post" action="/returns/<%= customerReturn.id %>/return-label/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="remove" value="yes"><button class="rm-btn" type="submit">Remove the return label rule</button></form><% } %>
  </div><% } %>
 </section>
+<% if(typeof returnCheck!=='undefined'&&returnCheck&&!returnCheck.locked&&(customerReturn.status==='RECEIVED'||returnCheck.current)){ const check=returnCheck; %>
+<section class="section" id="return-check"><div class="section-head"><h2>Check the returned goods</h2></div>
+ <% if(check.form){ %>
+  <p class="rm-sub">Record the condition of each product. Good goods go back where they were sold from<%= check.alone&&check.limit?', on their own up to '+check.limit+' a return':', once the owner confirms' %>. Anything else waits for a decision.</p>
+  <form method="post" action="/returns/<%= customerReturn.id %>/check" class="stack-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="sourceHash" value="<%= check.form.sourceHash %>">
+   <% check.form.lines.forEach(function(l,i){ %><fieldset><legend><%= l.name %> · <%= l.code %> · <%= helpers.unitCount(l.quantity_received,'unit') %></legend><input type="hidden" name="lines[<%= i %>][lineId]" value="<%= l.id %>">
+    <label>Condition of <%= l.code %><select name="lines[<%= i %>][conditionCode]" aria-label="Condition of <%= l.code %>" required><% check.conditions.forEach(function(c){ %><option value="<%= c[0] %>"><%= c[1] %></option><% }) %></select></label>
+    <label>What you checked on <%= l.code %><input name="lines[<%= i %>][note]" aria-label="What you checked on <%= l.code %>" maxlength="500" required></label></fieldset><% }) %>
+   <label><input type="checkbox" name="confirmed" value="yes" required> I checked every unit listed here.</label><button class="rm-btn" type="submit">Save the check</button></form>
+ <% } else if(check.problem){ %><p class="notice"><%= check.problem %></p>
+ <% } else if(check.current){ const a=check.current; %>
+  <% (a.proposal?a.proposal.lines:a.observations).forEach(function(d){ var place=check.places.find(function(p){return p.id===d.destinationId}); %><p><strong><%= d.sku %> · <%= d.quantity %> · <%= d.conditionCode %></strong><br><%= d.outcome?({RESTOCK:'Back into stock',REPAIR:'To repair',SCRAP:'Scrap'}[d.outcome])+(place?' at '+place.name:''):(a.status==='STOPPED'?'Decided on the return':'Waiting for a decision') %><%= d.appliedAt?(d.appliedAutomatically?' · done on its own':' · done'):'' %></p><% }) %>
+  <% if(a.problem){ %><p class="notice"><%= a.problem %></p><% } %>
+  <% if(check.owner&&a.status==='READY'&&a.proposal.lines.some(function(d){return !d.appliedAt&&d.job===114})&&!a.proposal.lines.some(function(d){return !d.appliedAt&&d.outcome&&d.job!==114})){ %>
+   <form method="post" action="/returns/<%= customerReturn.id %>/check/apply" class="stack-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="assessmentId" value="<%= a.id %>"><input type="hidden" name="revision" value="<%= a.revision %>"><input type="hidden" name="proposalHash" value="<%= a.proposalHash %>">
+    <label><input type="checkbox" name="confirmed" value="yes" required> Put the goods marked good back into stock.</label><button class="rm-btn" type="submit">Put back into stock</button></form>
+  <% } else if(check.owner&&['OBSERVED','READY'].includes(a.status)&&check.plan!=='growth'){ %><p><a class="rm-btn" href="/autopilot/return-disposition?id=<%= a.id %>">Review the decisions</a></p><% } %>
+ <% } %>
+ <% if(check.owner&&check.alone){ %><form method="post" action="/returns/<%= customerReturn.id %>/check/limit" class="stack-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="currency" value="<%= check.currency %>">
+  <label>Put good returns back on their own up to (<%= check.currency %>)<input name="maximum" inputmode="decimal" value="<%= check.limitAmount %>" required></label>
+  <label><input type="checkbox" name="confirmed" value="yes" required> Let StockChief put good returns back into stock on their own within this limit.</label><button class="rm-btn" type="submit">Save limit</button></form><% } %>
+</section><% } %>
 <section class="section"><div class="section-head"><h2>Next controlled step</h2></div>
   <% if(customerReturn.status==='REQUESTED'){ %>
     <p class="rm-sub">No stock or money moved. Authorization only confirms what may come back.</p>

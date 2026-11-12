@@ -9,12 +9,20 @@
 // Custom needs no training. Decided restock and repair moves are then made by
 // the worker on their own. Scrap is a write-off, and writing off stock always
 // needs a person (plan page 13), so it waits for the owner's approval.
+//
+// Job 114: staff check the received goods on the phone. A product they record
+// as GOOD (can be sold again) goes back to the location it was sold from,
+// through the return's own path, with its exact batch, serials and cost.
+// Growth prepares that for the owner to confirm; Pro and Custom put it back on
+// their own within the owner's limit for good returns, unless an owner rule
+// (job 113) decides that product and condition differently.
 const policy=require('../commercial/agent-plan'),{ValidationError,AuthorizationError,NotFoundError}=require('../domain/errors');
 const {newId}=require('../lib/util'),{hash}=require('../pricing/postgres-promotions'),exact=require('../domain/exact-quantity'),money=require('../domain/currency');
 const action='customer_return.plan_disposition',restockAction='customer_return.restock',kind='return.disposition-plan.v1',applyKind='return.disposition-apply.v1';
 const tx=(db,fn)=>db.transaction(fn,{isolation:'SERIALIZABLE',retrySafe:true});
 const scoped=c=>({query:(...a)=>c.query(...a),transaction:fn=>fn(c)});
-const day=86400000;
+const day=86400000,GOOD='GOOD',restockScope='good-returns';
+const permissions=require('../actions/permissions');
 function text(v,label,max=200){if(typeof v!=='string'||!v.trim()||v.trim().length>max||/[\u0000-\u001f\u007f]/.test(v))throw new ValidationError('Enter '+label+' on one plain line, up to '+max+' characters.');return v.trim();}
 function condition(v){const code=text(v,'a condition code',40).toUpperCase();if(!/^[A-Z0-9][A-Z0-9_-]*$/.test(code))throw new ValidationError('Condition codes use letters, numbers, underscores or hyphens.');return code;}
 function units(v){const n=Number(v);if(!Number.isSafeInteger(n)||n<1||n>100000)throw new ValidationError('Choose one to 100,000 whole units.');return n;}
@@ -39,6 +47,22 @@ async function owner(c,ctx,lock=false){
  if(!row)throw new AuthorizationError('Only the current inventory owner can authorize return disposition facts and rules.');
  await require('./postgres-warehouse-access').assertInventoryWide(c,ctx);
  if(lock)await c.query('SELECT a.id FROM accounts a JOIN workspaces w ON w.owner_account_id=a.id WHERE w.id=$1 FOR UPDATE OF a',[ctx.workspaceId]);
+}
+async function inspector(c,ctx){
+ const u=(await c.query(`SELECT u.* FROM users u JOIN workspaces w ON w.id=u.workspace_id WHERE u.workspace_id=$1 AND u.id=$2 AND w.deletion_requested_at IS NULL
+  AND NOT EXISTS(SELECT 1 FROM platform_account_access a WHERE a.account_id=w.owner_account_id AND a.disabled_at IS NOT NULL) FOR SHARE OF u,w`,[ctx.workspaceId,ctx.actorId])).rows[0];
+ if(!u)throw new AuthorizationError('Your inventory access needs review.');
+ permissions.assertCan(u,permissions.INSPECT_CUSTOMER_RETURN,'check returned goods');
+ return u;
+}
+async function ownerOf(c,workspaceId){
+ return (await c.query(`SELECT u.id FROM users u JOIN workspaces w ON w.id=u.workspace_id AND w.owner_account_id=u.account_id
+  WHERE w.id=$1 AND u.role='owner' AND w.deletion_requested_at IS NULL ORDER BY u.created_at,u.id LIMIT 1`,[workspaceId])).rows[0]?.id||null;
+}
+// The owner's limit for good returns going back on their own (Pro and Custom).
+async function restockLimit(c,workspaceId){
+ return (await c.query(`SELECT r.* FROM stockchief_runtime.agent_draft_rules r JOIN users u ON u.workspace_id=r.workspace_id AND u.id=r.authorized_by AND u.role='owner'
+  WHERE r.workspace_id=$1 AND r.action_type=$2 AND r.scope_key=$3`,[workspaceId,restockAction,restockScope])).rows[0]||null;
 }
 async function access(c,ctx,{automatic=false,trained=false,stopped=true}={}){
  await c.query('SELECT s.id FROM account_subscriptions s JOIN workspaces w ON w.owner_account_id=s.account_id WHERE w.id=$1 FOR SHARE OF s',[ctx.workspaceId]);
@@ -67,6 +91,10 @@ async function facts(c,ctx,id,{lock=false,allowDone=false}={}){
  WHERE rl.workspace_id=$1 AND rl.customer_return_id=$2 ORDER BY rl.created_at,rl.id LIMIT 101`,[ctx.workspaceId,id,r.quarantine_location_id])).rows;
  const done=l=>Number(l.quantity_restocked)+Number(l.quantity_repair)+Number(l.quantity_scrapped)!==0;
  if(!lines.length||lines.length>100||new Set(lines.map(l=>l.sku_id)).size!==lines.length||lines.some(l=>!['quantity','lot','serial'].includes(l.tracking_mode)||l.quantity_precision!==0||l.secondary_unit_label||l.kit||Number(l.quantity_received)!==Number(l.quantity_authorized)||(!allowDone&&done(l))))throw new ValidationError('Rule planning covers one to 100 distinct whole-unit product lines, fully received and still uninspected. Use the regular return inspection for mixed conditions within a line, kits or measured goods.');
+ const origins=(await c.query(`SELECT je.metadata::jsonb->>'salesOrderLineId' line_id,array_agg(DISTINCT m.location_id) locations FROM accounting_inventory_cost_movements icm
+  JOIN accounting_journal_entries je ON je.workspace_id=icm.workspace_id AND je.id=icm.journal_entry_id AND je.source_type='sale_fulfillment' AND je.status='POSTED'
+  JOIN movements m ON m.workspace_id=icm.workspace_id AND m.id=icm.inventory_movement_id JOIN locations l ON l.workspace_id=m.workspace_id AND l.id=m.location_id AND l.is_active=1 AND l.custody_agreement_id IS NULL
+  WHERE icm.workspace_id=$1 AND icm.quantity_delta<0 AND je.metadata::jsonb->>'salesOrderLineId'=ANY($2::text[]) GROUP BY 1`,[ctx.workspaceId,lines.map(l=>l.sales_order_line_id)])).rows;
  const lotIds=[...new Set(lines.flatMap(l=>(JSON.parse(l.tracking_evidence||'{}').receivedBatches||[]).map(b=>b.lotId).filter(Boolean)))];
  const lots=lotIds.length?(await c.query('SELECT id,code,expires_at FROM lots WHERE workspace_id=$1 AND id=ANY($2::text[])',[ctx.workspaceId,lotIds])).rows:[];
  const left=(await c.query(`SELECT greatest(
@@ -79,6 +107,7 @@ async function facts(c,ctx,id,{lock=false,allowDone=false}={}){
   if(!l.done&&(!Number.isSafeInteger(cost)||cost<0||!Number.isSafeInteger(qty)||qty<Number(l.quantity_received)))throw new ValidationError('Reconcile the actual quarantine stock cost before preparing disposition.');
   l.writeoffMinor=l.done?0:exact.ratioMinor(cost,Number(l.quantity_received),qty);
   l.valueMinor=l.unit_price_minor==null?null:exact.costMinor(Number(l.quantity_received),Number(l.unit_price_minor));
+  const from=origins.find(o=>o.line_id===l.sales_order_line_id)?.locations||[];l.originLocationId=from.length===1?from[0]:null;
   l.lots=[...new Set((JSON.parse(l.tracking_evidence||'{}').receivedBatches||[]).map(b=>b.lotId).filter(Boolean))].map(lotId=>{const lot=lots.find(x=>x.id===lotId);return {lotId,code:lot?.code||null,expiresAt:lot?.expires_at||null};});
  }
  const result={...r,leftAt:left?new Date(left).toISOString():null,lines};return {...result,sourceHash:hash(result)};
@@ -141,34 +170,48 @@ async function configure(db,ctx,id,input){return tx(db,async c=>{
  await c.query('UPDATE stockchief_runtime.agent_return_disposition_rules SET enabled=true,routine_enabled=true,trained_assessment_id=$3,authorized_by=$4,revision=revision+1 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,trained?(input.exampleId||p.trained_assessment_id):null,ctx.actorId]);await require('./postgres-security-audit').record(c,ctx,{action:'Routine return decisions authorized',reference:id,after:{maximumUnits:p.maximum_units,conditionCode:p.condition_code,conditions:describe(p)||'none',outcome:p.outcome,destinationId:p.destination_id,completedExampleId:trained?(input.exampleId||p.trained_assessment_id):null,writeOffsNeedSeparateApproval:true}});return {id};
  });}
 async function observe(db,ctx,input){return tx(db,async c=>{
- await owner(c,ctx,true);await access(c,ctx,{stopped:false});const f=await facts(c,ctx,input.returnId,{lock:true});
+ await inspector(c,ctx);await c.query('SELECT s.id FROM account_subscriptions s JOIN workspaces w ON w.owner_account_id=s.account_id WHERE w.id=$1 FOR SHARE OF s',[ctx.workspaceId]);
+ await policy.requireWorkspaceJob(c,ctx.workspaceId,114,'draft');const f=await facts(c,ctx,input.returnId,{lock:true});
+ const ownerId=await ownerOf(c,ctx.workspaceId);if(!ownerId)throw new AuthorizationError('This inventory has no current owner to review returns.');
+ await require('./postgres-warehouse-access').assertLocations(c,ctx,[f.quarantine_location_id]);
  if(input.confirmed!=='yes'||input.sourceHash!==f.sourceHash||!Array.isArray(input.lines)||input.lines.length!==f.lines.length)throw new ValidationError('Confirm the exact fully received products and the physical condition you actually inspected.');
  const observations=f.lines.map(l=>{const matches=input.lines.filter(x=>x.lineId===l.id);if(matches.length!==1)throw new ValidationError('Record each received product exactly once.');const raw=matches[0];return {lineId:l.id,skuId:l.sku_id,sku:l.code,product:l.name,quantity:Number(l.quantity_received),conditionCode:condition(raw.conditionCode),note:text(raw.note,'what you physically checked',500)};});
  const prior=(await c.query("SELECT * FROM stockchief_runtime.agent_return_assessments WHERE workspace_id=$1 AND return_id=$2 AND status IN('OBSERVED','READY') FOR UPDATE",[ctx.workspaceId,f.id])).rows[0];
  if(prior){if(prior.source_hash===f.sourceHash&&hash(prior.observations)===hash(observations))return {id:prior.id,replayed:true};throw new ValidationError('Stop the existing unreviewed assessment before recording different physical facts.');}
  const id=newId('return-assessment');await require('../commercial/storage-capacity').reserve(c,ctx.workspaceId,'return-assessment:'+id,Buffer.byteLength(JSON.stringify({f,observations}))*2+32768,{finished:true});
  await c.query('INSERT INTO stockchief_runtime.agent_return_assessments(id,workspace_id,return_id,observed_by,source_snapshot,observations,source_hash) VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7)',[id,ctx.workspaceId,f.id,ctx.actorId,JSON.stringify(f),JSON.stringify(observations),f.sourceHash]);
- await require('./postgres-job-queue').enqueue(scoped(c),{workspaceId:ctx.workspaceId,kind,idempotencyKey:id,payload:{assessmentId:id,ownerId:ctx.actorId},priority:65});return {id};
+ await require('./postgres-job-queue').enqueue(scoped(c),{workspaceId:ctx.workspaceId,kind,idempotencyKey:id,payload:{assessmentId:id,ownerId},priority:65});
+ await require('./postgres-security-audit').record(c,ctx,{action:'Returned goods checked',reference:f.return_number,after:{assessmentId:id,lines:observations.map(o=>({sku:o.sku,quantity:o.quantity,condition:o.conditionCode}))}});return {id};
  });}
 async function prepare(db,ctx,id,input={}, {automatic=false}={}){return tx(db,async c=>{
- await owner(c,ctx,true);await access(c,ctx,{stopped:false});const a=await assessment(c,ctx,id,true);
+ await owner(c,ctx,true);const state=await policy.accountState(c,ctx.workspaceId),plan=policy.usesAgentTerms(state)?state.plan:null,rulesAllowed=policy.permits(plan,113,'draft');
+ if(!automatic||!policy.permits(plan,114,'draft'))await access(c,ctx,{stopped:false});const a=await assessment(c,ctx,id,true);
  if(a.status==='APPLIED')return {id,replayed:true};if(!['OBSERVED','READY'].includes(a.status))throw new ValidationError('This assessment was stopped. Record a new physical inspection.');
  if(automatic&&a.status==='READY')return {id,replayed:true,automatic:Boolean(a.proposal?.automatic)};if(!automatic&&(Number(input.revision)!==a.revision||input.confirmed!=='yes'))throw new ValidationError('Reload and confirm the current physical assessment before preparing its decisions.');
  if((a.proposal?.lines||[]).some(l=>l.appliedAt))throw new ValidationError('Part of this return was already moved. Approve or stop the remaining decisions.');
  const f=await facts(c,ctx,a.return_id,{lock:true});if(f.sourceHash!==a.source_hash)throw new ValidationError('The return, quarantine stock or cost changed. Stop this assessment and inspect the current facts.');
- const byRules=automatic||input.byRules==='yes',rules=byRules?(await c.query('SELECT * FROM stockchief_runtime.agent_return_disposition_rules WHERE workspace_id=$1 AND (sku_id IS NULL OR sku_id=ANY($2::text[])) AND enabled ORDER BY id FOR SHARE',[ctx.workspaceId,a.observations.map(o=>o.skuId)])).rows:[];
- const lines=[],destinations=new Set();let allTrained=true;
+ const byRules=rulesAllowed&&(automatic||input.byRules==='yes'),rules=byRules?(await c.query('SELECT * FROM stockchief_runtime.agent_return_disposition_rules WHERE workspace_id=$1 AND (sku_id IS NULL OR sku_id=ANY($2::text[])) AND enabled ORDER BY id FOR SHARE',[ctx.workspaceId,a.observations.map(o=>o.skuId)])).rows:[];
+ // Automatic decisions use routine rules only while job 113 may decide alone;
+ // otherwise a GOOD product still goes back where it was sold (job 114).
+ let ruleHold=null;
+ if(automatic&&byRules){try{await access(c,ctx,{automatic:true,trained:true});}catch(error){if(![400,402,403,404,422].includes(error.status))throw error;ruleHold=error.message;}}
+ const lines=[],destinations=new Set(),missing=[];let allTrained=true;
  for(const o of a.observations){
-  const l=f.lines.find(x=>x.id===o.lineId),m=measure(f,l),p=byRules?pick(rules.filter(r=>r.authorized_by===ctx.actorId),o,l,f,m):null,manual=(input.lines||[]).find(x=>x.lineId===o.lineId);
-  if(byRules&&!p)throw new ValidationError('No current owner rule covers '+o.sku+' / '+o.conditionCode+' and this quantity. Choose this disposition individually.');
-  if(automatic){if(!p.routine_enabled)throw new ValidationError('This rule needs individual disposition review.');allTrained=Boolean(await example(c,ctx,p,p.trained_assessment_id))&&allTrained;}
-  const outcome=byRules?p.outcome:String(manual?.outcome||'').toUpperCase(),destinationId=outcome==='SCRAP'?null:(byRules?p.destination_id:manual?.destinationId);
+  const l=f.lines.find(x=>x.id===o.lineId),m=measure(f,l),manual=(input.lines||[]).find(x=>x.lineId===o.lineId);
+  let p=byRules?pick(rules.filter(r=>r.authorized_by===ctx.actorId),o,l,f,m):null;
+  if(automatic&&p&&(!p.routine_enabled||ruleHold)){ruleHold=ruleHold||'This rule needs individual disposition review.';p=null;}
+  if(p&&automatic){const taught=Boolean(await example(c,ctx,p,p.trained_assessment_id).catch(e=>{if(e.status!==422&&e.status!==400)throw e;return false;}));if(!taught&&plan==='pro'){ruleHold='This rule needs individual disposition review.';p=null;}else allTrained=taught&&allTrained;}
+  const good=!p&&o.conditionCode===GOOD&&l.originLocationId&&policy.permits(plan,114,'draft')&&(automatic||!manual);
+  if(!p&&!good&&!manual&&(automatic||byRules)){if(byRules&&!automatic)throw new ValidationError('No current owner rule covers '+o.sku+' / '+o.conditionCode+' and this quantity. Choose this disposition individually.');missing.push(o.sku+' / '+o.conditionCode);lines.push({...o,outcome:null,destinationId:null,writeoffMinor:0,ruleId:null,ruleRevision:null,ruleConditions:null,job:null,...m});continue;}
+  const outcome=p?p.outcome:good?'RESTOCK':String(manual?.outcome||'').toUpperCase(),destinationId=outcome==='SCRAP'?null:(p?p.destination_id:good?l.originLocationId:manual?.destinationId);
   if(!['RESTOCK','REPAIR','SCRAP'].includes(outcome))throw new ValidationError('Choose restock, repair or scrap for every physically inspected product.');if(destinationId){if(!destinations.has(destinationId))await location(c,ctx,destinationId);destinations.add(destinationId);}else if(outcome!=='SCRAP')throw new ValidationError('Choose the actual disposition location.');
-  lines.push({...o,outcome,destinationId,writeoffMinor:outcome==='SCRAP'?l.writeoffMinor:0,ruleId:byRules?p.id:null,ruleRevision:byRules?p.revision:null,ruleConditions:byRules?describe(p)||null:null,...m});
+  lines.push({...o,outcome,destinationId,writeoffMinor:outcome==='SCRAP'?l.writeoffMinor:0,ruleId:p?p.id:null,ruleRevision:p?p.revision:null,ruleConditions:p?describe(p)||null:null,job:good?114:113,...m});
  }
- await access(c,ctx,{automatic,trained:allTrained});const proposal={automatic,byRules,lines};
+ if(!lines.some(l=>l.outcome))throw new ValidationError(ruleHold&&!missing.length?ruleHold:'No current owner rule covers '+missing.join(', ')+' and this quantity. Choose this disposition individually.');
+ if(!automatic)await access(c,ctx);
+ const proposal={automatic,byRules,lines};
  await c.query("UPDATE stockchief_runtime.agent_return_assessments SET status='READY',proposal=$3::jsonb,problem=NULL,revision=revision+1 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id,JSON.stringify(proposal)]);
- if(automatic&&lines.some(l=>l.outcome!=='SCRAP'))await require('./postgres-job-queue').enqueue(scoped(c),{workspaceId:ctx.workspaceId,kind:applyKind,idempotencyKey:'apply:'+id,payload:{assessmentId:id,ownerId:ctx.actorId},priority:65});
+ if(automatic&&lines.some(l=>l.outcome&&l.outcome!=='SCRAP'))await require('./postgres-job-queue').enqueue(scoped(c),{workspaceId:ctx.workspaceId,kind:applyKind,idempotencyKey:'apply:'+id,payload:{assessmentId:id,ownerId:ctx.actorId},priority:65});
  return {id,automatic};
  });}
 // Moves the chosen lines through the return's own inspection path: restock and
@@ -190,10 +233,14 @@ async function applyLines(c,ctx,a,f,chosen,{automatic}){
  return result;
 }
 async function apply(db,ctx,id,input){return tx(db,async c=>{
- await owner(c,ctx,true);await access(c,ctx);const a=await assessment(c,ctx,id,true);if(a.status==='APPLIED')return {id,replayed:true};
+ await owner(c,ctx,true);const a=await assessment(c,ctx,id,true);if(a.status==='APPLIED')return {id,replayed:true};
+ if(a.proposal?.lines?.some(l=>!l.appliedAt&&l.outcome&&l.job!==114))await access(c,ctx);
+ else{const account=await policy.requireWorkspaceJob(c,ctx.workspaceId,114,'draft'),hold=await policy.stopped(c,ctx.workspaceId,account,restockAction,false);if(hold)throw new ValidationError(hold);}
+ if(!a.proposal?.lines?.some(l=>!l.appliedAt&&l.outcome))throw new ValidationError('Nothing on this return is decided yet. Decide each product on the return itself.');
  if(a.status!=='READY'||input.confirmed!=='yes'||Number(input.revision)!==a.revision||input.proposalHash!==hash(a.proposal))throw new ValidationError('Review and confirm the current exact disposition before changing stock.');
  const f=await facts(c,ctx,a.return_id,{lock:true,allowDone:true});if(f.sourceHash!==a.source_hash)throw new ValidationError('The physical return, quarantine stock or cost changed. Stop this assessment and inspect the current facts.');
- const remaining=a.proposal.lines.filter(l=>!l.appliedAt);
+ // Undecided products stay in quarantine for a decision on the return itself.
+ const remaining=a.proposal.lines.filter(l=>!l.appliedAt&&l.outcome);
  if(remaining.some(l=>l.outcome==='SCRAP')&&input.writeoffConfirmed!=='yes')throw new ValidationError('Separately approve the exact returned-stock write-off before scrapping anything.');
  for(const d of remaining){if(d.ruleId){const p=await rule(c,ctx,d.ruleId);if(!p.enabled||p.revision!==d.ruleRevision||p.authorized_by!==ctx.actorId)throw new ValidationError('A disposition rule changed or stopped. Prepare and review the current decisions again.');}if(d.destinationId)await location(c,ctx,d.destinationId);}
  const result=await applyLines(c,ctx,a,f,remaining,{automatic:false});return {id,result};
@@ -206,7 +253,16 @@ async function applyRoutine(db,workspaceId,id,ownerId){
   await owner(c,ctx,true);const a=await assessment(c,ctx,id,true);
   if(a.status!=='READY'||!a.proposal?.automatic)return {id,skipped:true};
   const chosen=[],reasons=new Set();let account=null;
-  for(const d of a.proposal.lines.filter(l=>!l.appliedAt&&l.outcome!=='SCRAP')){
+  const goods=a.proposal.lines.filter(l=>!l.appliedAt&&l.job===114&&l.outcome==='RESTOCK');
+  if(goods.length){
+   const state=await policy.accountState(c,workspaceId),limit=await restockLimit(c,workspaceId),value=goods.reduce((n,l)=>n+(l.valueMinor??Infinity),0),currency=a.source_snapshot.currency;
+   let hold=!policy.permits(policy.usesAgentTerms(state)?state.plan:null,114,'automatic')?'Confirm putting these checked goods back into stock.':await policy.stopped(c,workspaceId,state,restockAction,true);
+   if(!hold&&!(await require('../autopilot/postgres-service').getState(c,workspaceId)).canAutomate)hold='Routine work is off. Confirm putting these goods back into stock.';
+   if(!hold&&!limit)hold='Set your limit for good returns so StockChief can put them back on its own. Until then, confirm each one.';
+   if(!hold&&(limit.currency!==currency||!(value<=Number(limit.maximum_minor))))hold='These good returns are worth more than the '+money.format(Number(limit.maximum_minor),limit.currency)+' you allow. Confirm putting them back.';
+   if(hold)reasons.add(hold);else chosen.push(...goods);
+  }
+  for(const d of a.proposal.lines.filter(l=>!l.appliedAt&&l.outcome&&l.outcome!=='SCRAP'&&l.job!==114)){
    const p=d.ruleId?await rule(c,ctx,d.ruleId):null;
    if(!p||!p.enabled||!p.routine_enabled||p.revision!==d.ruleRevision||p.authorized_by!==ctx.actorId){reasons.add('A disposition rule changed or stopped. Review the remaining decisions.');continue;}
    account=account||await access(c,ctx,{automatic:true,trained:Boolean(await example(c,ctx,p,p.trained_assessment_id))});
@@ -226,6 +282,56 @@ async function applyRoutine(db,workspaceId,id,ownerId){
  });}catch(error){if(![400,402,403,404,422].includes(error.status))throw error;await db.query("UPDATE stockchief_runtime.agent_return_assessments SET problem=$3 WHERE workspace_id=$1 AND id=$2 AND status='READY'",[workspaceId,id,String(error.message).slice(0,500)]);return {id,held:true,reason:error.message};}
 }
 async function stop(db,ctx,id,input){return tx(db,async c=>{await owner(c,ctx,true);const a=await assessment(c,ctx,id,true);if(input.confirmed!=='yes'||Number(input.revision)!==a.revision)throw new ValidationError('Reload and confirm stopping this unreviewed assessment.');if(a.status==='APPLIED')throw new ValidationError('An applied physical disposition cannot be undone here.');await c.query("UPDATE stockchief_runtime.agent_return_assessments SET status='STOPPED',revision=revision+1 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id]);return {id};});}
+// Pro and Custom: the owner's limit for good returns going back on their own.
+async function saveRestockLimit(db,ctx,input){return tx(db,async c=>{
+ await owner(c,ctx,true);const prior=await restockLimit(c,ctx.workspaceId);
+ if(input.remove==='yes'){await c.query('DELETE FROM stockchief_runtime.agent_draft_rules WHERE workspace_id=$1 AND action_type=$2 AND scope_key=$3',[ctx.workspaceId,restockAction,restockScope]);if(prior)await require('./postgres-security-audit').record(c,ctx,{action:'Limit for good returns removed',before:{maximumMinor:Number(prior.maximum_minor),currency:prior.currency}});return {removed:true};}
+ const account=await policy.requireWorkspaceJob(c,ctx.workspaceId,114,'automatic');
+ if(account.shadow)throw new ValidationError('StockChief is watching during the first 14 days. Save this limit after shadow mode.');
+ if(input.confirmed!=='yes')throw new ValidationError('Confirm the limit for good returns going back on their own.');
+ const base=(await c.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0]?.base_currency;
+ const currency=money.code(input.currency||base||'USD'),maximum=money.userToMinor(input.maximum,currency,{label:'Limit for good returns'});if(!(maximum>0))throw new ValidationError('Enter a positive limit for good returns.');
+ await require('../manager/postgres-operating-instructions').checkRuleLimit(c,ctx,[],prior?0:1);
+ await c.query(`INSERT INTO stockchief_runtime.agent_draft_rules(workspace_id,action_type,scope_key,scope_label,currency,maximum_minor,authorized_by) VALUES($1,$2,$3,'Good returns back into stock',$4,$5,$6)
+  ON CONFLICT(workspace_id,action_type,scope_key) DO UPDATE SET currency=EXCLUDED.currency,maximum_minor=EXCLUDED.maximum_minor,authorized_by=EXCLUDED.authorized_by,revision=agent_draft_rules.revision+1`,[ctx.workspaceId,restockAction,restockScope,currency,maximum,ctx.actorId]);
+ await require('./postgres-security-audit').record(c,ctx,{action:'Limit for good returns saved',before:prior?{maximumMinor:Number(prior.maximum_minor),currency:prior.currency}:{},after:{maximumMinor:maximum,currency}});return {saved:true};
+ });}
+// What the return page shows: the check form for staff, or the decisions so far.
+async function check(db,ctx,returnId){
+ const account=await policy.accountState(db,ctx.workspaceId),plan=policy.usesAgentTerms(account)?account.plan:null;
+ if(!plan)return null;if(!policy.permits(plan,114,'draft'))return {locked:true};
+ const user=(await db.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+ if(!permissions.can(user,permissions.INSPECT_CUSTOMER_RETURN))return null;
+ const current=(await db.query("SELECT * FROM stockchief_runtime.agent_return_assessments WHERE workspace_id=$1 AND return_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1",[ctx.workspaceId,returnId])).rows[0]||null;
+ let form=null,problem=null;
+ const status=(await db.query('SELECT status FROM customer_returns WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,returnId])).rows[0]?.status;
+ if(status==='RECEIVED'&&(!current||current.status==='STOPPED')){try{form=await facts(db,ctx,returnId);}catch(e){if(![400,402,403,404,422].includes(e.status))throw e;problem=e.message;}}
+ const conditions=[[GOOD,'Good, can be sold again'],...(await db.query("SELECT DISTINCT ON (condition_code) condition_code,condition_label FROM stockchief_runtime.agent_return_disposition_rules WHERE workspace_id=$1 AND enabled AND condition_code<>'GOOD' ORDER BY condition_code,created_at LIMIT 50",[ctx.workspaceId])).rows.map(r=>[r.condition_code,r.condition_label])];
+ for(const [code,label] of [['DAMAGED','Damaged'],['FAULTY','Does not work'],['OPENED','Opened or used']])if(!conditions.some(x=>x[0]===code))conditions.push([code,label]);
+ const places=(await db.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 AND custody_agreement_id IS NULL ORDER BY name,id LIMIT 250',[ctx.workspaceId])).rows;
+ const limit=await restockLimit(db,ctx.workspaceId);
+ return {plan,owner:user.role==='owner',current:current?{...current,proposalHash:current.proposal?hash(current.proposal):null}:null,form,problem,conditions,places,
+  limit:limit?money.format(Number(limit.maximum_minor),limit.currency):null,limitAmount:limit?money.fromMinor(Number(limit.maximum_minor),limit.currency):'',alone:policy.permits(plan,114,'automatic'),
+  currency:form?.currency||current?.source_snapshot?.currency||'USD'};
+}
+// Needs you: returns waiting for a staff check, and good goods waiting for the owner.
+async function restockInbox(db,workspaceId,actor){
+ const account=await policy.accountState(db,workspaceId);if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,114,'draft'))return [];
+ const items=[];
+ if(permissions.can(actor,permissions.INSPECT_CUSTOMER_RETURN)){
+  const waiting=(await db.query(`SELECT r.id,r.return_number,r.received_at FROM customer_returns r WHERE r.workspace_id=$1 AND r.status='RECEIVED'
+   AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_return_assessments a WHERE a.workspace_id=r.workspace_id AND a.return_id=r.id AND a.status<>'STOPPED') ORDER BY r.received_at,r.id LIMIT 25`,[workspaceId])).rows;
+  for(const r of waiting)items.push({kind:'order',importance:'Needs You',priority:57,title:'Check the returned goods for '+r.return_number,happened:'The goods arrived and wait in quarantine, held from sale.',
+   why:'Good goods go back into stock only after someone checks them.',recommendation:'Record the condition of each product on the return.',href:'/returns/'+r.id+'#return-check',actionLabel:'Check the goods',sourceId:'return-check:'+r.id,at:r.received_at,createdAt:r.received_at});
+ }
+ if(actor?.role==='owner'){
+  const ready=(await db.query(`SELECT a.id,a.return_id,a.problem,a.created_at,r.return_number FROM stockchief_runtime.agent_return_assessments a JOIN customer_returns r ON r.workspace_id=a.workspace_id AND r.id=a.return_id
+   WHERE a.workspace_id=$1 AND a.status='READY' AND EXISTS(SELECT 1 FROM jsonb_array_elements(a.proposal->'lines') l WHERE l->>'job'='114' AND l->>'appliedAt' IS NULL) ORDER BY a.created_at LIMIT 25`,[workspaceId])).rows;
+  for(const a of ready)items.push({kind:'order',importance:'Needs You',priority:58,title:'Put the good returns from '+a.return_number+' back into stock',happened:a.problem||'Staff checked these goods and recorded them as good.',
+   why:'They stay held from sale until you confirm.',recommendation:'Confirm with one tap, or set a limit so good returns go back on their own.',href:'/returns/'+a.return_id+'#return-check',actionLabel:'Put back into stock',sourceId:'return-restock:'+a.id,at:a.created_at,createdAt:a.created_at});
+ }
+ return items;
+}
 async function onObservation(db,workspaceId,id,ownerId){try{return await prepare(db,{workspaceId,actorId:ownerId},id,{}, {automatic:true});}catch(error){if(![400,402,403,404,422].includes(error.status))throw error;await db.query("UPDATE stockchief_runtime.agent_return_assessments SET problem=$3 WHERE workspace_id=$1 AND id=$2 AND status='OBSERVED'",[workspaceId,id,String(error.message).slice(0,500)]);return {held:true,reason:error.message};}}
 async function repairHolds(c,ctx,ids,lock=false){return (await c.query(`SELECT h.*,s.code,i.name,l.name location_name,r.return_number,b.on_hand::text,b.quality_held::text,cb.quantity_units::text cost_quantity,cb.total_cost_minor::text cost_minor
  FROM stockchief_runtime.agent_return_repair_holds h JOIN skus s ON s.workspace_id=h.workspace_id AND s.id=h.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
@@ -254,4 +360,4 @@ async function screen(db,ctx,input={}){
 }
 async function readPage(db,ctx){const s=await screen(db,ctx);return {summary:'Recorded physical conditions are decided as restock, repair or scrap by your rules: condition, product, return reason, goods value, time since the goods left and days before expiry. Pro needs a matching completed manual example for routine decisions; Custom does not need training. Restock and repair moves then happen on their own; every write-off needs your approval.',rows:s.assessments.map(a=>({Return:a.return_number,Status:a.status.replace('_',' '),Review:a.problem||'',link:'/autopilot/return-disposition?id='+a.id})),more:s.moreAssessments};}
 function notices(summary){if(!summary||!Number(summary.n))return [];return [{kind:'order',importance:'Needs You',priority:50,title:Number(summary.n)+' return task'+(Number(summary.n)===1?' needs':'s need')+' review',happened:'Return goods await disposition or completed-repair checks and remain protected from sale.',why:'Review the exact decisions, approve write-offs, stop an outdated assessment, or confirm a physically completed repair. Refunds remain separate.',actionLabel:'Review return decisions',sourceId:'return-disposition-assessments',href:'/autopilot/return-disposition',createdAt:summary.created_at,at:summary.created_at}];}
-module.exports={owner,facts,assessment,saveRule,configure,observe,prepare,apply,applyRoutine,stop,onObservation,repairHold,releaseRepair,screen,notices,describe,kind,applyKind,action,restockAction,definition:{id:113,key:'return-disposition',label:'Review return restock, repair or scrap rules',readPage}};
+module.exports={owner,facts,assessment,saveRule,configure,observe,prepare,apply,applyRoutine,stop,onObservation,saveRestockLimit,check,restockInbox,GOOD,repairHold,releaseRepair,screen,notices,describe,kind,applyKind,action,restockAction,definition:{id:113,key:'return-disposition',label:'Review return restock, repair or scrap rules',readPage}};
