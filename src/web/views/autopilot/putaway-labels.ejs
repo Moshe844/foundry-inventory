@@ -1,9 +1,13 @@
 <section class="card"><h2>Prepare received goods for put-away</h2>
-<p>Choose the exact received product and its destination bin. StockChief prints the product and location codes your staff can scan.</p>
+<p>StockChief suggests a bin for each receipt. Confirm it, or choose another bin below. Staff then scan or tap on their phone to put the goods away.</p>
 <% if(form.blocked){ %><p role="status"><%= form.blocked %></p><% } %>
+<% if(form.suggestions&&form.suggestions.length){ %><h3>Suggested bins</h3>
+<% for(const s of form.suggestions){ %><div class="rm-actions"><p><strong><%= s.label %></strong><br><% if(s.destinationId){ %>Bin <%= s.destination %>. <%= s.reason %><% }else{ %><%= s.reason %><% } %></p>
+<% if(s.destinationId){ %><form method="post" action="/autopilot/putaway/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="receiptLine" value="<%= s.receiptLineId %>"><input type="hidden" name="destination" value="<%= s.destinationId %>"><button class="btn" <%= form.blocked?'disabled':'' %>>Confirm <%= s.destination %></button></form><% } %></div><% } %><% } %>
 <% if(form.receipts.length){ %>
+<h3>Choose a bin yourself</h3>
 <form method="post" action="/autopilot/putaway/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-<label>Received product <select name="receiptLine" required><% for(const r of form.receipts){ %><option value="<%= r.id %>"><%= r.po_number %> · <%= r.code %> · <%= r.quantity %> units at <%= r.location %></option><% } %></select></label>
+<label>Received product <select name="receiptLine" required><% for(const r of form.receipts){ %><option value="<%= r.id %>"><%= r.po_number %> · <%= r.code %> · <%= r.quantity %> at <%= r.location %></option><% } %></select></label>
 <label>Destination bin <select name="destination" required><option value="">Choose a bin at the same site</option><% for(const d of form.destinations){ %><option value="<%= d.id %>"><%= d.display_path %><%= d.barcode?'':' — add a scan code first' %></option><% } %></select></label>
 <button class="btn" <%= form.blocked?'disabled':'' %>>Prepare instructions and labels</button></form>
 <% }else{ %><p>No unprepared receipts on this page.</p><% } %>

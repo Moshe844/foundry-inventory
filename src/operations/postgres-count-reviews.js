@@ -58,7 +58,10 @@ async function prepare(db,ctx,input){return db.transaction(async c=>{
   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(workspace_id,created_by_user_id,submission_key) DO NOTHING`,
   [id,ctx.workspaceId,ctx.actorId,payload,integrityHash,effective?.action==='recount',effective,key,key?submissionHash:null]);
  if(!inserted.rowCount)return replay();
- if(effective?.action==='post')await post(c,{...ctx,actorId:effective.owner},id,integrityHash);
+ // A count that pairs with another bin's count as one bin mix-up becomes a
+ // bin correction instead of a write-off and a found-stock adjustment.
+ const paired=await require('../warehouse/agent-bin-corrections').fromCount(c,ctx,id);
+ if(effective?.action==='post'&&!paired)await post(c,{...ctx,actorId:effective.owner},id,integrityHash);
  return {id};
 },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function get(db,ctx,id){await authorize(db,ctx);const row=(await db.query('SELECT * FROM physical_count_reviews WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id])).rows[0];if(!row)throw new NotFoundError('This count review is not in this inventory.');await require('./postgres-warehouse-access').assertLocations(db,ctx,[row.payload.location.id]);return row;}
@@ -72,6 +75,7 @@ async function post(c,ctx,id,integrityHash){
  if(!review||review.integrity_hash!==integrityHash||digest(review.payload)!==integrityHash)throw new ValidationError('Open the current count review before approving.');
  if(review.status==='COMPLETED')return {replayed:true,...review.result};if(review.status!=='PENDING')throw new ValidationError('This count is no longer awaiting approval.');
  if(review.recount_required&&!review.recounted_at)throw new ValidationError('Count these items again before approving this difference.');
+ if((await c.query("SELECT 1 FROM stockchief_runtime.agent_bin_corrections WHERE workspace_id=$1 AND status IN ('PROPOSED','OPEN','SCANNED') AND evidence->'reviews' @> jsonb_build_array($2::text) LIMIT 1",[ctx.workspaceId,id])).rowCount)throw new ValidationError('This count found stock in another bin. Settle its bin correction first.');
  await assertUnchanged(c,ctx,review,'Stock or cost changed after this count was reviewed. Enter a new count before approving.');
  const results=[];for(const line of review.payload.lines)results.push(await require('../accounting/postgres-physical-count').applyInTransaction(c,ctx,{skuId:line.skuId,locationId:review.payload.location.id,countedQuantity:line.quantity,unitCostMinor:line.unitCostMinor,expectedBefore:{physical:Number(line.before.physical),costed:Number(line.before.costed),value:Number(line.before.value)},expectedCostDeltaMinor:line.costDeltaMinor,reasonCode:'cycle_count',reference:review.payload.reference,sourceType:'physical_count_review',sourceRecordId:id,idempotencyKey:'count-review:'+id+':'+line.skuId,currency:review.payload.currency}));
  const result={lines:results.length,changed:results.filter(r=>!r.unchanged).length};

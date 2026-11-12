@@ -1,0 +1,19 @@
+<div style="overflow-wrap:anywhere">
+<p><a href="/warehouse/stock">← Warehouse stock</a> · <a href="/warehouse/bin-corrections">Bin corrections</a></p>
+<h1>Stock in the wrong bin</h1>
+<p>Found a product in a different bin than the records show? Scan it where you found it and count both bins. When one bin is short by exactly what the other has extra, the records follow the stock. Nothing physically moves.</p>
+<% if(locked){ %><p class="notice"><span class="badge">Pro</span> Bin corrections need Pro with a taught correction, or Custom. <% if(owner){ %><a class="btn" href="/settings/billing">Upgrade</a><% } %></p><% } %>
+<% if(shadow){ %><p class="notice">The first 14-day watch period is active. Bin corrections wait until it ends.</p><% } %>
+<% if(blocked&&!shadow){ %><p class="notice"><%= blocked %></p><% } %>
+<% if(!locked&&!canScan){ %><p>Your inventory owner must let you move stock before you can report this.</p><% } %>
+<% if(!locked&&canScan){ %><section class="card"><div class="card-body">
+<form method="post" action="/warehouse/bin-corrections/found" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= requestKey %>">
+<label>Product code<input name="productCode" maxlength="80" autocomplete="off" required></label>
+<label>Bin where you found it<input name="foundCode" maxlength="80" autocomplete="off" required></label>
+<label>Units you counted there<input name="foundCount" type="number" min="0" max="100000" step="1" inputmode="numeric"></label>
+<label>Bin the records show<input name="recordedCode" maxlength="80" autocomplete="off" required></label>
+<label>Units you counted in that bin<input name="recordedCount" type="number" min="0" max="100000" step="1" inputmode="numeric"></label>
+<label>Batch code (batch goods only)<input name="lotCode" maxlength="80" autocomplete="off"></label>
+<label>Serial numbers you found (serial goods only, one per line)<textarea name="serials" rows="3" autocomplete="off"></textarea></label>
+<button class="btn" <%= shadow||blocked?'disabled':'' %>>Report stock in the wrong bin</button></form></div></section><% } %>
+</div>
