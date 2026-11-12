@@ -62,8 +62,9 @@ function estimate(row, recorded, clock) {
   return { ...evidence, digest: hash(evidence), changed: current.minimum !== minimum || current.maximum !== maximum };
 }
 
-async function read(db, workspaceId, skuIds) {
-  if (!skuIds.length) return new Map();
+// Distinct physical sales per product and location in the 90-day window,
+// with the evidence gaps that make a location estimate unreliable.
+async function sales(db, workspaceId, skuIds) {
   const clock = await time.forWorkspace(db, workspaceId);
   const start = time.dayBoundary(addDays(clock.calendarDate, 1 - WINDOW_DAYS), clock.timeZone);
   const args = [workspaceId, skuIds, start, clock.instant];
@@ -78,7 +79,12 @@ async function read(db, workspaceId, skuIds) {
     JOIN skus s ON s.workspace_id=d.workspace_id AND s.id=d.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
     WHERE d.workspace_id=$1 AND d.sku_id=ANY($2::text[]) AND d.occurred_at>=$3::timestamptz AND d.occurred_at<=$4::timestamptz
       AND m.operation='issue' AND m.reason_code IN('sale','sold') GROUP BY d.sku_id,d.location_id`, args)).rows;
-  const recorded = new Map(physical.map(r => [key(r.sku_id, r.location_id), r]));
+  return { clock, start, recorded: new Map(physical.map(r => [key(r.sku_id, r.location_id), r])) };
+}
+
+async function read(db, workspaceId, skuIds) {
+  if (!skuIds.length) return new Map();
+  const { clock, recorded } = await sales(db, workspaceId, skuIds);
   if (!recorded.size) return new Map();
   const profiles = new Map((await db.query(`SELECT s.id sku_id,i.unit_label,i.quantity_precision,i.quantity_increment::text,
     i.secondary_unit_label,i.secondary_precision,i.secondary_increment::text,i.tracking_mode
@@ -87,9 +93,9 @@ async function read(db, workspaceId, skuIds) {
   const rows = await require('../purchasing/postgres-replenishment-state').rows(db, workspaceId, { onlySkuIds: skuIds });
   const result = new Map();
   for (const row of rows) {
-    const positionKey = key(row.sku_id, row.location_id), sales = recorded.get(positionKey);
-    if (!sales || !profiles.has(row.sku_id)) continue;
-    try { result.set(positionKey, estimate({ ...row, ...profiles.get(row.sku_id) }, sales, clock)); }
+    const positionKey = key(row.sku_id, row.location_id), sold = recorded.get(positionKey);
+    if (!sold || !profiles.has(row.sku_id)) continue;
+    try { result.set(positionKey, estimate({ ...row, ...profiles.get(row.sku_id) }, sold, clock)); }
     catch (error) {
       if (!(error instanceof ValidationError)) throw error;
       result.set(positionKey, { skuId: row.sku_id, locationId: row.location_id, code: row.code, location: row.location_name, error: error.message });
@@ -104,4 +110,4 @@ async function current(db, workspaceId, skuId, locationId) {
   return result;
 }
 
-module.exports = { profile, profileKey, key, read, current };
+module.exports = { profile, profileKey, key, read, current, sales, estimate };

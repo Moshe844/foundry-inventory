@@ -1,0 +1,84 @@
+<% const m=model,base='/planning/reorder-refresh';
+   const qty=(value,unit)=>value==null?'not set':helpers.unitCount(Number(value),unit||'unit');
+   const when=value=>value?helpers.dateTime(new Date(value).toISOString()):'';
+   const counts=m.run?.counts||{};
+   const lead={suggest:'It suggests new values. You change them yourself.',
+     watch:'For the first 14 days it only watches and shows what it would change.',
+     draft:m.automatic?'It applies changes inside your limits and asks you about the rest.':'It drafts each change for your approval.'}[m.level]; %>
+<header class="rm-head"><a href="/planning">← Planning</a>
+<h1>Keep reorder points up to date</h1>
+<p>Every day StockChief checks each stocked product against its last 90 days of sales, lead time and safety stock. <%= lead %></p></header>
+<% if(m.watch){ %><p class="notice notice--warn"><%= m.watch %></p><% }else if(m.level==='draft'&&m.hold){ %><p class="notice"><%= m.hold %></p><% } %>
+
+<section class="rm-panel"><div class="rm-panel__body">
+<% if(m.run){ %><p>Last check <%= when(m.run.started_at) %><%= m.run.finished_at?'':' · still running' %></p>
+<p class="rm-muted"><%= Number(counts.applied||0) %> changed · <%= Number(counts.drafted||0) %> waiting for you · <%= Number(counts.suggested||0)+Number(counts.watched||0) %> suggested · <%= Number(counts.skipped||0) %> skipped · <%= Number(counts.current||0) %> already up to date</p>
+<% }else{ %><p>No check has run yet.</p><% } %>
+<form method="post" action="<%= base %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost">Check now</button></form>
+</div></section>
+
+<% if(m.drafts.length){ %><section class="rm-panel" id="waiting"><div class="rm-panel__head"><h2>Waiting for you</h2></div><div class="rm-panel__body">
+<form method="post" action="<%= base %>/approve-all"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn" <%= m.watch?'disabled':'' %>>Approve all</button></form>
+<ul class="rm-list"><% for(const c of m.drafts){ const e=c.evidence; %><li><div class="rm-told__t">
+  <p><strong><%= e.code %></strong> · <%= e.location %></p>
+  <p>Reorder point <%= qty(c.before_minimum,e.unit) %> → <%= qty(c.after_minimum,e.unit) %> · Target <%= qty(c.before_maximum,e.unit) %> → <%= qty(c.after_maximum,e.unit) %></p>
+  <p class="rm-muted"><%= qty(e.issued,e.unit) %> sold in 90 days · <%= e.lead %> lead days<% if(c.reason){ %> · <%= c.reason %><% } %></p>
+  <div class="rm-actions">
+    <form method="post" action="<%= base %>/<%= c.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--sm" <%= m.watch?'disabled':'' %>>Approve</button></form>
+    <form method="post" action="<%= base %>/<%= c.id %>/decline"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm">Keep current</button></form>
+  </div>
+</div></li><% } %></ul>
+<% if(m.number>1||m.more){ %><p><% if(m.number>1){ %><a href="?page=<%= m.number-1 %>">Previous</a><% } %> <% if(m.more){ %><a href="?page=<%= m.number+1 %>">Next</a><% } %></p><% } %>
+</div></section><% } %>
+
+<% if(m.suggestions.length){ %><section class="rm-panel" id="suggested"><div class="rm-panel__head"><h2><%= m.level==='watch'?'What it would change':'Suggested values' %></h2></div><div class="rm-panel__body">
+<ul class="rm-list"><% for(const c of m.suggestions){ const e=c.evidence; %><li><div class="rm-told__t">
+  <p><strong><%= e.code %></strong> · <%= e.location %></p>
+  <p>Reorder point <%= qty(c.before_minimum,e.unit) %> → <%= qty(c.after_minimum,e.unit) %> · Target <%= qty(c.before_maximum,e.unit) %> → <%= qty(c.after_maximum,e.unit) %></p>
+  <p class="rm-muted"><%= qty(e.issued,e.unit) %> sold in 90 days · <%= e.lead %> lead days<% if(c.reason){ %> · <%= c.reason %><% } %></p>
+</div></li><% } %></ul></div></section><% } %>
+
+<% if(m.history.length){ %><section class="rm-panel" id="changes"><div class="rm-panel__head"><h2>Recent decisions</h2></div><div class="rm-panel__body">
+<ul class="rm-list"><% for(const c of m.history){ const e=c.evidence; %><li><div class="rm-told__t">
+  <p><strong><%= e.code %></strong> · <%= e.location %> · <%= c.status==='UNDONE'?'Undone':c.status==='DECLINED'?'Kept current':c.authority==='PERSON'?'Approved':'Changed on its own' %></p>
+  <p>Reorder point <%= qty(c.before_minimum,e.unit) %> → <%= qty(c.after_minimum,e.unit) %> · Target <%= qty(c.before_maximum,e.unit) %> → <%= qty(c.after_maximum,e.unit) %></p>
+  <p class="rm-muted"><%= when(c.undone_at||c.decided_at||c.created_at) %><% if(c.authority==='RULE'){ %> · inside your rule<% }else if(c.authority==='LEARNED'){ %> · learned from your approvals<% } %></p>
+  <% if(c.status==='APPLIED'){ %><% if(c.undoable){ %><form method="post" action="<%= base %>/<%= c.id %>/undo"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm">Undo</button></form>
+  <% }else{ %><p class="rm-muted">Changed again since. Undo is no longer available.</p><% } %><% } %>
+</div></li><% } %></ul></div></section><% } %>
+
+<% if(m.skipped.length){ %><section class="rm-panel" id="skipped"><div class="rm-panel__head"><h2>Skipped and why</h2></div><div class="rm-panel__body">
+<ul class="rm-list"><% for(const c of m.skipped){ const e=c.evidence; %><li><div class="rm-told__t">
+  <p><strong><%= e.code %></strong> · <%= e.location %></p><p class="rm-muted"><%= c.reason %></p>
+</div></li><% } %></ul></div></section><% } %>
+
+<section class="rm-panel" id="locks"><div class="rm-panel__head"><h2>Locked settings</h2></div><div class="rm-panel__body">
+<p>A locked product and location keeps the reorder point and target you set. StockChief skips it.</p>
+<% if(m.locked.length){ %><ul class="rm-list"><% for(const l of m.locked){ %><li><div class="rm-told__t">
+  <form method="post" action="<%= base %>/locks"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <input type="hidden" name="skuId" value="<%= l.sku_id %>"><input type="hidden" name="locationId" value="<%= l.location_id||'' %>">
+  <%= l.code %> · <%= l.location %> <button class="rm-btn rm-btn--ghost rm-btn--sm" name="locked" value="no">Unlock</button></form>
+</div></li><% } %></ul><% } %>
+<% const lockable=[...m.drafts,...m.suggestions,...m.history.filter(c=>c.status==='APPLIED')].filter((c,i,all)=>all.findIndex(x=>x.sku_id===c.sku_id&&x.location_id===c.location_id)===i); %>
+<% if(lockable.length){ %><form method="post" action="<%= base %>/locks" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <label>Product and location <select name="position"><% for(const c of lockable){ %><option value="<%= JSON.stringify([c.sku_id,c.location_id||'']) %>"><%= c.evidence.code %> · <%= c.evidence.location %></option><% } %></select></label>
+  <button class="rm-btn rm-btn--ghost" name="locked" value="yes">Lock these settings</button></form><% } %>
+</div></section>
+
+<section class="rm-panel" id="rule"><div class="rm-panel__head"><h2>Changes on its own</h2></div><div class="rm-panel__body">
+<% if(m.plan==='starter'){ %><p>On Starter it only suggests. Growth can learn to make these changes on its own. <a href="/billing">Review plans</a></p>
+<% }else{ %>
+<% if(m.trained){ %><p>Teach it in either way. Save a limit below, or approve changes: after you approve a change for a product and location, it makes later changes there of the same size or smaller on its own.</p>
+<% }else{ %><p>Set the largest change it may make on its own. Bigger changes, and anything over a saved location maximum, come to you.</p><% } %>
+<% if(m.rule){ %><p>Current limit: <strong><%= m.rule.max_change_percent %>%</strong> per change<%= m.rule.fill_missing?' · also sets missing reorder points':'' %>.</p><% } %>
+<% if(m.canTeach){ %><form method="post" action="<%= base %>/rule" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <input type="hidden" name="revision" value="<%= m.rule?.revision||0 %>">
+  <label>Largest change on its own (%) <input type="number" name="maxChangePercent" min="1" max="500" step="1" required value="<%= m.rule?.max_change_percent||'' %>"></label>
+  <label class="choice"><input type="checkbox" name="fillMissing" value="yes" <%= m.rule?.fill_missing?'checked':'' %>> Also set reorder points that are missing or zero</label>
+  <label class="choice"><input type="checkbox" name="confirmed" value="yes" required> Let StockChief change reorder points and targets inside this limit.</label>
+  <button class="rm-btn">Save limit</button></form>
+  <% if(m.rule){ %><form method="post" action="<%= base %>/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= m.rule.revision %>">
+  <button class="rm-btn rm-btn--ghost" name="remove" value="1">Stop changes on its own</button></form><% } %>
+<% }else if(!m.isOwner){ %><p class="rm-muted">Only the business owner can set this limit.</p><% } %>
+<% } %>
+</div></section>
