@@ -291,8 +291,14 @@ function createPostgresProjectionsRouter(database){
     const filter=kind==='invoice'?"record_state='ACTIVE'":"status='active'";
     const counterparties=(await database.query(`SELECT id,name FROM ${table} WHERE workspace_id=$1 AND ${filter}
       ORDER BY lower(name)`,[req.ctx.workspaceId])).rows;
+    // Job 49: a freight, duty or fee bill can name the delivery it is for.
+    const agentPlan=require('../../commercial/agent-plan'),account=kind==='bill'?await agentPlan.accountState(database,req.ctx.workspaceId):null;
+    const deliveries=account&&agentPlan.usesAgentTerms(account)&&agentPlan.permits(account.plan,49,'draft')?(await database.query(`SELECT r.id,r.reference,r.received_at,po.po_number
+      FROM purchase_order_receipts r JOIN purchase_orders po ON po.workspace_id=r.workspace_id AND po.id=r.purchase_order_id
+      WHERE r.workspace_id=$1 ORDER BY r.received_at DESC,r.id DESC LIMIT 50`,[req.ctx.workspaceId])).rows.map(r=>({id:r.id,
+      label:r.po_number+' · '+(r.reference||String(r.received_at).slice(0,10))})):null;
     return res.page('accounting/postgres-manual-document',{title:kind==='invoice'?'Record a customer invoice':'Record a supplier bill',
-      nav:'accounting',kind,counterparties,products:kind==='invoice'?await require('../../operations/postgres-commerce').catalogue(database,req.ctx.workspaceId):[],today:await require('../../lib/business-time').today(database,req.ctx.workspaceId),idempotencyKey:newId('manual-doc')});
+      nav:'accounting',kind,counterparties,deliveries,products:kind==='invoice'?await require('../../operations/postgres-commerce').catalogue(database,req.ctx.workspaceId):[],today:await require('../../lib/business-time').today(database,req.ctx.workspaceId),idempotencyKey:newId('manual-doc')});
   }
   router.get('/accounting/receivables/new',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'create customer invoices'),
     asyncRoute((req,res)=>manualDocument(req,res,'invoice')));
@@ -320,9 +326,9 @@ function createPostgresProjectionsRouter(database){
     const result=await workflows.recordSupplierInvoice(database,req.ctx,{supplierId:req.body.counterpartyId,
       supplierInvoiceNumber,issueDate:req.body.issueDate,dueDate:trimOrNull(req.body.dueDate),
       taxMinor:req.body.tax?moneyMinor(req.body.tax,'Tax'):0,
-      idempotencyKey:requireText(req.body.idempotencyKey,'Bill request key',{max:160}),
+      idempotencyKey:requireText(req.body.idempotencyKey,'Bill request key',{max:160}),purchaseReceiptId:trimOrNull(req.body.purchaseReceiptId),
       notes:trimOrNull(req.body.notes),lines:[{description:requireText(req.body.description,'Description',{max:250}),
-        quantity:req.body.quantity,unitCostMinor:moneyMinor(req.body.unitAmount,'Unit cost')}],});
+        quantity:req.body.quantity,unitCostMinor:moneyMinor(req.body.unitAmount,'Unit cost'),...(trimOrNull(req.body.landedCostKind)?{landedCostKind:trimOrNull(req.body.landedCostKind)}:{})}],});
     req.flash('success',`${result.billNumber} recorded. No physical stock or payment was changed.`);
     return res.redirect(303,'/accounting/payables');
   }));

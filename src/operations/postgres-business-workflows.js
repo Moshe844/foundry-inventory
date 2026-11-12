@@ -479,6 +479,10 @@ async function recordSupplierInvoice(database, rawContext, input, {preview=false
     const purchaseOrder = input.purchaseOrderId ? await requireRow(client, `SELECT * FROM purchase_orders
       WHERE id=$1 AND workspace_id=$2 ${preview?'':'FOR UPDATE'}`, [input.purchaseOrderId, ctx.workspaceId], 'That purchase order was not found.') : null;
     if (purchaseOrder && purchaseOrder.supplier_id !== supplier.id) throw new ValidationError('The supplier invoice does not match the purchase order supplier.');
+    // A bill can name the delivery it is for, such as a carrier's freight bill (job 49).
+    const delivery=input.purchaseReceiptId?await requireRow(client,'SELECT id,purchase_order_id FROM purchase_order_receipts WHERE workspace_id=$1 AND id=$2',
+      [ctx.workspaceId,input.purchaseReceiptId],'That delivery is not in this business.'):null;
+    if(delivery&&purchaseOrder&&delivery.purchase_order_id!==purchaseOrder.id)throw new ValidationError('That delivery is not on this purchase order.');
     const reviewed=recheckId?await requireRow(client,'SELECT * FROM accounting_supplier_bills WHERE workspace_id=$1 AND id=$2'+(preview?'':' FOR UPDATE'),[ctx.workspaceId,recheckId],'That invoice is not in this business.'):null;
     if(reviewed&&(!['DRAFT','DISPUTED'].includes(reviewed.status)||reviewed.journal_entry_id||reviewed.opened_at))throw new ValidationError('Only unposted disputed invoices can be rechecked. Posted bills retain their accounting history.');
     if(reviewed&&(reviewed.supplier_id!==supplier.id||reviewed.purchase_order_id!==(input.purchaseOrderId||null)||!reviewed.invoice_input))throw new ValidationError('This bill needs an evidenced accounting review before it can be rechecked.');
@@ -512,6 +516,8 @@ async function recordSupplierInvoice(database, rawContext, input, {preview=false
       if(line.itemId&&!allItems.some(i=>i.id===line.itemId))throw new ValidationError('The invoice item is not in this business.');
       const purchaseLine=line.purchaseOrderLineId?byPoLine.get(line.purchaseOrderLineId):null;
       if(line.purchaseOrderLineId&&!purchaseLine)throw new ValidationError('The invoice line does not match this purchase order.');
+      if(line.landedCostKind!=null&&line.landedCostKind!==''&&(!['freight','duty','insurance','handling'].includes(line.landedCostKind)||purchaseLine))
+        throw new ValidationError('Only a separate freight, duty, insurance or handling line can be marked as a delivery cost.');
       const preparedLine=matcher.prepareLine(line,purchaseLine,billedByLine.get(purchaseLine?.id),receipts.get(purchaseLine?.id),quantitiesThisDocument,index+1,purchaseOrder?.currency||currency,{priceApproved:priceApproval?.allow_price_difference===true,trackingApproved:priceApproval?.allow_tracking_confirmation===true});
       if(!purchaseLine&&purchaseOrder)preparedLine.differences.push({line:index+1,kind:'missing_purchase_order_line'});
       differences.push(...preparedLine.differences);if(preparedLine.differences.some(d=>!d.approved))matchStatus='EXCEPTION';
@@ -548,6 +554,7 @@ async function recordSupplierInvoice(database, rawContext, input, {preview=false
       const reason=String(input.reviewReason||'').trim();if(!reason||reason.length>1000)throw new ValidationError('Explain why this invoice is being rechecked, up to 1000 characters.');
       const details=typeof reviewed.exception_detail==='string'?JSON.parse(reviewed.exception_detail||'{}'):reviewed.exception_detail||{},reviews=[...(details.reviews||[]),{at:nowIso(),actorId:ctx.actorId,reason,priorDifferences:details.differences||[],matchFingerprint:previewResult.matchFingerprint,status}];
       await client.query(`UPDATE accounting_supplier_bills SET status=$3,match_status=$4,journal_entry_id=$5,opened_at=CASE WHEN $3='OPEN' THEN $6 ELSE NULL END,updated_at=$6,exception_detail=$7,review_revision=review_revision+1 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,billId,status,matchStatus,posted?.entry.id||null,nowIso(),JSON.stringify({differences,reviews})]);
+      if(status==='OPEN')await require('../accounting/agent-landed-cost-bills').queue(client,ctx.workspaceId,billId);
       const result={billId,billNumber:reviewed.bill_number,status,matchStatus,differences,totalMinor,balanceMinor:totalMinor,journalEntryId:posted?.entry.id||null};await completeOperation(client,operation,result);return {...result,replayed:false};
     }
     const billNumber = trimOrNull(input.billNumber) || await numbered(client, ctx.workspaceId, 'accounting_supplier_bills', 'BILL');
@@ -570,12 +577,14 @@ async function recordSupplierInvoice(database, rawContext, input, {preview=false
     for (const [index, line] of prepared.entries()) {
       await client.query(`INSERT INTO accounting_supplier_bill_lines
         (id,workspace_id,bill_id,line_number,description,quantity,unit_cost_minor,line_total_minor,debit_account_id,
-         item_id,sku_id,purchase_order_line_id,created_at,secondary_quantity,price_quantity,document_line_total_minor,matched_receipt_minor,tracking_evidence,source_unit_cost_minor,source_price_quantity)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19,$20)`,
+         item_id,sku_id,purchase_order_line_id,created_at,secondary_quantity,price_quantity,document_line_total_minor,matched_receipt_minor,tracking_evidence,source_unit_cost_minor,source_price_quantity,landed_cost_kind)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19,$20,$21)`,
       [newId('apline'), ctx.workspaceId, billId, index + 1, line.description || `Invoice line ${index + 1}`,
         line.quantity, Number.isSafeInteger(line.unitCostMinor/line.priceQuantity)?line.unitCostMinor/line.priceQuantity:line.unitCostMinor, line.lineTotalMinor, defaultDebitAccountId, line.itemId || null,
-        line.skuId || line.purchaseLine?.sku_id || null, line.purchaseOrderLineId || null, at,line.secondaryQuantity,Number.isSafeInteger(line.unitCostMinor/line.priceQuantity)?1:line.priceQuantity,line.documentLineTotalMinor??null,line.matchedReceiptMinor,JSON.stringify(line.trackingEvidence||{}),line.unitCostMinor,line.priceQuantity]);
+        line.skuId || line.purchaseLine?.sku_id || null, line.purchaseOrderLineId || null, at,line.secondaryQuantity,Number.isSafeInteger(line.unitCostMinor/line.priceQuantity)?1:line.priceQuantity,line.documentLineTotalMinor??null,line.matchedReceiptMinor,JSON.stringify(line.trackingEvidence||{}),line.unitCostMinor,line.priceQuantity,line.landedCostKind||null]);
     }
+    // Job 49: a posted bill for a delivery updates the delivered goods' cost.
+    if(status==='OPEN')await require('../accounting/agent-landed-cost-bills').queue(client,ctx.workspaceId,billId);
     const result = { billId, billNumber, status, matchStatus, differences,
       totalMinor, balanceMinor: totalMinor, journalEntryId: posted?.entry.id || null };
     await completeOperation(client, operation, result);
