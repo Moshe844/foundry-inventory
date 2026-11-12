@@ -199,6 +199,7 @@ const actionJobs=new Map([
   ['purchasing.fx_alert',40],
   ['report.net_margin_alert',85],
   ['report.month_end_stock',158],
+  ['report.change_digest',157],
   ['channel.price_check',87],
   ['inventory.correct_bin',11],
   ['customer_return.from_email',111],

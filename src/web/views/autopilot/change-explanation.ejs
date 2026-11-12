@@ -1,0 +1,54 @@
+<% const r=explanation,stamp=v=>helpers.dateTime(v),open=flags.filter(f=>f.status==='OPEN'),seen=flags.filter(f=>f.status==='DISMISSED');
+const hurts=a=>r.measure==='cogs'?a>0n:a<0n; %>
+<div class="page-head"><div class="titles"><h1>Why it changed</h1>
+<p>Compare one month with an earlier one and see what moved sales, gross profit, cost of goods or stock value. Every cause is worked out from your posted sales and stock records, links to them, and the causes add up to the change.</p></div></div>
+
+<section class="card section"><form method="get" action="/autopilot/reviews/margin-change" class="form-stack">
+<label class="rm-field"><span>What changed</span><select name="measure" aria-label="What changed"><% Object.entries(measures).forEach(([key,label])=>{ %><option value="<%= key %>" <%= key===r.measure?'selected':'' %>><%= label %></option><% }) %></select></label>
+<label class="rm-field"><span>Month</span><select name="month" aria-label="Month"><% months.forEach(m=>{ %><option value="<%= m %>" <%= m===r.month?'selected':'' %>><%= m %></option><% }) %></select></label>
+<label class="rm-field"><span>Compared with</span><select name="compare" aria-label="Compared with"><% months.filter(m=>m<r.month||m===r.compare).forEach(m=>{ %><option value="<%= m %>" <%= m===r.compare?'selected':'' %>><%= m %></option><% }) %></select></label>
+<label class="rm-field"><span>Break down by</span><select name="by" aria-label="Break down by"><% Object.entries(dimensions).forEach(([key,label])=>{ %><option value="<%= key %>" <%= key===r.by?'selected':'' %>><%= label %></option><% }) %></select></label>
+<label class="rm-field"><span>Only this one (optional)</span><input name="subject" maxlength="150" value="<%= r.subject %>" placeholder="Item code, channel, customer or warehouse"></label>
+<button class="btn btn--primary">Explain</button></form></section>
+
+<% if(r.problem){ %><p class="notice notice--warn"><%= r.problem %> <a href="/accounting">Open accounting</a></p><% } %>
+<% if(r.empty){ %><p class="notice notice--info"><%= r.empty %></p><% } %>
+<% r.currencies.forEach(c=>{ %>
+<section class="card section" id="change-<%= c.currency %>"><h2><%= measures[r.measure] %><%= r.subject?' · '+r.subject:'' %> · <%= c.currency %></h2>
+<p><%= c.sentence %></p>
+<ul class="rm-list">
+<li class="list-row"><span><%= r.previous.name %></span><strong><%= fmt(c.previous,c.currency) %></strong></li>
+<li class="list-row"><span><%= r.current.name %></span><strong><%= fmt(c.current,c.currency) %></strong></li>
+<li class="list-row"><span>Change<%= c.percent===null?'':' ('+(c.percent>0?'+':'')+c.percent+'%)' %></span><strong><%= signed(c.change,c.currency) %></strong></li>
+</ul>
+<h3>Causes</h3>
+<ul class="rm-list"><% c.drivers.forEach(d=>{ %><li class="list-row" id="cause-<%= c.currency %>-<%= d.key %>"><span><strong><%= d.label %></strong>
+<% if(d.amount!==0n){ %> <span class="badge <%= hurts(d.amount)?'badge--danger':'badge--ok' %>"><%= hurts(d.amount)?'Hurt':'Helped' %></span><% } %>
+<% (d.records||[]).forEach(x=>{ %><small><% if(x.href){ %><a href="<%= x.href %>"><%= x.label %></a><% }else{ %><%= x.label %><% } %><%= x.text?' · '+x.text:'' %></small><% }) %>
+<% (d.sources||[]).forEach(s=>{ %><small>Behind <%= s.label %>: <% s.records.forEach((x,i)=>{ %><%= i?' · ':'' %><a href="<%= x.href %>"><%= x.label %></a><% }) %></small><% }) %>
+</span><strong><%= signed(d.amount,c.currency) %></strong></li><% }) %></ul>
+<% if(c.stockouts.length){ %><h3>Sales probably missed while out of stock</h3><p class="cell-sub">Part of the drop in units sold. An estimate from the days each item had nothing on hand, at its sales rate in <%= r.previous.name %>; not added again above.</p>
+<ul class="rm-list"><% c.stockouts.forEach(s=>{ %><li class="list-row"><span><% if(s.href){ %><a href="<%= s.href %>"><%= s.label %></a><% }else{ %><%= s.label %><% } %><small><%= s.text %></small></span><strong><%= fmt(s.sales,c.currency) %></strong></li><% }) %></ul><% } %>
+<% if(c.below){ %><h3>Below gross profit</h3><ul class="rm-list">
+<% c.below.lines.forEach(l=>{ %><li class="list-row"><span><a href="<%= l.href %>"><%= l.label %></a><small><%= fmt(l.previous,c.currency) %> → <%= fmt(l.current,c.currency) %></small></span><strong><%= signed(l.amount,c.currency) %></strong></li><% }) %>
+<li class="list-row"><span><strong>Change after these</strong></span><strong><%= c.below.afterChange===null?'Not known':signed(c.below.afterChange,c.currency) %></strong></li></ul>
+<% c.below.notes.forEach(n=>{ %><p class="cell-sub"><%= n %></p><% }) %><% } %>
+<% if(c.breakdown.length){ %><h3>By <%= dimensions[r.by].toLowerCase() %></h3>
+<div class="table-wrap"><table class="table table--stack"><thead><tr><th><%= dimensions[r.by] %></th><th><%= r.compare %></th><th><%= r.month %></th><th>Change</th><th>Biggest cause</th></tr></thead><tbody>
+<% c.breakdown.forEach(g=>{ %><tr><td class="cell-main"><% if(g.href){ %><a class="cell-title" href="<%= g.href %>"><%= g.label %></a><% }else{ %><span class="cell-title"><%= g.label %></span><% } %></td>
+<td data-label="<%= r.compare %>"><%= fmt(g.previous,c.currency) %></td><td data-label="<%= r.month %>"><%= fmt(g.current,c.currency) %></td><td data-label="Change"><%= signed(g.change,c.currency) %></td>
+<td data-label="Biggest cause"><%= g.lead?g.lead.label+' '+signed(g.lead.amount,c.currency):'' %></td></tr><% }) %></tbody></table></div>
+<% if(c.breakdownMore){ %><p class="cell-sub">Showing the 50 biggest changes. Name one to explain it alone.</p><% } %><% } %>
+</section><% }) %>
+
+<section class="card section" id="monthly-digest"><h2>Monthly check for big changes</h2>
+<p class="cell-sub">After each month ends StockChief compares it with the month before and flags sales, gross profit, cost of goods or stock value that moved 20% or more, with the causes.</p>
+<% if(shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It checks each month and raises no flags.</p><% }else if(automatic){ %><p class="notice notice--info"><%= automatic %></p><% } %>
+<% if(open.length){ %><ul class="rm-list"><% open.forEach(f=>{ %><li class="list-row" id="flag-<%= f.id %>"><span><a href="<%= f.detail.href %>"><strong><%= f.detail.title %></strong></a><small><%= f.detail.happened %></small></span>
+<form method="post" action="/autopilot/reviews/margin-change/flags/<%= f.id %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm">Mark as seen</button></form></li><% }) %></ul>
+<% }else{ %><p class="cell-sub">No big changes waiting for you.</p><% } %>
+<% if(seen.length){ %><p class="cell-sub">Seen: <%= seen.map(f=>f.detail.title).join('; ') %>.</p><% } %>
+<% if(runs.length){ %><ul class="rm-list"><% runs.forEach(run=>{ %><li class="list-row"><span><%= run.period %> · <%= run.outcome==='PRODUCED'?'Checked':run.outcome==='WATCHED'?'Checked while watching':'Stopped' %><small><%= stamp(run.created_at) %><%= run.authorization_kind==='AUTOMATIC'?' · on its own':' · by you' %><%= run.reason?' · '+run.reason:'' %></small></span></li><% }) %></ul><% } %>
+<form method="post" action="/autopilot/reviews/margin-change/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="month" value="<%= r.month %>"><button class="btn btn--ghost">Check <%= r.month %> for big changes now</button></form>
+<p class="cell-sub"><a href="/autopilot/job-modes">Choose Watch only or Ask me first for this job</a></p>
+</section>

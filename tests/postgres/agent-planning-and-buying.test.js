@@ -297,9 +297,10 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
     }
     const close=(await review('month-end-stock',{filter:end.slice(0,7)})).rows[0];
     assert.equal(close['Stock on books at month end'],'$15.00');assert.equal(close['Cost of goods sold'],'$9.00');
-    const change=(await review('margin-change',{filter:end.slice(0,7)})).rows[0];
-    assert.equal(change['Gross profit'],'$13.00');assert.equal(change['Revenue change'],'$2.00');assert.equal(change['Cost of goods change'],'$3.00');
-    assert.equal(change['Gross profit change'],'-$1.00');
+    const causes=(await review('margin-change',{filter:end.slice(0,7)})).rows,change=causes[0];
+    assert.equal(change.Change,'-$1.00');assert.match(change.Detail,/\$13\.00 against \$14\.00/);
+    // These hand-posted sales name no item, so the whole change is in other postings.
+    assert.equal(causes.find(r=>r.Cause==='Other postings, not item sales').Change,'-$1.00');
     await browser.get(change.link).expect(200);
   }
   await assert.rejects(review('month-end-stock',{filter:today.slice(0,7)}),/completed calendar month/);
