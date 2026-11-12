@@ -1070,6 +1070,9 @@ function createPostgresAutopilotRouter(database,options={}){
     const prepared=await assistant.prepareAction(database,req.ctx,'Prepare this requested customer account statement',{action:'customer.statement',recordReference:req.body.customerReference,mailbox:req.body.connectorId,currency:req.body.currency||undefined});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact customer, currency and connected sending mailbox.');res.redirect(303,'/actions/'+prepared.proposal.id);
   }));
+  router.post('/autopilot/customer-statements/requests/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../accounting/agent-statement-requests').dismiss(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/reviews/customer-statements');
+  }));
   const disputeFlow=require('../../purchasing/invoice-dispute-follow-through');
   router.get('/autopilot/supplier-disputes/:id',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/supplier-dispute-detail',{
     title:'Supplier invoice dispute',nav:'autopilot',backTo:{href:'/autopilot/reviews/supplier-invoice-disputes',label:'Supplier invoice disputes'},

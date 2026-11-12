@@ -1,7 +1,16 @@
-<section class="card"><h2>Prepare a requested statement</h2><p>The preview shows the customer’s recorded account in one currency, including current-month activity, outstanding invoices and other account balances. StockChief does not send this page automatically.</p>
-<% if(result.customerStatementForm.blocked){ %><p><%= result.customerStatementForm.blocked %></p><% }else if(!result.customerStatementForm.mailboxes.length){ %><p>Connect a sending mailbox first. <a href="/connections">Open connections</a></p><% }else{ %>
+<% const sf=result.customerStatementForm; %>
+<section class="card"><h2>Prepare a requested statement</h2><p>The preview shows the customer’s recorded account in one currency, including current-month activity, outstanding invoices and other account balances. The complete statement goes as a PDF with the email.</p>
+<% if(sf.blocked){ %><p><%= sf.blocked %></p><% }else if(!sf.mailboxes.length){ %><p>Connect a sending mailbox first. <a href="/connections">Open connections</a></p><% }else{ %>
 <form method="post" action="/autopilot/customer-statements/prepare" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
 <label class="rm-field"><span>Exact customer name or email</span><input name="customerReference" maxlength="150" required></label>
 <label class="rm-field"><span>Currency</span><small>Leave blank to use your accounting currency. Other currencies are separate.</small><input name="currency" aria-label="Currency" maxlength="3" placeholder="USD"></label>
-<label class="rm-field"><span>Sending mailbox</span><select name="connectorId" required><% result.customerStatementForm.mailboxes.forEach(box=>{ %><option value="<%= box.id %>"><%= box.display_name %></option><% }) %></select></label>
+<label class="rm-field"><span>Sending mailbox</span><select name="connectorId" required><% sf.mailboxes.forEach(box=>{ %><option value="<%= box.id %>"><%= box.display_name %></option><% }) %></select></label>
 <button class="btn btn--primary">Preview account statement</button></form><% } %></section>
+<section class="card section" data-statement-requests><h2>Statement requests</h2>
+<% if(!(sf.requests||[]).length){ %><p>No customer has asked for a statement yet. Requests by email or in Ask appear here.</p><% }else{ %><ul class="rm-list">
+<% for(const r of sf.requests){ %><li class="list-row" data-statement-request="<%= r.id %>">
+  <span><% if(r.href){ %><a href="<%= r.href %>"><strong><%= r.who %></strong></a><% }else{ %><strong><%= r.who %></strong><% } %>
+    <small><%= r.how %><% if(r.at){ %> · <%= helpers.shortDate?helpers.shortDate(r.at):r.at %><% } %> · <%= r.outcome %><% if(r.automatic){ %> by StockChief<% } %></small>
+    <% if(r.reason){ %><small><%= r.reason %></small><% } %></span>
+  <% if(r.canDismiss){ %><form method="post" action="/autopilot/customer-statements/requests/<%= encodeURIComponent(r.id) %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm">Dismiss</button></form><% } %>
+</li><% } %></ul><% } %></section>
