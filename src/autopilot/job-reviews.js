@@ -75,6 +75,7 @@ const definitions=[
   require('../pricing/channel-price-review').definition,
   require('./repeated-corrections').definition,
   require('../sales/recurring-orders').definition,
+  ...require('../sales/agent-customer-orders').definitions,
   require('../actions/financial-visibility').definition,
   ...require('./automation-opportunities').definitions,
   {id:13,key:'kit-capacity',label:'Kits you can build now',filterLabel:'Kit SKU',readPage:require('../purchasing/agent-kit-reorders').review},

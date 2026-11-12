@@ -1364,6 +1364,30 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',result.stopped?'Every bill of this kind will wait for you.':'Your limit was saved.');
     res.redirect(303,landedCostBills.path+'/'+encodeURIComponent(req.params.id));
   }));
+  // Jobs 52 and 53: customer orders from email, PDFs, spreadsheets and one-sentence repeats.
+  const customerOrders=require('../../sales/agent-customer-orders');
+  router.get('/autopilot/reviews/customer-email-orders',requireAuth,owner,(req,res)=>res.redirect(303,customerOrders.path));
+  router.get('/autopilot/reviews/repeat-customer-orders',requireAuth,owner,(req,res)=>res.redirect(303,customerOrders.path));
+  router.get(customerOrders.path,requireAuth,owner,starterAgentPage(52,'draft','Customer orders from email',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/customer-orders',{title:'Customer orders from email',nav:'autopilot',
+      screen:await customerOrders.page(database,req.ctx,{page:req.query.page||1}),backTo:{href:'/autopilot/reviews',label:'Agent reviews'}});
+  },'Growth'));
+  router.post(customerOrders.path+'/limits',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await customerOrders.configure(database,req.ctx,req.body);
+    req.flash('success',result.enabled?'Your limits were saved.':'Every customer order will wait for you.');
+    res.redirect(303,customerOrders.path);
+  }));
+  router.post(customerOrders.path+'/codes',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await (req.body.remove==='yes'?customerOrders.removeCode:customerOrders.saveCode)(database,req.ctx,req.body);
+    req.flash('success',req.body.remove==='yes'?'The code was removed.':'The customer’s code was saved.');
+    res.redirect(303,customerOrders.path+'#codes');
+  }));
+  router.post(customerOrders.path+'/:kind/:id/undo',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await customerOrders.undo(database,req.ctx,req.params.kind==='repeat'?'repeat':'email',req.params.id);
+    req.flash('success',result.replayed?'This order was already undone.':'The order was cancelled and its stock released.');
+    res.redirect(303,customerOrders.path);
+  }));
   router.post('/autopilot/putaway/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const made=await require('../../warehouse/agent-putaway').prepare(database,req.ctx,req.body.receiptLine,req.body.destination);
     res.redirect(303,'/warehouse/putaway/'+made.id);
