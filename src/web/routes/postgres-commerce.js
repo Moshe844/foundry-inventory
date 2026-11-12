@@ -458,7 +458,8 @@ function createPostgresCommerceRouter(database,options={}){
       manualShippingNotices,noticePolicy:{shippingNotice:manualShippingNotices&&policy.shipping_notice==='send'?'prepare':policy.shipping_notice||'prepare',outForDeliveryNotice:policy.out_for_delivery_notice||'prepare',
         deliveredNotice:policy.delivered_notice||'prepare',exceptionNotice:policy.exception_notice||'prepare',
         connectorId:policy.connector_id||'',businessName:policy.business_name||'',signature:policy.signature||''},
-      mailboxes:mailboxRows.rows,canManageSettings:permissions.can(req.user,permissions.ADMIN)});
+      mailboxes:mailboxRows.rows,canManageSettings:permissions.can(req.user,permissions.ADMIN),
+      noticeChannels:agentPolicy.usesAgentTerms(account)?await require('../../shipping/agent-shipping-notices').channels(database,req.ctx.workspaceId):[]});
   }));
   router.post('/fulfilment/settings/notices',requireAuth,requirePermission(permissions.ADMIN,'change customer notices'),asyncRoute(async(req,res)=>{
     const allowed=new Set(['off','prepare','send']);const pick=(value)=>allowed.has(value)?value:'prepare';const at=nowIso();
@@ -468,6 +469,7 @@ function createPostgresCommerceRouter(database,options={}){
     if(automatic&&req.user.role!=='owner')throw new AuthorizationError('Only the inventory owner can authorize automatic customer shipping notices.');
     const mailbox=automatic?await require('../../shipping/agent-shipping-notices').mailbox(database,req.ctx.workspaceId,req.body.connectorId):null;
     if(automatic&&!mailbox)throw new ValidationError('Choose a connected mailbox with email sending permission to send shipping notices automatically.');
+    await require('../../shipping/agent-shipping-notices').saveChannels(database,req.ctx,req.body.channelSender,req.user);
     await database.query(`INSERT INTO customer_communication_policy(workspace_id,shipping_notice,out_for_delivery_notice,
       delivered_notice,exception_notice,connector_id,business_name,signature,created_at,updated_at,shipping_authorized_by,shipping_mailbox_account)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,$11) ON CONFLICT(workspace_id) DO UPDATE SET shipping_notice=excluded.shipping_notice,
@@ -1277,6 +1279,7 @@ function createPostgresCommerceRouter(database,options={}){
     const creditHold=await require('../../sales/agent-credit-holds').forOrderPage(database,req.ctx,
       {id:page.order.id,status:page.order.status,customer_id:page.order.customer.id},agentState,req.user);
     const bankDetails=await require('../../sales/postgres-bank-transfer-details').get(database,req.ctx.workspaceId);
+    const noticeChannel=page.shipments.length&&plans.usesAgentTerms(agentState)?await require('../../shipping/agent-shipping-notices').channelFor(database,req.ctx.workspaceId,page.order.id):null;
     const shippingAccounts=page.order.delivery_method==='SHIP'?await require('../../shipping/postgres-accounts').describeAll(database,req.ctx.workspaceId):[];
     const shippingReady=shippingAccounts.length>0;
     // The parcel being shipped through a carrier right now: its rates and label are shown on the order itself.
@@ -1294,7 +1297,7 @@ function createPostgresCommerceRouter(database,options={}){
         agentRun:await require('../../shipping/agent-labels').view(database,req.ctx.workspaceId,openParcel.id)};}
     else if(shippingReady&&page.order.status!=='CANCELLED'&&page.pickable.length){let locationId=null;try{locationId=require('../../sales/parcel-lines').forParcel(page.detail).locationId;}catch(error){if(!(error instanceof ValidationError))throw error;}
       if(locationId)shipNeeds=await readiness.needs(database,req.ctx.workspaceId,{orderId:page.order.id,locationId});}
-    return res.page('sales/order',{canEditLocation,shipConnectHref,shipNeeds,shipNoAccount:Boolean(openParcel&&!shippingReady),depositRefundKey:newId('deposit-refund'),shippingReady,shipNow,shippingAccountNames:shippingAccounts.map(a=>a.providerName),shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
+    return res.page('sales/order',{noticeChannel,canEditLocation,shipConnectHref,shipNeeds,shipNoAccount:Boolean(openParcel&&!shippingReady),depositRefundKey:newId('deposit-refund'),shippingReady,shipNow,shippingAccountNames:shippingAccounts.map(a=>a.providerName),shipRequestKey:newId('shiplabel'),bankDetails,canManageBankDetails:permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       canRecordPayments:permissions.can(req.user,permissions.RECORD_PAYMENTS),canEdit:permissions.can(req.user,permissions.OPERATE),title:`${page.order.order_number} · ${page.order.customer.name}`,nav:'sales',room:false,
       suppressBack:true,screenGuide:null,story:null,evidenceTrace:null,order:page.order,shortButAvailable:0,postgresPlacement:true,
       shipFromReview,orderCredit,orderCreditDetailed:plans.permits(agentState.plan,80,'automatic'),orderScreening,creditHold,

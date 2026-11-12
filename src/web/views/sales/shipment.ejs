@@ -796,7 +796,8 @@
 }());
 </script>
 
-<% if (notices && notices.length) { %>
+<% var shippedNotices = (notices || []).filter(function (n) { return !locals.postgresPlacement || n.message_kind === 'shipping_notice'; }); %>
+<% if (shippedNotices.length) { %>
   <%
     /*
      * What the customer was told, or is about to be.
@@ -806,10 +807,10 @@
      * from records; the person who has to answer the reply gets the last read
      * of it.
      */
-    var notice = notices[0];
+    var notice = shippedNotices[0];
     var gone = notice.status === 'SENT';
   %>
-  <section class="section">
+  <section class="section" id="notice">
     <div class="panel">
       <div class="panel-head">
         <div>

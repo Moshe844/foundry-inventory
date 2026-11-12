@@ -680,7 +680,9 @@
                   var told = (locals.customerNotices || [])
                     .filter(function (note) { return note.shipmentId === box.id; })[0];
                 %>
-                <% if (!told) { %>
+                <% if (!told && locals.noticeChannel && noticeChannel.sender !== 'stockchief' && box.handover === 'CARRIER') { %>
+                  <span class="t-muted"><%= noticeChannel.name %> tells them</span>
+                <% } else if (!told) { %>
                   <span class="t-muted">—</span>
                 <% } else if (told.status === 'SENT') { %>
                   <span class="t-ok">Sent <%= helpers.shortDate(told.sentAt) %></span>

@@ -194,8 +194,8 @@
             <span class="choice-body">
               <strong>StockChief sends it for me</strong>
               <span class="t-xs t-muted">
-                Sent as soon as the physical carrier handoff is confirmed. Needs a connected mailbox, and
-                nothing goes out while StockChief is paused.
+                Sent as soon as the parcel leaves: when you record the carrier handoff or the carrier
+                first scans it. Needs a connected mailbox, and nothing goes out while StockChief is paused.
               </span>
             </span><% } %>
           </label>
@@ -208,6 +208,21 @@
             </span>
           </label>
         </div>
+
+        <% if ((locals.noticeChannels || []).length) { %>
+          <div class="field-row" id="channel-notices">
+            <% noticeChannels.forEach(function (channel) { %>
+              <label class="field">
+                <span class="field-label">Orders from <%= channel.name %></span>
+                <select class="select" name="channelSender[<%= channel.id %>]">
+                  <option value="channel" <%= channel.sender === 'channel' ? 'selected' : '' %>><%= channel.name %> emails them</option>
+                  <option value="stockchief" <%= channel.sender === 'stockchief' ? 'selected' : '' %>>StockChief emails them</option>
+                </select>
+                <span class="field-hint">Stores and marketplaces send their own shipping email. Choose StockChief only if <%= channel.name %> does not.</span>
+              </label>
+            <% }) %>
+          </div>
+        <% } %>
 
         <div class="field-row" style="margin-top:16px;">
           <% [
