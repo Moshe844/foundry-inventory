@@ -91,6 +91,7 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   await require('../accounting/agent-cash-planning').preparePaymentChecks(db,workspaceId,account,today);
   // Job 166 needs migration 459 (its notice job number and alert levels).
   const stockAlerts=await require('../db/schema-installed').has(db,'stockchief_runtime.agent_alert_channels');
+  const watchRules=await require('./watch-rules').candidates(db);
   const watched=require('./activity-watches').spec;
   const watchQueries=Object.entries(watched).filter(([job])=>policy.permits(account.plan,Number(job),'automatic'))
     .map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('');
@@ -114,7 +115,7 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
         ON p.workspace_id=s.workspace_id AND '/actions/'||p.id=opportunity->>'link'
         WHERE NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_draft_rules r WHERE r.workspace_id=p.workspace_id
           AND r.action_type=p.action_type AND r.scope_key=p.payload#>>'{training,key}'))`+
-    ' UNION ALL SELECT 167,"Brand","SKU",link,$3::date FROM ('+require('./brand-watches').matching+') b'+
+    watchRules+
     (stockAlerts?' UNION ALL SELECT 166,kind,ref,link,$3::date FROM ('+require('./stock-alerts').sql+') low':'')+
     (includeTransfers?' UNION ALL '+transferArrivals.candidates('$4'):'')+
     (monitors.has(110)?' UNION ALL '+purchaseBudgets.overBudgetNotices:'')+
@@ -239,9 +240,9 @@ async function inbox(db,workspaceId,actorId=null){
         why:'StockChief compares stock on hand with each reorder point, or your own alert level, through the day.',
         recommendation:'Reorder or move stock, or change the reorder point.',href:require('./stock-alerts').path,actionLabel:'Review stock alerts',sourceId:'agent-notice-166'};
     }
-    if(Number(r.job_id)===167)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'Stock below a brand watch level',
-      happened:r.n+' SKU'+(r.n===1?' is':'s are')+' at a watched stock level.',why:'The physical quantity across your inventory meets a saved brand rule.',
-      recommendation:'Review the flagged products and their current stock.',href:'/autopilot/reviews/brand-watches',actionLabel:'View watched stock',sourceId:'agent-notice-167'};
+    if(Number(r.job_id)===167)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'Your watch rules found something',
+      happened:r.n+' product'+(r.n===1?' matches':'s match')+' your watch rules.',why:'StockChief checks your watch rules against stock, sales, prices and expiry dates through the day.',
+      recommendation:'Review what matched and act on it.',href:require('./watch-rules').path,actionLabel:'Review watch rule alerts',sourceId:'agent-notice-167'};
     if(Number(r.job_id)===87)return {kind:'inventory',grouped:true,importance:'Important',priority:75,title:'Channel prices need review',
       happened:r.n+' recorded channel price'+(r.n===1?' needs':'s need')+' review.',why:'A comparison found a price difference, MAP issue or older provider observation.',
       recommendation:'Review the recorded prices and their check dates.',href:'/autopilot/reviews/channel-prices',actionLabel:'Review channel prices',sourceId:'agent-notice-87'};

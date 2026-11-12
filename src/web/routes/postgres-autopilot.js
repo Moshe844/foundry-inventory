@@ -1529,6 +1529,8 @@ function createPostgresAutopilotRouter(database,options={}){
       model:await require('../../forecasting/agent-safety-stock').classPlanning(database,req.ctx,req.params.itemId,req.query),
     });
   }));
+  // Brand watches became watch rules (job 167).
+  router.get('/autopilot/reviews/brand-watches',requireAuth,(req,res)=>res.redirect(301,'/autopilot/reviews/watch-rules'));
   router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
     return agentPage(req,res,'autopilot/review-result',{title:'Agent review',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>{
       const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,change:req.query.change});
@@ -1552,7 +1554,10 @@ function createPostgresAutopilotRouter(database,options={}){
       if(req.params.job==='supplier-specifications')result.specForm=true;
       if(req.params.job==='warehouse-slotting')result.slottingPath=slotting.path;
       if(req.params.job==='repeat-loss')result.lossShifts=await require('../../autopilot/stock-loss-patterns').settings(database,req.ctx.workspaceId);
-      if(req.params.job==='brand-watches')result.watches=await require('../../autopilot/brand-watches').list(database,req.ctx.workspaceId);
+      if(req.params.job==='watch-rules'){
+        result.watchRules={rules:await require('../../autopilot/watch-rules').list(database,req.ctx.workspaceId),draft:req.session?.watchRuleDraft||''};
+        if(req.session)delete req.session.watchRuleDraft;
+      }
       const alertJob=require('../../autopilot/agent-alerts').forKey(req.params.job);
       if(alertJob)result.alerts=await require('../../autopilot/agent-alerts').panel(database,req.ctx,alertJob);
       if(req.params.job==='staff-count-lists')result.countAssignments={...await require('../../operations/agent-count-tasks').setup(database,req.ctx),requestKey:newId('count-assignment'),selectedLocationId:req.query.locationId};
@@ -1619,10 +1624,21 @@ function createPostgresAutopilotRouter(database,options={}){
     await require('../../purchasing/dual-approval').configure(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/purchase-approval-threshold');
   }));
-  router.post('/autopilot/reviews/brand-watches/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
-    await require('../../autopilot/brand-watches').save(database,req.ctx,req.body);
-    res.redirect(303,'/autopilot/reviews/brand-watches');
-  }));
+  // Job 167: an unclear rule is asked back and its words stay in the form.
+  const saveWatchRule=asyncRoute(async(req,res)=>{
+    const rules=require('../../autopilot/watch-rules');
+    try{
+      const saved=await rules.save(database,req.ctx,req.body);
+      req.flash('success',saved.removed!==undefined?(saved.removed?'Watch rule removed.':'That rule was already removed.'):'Rule saved. StockChief reads it as: '+saved.meaning);
+    }catch(error){
+      if(error?.code!=='validation_error'||req.body.remove)throw error;
+      if(req.session)req.session.watchRuleDraft=String(req.body.instruction||'').slice(0,320);
+      req.flash('error',error.message);
+    }
+    res.redirect(303,rules.path);
+  });
+  router.post('/autopilot/reviews/watch-rules/rules',requireAuth,owner,saveWatchRule);
+  router.post('/autopilot/reviews/brand-watches/rules',requireAuth,owner,saveWatchRule);
   router.post('/autopilot/reviews/payment-run/approve',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../accounting/agent-cash-planning').approvePaymentRun(database,req.ctx,req.body);
     req.flash('success','Payment review recorded. Pay suppliers and record payments from their individual bills.');

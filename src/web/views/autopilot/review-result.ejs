@@ -114,12 +114,7 @@
 <label>Watch from local hour (0–23) <input type="number" min="0" max="23" name="nightFrom" value="<%= w.night_from??'' %>"></label>
 <label>Until local hour (0–23) <input type="number" min="0" max="23" name="nightUntil" value="<%= w.night_until??'' %>"></label><% } %>
 <button class="btn">Save alert settings</button></form><% } %>
-<% if(result.watches){ %><form method="post" action="/autopilot/reviews/brand-watches/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-<label>Brand watch instruction <input name="instruction" required maxlength="320" placeholder="Tell me if any Nike item drops under 20"></label>
-<button class="btn">Save watch</button></form>
-<% for(const w of result.watches){ %><form method="post" action="/autopilot/reviews/brand-watches/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-<span><%= w.brand_name %> · <%= w.inclusive?'At or below':'Below' %> <%= w.threshold %> units</span>
-<button name="remove" value="<%= w.brand_name %>" class="btn">Remove watch</button></form><% } } %>
+<% if(result.watchRules){ %><%- include('watch-rules',{watchRules:result.watchRules,csrfToken}) %><% } %>
 <% if(result.download){ %><p><a class="btn" href="<%= result.download %>"><%= result.downloadLabel %></a></p><% } %>
 <% if(result.specForm){ %><form method="post" action="/autopilot/reviews/supplier-specifications/prepare">
 <input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Approved supplier file <input required name="sourceImport" value="<%= filter %>"></label>

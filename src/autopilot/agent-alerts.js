@@ -32,7 +32,9 @@ const channels='stockchief_runtime.agent_alert_channels',deliveries='stockchief_
 const MAX_EMAIL=200,EMAIL=/^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const JOBS={
   166:{action:'alert.low_stock',name:'Low stock and stock-out alerts',module:'./stock-alerts',
-    subject:(n,first)=>n===1?first.split(' (')[0]:n+' stock alerts',intro:'StockChief found stock that needs you.'}
+    subject:(n,first)=>n===1?first.split(' (')[0]:n+' stock alerts',intro:'StockChief found stock that needs you.'},
+  167:{action:'alert.watch_rule',name:'Watch rules',module:'./watch-rules',
+    subject:(n,first)=>n===1?'Watch rule: '+first.split(' (')[0]:n+' watch rule alerts',intro:'Your watch rules found something.'}
 };
 const plural=(n,one,many)=>n+' '+(Number(n)===1?one:many);
 const expected=error=>error instanceof DomainError&&[400,402,403,404,409,422].includes(error.status);

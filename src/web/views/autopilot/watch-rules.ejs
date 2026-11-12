@@ -1,0 +1,24 @@
+<% const w=watchRules; %>
+<section class="card card-body stack" data-watch-rules>
+  <h2>Your rules</h2>
+  <form method="post" action="/autopilot/reviews/watch-rules/rules">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label>Write a rule in your own words
+      <input name="instruction" required maxlength="320" value="<%= w.draft %>" placeholder="Tell me if any Nike item drops under 20">
+    </label>
+    <p class="hint">Name a brand, category, supplier, location or tag, or say “any item”. Watch stock under, over or out, price changes,
+      sales above or below a number in a day, week or month, or batches that expire within some days. For example: “Tell me when any item
+      tagged school sells more than 50 in a week”, or “Tell me if anything at Brooklyn runs out”.</p>
+    <p><button class="btn btn--primary">Save rule</button></p>
+  </form>
+  <% if(!w.rules.length){ %><p>No rules yet.</p><% } %>
+  <ul class="rm-list">
+    <% for(const rule of w.rules){ %>
+      <li class="list-row" data-watch-rule="<%= rule.id %>">
+        <span><strong><%= rule.instruction %></strong><small>StockChief reads it as: <%= rule.meaning %></small></span>
+        <form method="post" action="/autopilot/reviews/watch-rules/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn" name="remove" value="<%= rule.id %>">Remove</button></form>
+      </li>
+    <% } %>
+  </ul>
+</section>
