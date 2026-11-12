@@ -544,8 +544,10 @@ async function recordSupplierInvoice(database, rawContext, input, {preview=false
     const totalMinor = subtotal + taxMinor+chargesMinor;
     if(!Number.isSafeInteger(totalMinor)||totalMinor<=0)throw new ValidationError('A supplier invoice must have a positive, supported total. Use a supplier credit for a credit document.');
     if(input.documentTotalMinor!==undefined&&input.documentTotalMinor!==null){nonNegativeMinor(input.documentTotalMinor,'Document total');if(input.documentTotalMinor!==totalMinor){matchStatus='EXCEPTION';differences.push({kind:'document_total_differs',documentTotalMinor:input.documentTotalMinor,calculatedTotalMinor:totalMinor});}}
-    const termsAuthority=matcher.terms(supplier,issueDate,dueDate,input.sourcePaymentTerms),adjustmentAuthority=await matcher.adjustments(client,ctx.workspaceId,purchaseOrder,currency,charges,taxMinor,documentFingerprint);
+    const termsAuthority=matcher.terms(supplier,issueDate,dueDate,input.sourcePaymentTerms),{taxAgreed,taxBudget,...adjustmentAuthority}=await matcher.adjustments(client,ctx.workspaceId,purchaseOrder,currency,charges,taxMinor,documentFingerprint);
     if(purchaseOrder&&charges.length&&!adjustmentAuthority.chargesApproved){matchStatus='EXCEPTION';differences.push({kind:'additional_charges_require_review',chargesMinor});}
+    // Job 100: more tax than the purchase order agreed is wrong tax. With no tax on the order, the owner still reviews it.
+    if(purchaseOrder&&taxMinor>0&&taxAgreed&&!adjustmentAuthority.taxApproved){matchStatus='EXCEPTION';differences.push({kind:'invoice_tax_differs',agreedTaxMinor:Math.max(0,taxBudget),billedTaxMinor:taxMinor});}
     journalLines.push({ accountKey: 'ACCOUNTS_PAYABLE', creditMinor: totalMinor, supplierId: supplier.id });
     const billId = reviewed?.id||newId('apbill');
     const sourceKey = reviewed?.source_key||input.sourceKey || `supplier-invoice:${supplier.id}:${input.supplierInvoiceNumber || input.idempotencyKey}`;

@@ -1016,6 +1016,25 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success','Corrected invoice posted. The disputed original is retained.');
     res.redirect(303,'/autopilot/supplier-disputes/'+encodeURIComponent(req.params.id));
   }));
+  router.post('/autopilot/supplier-disputes/settings',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await disputeFlow.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'Dispute limit stopped. Disputes wait for you.':'Dispute limit saved.');
+    res.redirect(303,'/autopilot/reviews/supplier-invoice-disputes');
+  }));
+  router.post('/autopilot/supplier-disputes/:id/remind',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await disputeFlow.remind(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Reminder queued. It goes out from the same mailbox.');
+    res.redirect(303,'/autopilot/supplier-disputes/'+encodeURIComponent(req.params.id));
+  }));
+  router.post('/autopilot/supplier-disputes/:id/read',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await disputeFlow.markRead(database,req.ctx,req.params.id,req.body);
+    res.redirect(303,'/autopilot/supplier-disputes/'+encodeURIComponent(req.params.id));
+  }));
+  router.post('/autopilot/supplier-disputes/:id/settle-credit',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await disputeFlow.settle(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Invoice posted and the credit note applied. The dispute is settled.');
+    res.redirect(303,'/autopilot/supplier-disputes/'+encodeURIComponent(req.params.id));
+  }));
   router.post('/autopilot/supplier-disputes/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await assistant.prepareAction(database,req.ctx,'Ask the supplier to review this invoice difference',{action:'supplier_invoice.dispute',recordReference:req.body.billNumber,mailbox:req.body.connectorId});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact disputed supplier bill and sending mailbox.');res.redirect(303,'/actions/'+prepared.proposal.id);
