@@ -130,4 +130,4 @@ async function review(db,ctx,{filter,page}){
   }),more:rows.length>100,summary};
 }
 
-module.exports={summary,notices,review};
+module.exports={summary,findings,notices,review};

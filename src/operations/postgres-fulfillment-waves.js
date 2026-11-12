@@ -82,6 +82,7 @@ async function readyOrders(database,workspaceId,options={}){
         WHERE line.workspace_id=orders.workspace_id AND line.sales_order_id=orders.id AND allocation.quantity>0)
       AND NOT EXISTS(SELECT 1 FROM sales_shipments shipment WHERE shipment.workspace_id=orders.workspace_id AND shipment.sales_order_id=orders.id AND shipment.status IN ('PICKING','PACKED'))
       AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.shipbob_sandbox_orders delegated WHERE delegated.workspace_id=orders.workspace_id AND delegated.sales_order_id=orders.id)
+      AND NOT ${require('../sales/agent-credit-holds').activeHoldSql('orders')}
     ORDER BY orders.needed_by NULLS LAST,orders.order_number,orders.id LIMIT $3)
     SELECT orders.id,orders.order_number,orders.needed_by,customer.name AS customer_name,
       (SELECT COALESCE(SUM(allocation.quantity),0)::bigint FROM sales_order_lines line
@@ -128,6 +129,7 @@ async function create(database,ctx,input,options={}){
       [ctx.workspaceId,orderId])).rows[0];
       if(!order)throw new NotFoundError('One selected customer order could not be found.');
       if(!['CONFIRMED','PARTIALLY_FULFILLED',...(options.partialRelease?['BACKORDERED']:[])].includes(order.status))throw new ValidationError(`${order.order_number} is not ready to pick.`);
+      await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,orderId);
       const active=await client.query(`SELECT 1 FROM sales_shipments WHERE workspace_id=$1 AND sales_order_id=$2 AND status IN ('PICKING','PACKED') LIMIT 1`,[ctx.workspaceId,orderId]);
       if(active.rows.length)throw new ValidationError(`${order.order_number} already has an unshipped box. Open or cancel that box before releasing another pick.`);
       if((await client.query('SELECT 1 FROM stockchief_runtime.shipbob_sandbox_orders WHERE workspace_id=$1 AND sales_order_id=$2',[ctx.workspaceId,orderId])).rowCount)throw new ValidationError('Review this order in ShipBob before releasing local picking. Its provider outcome must be resolved first.');
@@ -209,7 +211,7 @@ async function scan(database,ctx,id,input){
     try{
       const locationId=await resolveIdentity(client,ctx.workspaceId,input.locationBarcode,'location',{label:'Location scan'});
       const skuId=await resolveIdentity(client,ctx.workspaceId,input.itemBarcode,'sku',{label:'Product scan'});
-      const line=(await client.query(`SELECT line.*,item.name AS item_name,item.tracking_mode,location.name AS location_name
+      const line=(await client.query(`SELECT line.*,item.name AS item_name,item.tracking_mode,location.name AS location_name,shipment.sales_order_id AS held_order_id
         FROM fulfillment_wave_lines line JOIN skus sku ON sku.id=line.sku_id JOIN items item ON item.id=sku.item_id
         JOIN locations location ON location.id=line.location_id
         JOIN sales_shipments shipment ON shipment.workspace_id=line.workspace_id AND shipment.id=line.shipment_id AND shipment.status='PICKING'
@@ -217,6 +219,7 @@ async function scan(database,ctx,id,input){
           AND line.picked_quantity<line.planned_quantity ORDER BY line.id LIMIT 1 FOR UPDATE OF line,shipment`,
       [ctx.workspaceId,id,locationId,skuId])).rows[0];
       if(!line)throw new ValidationError('That product and location are not open work in this wave. Nothing was picked.');
+      await require('../sales/agent-order-checks').assertCanRelease(client,ctx.workspaceId,line.held_order_id);
       const remaining=Number(line.planned_quantity)-Number(line.picked_quantity);
       if(quantity>remaining)throw new ValidationError(`Only ${remaining} remain on this wave line. Nothing was picked.`);
       let lotId=null;let serialUnitId=null;

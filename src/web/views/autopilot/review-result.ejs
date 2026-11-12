@@ -132,11 +132,20 @@
 <button class="btn">Review replacement orders</button></form><% } %>
 <% if(result.freightCombine){ %><%- include('freight-combine-rules',{model:result.freightCombine,trained:result.mode==='trained',csrfToken}) %><% } %>
 <% if(result.purchaseSplits){ %><%- include('purchase-split-rules',{model:result.purchaseSplits,trained:result.mode==='trained',csrfToken}) %><% } %>
+<% if(result.orderCheckSettings){ %>
+<form method="post" action="/autopilot/reviews/sales-order-checks/settings"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<p>StockChief checks each new or changed order on its own and flags problems on the order and in Needs you. It never changes or cancels an order.</p>
+<label>Flag discounts bigger than this share of the list price (%) <input type="number" name="discountPercent" min="1" max="100" step="0.01" required value="<%= result.orderCheckSettings.discountPercent %>"></label>
+<button class="btn">Save discount limit</button></form>
+<% } %>
 <% if(result.overdueRule!==undefined){ %>
 <% if(result.mode==='alone'||result.overdueRule){ %>
 <form method="post" action="/autopilot/reviews/overdue-customer-orders/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-<p>When automation is active, this rule holds new reservations and fulfillment for customers with overdue invoices.</p>
-<button name="mode" value="<%= result.overdueRule?'off':'on' %>" class="btn"><%= result.overdueRule?'Turn off overdue-order holds':'Enable overdue-order holds' %></button></form>
+<p><%= result.overdueRuleText || 'Hold orders on their own for customers who are overdue, and release them when the overdue invoices are paid in full.' %> Holds happen while routine work is on; a held order cannot be picked or shipped.</p>
+<label>Days overdue <input type="number" name="days" min="1" max="365" required placeholder="30" value="<%= result.overdueRule ? result.overdueRule.days_overdue : '' %>"></label>
+<label>Only when the overdue amount is at least (optional) <input name="amount" inputmode="decimal" value="<%= result.overdueAmount %>"></label>
+<button name="mode" value="on" class="btn"><%= result.overdueRule ? 'Save overdue rule' : 'Enable overdue-order holds' %></button>
+<% if(result.overdueRule){ %><button name="mode" value="off" class="btn" formnovalidate>Turn off overdue-order holds</button><% } %></form>
 <% } else { %><p>Automatic holds require Pro. <a href="/billing">Upgrade</a></p><% } %>
 <% } %>
 <% if(result.filterable){ %><form method="get"><label><%= result.filterLabel||"Filter by exact code, name or reference" %> <input name="filter" value="<%= filter %>" maxlength="150"></label><% if(result.requiresChange){ %><label><%= result.changeLabel||'Change in sales (%)' %> <input type="number" name="change" step="0.01" min="<%= result.minChange??-100 %>" max="<%= result.maxChange??1000 %>" value="<%= result.change??'' %>" required></label><% } %><button class="btn">Look up</button></form><% } %>
