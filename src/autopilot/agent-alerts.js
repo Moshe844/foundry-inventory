@@ -34,7 +34,9 @@ const JOBS={
   166:{action:'alert.low_stock',name:'Low stock and stock-out alerts',module:'./stock-alerts',
     subject:(n,first)=>n===1?first.split(' (')[0]:n+' stock alerts',intro:'StockChief found stock that needs you.'},
   167:{action:'alert.watch_rule',name:'Watch rules',module:'./watch-rules',
-    subject:(n,first)=>n===1?'Watch rule: '+first.split(' (')[0]:n+' watch rule alerts',intro:'Your watch rules found something.'}
+    subject:(n,first)=>n===1?'Watch rule: '+first.split(' (')[0]:n+' watch rule alerts',intro:'Your watch rules found something.'},
+  168:{action:'alert.overdue',name:'Late orders, shipments and invoices',module:'./overdue-alerts',
+    subject:(n,first)=>n===1?'Overdue: '+first.split(' (')[0]:n+' overdue orders, shipments or invoices',intro:'StockChief found work that is past its date.'}
 };
 const plural=(n,one,many)=>n+' '+(Number(n)===1?one:many);
 const expected=error=>error instanceof DomainError&&[400,402,403,404,409,422].includes(error.status);
