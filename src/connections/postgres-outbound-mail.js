@@ -88,7 +88,7 @@ async function queueInTransaction(client,ctx,payload,idempotencyKey,options={}){
   if(options.agentRequested){
     const policy=require('../commercial/agent-plan'),state=await policy.accountState(client,ctx.workspaceId);
     if(policy.usesAgentTerms(state)){
-      const requestedJob=new Map([['supplier_direct_purchase',37],['quote_followup',74],['customer_statement',81],['invoice_reminder',102],['stock_ready_notice',50],['invoice_dispute',100],['supplier_forecast',36],['supplier_rfq',93],['supplier_claim',45],['return_label',112]]).get(payload.standingAuthority?.kind);
+      const requestedJob=new Map([['supplier_direct_purchase',37],['quote_followup',74],['customer_statement',81],['invoice_reminder',102],['stock_ready_notice',50],['invoice_dispute',100],['supplier_forecast',36],['supplier_rfq',93],['supplier_claim',45],['return_label',112],['fx_alert',40]]).get(payload.standingAuthority?.kind);
       agentJob=requestedJob!==undefined&&requestedJob===options.agentJob?requestedJob:policy.actionJob('communication.send_email','draft',{...payload,idempotencyKey});
       policy.requireJob(state.plan,agentJob,'draft');
     }
@@ -217,6 +217,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       if(input.standingAuthority?.kind==='stock_ready_notice')await require('../sales/agent-stock-ready').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='invoice_dispute')await require('../purchasing/agent-invoice-disputes').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(client,workspaceId,input.standingAuthority);
+      if(input.standingAuthority?.kind==='fx_alert')await require('../purchasing/agent-purchase-fx').emailAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(client,workspaceId,input.standingAuthority.workId,input.standingAuthority);
       return {message,connection};
     },{isolation:'SERIALIZABLE',retrySafe:true});
@@ -226,6 +227,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       key:effect.idempotencyKey,provider:effect.provider,operation:'outbound_email',unit:'message'},async()=>{
         if(agentJob)await require('../commercial/agent-plan').requireWorkspaceJob(database,workspaceId,agentJob,'draft');
         if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(database,workspaceId,input.standingAuthority);
+        if(input.standingAuthority?.kind==='fx_alert')await require('../purchasing/agent-purchase-fx').emailAuthority(database,workspaceId,input.standingAuthority);
         if(options.beforeSend)await options.beforeSend({effect,message:loaded.message,connection:loaded.connection});
         if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(database,workspaceId,input.standingAuthority.workId,input.standingAuthority);
         if(input.standingAuthority?.kind==='quote_followup')await require('../sales/agent-quote-followups').authority(database,workspaceId,input.standingAuthority);

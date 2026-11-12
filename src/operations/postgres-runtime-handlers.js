@@ -717,6 +717,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'mail.supplier-terms.v1':external((job,database)=>require('../purchasing/agent-supplier-email-terms').onArrival(database,job.workspaceId,job.payload.messageId)),
   'mail.supplier-po-amendment.v1':external((job,database)=>require('../purchasing/po-amendment-email').onArrival(database,job.workspaceId,job.payload.messageId)),
   'purchasing.stale-incoming.v1':external((job,database)=>require('../purchasing/agent-stale-incoming').run(database,job.workspaceId)),
+  'purchasing.fx-rates.v1':external((job,database)=>require('../purchasing/agent-purchase-fx').run(database,job.workspaceId)),
   'purchase-order.supplier-document-amendment.v1':external((job,database)=>require('../purchasing/po-amendment-document').onDocument(database,job.workspaceId,job.payload.documentId)),
   'mail.supplier-unavailability.v1':external((job,database)=>require('../purchasing/supplier-unavailability-mail').onArrival(database,job.workspaceId,job.payload)),
   'mail.supplier-ship-date.v1':external((job,database)=>require('../purchasing/supplier-ship-date-mail').onArrival(database,job.workspaceId,job.payload)),

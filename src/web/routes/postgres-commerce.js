@@ -646,7 +646,8 @@ function createPostgresCommerceRouter(database,options={}){
       outstandingUnits:Number(line.quantity_units)-Number(line.quantity_received_units),destinationLocationId:line.destination_location_id}));
     if(!lines.length){req.flash('info','There is nothing outstanding on that order.');return res.redirect(303,`/purchasing/orders/${req.params.id}`);}
     const qualityConfigured=(await database.query('SELECT EXISTS(SELECT 1 FROM stockchief_runtime.agent_quality_policies WHERE workspace_id=$1 AND enabled AND (supplier_id IS NULL OR supplier_id=$2) AND (sku_id IS NULL OR sku_id=ANY($3::text[]))) required',[req.ctx.workspaceId,detail.order.supplier_id,detail.lines.map(l=>l.sku_id)])).rows[0].required;
-    return res.page('buy/receive',{qualityConfigured,title:`Receive ${order.poNumber}`,nav:'purchasing',order,lines,locations,
+    const fx=await require('../../purchasing/agent-purchase-fx').receiptPreview(database,req.ctx.workspaceId,detail.order.currency);
+    return res.page('buy/receive',{qualityConfigured,fx,title:`Receive ${order.poNumber}`,nav:'purchasing',order,lines,locations,
       warnings:[],overReceipt:null,submitted:null,receiptIdempotencyKey:newId('uireceipt'),sourceEvent:null,
       permissions:purchasingPermissions(req),screenGuide:null,ownSectionTabs:true,suppressBack:true});
   }));
@@ -898,7 +899,7 @@ function createPostgresCommerceRouter(database,options={}){
     const receiptKey=key(req,'po-receive');
     const receipt=await workflows.receivePurchaseOrder(database,req.ctx,req.params.id,{idempotencyKey:receiptKey,
       damagedLineIds:lines.filter(l=>req.body['condition_'+l.lineId]==='damaged').map(l=>l.lineId),
-      reference:trimOrNull(req.body.reference),note:trimOrNull(req.body.note),qcConfirmed:req.body.qcConfirmed,
+      reference:trimOrNull(req.body.reference),note:trimOrNull(req.body.note),qcConfirmed:req.body.qcConfirmed,fxRate:trimOrNull(req.body.fxRate),
       overReceiptApproved:req.body.overReceiptApproved==='1'||req.body.approveOverReceipt==='1',lines});
     // Units marked damaged arrived and are written off at once through the
     // stock-removal path's own "damaged" reason, so they never count as

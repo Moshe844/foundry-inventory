@@ -17,7 +17,8 @@ const comparisons=`WITH products AS MATERIALIZED (
     'Catalogue cost' AS kind,'/inventory/'||s.item_id AS link,'Saved catalogue cost' AS reference,1 AS precedence
   FROM products s JOIN sku_purchase_costs c ON c.workspace_id=$1 AND c.sku_id=s.id
   UNION ALL
-  SELECT s.id,r.id,r.created_at,po.currency,
+  -- A receipt in another currency is booked in the accounting currency (job 40).
+  SELECT s.id,r.id,r.created_at,coalesce(fx.base_currency,po.currency),
     CASE WHEN min(cm.unit_cost_minor)=max(cm.unit_cost_minor) AND bool_and(cm.unit_cost_minor IS NOT NULL
       AND (cm.secondary_quantity_delta>0) IS NOT DISTINCT FROM (CASE WHEN s.secondary_unit_label IS NOT NULL THEN true END)
       AND (cm.unit_cost_minor=0 OR (j.id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM accounting_journal_entries reversal
@@ -31,8 +32,10 @@ const comparisons=`WITH products AS MATERIALIZED (
     AND l.movement_ids::jsonb ? cm.inventory_movement_id
   LEFT JOIN accounting_journal_entries j ON j.workspace_id=cm.workspace_id AND j.id=cm.journal_entry_id
     AND j.status='POSTED' AND j.source_type='purchase_receipt' AND j.source_record_id=r.id AND j.reversal_of_entry_id IS NULL
+  LEFT JOIN LATERAL (SELECT x.base_currency FROM stockchief_runtime.agent_fx_receipt_rates x
+    WHERE x.workspace_id=r.workspace_id AND x.receipt_id=r.id LIMIT 1) fx ON true
   WHERE po.delivery_kind<>'CUSTOMER_DIRECT'
-  GROUP BY s.id,r.id,r.created_at,po.id,po.currency,po.po_number
+  GROUP BY s.id,r.id,r.created_at,po.id,po.currency,fx.base_currency,po.po_number
   UNION ALL
   SELECT s.id,r.id,r.created_at,po.currency,
     CASE WHEN count(*)=1 AND bool_and(coalesce(fact->>'weightUnit',fact->>'unit')=s.unit

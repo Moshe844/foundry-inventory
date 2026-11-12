@@ -334,6 +334,8 @@ async function placePurchaseOrder(database, rawContext, purchaseOrderId, input) 
       WHERE id=$1 AND workspace_id=$2`, [purchaseOrderId, ctx.workspaceId, at]);
     await event(client, 'purchase_order_events', null, { workspaceId: ctx.workspaceId, recordId: purchaseOrderId,
       type: 'ordered', detail: { externalReference: input.externalReference || null }, actorId: ctx.actorId, at });
+    // A foreign purchase gets its landed-cost estimate at the rate of the day it is placed.
+    await require('../purchasing/agent-purchase-fx').recordEstimate(client, ctx.workspaceId, purchaseOrderId);
     const result = { purchaseOrderId, status: 'ORDERED' };
     await completeOperation(client, operation, result);
     return { ...result, replayed: false };
@@ -378,6 +380,10 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
     }
     if(order.delivery_kind==='CUSTOMER_DIRECT')throw new ValidationError('Record this supplier’s direct dispatch in Supplier-direct deliveries. These goods do not arrive at your warehouse.');
     const at = input.receivedAt || nowIso();
+    // Goods bought in another currency are booked at the recorded rate of the
+    // receipt date. No rate stops the receipt before anything moves.
+    const fxModule = require('../purchasing/agent-purchase-fx'), fxRates = require('../purchasing/fx-rates');
+    const fx = await fxModule.receiptRate(client, ctx, order, at, input.fxRate);
     const receiptId = newId('poreceipt');
     const movementGroupIds = [];
     const received = [];
@@ -411,16 +417,19 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
         reference: input.reference || order.po_number, notes: input.note,
         occurredAt: at, idempotencyKey: `${input.idempotencyKey}:line:${receiptLineKey}`,
       });
-      const unitCostMinor = require('../domain/currency').userToMinor(String(line.unit_cost),order.currency,{label:'Supplier unit cost'});
+      const supplierUnitMinor = require('../domain/currency').userToMinor(String(line.unit_cost),order.currency,{label:'Supplier unit cost'});
       const measuredQuantity=stockQuantity.secondary(await stockQuantity.forSku(client,ctx,line.sku_id),requested.secondaryQuantity);
-      const totalCostMinor = exact.costMinor(measuredQuantity??quantity,unitCostMinor);
+      const foreignCostMinor = exact.costMinor(measuredQuantity??quantity,supplierUnitMinor);
+      const totalCostMinor = fx ? fxRates.convert(foreignCostMinor, fx.currency, fx.base, fx.rate) : foreignCostMinor;
+      const unitCostMinor = fx ? fxRates.convert(supplierUnitMinor, fx.currency, fx.base, fx.rate) : supplierUnitMinor;
       if(totalCostMinor===0)await ledger.validatePostingDateInTransaction(client,ctx,at);
       const posted = totalCostMinor===0?null:await ledger.postInTransaction(client, ctx, {
         postingInstant:at, sourceKey: `purchase-receipt:${receiptId}:${receiptLineKey}`,
         description: `Receive ${quantity} units on ${order.po_number}`, sourceType: 'purchase_receipt',
         sourceRecordType: 'purchase_order_receipt', sourceRecordId: receiptId,
-        currency: order.currency,
-        metadata: { purchaseOrderId, purchaseOrderLineId: line.id, movementId: physical.movementId },
+        currency: fx ? fx.base : order.currency,
+        metadata: { purchaseOrderId, purchaseOrderLineId: line.id, movementId: physical.movementId,
+          ...(fx ? { exchange: { currency: fx.currency, amountMinor: foreignCostMinor, rate: fx.rate, rateDate: fx.date, source: fx.source } } : {}) },
         lines: [
           { accountKey: 'INVENTORY_ASSET', debitMinor: totalCostMinor, supplierId: order.supplier_id,
             itemId: line.item_id, skuId: line.sku_id, locationId },
@@ -430,6 +439,8 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
       });
       await costing.receiveInTransaction(client, ctx, { movementId: physical.movementId, unitCostMinor,
         totalCostMinor, journalEntryId: posted?.entry.id||null, sourceType: 'purchase_order_receipt', sourceRecordId: receiptId });
+      if (fx) await fxModule.recordReceipt(client, ctx, { receiptId, receiptLineKey, orderId: purchaseOrderId, lineId: line.id,
+        skuId: line.sku_id, fx, foreignMinor: foreignCostMinor, baseMinor: totalCostMinor, journalEntryId: posted?.entry.id||null });
       await client.query(`UPDATE purchase_order_lines SET quantity_received_units=quantity_received_units+$4,secondary_quantity_received=secondary_quantity_received+$5
         WHERE id=$1 AND purchase_order_id=$2 AND workspace_id=$3`, [line.id, purchaseOrderId, ctx.workspaceId, quantity,measuredQuantity??0]);
       await client.query(`INSERT INTO purchase_order_receipt_lines
@@ -441,7 +452,8 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
         JSON.stringify(requested.serials || []), overBy, JSON.stringify([physical.movementId]), nowIso(),measuredQuantity]);
       movementGroupIds.push(physical.groupId);
       received.push({ lineId: line.id, quantity, movementId: physical.movementId,
-        journalEntryId: posted?.entry.id||null, totalCostMinor, overBy });
+        journalEntryId: posted?.entry.id||null, totalCostMinor, overBy,
+        ...(fx ? { currency: fx.base, supplierCurrency: fx.currency, supplierCostMinor: foreignCostMinor, rate: fx.rate, rateDate: fx.date, rateSource: fx.source } : {}) });
     }
     const totals = await client.query(`SELECT COUNT(*) FILTER (WHERE quantity_received_units < quantity_units) AS open
       FROM purchase_order_lines WHERE purchase_order_id=$1 AND workspace_id=$2`, [purchaseOrderId, ctx.workspaceId]);
