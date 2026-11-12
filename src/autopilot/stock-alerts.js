@@ -61,6 +61,8 @@ function describe(r){
 
 // The review: stock-outs first, then low stock, by SKU.
 async function review(db,ctx,{filter='',page=1}){
+  if(!await require('../db/schema-installed').has(db,'stockchief_runtime.agent_alert_channels'))
+    return {rows:[],more:false,summary:'Stock alerts are being upgraded. Check back shortly.'};
   const rows=(await db.query(`SELECT * FROM (${sql}) a ORDER BY (a.kind='Out of stock') DESC,a.sku,a.location LIMIT 101 OFFSET $3`,
     [ctx.workspaceId,filter||'',(page-1)*100])).rows;
   return {rows:rows.slice(0,100).map(describe),more:rows.length>100,
