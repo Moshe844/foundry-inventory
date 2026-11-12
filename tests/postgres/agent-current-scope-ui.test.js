@@ -2,7 +2,7 @@
 test('plan popups and comparison explain current partial scope without offering paid tracking to Growth',{timeout:180000},async t=>{
  const f=await require('../helpers/agent-workflow-fixture').fixture(t),app=require('../../src/postgres-app').createPostgresApp({database:f.db,env:'test',sessionSecret:'current-plan-scope-check'}),server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));}),browser=await require('playwright').chromium.launch();f.cleanup(async()=>{await browser.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await app.locals.sessionStore.close();});const page=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});await page.goto('http://127.0.0.1:'+server.address().port+'/pricing');
  // Statuses, modes and wording come from the plan data itself, so finishing a job never breaks this check.
- const rows=require('../../src/commercial/agent-plan-comparison').comparison(),norm=s=>String(s||'').replace(/\s+/g,' ').trim(),SAMPLE=[12,16,31,38,40,61,65,70,83,85,97,112,113,128,145,183];
+ const rows=require('../../src/commercial/agent-plan-comparison').comparison(),norm=s=>String(s||'').replace(/\s+/g,' ').trim().replace(/^Available now:\s*/,''),SAMPLE=[12,16,31,38,40,61,65,70,83,85,97,112,113,128,145,183];
  for(const tier of ['starter','growth','pro','enterprise']){
   await page.locator('.plan-card[data-plan="'+tier+'"] .plan-details-link').click();const dialog=page.locator('[data-plan-dialog="'+tier+'"]');
   assert.equal(await dialog.locator('[data-plan-job]:not([data-status="pending"])').count(),await dialog.locator('[data-plan-job] [data-job-current-scope]').count(),tier+' must explain every available scope');
