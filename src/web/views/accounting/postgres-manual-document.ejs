@@ -14,6 +14,8 @@
     <label class="field"><span class="field-label">Quantity</span><input class="input" type="number" name="quantity" min="0.01" step="0.01" value="1" required></label>
     <label class="field"><span class="field-label">Unit amount</span><input class="input" name="unitAmount" inputmode="decimal" placeholder="0.00" required></label>
     <label class="field"><span class="field-label">Exact tax amount (optional)</span><input class="input" name="tax" inputmode="decimal" placeholder="0.00"></label>
+    <% if(kind==='bill'&&locals.deliveries){ %><label class="field"><span class="field-label">Delivery this cost is for (optional)</span><select class="select" name="purchaseReceiptId"><option value="">Not for a delivery</option><% deliveries.forEach(function(d){ %><option value="<%= d.id %>"><%= d.label %></option><% }) %></select></label>
+    <label class="field"><span class="field-label">Delivery cost type (optional)</span><select class="select" name="landedCostKind"><option value="">Not a delivery cost</option><option value="freight">Freight</option><option value="duty">Duty</option><option value="insurance">Insurance</option><option value="handling">Handling</option></select></label><% } %>
     <label class="field field--wide"><span class="field-label">Notes (optional)</span><input class="input" name="notes" maxlength="500"></label>
   </div>
   <div class="card-foot"><button class="btn btn--primary" type="submit"><%= kind==='invoice'?'Record invoice':'Record bill' %></button></div>

@@ -60,7 +60,7 @@
 <% if(result.partnerStockForm){ %><%- include('partner-stock-readings',{setting:result.partnerStockForm,csrfToken}) %><% } %>
 <% if(result.pickReleaseForm){ %><%- include('pick-release',{form:result.pickReleaseForm,csrfToken}) %><% } %>
 <% if(result.putawayForm){ %><%- include('putaway-labels',{form:result.putawayForm,csrfToken}) %><% } %>
-<% if(result.landedCostForm){ %><p><a class="btn" href="/autopilot/landed-costs/new">Prepare a stock-cost allocation</a></p><% } %>
+<% if(result.landedCostForm){ %><p><a class="btn" href="/autopilot/landed-cost-bills">Bills posted for deliveries</a> <a class="btn" href="/autopilot/landed-costs/new">Prepare a stock-cost allocation</a></p><% } %>
 <% if(result.arrivedStockForm){ %><%- include('arrived-stock',{result,csrfToken}) %><% } %>
 <% if(result.stockReadyForm){ %><%- include('stock-ready-updates',{result,csrfToken}) %><% } %>
 <% if(result.invoiceDisputeForm){ %><%- include('supplier-invoice-disputes',{result,csrfToken}) %><% } %>

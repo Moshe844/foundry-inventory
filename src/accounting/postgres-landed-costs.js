@@ -138,17 +138,22 @@ async function adjustValues(db,ctx,documentId,allocations,journalId,{reverse=fal
    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[newId('landed-value'),ctx.workspaceId,p.skuId,p.locationId,p.amount,before.quantity_units,reverse?'landed_cost_reversal':'landed_cost_document',documentId,journalId,nowIso()]);
  }
 }
-async function applyInTransaction(db,ctx,p){
+// routine: the job 49 bill routine (agent-landed-cost-bills.js) has already checked
+// its own taught supplier and cost-type limit inside this transaction. Every other
+// plan, mode, pause, shadow and evidence check below still applies to it.
+async function applyInTransaction(db,ctx,p,{routine=null}={}){
  await actor(db,ctx,{write:true});
  const doc=(await db.query('SELECT * FROM landed_cost_documents WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,p.recordId])).rows[0];if(!doc)throw new NotFoundError('That cost allocation is not in this inventory.');
  if(doc.status==='APPLIED'){if(doc.approval_hash!==p.fingerprint)throw new ValidationError('This allocation was applied from different approved evidence.');return {documentId:doc.id,documentNumber:doc.document_number,currency:doc.currency,journalEntryId:doc.applied_journal_entry_id,replayed:true};}
- const automatic=ctx.agentLandedCostScope==='automatic',state=await policy.accountState(db,ctx.workspaceId);
- const taught=automatic&&await require('../autopilot/draft-authority').trained(db,ctx.workspaceId,'landed_cost.apply',p);
+ const automatic=Boolean(routine)||ctx.agentLandedCostScope==='automatic',state=await policy.accountState(db,ctx.workspaceId);
+ const taught=routine?routine.trained===true:automatic&&await require('../autopilot/draft-authority').trained(db,ctx.workspaceId,'landed_cost.apply',p);
  policy.requireJob(state.plan,49,automatic?'automatic':'draft',{trained:taught});
  const stop=await policy.stopped(db,ctx.workspaceId,state,'landed_cost.apply',automatic,p);if(stop)throw new ValidationError(stop);
  if(automatic){
   await db.query('SELECT workspace_id FROM workspace_autopilot WHERE workspace_id=$1 FOR SHARE',[ctx.workspaceId]);
   if(!(await require('../autopilot/postgres-service').getState(db,ctx.workspaceId)).canAutomate||p.needsLandedCostConfirmation)throw new ValidationError('Approve this cost allocation individually or enable its qualified routine authority.');
+ }
+ if(automatic&&!routine){
   const rule=(await db.query('SELECT maximum_minor,authorized_by FROM stockchief_runtime.agent_draft_rules WHERE workspace_id=$1 AND action_type=$2 AND scope_key=$3 AND currency=$4 FOR SHARE',[ctx.workspaceId,'landed_cost.apply',p.training.key,p.training.currency])).rows[0];
   if(state.plan==='pro'&&(!rule||!(await db.query("SELECT 1 FROM users u WHERE workspace_id=$1 AND id=$2 AND role='owner' AND NOT EXISTS(SELECT 1 FROM platform_account_access a WHERE a.account_id=u.account_id AND a.disabled_at IS NOT NULL) FOR SHARE OF u",[ctx.workspaceId,rule.authorized_by])).rowCount))throw new ValidationError('The taught owner scope is no longer authorized. Approve this allocation individually.');
   if(rule&&Number(rule.maximum_minor)<p.training.amountMinor)throw new ValidationError('This additional cost exceeds the saved owner limit. Approve it individually.');
@@ -168,7 +173,7 @@ async function applyInTransaction(db,ctx,p){
   const after=(await db.query('SELECT b.on_hand::text physical,c.quantity_units::text costed,c.total_cost_minor::text value FROM balances b JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id WHERE b.workspace_id=$1 AND b.sku_id=$2 AND b.location_id=$3',[ctx.workspaceId,before.sku_id,before.location_id])).rows[0],added=total(fresh.source.allocations.filter(a=>a.skuId===before.sku_id&&a.locationId===before.location_id).map(a=>a.amountMinor));
   if(!after||Number(after.physical)!==Number(before.physical)||Number(after.costed)!==Number(before.costed)||Number(after.value)!==money.integer(Number(before.value)+added))throw new ValidationError('The stock-cost change did not preserve its physical quantities and exact recorded value. Nothing was committed.');
  }
- await db.query("UPDATE landed_cost_documents SET status='APPLIED',approved_by_user_id=$3,approved_at=$4,applied_at=$4,updated_at=$4,approval_hash=$5,applied_journal_entry_id=$6 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,doc.id,ctx.actorId,nowIso(),p.fingerprint,posted.entry.id]);
+ await db.query("UPDATE landed_cost_documents SET status='APPLIED',approved_by_user_id=$3,approved_at=$4,applied_at=$4,updated_at=$4,approval_hash=$5,applied_journal_entry_id=$6,applied_automatically=$7 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,doc.id,ctx.actorId,nowIso(),p.fingerprint,posted.entry.id,automatic]);
  await require('../operations/postgres-security-audit').record(db,ctx,{action:'Received-goods costs applied',reference:doc.document_number,after:{currency:doc.currency,additionalCostMinor:fresh.source.totalMinor,quantityUnchanged:true,supplierBalanceUnchanged:true}});
  return {documentId:doc.id,documentNumber:doc.document_number,currency:doc.currency,journalEntryId:posted.entry.id,additionalCostMinor:fresh.source.totalMinor,automatic,replayed:false};
 }
@@ -229,7 +234,7 @@ async function review(db,ctx,{page=1,filter=''}){
  await actor(db,ctx);const rows=(await db.query(`SELECT d.id,d.document_number,d.status,d.currency,d.allocation_method,po.po_number,(SELECT coalesce(sum(amount_minor),0)::text FROM landed_cost_charges c WHERE c.workspace_id=d.workspace_id AND c.document_id=d.id) additional
   FROM landed_cost_documents d LEFT JOIN purchase_orders po ON po.workspace_id=d.workspace_id AND po.id=d.purchase_order_id WHERE d.workspace_id=$1 AND ($2='' OR d.document_number ILIKE '%'||$2||'%' OR po.po_number ILIKE '%'||$2||'%')
   ORDER BY d.created_at DESC,d.id DESC LIMIT 101 OFFSET $3`,[ctx.workspaceId,filter,(page-1)*100])).rows;
- return {summary:'Allocate posted freight, duty and fees to received stock using exact quantities, original recorded cost or recorded weight. Goods sold or moved since receipt need individual accounting review. Pro learns your source, product, location and additional-cost limit; Custom honors lower saved limits. No stock quantities, payables or payments change.',
+ return {summary:'Allocate posted freight, duty and fees to received stock using exact quantities, original recorded cost or recorded weight. A bill posted for a delivery is split on its own within your limit for that supplier and cost type. Goods sold or moved since receipt need individual accounting review. No stock quantities, payables or payments change.',
   rows:rows.slice(0,100).map(r=>({Allocation:r.document_number,'Purchase order':r.po_number||'Recorded deliveries',Status:r.status,Method:r.allocation_method,'Additional cost':money.format(Number(r.additional),r.currency),link:'/autopilot/landed-costs/'+r.id})),more:rows.length>100,landedCostForm:{}};
 }
 async function page(db,ctx,id){
@@ -250,7 +255,7 @@ async function reservedExpenseForProduction(db,workspaceId,source){
     WHERE c.workspace_id=$1 AND c.source_journal_line_id IS NULL AND d.status NOT IN ('VOID','REVERSED') AND b.journal_entry_id=$3 AND l.debit_account_id=$4) THEN $5::bigint ELSE 0 END amount`,[workspaceId,source.id,source.entry_id,source.account_id,source.debit_minor])).rows[0];
  return money.integer(row.amount,'Already assigned expense');
 }
-module.exports={createDraft,document,preview,allocation,build,apply,applyInTransaction,reverse,verify,voidDraft,sources,prepareForm,page,reservedExpenseForProduction,
+module.exports={createDraft,document,preview,allocation,build,apply,applyInTransaction,reverse,verify,voidDraft,sources,prepareForm,page,reservedExpenseForProduction,receiptFacts,
  definition:{id:49,key:'landed-costs',label:'Allocate freight, duty and fees to received stock',filterLabel:'Allocation number or PO',readPage:review},
  spec:{name:'landed_cost.apply',agentJob:49,record:'landed_cost_document',fields:['recordReference'],permission:P.ALLOCATE_LANDED_COST,ownerOnly:true,capability:'accounting.core',description:'Apply one existing reviewed draft freight, duty or fee allocation to wholly retained received quantity goods. Reclassifies exact posted expense evidence into inventory value without changing stock quantity, supplier balances or payments. Pro needs a taught exact source/product/location/method and additional-cost cap; Custom honors saved limits. Other costs need individual confirmation. Sold, moved, lot, serial, measured or missing-cost stock needs separate review.',build,execute:applyInTransaction,verify,
  resultReference:'documentId',resultDisplayReference:'documentNumber',resultRecordKind:'landed_cost_document',resultingRecords:['landed_cost_documents','landed_cost_allocations','accounting_inventory_value_adjustments','accounting_journal_entries']}};

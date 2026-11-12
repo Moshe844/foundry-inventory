@@ -1330,6 +1330,34 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/landed-costs/:id/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{const p=await assistant.prepareAction(database,req.ctx,'Apply this received-goods cost allocation',{action:'landed_cost.apply',recordReference:req.params.id});if(p.status!=='PREPARED')throw new ValidationError('Review the current allocation document first.');res.redirect(303,'/actions/'+p.proposal.id);}));
   router.post('/autopilot/landed-costs/:id/discard',requireAuth,owner,asyncRoute(async(req,res)=>{await landedCosts.voidDraft(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/reviews/landed-costs');}));
   router.post('/autopilot/landed-costs/:id/reverse',requireAuth,owner,asyncRoute(async(req,res)=>{await landedCosts.reverse(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/landed-costs/'+req.params.id);}));
+  // Job 49: freight, duty and fee bills posted for a delivery update the goods' cost.
+  const landedCostBills=require('../../accounting/agent-landed-cost-bills');
+  const landedBillsPage=starterAgentPage(49,'draft','Delivery cost bills',async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    res.page('autopilot/landed-cost-bills',{title:'Delivery cost bills',nav:'autopilot',
+      screen:await landedCostBills.page(database,req.ctx,{id:req.params.id||null,page:req.query.page||1}),
+      backTo:req.params.id?{href:landedCostBills.path,label:'Delivery cost bills'}:{href:'/autopilot/reviews/landed-costs',label:'Received-goods costs'}});
+  },'Pro');
+  router.get(landedCostBills.path,requireAuth,owner,landedBillsPage);
+  router.get(landedCostBills.path+'/:id',requireAuth,owner,landedBillsPage);
+  router.post(landedCostBills.path+'/check',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await landedCostBills.check(database,req.ctx);
+    req.flash('success','StockChief will check the waiting bills again.');
+    res.redirect(303,landedCostBills.path);
+  }));
+  const billDone={approve:'The cost was added to the delivered goods.',keep:'The bill stays an expense.',choose:'Saved.',undo:'The cost went back to the expense.'};
+  for(const step of Object.keys(billDone)){
+    router.post(landedCostBills.path+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      const result=await landedCostBills[step](database,req.ctx,req.params.id,req.body);
+      req.flash('success',result.replayed?'This was already done.':billDone[step]);
+      res.redirect(303,landedCostBills.path+'/'+encodeURIComponent(req.params.id));
+    }));
+  }
+  router.post(landedCostBills.path+'/:id/limit',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await landedCostBills.configure(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.stopped?'Every bill of this kind will wait for you.':'Your limit was saved.');
+    res.redirect(303,landedCostBills.path+'/'+encodeURIComponent(req.params.id));
+  }));
   router.post('/autopilot/putaway/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const made=await require('../../warehouse/agent-putaway').prepare(database,req.ctx,req.body.receiptLine,req.body.destination);
     res.redirect(303,'/warehouse/putaway/'+made.id);

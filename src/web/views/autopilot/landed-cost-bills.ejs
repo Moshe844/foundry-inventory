@@ -1,0 +1,145 @@
+<% const base='/autopilot/landed-cost-bills', money=(minor,currency)=>helpers.money(minor,currency); %>
+<% const cap=s=>s?s[0].toUpperCase()+s.slice(1):''; %>
+<% if(!screen.item){ %>
+<header class="rm-head">
+  <h1>Delivery cost bills</h1>
+  <p><%= screen.mode==='trained'?'When a freight, duty or fee bill is posted for a delivery, StockChief splits it over the goods and adds it to their cost. It asks you first until you approve one bill of a kind and save a limit for it.':
+    'When a freight, duty or fee bill is posted for a delivery, StockChief splits it over the goods and adds it to their cost on its own, within the limits you save.' %>
+    Quantities, supplier balances and payments stay the same.</p>
+</header>
+<form method="post" action="<%= base %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost">Check again</button>
+  <a href="/accounting/payables/new">Record a bill for a delivery</a></form>
+<% if(screen.stop){ %><p class="notice notice--warn"><%= screen.stop %></p><% } %>
+
+<h2>Waiting for you</h2>
+<% if(!screen.waiting.length){ %><p>Nothing is waiting.</p><% } %>
+<ul class="rm-list" data-landed-waiting>
+<% for(const b of screen.waiting){ %>
+  <li class="list-row" data-landed-bill="<%= b.id %>">
+    <span><a href="<%= b.href %>"><strong><%= b.bill %> · <%= b.supplier %></strong></a>
+      <small><%= b.description %> · <%= money(b.amount,b.currency) %><%= b.delivery?' · '+b.delivery:'' %></small>
+      <% if(b.reason){ %><small><%= b.reason %></small><% } %>
+      <% if(b.wouldPost){ %><small>StockChief would post this on its own once it may.</small><% } %></span>
+    <span><%= b.category?cap(b.category)+' · ':'' %><%= b.label %></span>
+  </li>
+<% } %>
+</ul>
+<% if(screen.page>1||screen.more){ %><nav class="actions" aria-label="Bill pages"><% if(screen.page>1){ %><a href="<%= base %>?page=<%= screen.page-1 %>">Previous page</a><% } %> <% if(screen.more){ %><a href="<%= base %>?page=<%= screen.page+1 %>">Next page</a><% } %></nav><% } %>
+
+<% if(screen.recent.length){ %>
+<h2>Recent bills</h2>
+<ul class="rm-list" data-landed-recent>
+<% for(const b of screen.recent){ %>
+  <li class="list-row" data-landed-done="<%= b.id %>">
+    <span><a href="<%= b.href %>"><strong><%= b.bill %> · <%= b.supplier %></strong></a>
+      <small><%= b.description %> · <%= money(b.amount,b.currency) %><%= b.delivery?' · '+b.delivery:'' %></small></span>
+    <span><%= b.category?cap(b.category)+' · ':'' %><%= b.label %></span>
+  </li>
+<% } %>
+</ul>
+<% } %>
+
+<% if(screen.rules.length){ %>
+<h2>Limits you saved</h2>
+<ul class="rm-list" data-landed-limits>
+<% for(const r of screen.rules){ %>
+  <li class="list-row"><span><strong><%= cap(r.category) %> from <%= r.supplier %></strong>
+    <small><%= r.enabled?'Up to '+r.limit+' a bill, split by '+r.methodLabel+'.':'Every bill waits for you.' %></small></span>
+    <span><%= r.enabled?'On':'Ask me' %></span></li>
+<% } %>
+</ul>
+<% } %>
+<% }else{ const it=screen.item, href=base+'/'+encodeURIComponent(it.id), open=['WATCHING','REVIEW','HELD'].includes(it.status); %>
+<header class="rm-head">
+  <h1><%= it.bill %> · <%= it.supplier %></h1>
+  <p><%= it.description %> · <%= money(it.amount,it.currency) %></p>
+</header>
+<% if(screen.stop&&open){ %><p class="notice notice--warn"><%= screen.stop %></p><% } %>
+<section class="rm-panel"><div class="rm-panel__body">
+  <dl class="kv">
+    <dt>Status</dt><dd data-landed-status><%= it.label %></dd>
+    <dt>Delivery</dt><dd><%= it.delivery||'Not matched to a delivery' %></dd>
+    <dt>Cost type</dt><dd><%= it.category?cap(it.category):'Not clear' %></dd>
+    <dt>Split by</dt><dd><%= it.methodLabel?cap(it.methodLabel):'Not chosen yet' %></dd>
+    <% if(it.document){ %><dt>Allocation</dt><dd><a href="/autopilot/landed-costs/<%= encodeURIComponent(it.document.id) %>"><%= it.document.number %></a></dd><% } %>
+  </dl>
+  <% if(it.reason&&open){ %><p class="notice notice--warn" data-landed-reason><%= it.reason %></p><% } %>
+  <% if(it.wouldPost&&open){ %><p>StockChief would post this on its own once it may.</p><% } %>
+  <% if(screen.problem){ %><p class="notice notice--warn"><%= screen.problem %></p><% } %>
+</div></section>
+
+<% if(screen.preview){ %>
+<h2>How the cost is split</h2>
+<ul class="rm-list" data-landed-split>
+<% for(const a of screen.preview.allocations){ %>
+  <li class="list-row"><span><strong><%= a.product %></strong><small><%= a.sku %> · <%= a.quantity %> received at <%= a.location %></small></span>
+    <span>+<%= money(a.amount,it.currency) %></span></li>
+<% } %>
+</ul>
+<form method="post" action="<%= href %>/approve">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="fingerprint" value="<%= screen.preview.fingerprint %>"><input type="hidden" name="confirmed" value="yes">
+  <button class="rm-btn" <%= screen.stop?'disabled':'' %>>Add <%= money(it.amount,it.currency) %> to these goods</button>
+</form>
+<% } %>
+
+<% if(screen.posted.length){ %>
+<h2><%= it.status==='UNDONE'?'What was added, then taken back':'What was added to stock cost' %></h2>
+<ul class="rm-list" data-landed-posted>
+<% for(const a of screen.posted){ %>
+  <li class="list-row"><span><strong><%= a.product %></strong><small><%= a.sku %> at <%= a.location %></small></span><span>+<%= money(a.amount,it.currency) %></span></li>
+<% } %>
+</ul>
+<% } %>
+<% if(screen.undoable){ %><form method="post" action="<%= href %>/undo">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+  <p>Undo posts a reversing entry: the cost goes back to the expense it came from.</p>
+  <button class="rm-btn rm-btn--ghost">Undo, back to the expense</button>
+</form><% }else if(screen.undoReason){ %><p><%= screen.undoReason %></p><% } %>
+
+<% if(open){ %>
+<details <%= it.status==='HELD'?'open':'' %> data-landed-choose><summary>Choose the delivery, cost type or split</summary>
+  <form method="post" action="<%= href %>/choose" class="form-inline">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="field"><span class="field-label">Delivery</span><select class="select" name="receiptId" required>
+      <option value="">Choose the delivery</option>
+      <% for(const d of screen.deliveries){ %><option value="<%= d.id %>" <%= d.id===it.receiptId?'selected':'' %>><%= d.label %></option><% } %>
+    </select></label>
+    <label class="field"><span class="field-label">Cost type</span><select class="select" name="category" required>
+      <option value="">Choose the cost type</option>
+      <% for(const t of screen.types){ %><option value="<%= t %>" <%= t===it.category?'selected':'' %>><%= cap(t) %></option><% } %>
+    </select></label>
+    <label class="field"><span class="field-label">Split by</span><select class="select" name="method">
+      <% for(const m of screen.methods){ %><option value="<%= m.value %>" <%= m.value===screen.defaultMethod?'selected':'' %>><%= cap(m.label) %></option><% } %>
+    </select></label>
+    <button class="rm-btn">Save</button>
+  </form>
+</details>
+<form method="post" action="<%= href %>/keep">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+  <button class="rm-btn rm-btn--ghost">Keep it as an expense</button>
+</form>
+<% } %>
+
+<% if(it.category&&it.supplier){ const r=screen.rule; %>
+<section class="rm-panel" data-landed-limit><div class="rm-panel__body">
+  <h2><%= cap(it.category) %> bills from <%= it.supplier %></h2>
+  <% if(r&&r.enabled&&screen.taught){ %><p>Bills up to <%= r.limit %> post on their own, split by <%= r.methodLabel %>, while StockChief handles routine work. Bigger bills wait for you.</p>
+  <% }else if(r&&!r.enabled){ %><p>Every bill of this kind waits for you.</p>
+  <% }else if(screen.trained&&!screen.canTeach){ %><p>Approve one bill of this kind yourself. Then you can let StockChief post these on its own, up to a limit you choose.</p>
+  <% }else{ %><p>Every bill of this kind waits for you until you save a limit.</p><% } %>
+  <% if(screen.canTeach){ %><form method="post" action="<%= href %>/limit" class="form-inline">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r?r.revision:0 %>">
+    <label class="field"><span class="field-label">Post on its own up to (<%= it.currency %>)</span><input class="input" name="maximum" inputmode="decimal" required value="<%= r&&r.enabled?r.maximum:'' %>"></label>
+    <label class="field"><span class="field-label">Split these bills by</span><select class="select" name="method">
+      <% for(const m of screen.methods){ %><option value="<%= m.value %>" <%= m.value===(r?r.method:screen.defaultMethod)?'selected':'' %>><%= cap(m.label) %></option><% } %>
+    </select></label>
+    <label><input type="checkbox" name="confirmed" value="yes" required> Let StockChief post these bills on its own within this limit.</label>
+    <button class="rm-btn"><%= r&&r.enabled?'Change the limit':'Save the limit' %></button>
+  </form><% } %>
+  <% if((!r&&!screen.trained)||(r&&r.enabled)){ %><form method="post" action="<%= href %>/limit">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r?r.revision:0 %>">
+    <button class="rm-btn rm-btn--ghost" name="stop" value="yes">Ask me about every bill of this kind</button>
+  </form><% } %>
+</div></section>
+<% } %>
+<% } %>
