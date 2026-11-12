@@ -69,6 +69,10 @@ async function watching(db,workspaceId,account=null){
 async function record(db,workspaceId,entry,account=null){
   const state=await watching(db,workspaceId,account);
   if(!state)return null;
+  return (await insertActions(db,workspaceId,[entry]))[0]||null;
+}
+
+function actionRecord(entry){
   const job=Number(entry.job);
   if(!Number.isInteger(job)||job<1||job>214||!KINDS[entry.kind])throw new TypeError('A watched action needs its plan job and kind.');
   const currency=/^[A-Z]{3}$/.test(String(entry.currency||''))?entry.currency:null;
@@ -78,43 +82,59 @@ async function record(db,workspaceId,entry,account=null){
   const key=String(entry.key||'');
   const qty=entry.quantity==null||!Number.isFinite(Number(entry.quantity))?null:String(entry.quantity);
   const summary=String(entry.summary||'').replace(/\s+/g,' ').trim().slice(0,500)||KINDS[entry.kind];
-  const row=(await db.query(`INSERT INTO ${ACTIONS}(id,workspace_id,job_id,area,kind,record_key,summary,sku_id,location_id,quantity,amount_minor,currency,lead_days,caught_minor,evidence,href)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16)
-    ON CONFLICT(workspace_id,job_id,record_key) DO NOTHING RETURNING id`,
-  [newId('shadow'),workspaceId,job,areaOf(job).key,entry.kind,key.length>0&&key.length<=300?key:digest(key),summary,entry.skuId||null,entry.locationId||null,
-    qty,amount,amount!=null||caught!=null?currency:null,lead,caught,JSON.stringify(entry.evidence||{}),entry.href||null])).rows[0];
-  if(row)await require('../operations/postgres-security-audit').record(db,{workspaceId},{action:'StockChief only watched: it would have acted',reference:row.id,
-    after:{job,kind:entry.kind,summary,amountMinor:amount,caughtMinor:caught,currency:amount!=null||caught!=null?currency:null}});
-  return row?.id||null;
+  return {id:newId('shadow'),audit_id:newId('security'),job_id:job,area:areaOf(job).key,kind:entry.kind,
+    record_key:key.length>0&&key.length<=300?key:digest(key),summary,sku_id:entry.skuId||null,
+    location_id:entry.locationId||null,quantity:qty,amount_minor:amount,currency:amount!=null||caught!=null?currency:null,
+    lead_days:lead,caught_minor:caught,evidence:entry.evidence||{},href:entry.href||null};
+}
+
+async function insertActions(db,workspaceId,entries){
+  const ids=[];
+  for(let offset=0;offset<entries.length;offset+=250){
+    const batch=entries.slice(offset,offset+250).map(actionRecord);
+    const saved=await db.query(`WITH supplied AS MATERIALIZED (
+      SELECT * FROM jsonb_to_recordset($2::jsonb) AS r(id text,audit_id text,job_id integer,area text,kind text,
+        record_key text,summary text,sku_id text,location_id text,quantity numeric,amount_minor bigint,currency text,
+        lead_days integer,caught_minor bigint,evidence jsonb,href text)
+    ), saved AS (
+      INSERT INTO ${ACTIONS}(id,workspace_id,job_id,area,kind,record_key,summary,sku_id,location_id,quantity,amount_minor,currency,lead_days,caught_minor,evidence,href)
+      SELECT id,$1,job_id,area,kind,record_key,summary,sku_id,location_id,quantity,amount_minor,currency,lead_days,caught_minor,evidence,href
+        FROM supplied ON CONFLICT(workspace_id,job_id,record_key) DO NOTHING RETURNING id
+    ), audited AS (
+      INSERT INTO security_event_history(id,workspace_id,action,reference,before_state,after_state)
+      SELECT r.audit_id,$1,'StockChief only watched: it would have acted',s.id,'{}'::jsonb,
+        jsonb_build_object('job',r.job_id,'kind',r.kind,'summary',r.summary,'amountMinor',r.amount_minor,
+          'caughtMinor',r.caught_minor,'currency',r.currency)
+      FROM saved s JOIN supplied r USING(id) RETURNING reference
+    ) SELECT reference AS id FROM audited`,[workspaceId,JSON.stringify(batch)]);
+    ids.push(...saved.rows.map(row=>row.id));
+  }
+  return ids;
 }
 
 // Reorders and transfers the replenishment planner prepared while watching.
 async function fromPlannedWork(db,workspaceId,items,account=null){
   const state=await watching(db,workspaceId,account);
   if(!state||!items.length)return 0;
-  let recorded=0;
+  const entries=[];
   for(const item of items){
     const a=item.recommendedAction||{};
     if(a.type==='purchase'&&a.skuId&&a.supplierId){
-      // The same lead time the planner uses: measured, then configured, then the default.
-      const lead=(await db.query(`SELECT coalesce(lead.effective_lead,$4) AS effective_lead FROM supplier_items si JOIN stockchief_runtime.supplier_planning_leads lead ON lead.supplier_item_id=si.id
-        WHERE si.workspace_id=$1 AND si.sku_id=$2 AND si.supplier_id=$3 ORDER BY si.is_preferred DESC,si.id LIMIT 1`,
-        [workspaceId,a.skuId,a.supplierId,require('../purchasing/replenishment-decision').DEFAULT_LEAD_DAYS])).rows[0];
-      if(await record(db,workspaceId,{job:policy.permits(state.plan,20,'automatic')?20:19,kind:'order',
+      entries.push({job:policy.permits(state.plan,20,'automatic')?20:19,kind:'order',
         key:'order:'+a.skuId+':'+(a.destinationLocationId||'inventory')+':'+a.supplierId,
         summary:'Order '+quantity(a.quantity)+' of '+(a.displayName||a.code||'this item')+' from '+(a.supplierName||'the supplier')+(a.destinationLocationId?' for '+a.destinationLocationName:''),
         skuId:a.skuId,locationId:a.destinationLocationId||null,quantity:a.quantity,amountMinor:amountMinor(a.value,a.currency),currency:a.currency,
-        leadDays:lead?.effective_lead??null,evidence:{available:a.destinationAvailable,incoming:a.incoming,reorderPoint:a.reorderPoint,unitCost:a.unitCost},
-        href:'/autopilot/work/'+item.id},state))recorded++;
+        leadDays:a.supplierLeadDays??null,evidence:{available:a.destinationAvailable,incoming:a.incoming,reorderPoint:a.reorderPoint,unitCost:a.unitCost},
+        href:'/autopilot/work/'+item.id});
     }else if(a.type==='transfer'&&a.skuId){
-      if(await record(db,workspaceId,{job:policy.permits(state.plan,119,'automatic')?119:118,kind:'transfer',
+      entries.push({job:policy.permits(state.plan,119,'automatic')?119:118,kind:'transfer',
         key:'transfer:'+a.skuId+':'+a.sourceLocationId+':'+a.destinationLocationId,
         summary:'Move '+quantity(a.quantity)+' of '+(a.displayName||a.code||'this item')+' from '+a.sourceLocationName+' to '+a.destinationLocationName,
         skuId:a.skuId,locationId:a.destinationLocationId,quantity:a.quantity,leadDays:1,
-        evidence:{destinationAvailable:a.destinationAvailable,reorderPoint:a.reorderPoint,sourceAvailable:a.sourceAvailable},href:'/autopilot/work/'+item.id},state))recorded++;
+        evidence:{destinationAvailable:a.destinationAvailable,reorderPoint:a.reorderPoint,sourceAvailable:a.sourceAvailable},href:'/autopilot/work/'+item.id});
     }
   }
-  return recorded;
+  return (await insertActions(db,workspaceId,entries)).length;
 }
 
 // A count StockChief would have posted under the owner's limit, or sent for a recount.

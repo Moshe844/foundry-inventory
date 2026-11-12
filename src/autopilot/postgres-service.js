@@ -269,10 +269,13 @@ function position(row){return {...row,...require('../purchasing/replenishment-de
 
 async function planningSuppliers(database,workspaceId,skuIds){
  if(!skuIds.length)return new Map();
- const rows=(await database.query(`SELECT si.*,s.name AS supplier_name,s.currency,s.minimum_order_amount,s.free_freight_threshold_minor,s.ordinary_freight_minor,s.freight_terms_currency,
+ const rows=(await database.query(`WITH purchase_history AS MATERIALIZED (${require('./confidence').purchaseHistoryRows()})
+  SELECT si.*,s.name AS supplier_name,s.currency,s.minimum_order_amount,s.free_freight_threshold_minor,s.ordinary_freight_minor,s.freight_terms_currency,
+  coalesce(history.orders,0) AS previous_orders,history.unit_cost AS previous_unit_cost,history.currency AS previous_currency,
   COALESCE(lead.effective_lead,${require('../purchasing/replenishment-decision').DEFAULT_LEAD_DAYS}) AS effective_lead
   FROM supplier_items si JOIN suppliers s ON s.id=si.supplier_id AND s.workspace_id=si.workspace_id
   JOIN stockchief_runtime.supplier_planning_leads lead ON lead.supplier_item_id=si.id
+  LEFT JOIN purchase_history history ON history.sku_id=si.sku_id AND history.supplier_id=si.supplier_id
   WHERE si.workspace_id=$1 AND si.sku_id=ANY($2::text[]) AND si.is_active=1 AND s.status='active'
   ORDER BY si.sku_id,si.is_preferred DESC,COALESCE(si.last_unit_cost,1e100),effective_lead,si.id`,[workspaceId,skuIds])).rows;
  const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}return bySku;
@@ -381,13 +384,14 @@ async function persistPlannedWork(database,workspaceId,entries){
  // Bound each SQL payload rather than performing four network round trips per
  // suggestion. The unique idempotency key and its audit event commit together.
  for(let offset=0;offset<entries.length;offset+=250){const batch=entries.slice(offset,offset+250).map(({candidate,evaluation})=>{
+  const {history,supplierLeadDays,...actionIdentity}=candidate;
   const automatic=evaluation.decision==='authorized';return {id:newAppendId('wi'),event_id:newAppendId('wievt'),
    category:candidate.type==='transfer'?'stock_transfer':'replenishment_plan',source_evidence:candidate.evidence,
    affected_entities:{skuId:candidate.skuId,displayName:candidate.displayName},recommended_action:candidate,
    priority:candidate.priority,urgency:candidate.urgency,confidence:decisionEvidence(candidate)?.level||'low',policy_id:evaluation.policy?.id||null,
    policy_evaluation:{decision:evaluation.decision,reason:evaluation.reason,policyVersion:evaluation.policy?.version||null,policyHash:evaluation.policy?.integrityHash||null},
    approval_requirement:automatic?'NONE':'REQUIRED',execution_status:automatic?STATUSES.AUTHORIZED:STATUSES.WAITING,
-   idempotency_key:'autopilot:'+hash({candidate,balance:candidate.destinationAvailable,incoming:candidate.incoming,
+   idempotency_key:'autopilot:'+hash({candidate:actionIdentity,balance:candidate.destinationAvailable,incoming:candidate.incoming,
     ...(candidate.exactSource||candidate.kitDemand?{authorized:automatic,policyId:evaluation.policy?.id||null}:{})}).slice(0,40),
    event_detail:{automatic,reason:evaluation.reason}};});
   const save=async client=>{const ids=[...new Set(batch.map(row=>row.recommended_action.skuId))].sort();await client.query(`INSERT INTO stockchief_runtime.replenishment_source_versions(workspace_id,sku_id,version)
@@ -420,8 +424,6 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
   const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
   const selected=Array.from(bySku.entries()).slice(0,limitSkus??bySku.size),partial=limitSkus!==null&&bySku.size>limitSkus;
   const prepared=[];const considered=[];const suppliers=await planningSuppliers(database,workspaceId,selected.map(([id])=>id));
-  // Job 199: earlier sent orders per item and supplier, for how sure StockChief is about each order.
-  const histories=await require('./confidence').purchaseHistory(database,workspaceId,selected.map(([id])=>id));
   const selectedPositions=selected.flatMap(([,locations])=>locations);
   // On plans with the kits job, parts with kit demand are bought by that job,
   // and a warehouse never gives away parts its own kits need.
@@ -460,7 +462,8 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
         code:shortage.code,quantity:supplier.quantity,purchaseUnits:supplier.purchaseUnits,unitsPerPurchaseUnit:supplier.unitsPer,
         purchaseUnit:supplier.purchase_unit,purchaseMultiple:supplier.purchaseMultiple,topUpSignature:supplier.topUpSignature,
         supplierId:supplier.supplier_id,supplierName:supplier.supplier_name,supplierSku:supplier.supplier_sku,
-        history:histories.get(shortage.sku_id+':'+supplier.supplier_id)||{orders:0,lastUnitCost:null,lastCurrency:null},
+        supplierLeadDays:supplier.effective_lead,
+        history:{orders:supplier.previous_orders,lastUnitCost:supplier.previous_unit_cost==null?null:Number(supplier.previous_unit_cost),lastCurrency:supplier.previous_currency},
         destinationLocationId:shortage.location_id||(shortage.receivingOptions?.length===1?shortage.receivingOptions[0].id:null),destinationLocationName:shortage.location_id?shortage.location_name:shortage.receivingOptions?.length===1?shortage.receivingOptions[0].name:'Choose where this delivery should arrive',quantityScope:shortage.scope==='workspace'?'workspace':'location',receivingOptions:shortage.receivingOptions||null,unitCost:supplier.unitCost,
         value:supplier.value,currency:supplier.currency||'USD',destinationAvailable:shortage.available,incoming:shortage.incoming,
         reorderPoint:shortage.reorder,targetStock:shortage.target,priority:88,urgency:shortage.available<=0?'immediate':'soon',evidence:[
