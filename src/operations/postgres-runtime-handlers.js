@@ -443,6 +443,7 @@ async function autopilotEvaluate(job,client){
       await require('../forecasting/agent-reorder-refresh').schedule(scopedDatabase(client),job.workspaceId);
     }
     await require('./agent-daily-cycle-counts').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
+    await require('./agent-annual-stocktake-runs').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
   }
   const basic=await entitlements.capabilityState(client,scope,'planning.basic');
   const transfers=await entitlements.capabilityState(client,scope,'planning.transfer_before_buy');
@@ -623,7 +624,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'erp.cutover.continue':external((job,database)=>require('../onboarding/postgres-cutover-runner').run(job,database),'bulk'),
   'warehouse.count.apply':external((job,database)=>require('./postgres-count-campaigns').run(job,database),'bulk'),
   'agent.phone-count.apply.v1':external((job,database)=>require('./postgres-count-campaigns').run(job,database),'bulk'),
-  'agent.annual-stocktake.apply.v1':external(async(job,database)=>{if(!(await database.query('SELECT 1 FROM stockchief_runtime.agent_annual_count_teams WHERE workspace_id=$1 AND campaign_id=$2',[job.workspaceId,job.payload?.campaignId])).rowCount)throw new (require('../domain/errors').ValidationError)('This job is not an annual stocktake worksheet.');return require('./postgres-count-campaigns').run(job,database);},'bulk'),
+  'agent.annual-stocktake.apply.v1':external(async(job,database)=>{if(!(await database.query('SELECT 1 FROM stockchief_runtime.agent_annual_count_teams WHERE workspace_id=$1 AND campaign_id=$2',[job.workspaceId,job.payload?.campaignId])).rowCount)throw new (require('../domain/errors').ValidationError)('This job is not an annual stocktake worksheet.');const result=await require('./postgres-count-campaigns').run(job,database);if(result?.status==='COMPLETED')await require('./agent-annual-stocktake-runs').settle(database,job.workspaceId,null,job.payload.campaignId);return result;},'bulk'),
+  'agent.annual-stocktake.routine.v1':external((job,database)=>require('./agent-annual-stocktake-runs').routine(database,job.workspaceId),'maintenance'),
   'system.retention':external((job,database)=>require('./postgres-retention').run(database,{now:Number(job.payload?.now)||Date.now()}),'bulk'),
   'records.remove-import':external((job,database)=>require('../domain/postgres-record-removal').runImportRemoval(job,database),'bulk'),
   'records.remove-product':external((job,database)=>require('../domain/postgres-record-removal').runProductRemoval(job,database),'bulk'),

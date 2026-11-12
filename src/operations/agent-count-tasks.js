@@ -199,7 +199,8 @@ async function record(db,ctx,id,input){
     await c.query('UPDATE warehouse_count_campaign_lines SET counter_quantity=$5,counter_recorded_by=$6,counter_recorded_name=(SELECT name FROM users WHERE workspace_id=$1 AND id=$6),counter_recorded_at=clock_timestamp() WHERE workspace_id=$1 AND campaign_id=$2 AND location_id=$3 AND sku_id=$4',[ctx.workspaceId,id,input.locationId,input.skuId,quantity,ctx.actorId]);
     const finished=await c.query(`UPDATE stockchief_runtime.agent_count_tasks SET observed_at=now() WHERE workspace_id=$1 AND campaign_id=$2 AND NOT EXISTS(
       SELECT 1 FROM warehouse_count_campaign_lines WHERE workspace_id=$1 AND campaign_id=$2 AND counter_quantity IS NULL)`,[ctx.workspaceId,id]);
-    if(finished.rowCount)await smallDifferences(c,ctx,id);
+    // An annual stocktake area first gets its recounts and the stocktake's own rules (job 16).
+    if(finished.rowCount&&!await require('./agent-annual-stocktake-runs').counted(c,ctx,id))await smallDifferences(c,ctx,id);
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 // Job 6 for phone counts: when the counter finishes, differences within the owner's count
@@ -210,10 +211,10 @@ async function record(db,ctx,id,input){
 // refuse (a missing purchase cost, a changed position) also leaves the count for a person.
 async function smallDifferences(c,ctx,id){
   const {rows:[rule]}=await c.query('SELECT authorized_by FROM stockchief_runtime.agent_count_rules WHERE workspace_id=$1 AND automatic',[ctx.workspaceId]);
-  if(!rule)return;
+  if(!rule)return null;
   const evidence=(await c.query(`SELECT observation,before_count FROM stockchief_runtime.agent_count_position_evidence
     WHERE workspace_id=$1 AND campaign_id=$2`,[ctx.workspaceId,id])).rows;
-  if(evidence.some(e=>!observations.matches(e.observation,e.before_count)))return;
+  if(evidence.some(e=>!observations.matches(e.observation,e.before_count)))return null;
   const asOwner={...ctx,actorId:rule.authorized_by},revision=async()=>(await c.query('SELECT revision FROM warehouse_count_campaigns WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id])).rows[0].revision;
   await c.query('SAVEPOINT agent_small_count');
   try{
@@ -222,14 +223,16 @@ async function smallDifferences(c,ctx,id){
     const lines=(await c.query(`SELECT counted_quantity,before_quantity,cost_delta_minor FROM warehouse_count_campaign_lines WHERE workspace_id=$1 AND campaign_id=$2`,
       [ctx.workspaceId,id])).rows.map(l=>({delta:exact.safeNumber(exact.subtract(l.counted_quantity,l.before_quantity),{signed:true}),costDeltaMinor:Number(l.cost_delta_minor)||0}));
     const decision=books&&await require('../autopilot/count-rules').evaluate(c,asOwner,{currency:books.base_currency,lines},[]);
-    if(decision?.action!=='post'){await c.query('ROLLBACK TO SAVEPOINT agent_small_count');return;}
+    if(decision?.action!=='post'){await c.query('ROLLBACK TO SAVEPOINT agent_small_count');return null;}
     await campaigns.approve(scoped(c),asOwner,id,await revision());
     await require('./postgres-security-audit').record(c,asOwner,{action:'Phone count posted under the count limit',reference:id,
       after:{exposureMinor:decision.exposureMinor,limitMinor:decision.limitMinor,currency:decision.currency}});
     await c.query('RELEASE SAVEPOINT agent_small_count');
+    return decision;
   }catch(error){
     await c.query('ROLLBACK TO SAVEPOINT agent_small_count');
     if(!(error instanceof require('../domain/errors').DomainError))throw error;
+    return null;
   }
 }
 async function inbox(db,workspaceId,actorId){
@@ -313,4 +316,4 @@ async function activity(db,ctx){
 }
 const definitions=[{id:7,key:'staff-count-lists',label:'Assign and schedule mobile stock counts',read:activity},
   {id:177,key:'staff-count-progress',label:'Check assigned stock count progress',read:activity}];
-module.exports={assign,schedule,runSchedules,page,record,inbox,setup,importObserved,definitions,assertOwner:owner};
+module.exports={assign,schedule,runSchedules,page,record,inbox,setup,importObserved,smallDifferences,definitions,assertOwner:owner};
