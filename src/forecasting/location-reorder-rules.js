@@ -194,6 +194,8 @@ async function processBatch(c, workspaceId, { entries }) {
       if (!rule || rule.revision !== revision || rule.authorized_by !== actorId || account.plan === 'growth' && !rule.taught_recommendation_id)
         throw new ValidationError('The saved location rule or Growth example changed.');
       await lockPosition(c, workspaceId, skuId, locationId);
+      if ((await c.query('SELECT 1 FROM stockchief_runtime.agent_reorder_locks WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',
+        [workspaceId, skuId, locationId])).rowCount) throw new ValidationError('You locked these reorder settings.');
       const estimate = await source.current(c, workspaceId, skuId, locationId);
       if (estimate.changed && (estimate.digest !== digest || estimate.profileKey !== rule.profile_key))
         throw new ValidationError('The local sales, lead time, stocking unit or thresholds changed. Review a fresh run.');

@@ -18,7 +18,7 @@ const orderCredit=require('../sales/order-credit-exposure');
 const customerHealth=require('../sales/customer-health');
 const monitoredJobs=[10,77,80,82,88,91,110,116];
 const historyScopedJobs=[82,88,116];
-const noticeOperation=job=>[50,77].includes(job)?'suggest':'automatic';
+const noticeOperation=job=>[50,77].includes(job)?'suggest':job===21?'draft':'automatic';
 const transfers=`WITH positions AS (
     SELECT t.id,t.transfer_number,t.status,${transferArrivals.expectedDate} AS due,src.name AS source,dst.name AS destination,
       CASE WHEN count(DISTINCT i.unit_label)=1 THEN min(i.unit_label) END AS unit,
@@ -103,6 +103,8 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
       AND d.report_date=(SELECT max(report_date) FROM workspace_daily_digests WHERE workspace_id=$1 AND summary::jsonb->>'format'='agent-brief')`:'')+
     (priceChecks?` UNION ALL SELECT 87,'Channel price',reference,link,$3::date FROM (`+require('../pricing/channel-price-review').observed+`) prices WHERE "Finding"<>'Matches recorded catalogue price'`:'')+
     (policy.permits(account.plan,209,'automatic')?` UNION ALL SELECT 209,'Correction',reference,link,$3::date FROM (`+require('./repeated-corrections').sql+`) corrections`:'')+
+    (policy.permits(account.plan,21,'draft')?` UNION ALL SELECT 21,'Reorder change',c.id,'/planning/reorder-refresh',c.created_at::date
+      FROM stockchief_runtime.agent_reorder_refresh_changes c WHERE c.workspace_id=$1 AND c.status='DRAFT'`:'')+
     ` UNION ALL SELECT 67,'Recurring order',r.id,'/autopilot/reviews/recurring-customer-orders',r.next_date
       FROM stockchief_runtime.recurring_customer_orders r WHERE r.workspace_id=$1 AND r.paused AND r.problem IS NOT NULL`+
     ` UNION ALL SELECT 206,'Automation',s.month,'/autopilot/reviews/automation-opportunities',(s.month||'-01')::date
@@ -237,6 +239,9 @@ async function inbox(db,workspaceId,actorId=null){
     if(Number(r.job_id)===204)return {kind:'inventory',grouped:true,importance:'Information',priority:35,title:'Your daily record of StockChief work',
       happened:'Completed agent work is ready to review.',why:'The daily briefing recorded completed actions for '+r.due+'.',
       recommendation:'Review completed work and available undo actions.',href:'/autopilot/reviews/daily-work?filter='+encodeURIComponent(r.due),actionLabel:'View completed work',sourceId:'agent-notice-204'};
+    if(Number(r.job_id)===21)return {kind:'inventory',grouped:true,importance:'Important',priority:60,title:'Reorder point changes need your approval',
+      happened:r.n+' reorder point and target '+(r.n===1?'change is':'changes are')+' ready.',why:'The daily check compared recorded sales, lead time and safety stock with the current settings.',
+      recommendation:'Approve the changes or keep the current settings.',href:'/planning/reorder-refresh#waiting',actionLabel:'Review reorder changes',sourceId:'agent-notice-21'};
     if(Number(r.job_id)===67)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'A recurring customer order needs review',
       happened:r.n+' recurring schedule'+(r.n===1?' is':'s are')+' paused.',why:'A current plan, price, customer or authority check requires a decision.',
       recommendation:'Review the schedule and its current order details.',href:'/autopilot/reviews/recurring-customer-orders',actionLabel:'Review recurring orders',sourceId:'agent-notice-67'};

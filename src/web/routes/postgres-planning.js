@@ -26,7 +26,8 @@ function createPostgresPlanningRouter(database) {
     const safetyRules=safetyRoutine?(await database.query(`SELECT r.location_id,r.class,r.service_level,l.name FROM stockchief_runtime.class_service_levels r
       JOIN locations l ON l.workspace_id=r.workspace_id AND l.id=r.location_id WHERE r.workspace_id=$1 ORDER BY l.name,r.class`,[req.ctx.workspaceId])).rows:[];
     const recommendations=agentTerms?overview.recommendations.filter(r=>r.kind!=='reorder_point'||!r.evidence.locationId):overview.recommendations;
-    return res.page('planning/postgres-index',{title:'What happens next',nav:'inventory',room:true,...overview,recommendations,agentTerms,manageRules,rules,safetyPreview,safetyRoutine,safetyRules,planLocksReorder:agentTerms&&state.plan==='starter',
+    const reorderRefresh=agentTerms&&permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)&&agent.permits(state.plan,21,'suggest');
+    return res.page('planning/postgres-index',{title:'What happens next',nav:'inventory',room:true,...overview,recommendations,agentTerms,manageRules,rules,safetyPreview,safetyRoutine,safetyRules,reorderRefresh,planLocksReorder:agentTerms&&state.plan==='starter',
       mayAccept:row=>!agentTerms||permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)&&agent.permits(state.plan,row.kind==='safety_stock'?150:row.evidence.locationId?120:21,'draft'),
       canOperate:permissions.can(req.user,permissions.OPERATE),canAdmin:permissions.can(req.user,permissions.ADMIN)});
   }));
@@ -56,6 +57,49 @@ function createPostgresPlanningRouter(database) {
       return res.redirect(303,'/planning/location-reorder?skuId='+encodeURIComponent(input.skuId)+'&locationId='+encodeURIComponent(input.locationId));
     return res.redirect(303,'/planning#location-rules');
   }));
+  const refresh=()=>require('../../forecasting/agent-reorder-refresh'),refreshPath='/planning/reorder-refresh';
+  const manageReorders=requirePermission(permissions.MANAGE_REPLENISHMENT,'review reorder settings');
+  router.get(refreshPath,manageReorders,asyncRoute(async(req,res)=>{
+    const view={title:'Keep reorder points up to date',nav:'inventory'};
+    const agent=require('../../commercial/agent-plan'),state=await agent.accountState(database,req.ctx.workspaceId);
+    if(!agent.usesAgentTerms(state)&&req.accepts('html'))return res.page('autopilot/agent-plan-locked',{...view,tier:'Starter',
+      reviewTerms:agent.permits(state.plan,refresh().JOB,'suggest'),backTo:{href:'/planning',label:'Planning'}});
+    try{
+      const model=await refresh().page(database,req.ctx,{number:req.query.page||1});
+      return res.page('planning/reorder-refresh',{...view,model});
+    }catch(error){
+      if(error.code!=='entitlement_required'||!req.accepts('html'))throw error;
+      res.status(402);
+      return res.page('autopilot/locked',{...view,message:error.message});
+    }
+  }));
+  router.post(refreshPath+'/check',manageReorders,asyncRoute(async(req,res)=>{
+    const result=await refresh().requestCheck(database,req.ctx);
+    req.flash('success',result.queued?'StockChief will check every stocked product shortly.':'A check is already on its way.');
+    return res.redirect(303,refreshPath);
+  }));
+  router.post(refreshPath+'/approve-all',manageReorders,asyncRoute(async(req,res)=>{
+    const result=await refresh().approveAll(database,req.ctx);
+    req.flash('success','Approved '+result.approved+' change'+(result.approved===1?'':'s')+'.'+(result.held.length?' '+result.held.length+' need a fresh check: '+result.held[0].reason:''));
+    return res.redirect(303,refreshPath);
+  }));
+  router.post(refreshPath+'/locks',manageReorders,asyncRoute(async(req,res)=>{
+    const result=await refresh().setLock(database,req.ctx,selectedPosition(req.body));
+    req.flash('success',result.locked?'Locked. StockChief will leave these settings alone.':'Unlocked. The next check includes these settings.');
+    return res.redirect(303,refreshPath+'#locks');
+  }));
+  router.post(refreshPath+'/rule',requireAuth,asyncRoute(async(req,res)=>{
+    const result=await refresh().configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'StockChief will ask you about every change.':'Limit saved. Changes inside it happen on their own.');
+    return res.redirect(303,refreshPath+'#rule');
+  }));
+  for(const [action,message] of [['approve','Change approved and saved.'],['decline','Kept the current settings.'],['undo','Earlier reorder point and target restored.']]){
+    router.post(refreshPath+'/:id/'+action,manageReorders,asyncRoute(async(req,res)=>{
+      const result=await refresh()[action](database,req.ctx,req.params.id);
+      req.flash('success',result.replayed?'That was already done.':message);
+      return res.redirect(303,refreshPath);
+    }));
+  }
   router.get('/planning/safety-stock',requirePermission(permissions.MANAGE_REPLENISHMENT,'review safety stock'),asyncRoute(async(req,res)=>{
     const view={title:'Review safety stock',nav:'inventory'};
     try{
