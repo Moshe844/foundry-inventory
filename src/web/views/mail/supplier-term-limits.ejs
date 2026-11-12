@@ -2,4 +2,5 @@
 <label>Maximum lead-time change in days<input type="number" min="0" max="365" step="1" name="maximumLeadChangeDays" value="<%= values.maximumLeadChangeDays??'' %>" required></label>
 <label>Maximum minimum-order quantity in purchase units<input type="number" min="0" max="100000" step="0.000001" name="maximumMoq" value="<%= values.maximumMoq??'' %>" required></label>
 <label>Maximum minimum-order change in purchase units<input type="number" min="0" max="100000" step="0.000001" name="maximumMoqChange" value="<%= values.maximumMoqChange??'' %>" required></label>
+<label>Maximum pack-size change in stock units (leave empty to always ask)<input type="number" min="0" max="100000" step="1" name="maximumPackChange" value="<%= values.maximumPackChange??'' %>"></label>
 <label><input type="checkbox" name="allowUnset" value="yes" <%= values.allowUnset?'checked':'' %>> I also authorize filling currently empty numeric values within these limits.</label>

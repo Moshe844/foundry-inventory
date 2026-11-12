@@ -152,13 +152,14 @@ async function capture(database,connection,message,{metadataOnlyReason=message.s
         await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:'mail.customer-return.v1',idempotencyKey:'customer-return-email:'+id,payload:{messageId:id},priority:55,maxAttempts:3});
       }
     }
-    if(match.kind==='supplier'&&!attachments.length&&require('../purchasing/supplier-email-terms-source').isSubject(message.subject)){
+    if(match.kind==='supplier'&&!attachments.length&&(require('../purchasing/supplier-email-terms-source').isSubject(message.subject)||require('../purchasing/supplier-detail-text').mentions(message.subject,message.bodyText||message.body))){
       const policy=require('../commercial/agent-plan'),state=await policy.accountState(client,connection.workspace_id);
       if(policy.usesAgentTerms(state)&&policy.permits(state.plan,96,'draft')){
         const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)};
         await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:'mail.supplier-terms.v1',idempotencyKey:'supplier-terms-email:'+id,payload:{messageId:id},priority:55,maxAttempts:3});
       }
     }
+    if(match.kind==='supplier'&&!attachments.length)await require('../purchasing/agent-supplier-benefit-claims').noticeOffer({query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)},connection.workspace_id,id);
     let poAmendmentQueued=false;
     if(match.kind==='supplier'&&sentThread?.kind==='supplier'&&!attachments.length&&require('../purchasing/po-amendment-email-parser').subject(message.subject)){
       const policy=require('../commercial/agent-plan'),state=await policy.accountState(client,connection.workspace_id);
