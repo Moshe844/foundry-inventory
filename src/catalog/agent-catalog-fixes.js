@@ -219,6 +219,40 @@ const DUPLICATES=`WITH active AS MATERIALIZED (
     AND (rank<>4 OR count(DISTINCT barcode)<=1)
   ORDER BY rank,key LIMIT 2000`;
 
+// Job 127 links incoming supplier catalog rows to products that already
+// exist with the same rules: 1 same barcode, 2 same supplier code at this
+// supplier, 3 same SKU apart from capitals and spaces, 4 same name and
+// options in the same unit (a guess a person confirms). Archived products
+// are returned with live=false so they are asked about, never duplicated.
+async function matchIncoming(db,workspaceId,supplierId,rows){
+  if(!rows.length)return new Map();
+  // One lookup per rule, each a plain filter on its own index or table, so a
+  // large catalog never plans a row-by-row join against stale statistics.
+  const key=v=>String(v??'').trim().toLowerCase(),alnum=v=>String(v??'').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,'');
+  const codes=[...new Set(rows.map(r=>key(r.code)).filter(Boolean))],barcodes=[...new Set(rows.map(r=>key(r.barcode)).filter(Boolean))];
+  const names=[...new Set(rows.map(r=>alnum(r.name)).filter(Boolean))];
+  const facts='s.id,s.code,s.barcode,s.item_id,s.variant_label,i.name,i.unit_label,(s.is_active=1 AND i.is_active=1) AS live';
+  const join='FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id';
+  const [byBarcode,bySupplier,byCode,byName]=await Promise.all([
+    barcodes.length?db.query(`SELECT ${facts},lower(btrim(s.barcode)) AS k ${join} WHERE s.workspace_id=$1 AND lower(btrim(s.barcode))=ANY($2::text[])`,[workspaceId,barcodes]):{rows:[]},
+    codes.length?db.query(`SELECT ${facts},lower(btrim(si.supplier_sku)) AS k FROM supplier_items si JOIN skus s ON s.workspace_id=si.workspace_id AND s.id=si.sku_id
+      JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE si.workspace_id=$1 AND si.supplier_id=$2 AND si.is_active=1 AND lower(btrim(si.supplier_sku))=ANY($3::text[])`,[workspaceId,supplierId,codes]):{rows:[]},
+    codes.length?db.query(`SELECT ${facts},lower(btrim(s.code)) AS k ${join} WHERE s.workspace_id=$1 AND lower(btrim(s.code))=ANY($2::text[])`,[workspaceId,codes]):{rows:[]},
+    names.length?db.query(`WITH named AS MATERIALIZED (SELECT id,name,unit_label,is_active,regexp_replace(lower(name),'[^[:alnum:]]+','','g') AS k FROM items
+      WHERE workspace_id=$1 AND regexp_replace(lower(name),'[^[:alnum:]]+','','g')=ANY($2::text[]))
+      SELECT s.id,s.code,s.barcode,s.item_id,s.variant_label,n.name,n.unit_label,(s.is_active=1 AND n.is_active=1) AS live,n.k FROM named n JOIN skus s ON s.workspace_id=$1 AND s.item_id=n.id`,[workspaceId,names]):{rows:[]}]);
+  const index=(list,f)=>{const m=new Map();for(const r of list.rows){const k=f(r);if(!m.has(k))m.set(k,[]);m.get(k).push(r);}return m;};
+  const b=index(byBarcode,r=>r.k),sup=index(bySupplier,r=>r.k),c=index(byCode,r=>r.k),n=index(byName,r=>r.k);
+  const out=new Map();
+  for(const row of rows){
+    const found=[...(row.barcode?b.get(key(row.barcode))||[]:[]).map(m=>({...m,rank:1})),...(row.code?sup.get(key(row.code))||[]:[]).map(m=>({...m,rank:2})),
+      ...(row.code?c.get(key(row.code))||[]:[]).map(m=>({...m,rank:3})),
+      ...(n.get(alnum(row.name))||[]).filter(m=>alnum(m.variant_label)===alnum(row.options)&&key(m.unit_label)===key(row.unit||'unit')).map(m=>({...m,rank:4}))];
+    if(found.length)out.set(row.key,found.map(({k,...m})=>m));
+  }
+  return out;
+}
+
 // Orders, purchase orders and transfers that still list a SKU, the same test
 // the catalog uses before archiving a variant.
 const PENDING=`SELECT o.order_number AS reference FROM sales_order_lines l JOIN sales_orders o ON o.workspace_id=l.workspace_id AND o.id=l.sales_order_id
@@ -830,5 +864,5 @@ async function merged(db,workspaceId,itemId){
 
 const definition={id:JOB,key:'catalog-fixes',label:'Find duplicates and missing product data',readPage:review};
 
-module.exports={JOB,ACTION,kind,path,KINDS,SAFE,SAFE_SQL,DUPLICATES,mergeOptions,problemRows,skuOptions,describe,run,schedule,afterImport,check,
+module.exports={JOB,ACTION,kind,path,KINDS,SAFE,SAFE_SQL,DUPLICATES,matchIncoming,mergeOptions,problemRows,skuOptions,describe,run,schedule,afterImport,check,
   approve,approveMany,dismiss,undo,configure,page,inbox,review,merged,load,definition};
