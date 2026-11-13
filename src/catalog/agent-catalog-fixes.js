@@ -555,6 +555,8 @@ async function act(c,ctx,fix,o,{automatic,rule=null,value=null}){
   }
   await c.query(`UPDATE ${fixes} SET status='DONE',automatic=$3,decided_by=$4,decided_at=clock_timestamp(),rule_revision=$5,reason=NULL,would_apply=false,applied=$6
     WHERE workspace_id=$1 AND id=$2`,[ws,fix.id,automatic,ctx.actorId,rule?.revision??null,JSON.stringify(applied)]);
+  // Job 201: a catalog fix made on its own counts toward StockChief's usual day.
+  if(automatic)await require('../autopilot/circuit-breaker').note(c,ws,{key:'catalog-fix:'+fix.id,kind:o.kind==='COST'?'price':'change',reference:d.code});
   await audit.record(c,ctx,{action:automatic?'Catalog fix made on its own':'Catalog fix approved',reference:fix.id,
     after:{kind:o.kind,sku:d.code,keeper:d.keeper?.code||null,change:applied,limit:automatic?(rule?.enabled?rule.daily_limit:DEFAULT_DAILY):null}});
   return {kind:o.kind,id:fix.id,applied};

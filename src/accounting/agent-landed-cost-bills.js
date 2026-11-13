@@ -217,6 +217,9 @@ async function decide(c,gate,bill,line,row){
   if(twoPeople)return save(c,base,{status:'REVIEW',reason:twoPeople,wouldPost:true});
   const posted=await costs.applyInTransaction(c,ctx,built.payload,{routine:{trained:true}});
   await save(c,base,{status:'POSTED',automatic:true,decidedBy:gate.owner,ruleRevision:allowed.rule.revision});
+  // Job 201: a delivery cost posted on its own counts toward StockChief's usual day.
+  await require('../autopilot/circuit-breaker').note(c,gate.workspaceId,{key:'landed-cost:'+posted.documentNumber,kind:'landed_cost',
+    reference:bill.bill_number,amountMinor:base.amount,currency:base.currency});
   await audit.record(c,ctx,{action:'Delivery cost posted to stock on its own',reference:posted.documentNumber,
     after:{bill:bill.bill_number,supplierId:base.supplierId,costType:base.category,amount:money.format(base.amount,base.currency),split:base.method,
       limit:money.format(Number(allowed.rule.maximum_minor),allowed.rule.currency),journalEntryId:posted.journalEntryId,automatic:true}});

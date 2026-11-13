@@ -171,7 +171,7 @@ function needs(database,workspaceId,actorId=null){
       actor?.role==='owner'?require('../accounting/agent-customer-credits').inbox(database,workspaceId):[],
       actor?.role==='owner'?require('../catalog/agent-supplier-catalog').inbox(database,workspaceId):[],
       actor?.role==='owner'?require('../onboarding/agent-old-system-migration').inbox(database,workspaceId):[],
-      actor&&require('../actions/permissions').can(actor,require('../actions/permissions').MANAGE_REPLENISHMENT)?require('../forecasting/agent-runout').inbox(database,workspaceId):[],
+      actor&&require('../actions/permissions').can(actor,require('../actions/permissions').MANAGE_REPLENISHMENT)?require('../forecasting/agent-runout').inbox(database,workspaceId,actor):[],
       actor?.role==='owner'?require('../catalog/agent-product-classification').inbox(database,workspaceId):[],
       actorId?require('../autopilot/escalations').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../sales/agent-customer-return-emails').inbox(database,workspaceId):[],
@@ -193,7 +193,8 @@ function needs(database,workspaceId,actorId=null){
     ].map(schemaTolerant));
     // A parcel StockChief is watching (job 62) shows once, with its own words.
     const watchedParcels=new Set(parcelFlags.map(r=>r.shipmentId));
-    const delegated=new Set(deputyTasks.map(r=>r.href));
+    // Job 202: an approval the deputy covers for the owner shows once, as covered.
+    const delegated=new Set(deputyTasks.concat(approvalDesk.filter(r=>r.approvalRequest?.covering)).map(r=>r.href));
     const supplierMail=new Set(supplierUpdates.filter(r=>!r.grouped).map(r=>r.href.replace(/\/supplier-details$/,'')));
     // An approval routed here (job 176) shows once: a native approval, a deputy's
     // copy or another source naming the same record wins.

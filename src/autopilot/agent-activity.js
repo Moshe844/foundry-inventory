@@ -123,6 +123,7 @@ const SOURCES=[
  {job:196,actions:['Original lot certificate linked'],when:'automatic',why:'A certificate in your mailbox matched a lot.',rule:'Your lot certificate mailbox scope',page:'/autopilot/lot-certificates',fix:'Withdraw the link on Lot certificates.'},
  {job:197,actions:['Compliance report produced on its own'],why:'Your compliance report schedule was due.',rule:'Your compliance report schedule',page:'/autopilot/compliance-reports',fix:'Discard the report and produce a new one.'},
  {job:201,actions:['Paused unusual automatic activity'],why:'Spending or volume looked unusual.',rule:'The circuit-breaker',page:'/autopilot/reviews/unusual-automatic-activity',fix:'Check the activity, then resume automatic work.'},
+ {job:202,actions:['Approval sent to vacation deputy'],why:'You were away and your deputy may approve it.',rule:'Your vacation dates and deputy',page:'/autopilot/reviews/vacation-deputy',fix:'End the vacation; waiting approvals come back to you.'},
  // Alert emails: the job is in the entry (166 to 180, 204).
  {job:null,actions:['Alert email queued'],when:'notOwner',why:'New alerts opened.',rule:'Your alert email setting',outside:true,fix:SENT}
 ];

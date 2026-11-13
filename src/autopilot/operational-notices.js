@@ -115,6 +115,8 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   for(const [job,d] of Object.entries(require('./activity-watches').spec))
     if(policy.permits(account.plan,Number(job),'automatic')&&(!d.ready||await d.ready(db)))watched.push([job,d]);
   const watchQueries=watched.map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('');
+  // Job 201: the pause StockChief took itself stays open until the owner resumes.
+  const breakerPause=await require('./circuit-breaker').noticeSql(db,account);
   // Job 87's channel price checks run through the worker (agent-channel-price-checks.js).
   const candidates='SELECT 168 AS job,"Type" AS kind,"Reference" AS ref,link,"Due"::date AS due FROM ('+overdue.sql+') x'+
     (policy.permits(account.plan,50,'suggest')?` UNION ALL SELECT DISTINCT 50,'Stock ready',waited.order_number,'/autopilot/reviews/stock-ready-updates',$3::date FROM (`+
@@ -147,7 +149,7 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
     (monitors.has(88)?' UNION ALL '+customerHealth.notices(cutoff):'')+
     (supplierPriceChecks?' UNION ALL '+supplierPrices.notices:'')+
     (monitors.has(116)?' UNION ALL SELECT * FROM ('+returnRates.notices(cutoff)+') return_rates':'')+
-    (monitors.has(10)?' UNION ALL SELECT 10,\'Stock loss\',reference,link,$3::date FROM ('+stockLoss.sql+') losses':'')+watchQueries+channelAlerts;
+    (monitors.has(10)?' UNION ALL SELECT 10,\'Stock loss\',reference,link,$3::date FROM ('+stockLoss.sql+') losses':'')+watchQueries+channelAlerts+breakerPause;
   await db.query(`WITH current AS MATERIALIZED (${candidates}), upserted AS (
     INSERT INTO stockchief_runtime.agent_operational_notices AS n(workspace_id,job_id,kind,reference,link,due,last_reminded,history_from)
     SELECT $1,job,kind,ref,link,due,$3::date,CASE WHEN job IN (${historyScopedJobs.join(',')}) THEN ${cutoff}::text::date END FROM current
@@ -270,6 +272,11 @@ async function inbox(db,workspaceId,actorId=null){
     if(Number(r.job_id)===170)return {kind:'inventory',grouped:true,importance:'Important',priority:78,title:'Costs went up or margins fell',
       happened:r.n+' cost or margin alert'+(r.n===1?'':'s')+'.',why:'StockChief compares each new cost with the one before it, and gross margins (before fees and shipping) with your minimum, through the day.',
       recommendation:'Review the costs and selling prices. StockChief has not changed any price.',href:require('./cost-alerts').path,actionLabel:'Review cost and margin alerts',sourceId:'agent-notice-170'};
+    if(Number(r.job_id)===201){const breaker=require('./circuit-breaker');
+      return {kind:'inventory',grouped:true,importance:'Urgent',priority:95,title:'StockChief paused its automatic work',
+        happened:'Today’s automatic activity is far above a usual day, so nothing automatic runs.',
+        why:'StockChief compares its own purchases, labels, emails, credits, price changes and other automatic work with the last 28 days.',
+        recommendation:'Review what it did today. Only you can resume it.',href:breaker.path,actionLabel:'Review and resume',sourceId:'agent-notice-201'};}
     if(Number(r.job_id)===171)return {kind:'inventory',grouped:true,importance:'Important',priority:79,title:'Unusual activity',
       happened:r.n+' unusual change'+(r.n===1?'':'s')+' in the last seven days.',why:'Big stock corrections or price changes, many changes by one person, or changes during the hours you watch.',
       recommendation:'Check who made each change and why. Nothing was blocked.',href:require('./unusual-activity').path,actionLabel:'Review unusual activity',sourceId:'agent-notice-171'};

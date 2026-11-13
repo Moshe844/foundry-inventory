@@ -157,6 +157,8 @@ test('saved freight and exact current plan authority combine only qualifying nat
 });
 test('vacation coverage sends open purchases and transfers only to a currently qualified deputy',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,workflows,browser,subscribe}=f;
+  // Delegating waits out the first 14 days (job 202 respects shadow mode).
+  await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
   const auth=require('../../src/domain/postgres-auth-service'),p=require('../../src/actions/permissions'),vacation=require('../../src/autopilot/vacation-deputy');
   const colleague=await auth.createBusiness(db,{name:'Holiday buyer',businessName:'Independent business',email:randomUUID()+'@example.test',password:f.password});
   const actor={workspaceId:ctx.workspaceId,actorId:randomUUID()},grant=[p.VIEW_PURCHASING,p.APPROVE_PO,p.VIEW_TRANSFERS,p.APPROVE_TRANSFER];
@@ -176,7 +178,8 @@ test('vacation coverage sends open purchases and transfers only to a currently q
   const dst=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Vacation transfer site',kind:'warehouse'});
   const transfers=require('../../src/transfers/postgres-transfer-service');
   const move=await transfers.request(db,ctx,{fromLocationId:f.location.id,toLocationId:dst.id,reason:'Balance stock',idempotencyKey:randomUUID(),lines:[{skuId:f.item.skuIds[0],quantity:1}]});
-  const received=async()=>(await require('../../src/projections/postgres-service').needs(db,ctx.workspaceId,actor.actorId)).filter(r=>r.sourceId?.startsWith('vacation-')).map(r=>r.sourceId.slice(9)).sort();
+  // Pro and Custom also route by role (job 176); either way the deputy gets the same approvals.
+  const received=async()=>(await require('../../src/projections/postgres-service').needs(db,ctx.workspaceId,actor.actorId)).filter(r=>r.approvalRequest).map(r=>r.approvalRequest.id).sort();
   for(const tier of ['growth','pro','enterprise']){await subscribe(tier);assert.deepEqual(await received(),[small,move.id].sort());}
   await subscribe('starter');assert.deepEqual(await received(),[]);
   await subscribe('growth');await vacation.save(db,ctx,{...input,start:add(today,1),revision:1});assert.deepEqual(await received(),[]);

@@ -1981,6 +1981,7 @@ function createPostgresAutopilotRouter(database,options={}){
       if(req.params.job===require('../../autopilot/escalations').key)result.escalations=await require('../../autopilot/escalations').actions(database,req.ctx);
       if(req.params.job==='staff-count-lists')result.countAssignments={...await require('../../operations/agent-count-tasks').setup(database,req.ctx),requestKey:newId('count-assignment'),selectedLocationId:req.query.locationId};
       if(req.params.job==='vacation-deputy')result.vacation=await require('../../autopilot/vacation-deputy').setup(database,req.ctx);
+      if(req.params.job===require('../../autopilot/circuit-breaker').key)result.breaker=await require('../../autopilot/circuit-breaker').status(database,req.ctx);
       if(req.params.job==='purchase-approval-threshold'){
         const rule=await require('../../purchasing/dual-approval').setting(database,req.ctx.workspaceId);
         result.purchaseThreshold={...rule,amount:rule.amount_minor==null?'':require('../../domain/currency').fromMinor(rule.amount_minor,rule.currency)};
@@ -2103,6 +2104,17 @@ function createPostgresAutopilotRouter(database,options={}){
     const watch=require('../../autopilot/activity-watches'),id=Number(req.params.id);
     await watch.save(database,req.ctx,id,req.body);
     res.redirect(303,'/autopilot/reviews/'+watch.spec[id].key);
+  }));
+  // Job 201: the owner resumes after reviewing what StockChief did today.
+  router.post('/autopilot/circuit-breaker/resume',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const breaker=require('../../autopilot/circuit-breaker');
+    await breaker.resume(database,req.ctx,req.body);
+    req.flash('success','StockChief is running again. Your review is in the activity record.');
+    res.redirect(303,breaker.path);
+  }));
+  router.post('/autopilot/vacation-deputy/hand-back',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../autopilot/vacation-deputy').handBack(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/reviews/vacation-deputy');
   }));
   router.post('/autopilot/vacation-deputy',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../autopilot/vacation-deputy').save(database,req.ctx,req.body);

@@ -247,15 +247,21 @@ async function email(c,ctx,r){
   if(!to.length)return 0;
   const {escapeHtml}=require('../commercial/notifications'),origin=String(config.connections.publicOrigin||'').replace(/\/$/,'');
   const link=origin?origin+href+'?'+new URLSearchParams({month:r.month}):null;
-  const lines=[...r.totals.flatMap(t=>t.kinds.map(k=>k.label+': '+fmt(k.amount,t.currency)+' ('+k.count+')')),
-    ...r.tasks.slice(0,10).map(t=>t.label+': '+t.count+' × '+t.minutesEach+' min'+(t.basis==='standard'?' (standard estimate)':''))];
+  const taskLines=r.tasks.slice(0,10).map(t=>t.label+': '+t.count+' × '+t.minutesEach+' min'+(t.basis==='standard'?' (standard estimate)':''));
+  const moneyLines=r.totals.flatMap(t=>t.kinds.map(k=>k.label+': '+fmt(k.amount,t.currency)+' ('+k.count+')'));
+  // Job 203: the money caught comes from supplier costs and bills. Only the owner
+  // and team members who may see costs get it; any other address gets the hours.
+  const seesCosts=new Set((await c.query(`SELECT lower(a.email) AS email,u.role,u.permissions FROM users u JOIN accounts a ON a.id=u.account_id
+    LEFT JOIN platform_account_access x ON x.account_id=u.account_id WHERE u.workspace_id=$1 AND a.email IS NOT NULL AND x.disabled_at IS NULL`,[ctx.workspaceId])).rows
+    .filter(m=>require('../actions/financial-visibility').costs(m)).map(m=>m.email));
   const account=(await c.query(`SELECT a.id FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1`,[ctx.workspaceId])).rows[0];
   const jobs=require('../operations/postgres-job-queue'),credentials=require('../connections/credentials');
   let queued=0;
   for(const address of to){
+    const full=seesCosts.has(address),summary=full?headline(r):headline({...r,totals:[],plan:null,pricePerHour:null}),lines=full?moneyLines.concat(taskLines):taskLines;
     const message={to:address,subject:'Your StockChief ROI report for '+r.name,
-      text:['Your ROI report for '+r.name,headline(r),...lines,link?'Open the report: '+link:''].filter(Boolean).join('\n\n'),
-      html:'<h1>Your ROI report for '+escapeHtml(r.name)+'</h1><p>'+escapeHtml(headline(r))+'</p>'+(lines.length?'<ul>'+lines.map(l=>'<li>'+escapeHtml(l)+'</li>').join('')+'</ul>':'')+
+      text:['Your ROI report for '+r.name,summary,...lines,link?'Open the report: '+link:''].filter(Boolean).join('\n\n'),
+      html:'<h1>Your ROI report for '+escapeHtml(r.name)+'</h1><p>'+escapeHtml(summary)+'</p>'+(lines.length?'<ul>'+lines.map(l=>'<li>'+escapeHtml(l)+'</li>').join('')+'</ul>':'')+
         (link?'<p><a href="'+escapeHtml(link)+'">Open the report</a></p>':'')+'<p>Standard estimates are StockChief’s starting minutes for a task; time a task yourself to replace them.</p>'};
     const job=await jobs.enqueue(reports.scoped(c),{workspaceId:ctx.workspaceId,kind:'system.email-send',idempotencyKey:'roi-report-email:'+ctx.workspaceId+':'+r.month+':'+address,
       payload:{messageType:'scheduled_report',accountId:account?.id||null,sealed:credentials.encrypt(message)},priority:30,maxAttempts:5});
@@ -366,5 +372,5 @@ async function download(db,ctx,query={}){
   return {filename:'roi-report-'+month+'.'+format,format,body};
 }
 
-module.exports={JOB,ACTION,KIND,href,STANDARD_MINUTES,KINDS,compute,headline,run,schedule,checkNow,page,readPage,download,
+module.exports={JOB,ACTION,KIND,href,STANDARD_MINUTES,KINDS,compute,headline,run,schedule,checkNow,page,readPage,download,email,
   definition:{id:JOB,key:'roi-report',label:'Monthly ROI report: hours saved and money caught',filterLabel:'Completed month (YYYY-MM)',readPage}};

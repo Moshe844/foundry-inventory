@@ -426,6 +426,7 @@ async function autopilotEvaluate(job,client){
   if(cycle.skipped)return {...cycle,cycleId,cycleStartedAt};
   if(!job.payload.afterSkuId){
     await require('../autopilot/circuit-breaker').refresh(client,job.workspaceId);
+    await require('../autopilot/circuit-breaker').prune(client,job.workspaceId);
     await require('./agent-count-tasks').runSchedules(client,job.workspaceId);
     await require('../sales/recurring-orders').schedule(client,job.workspaceId);
     // Job 180: yesterday's team summary, before the notices so it opens and emails in this check.

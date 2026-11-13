@@ -160,6 +160,11 @@ async function queueInTransaction(client,ctx,payload,idempotencyKey,options={}){
     provider:connection.provider_type,aggregateType:communicationKind==='supplier'?'supplier_communication':'customer_communication',
     aggregateId:message.id,idempotencyKey,requestedByUserId:ctx.actorId,
     payload:{communicationId:message.id,communicationKind,connectorId:connection.id,...(agentJob?{agentJob}:{}),...(prepared.standingAuthority?{standingAuthority:prepared.standingAuthority}:{})},priority:10,maxAttempts:12});
+  // Job 201: an email StockChief sends on its own counts toward its usual day.
+  // Alert emails to the owner and anything a person approved do not.
+  const grant=prepared.standingAuthority;
+  if(inserted.rowCount&&grant&&grant.kind!=='agent_alert'&&grant.automatic!==false&&grant.manual!==true&&grant.manualApproval!==true)
+    await require('../autopilot/circuit-breaker').note(client,ctx.workspaceId,{key:'email:'+message.id,kind:'email',reference:prepared.subject});
   return {communicationId:message.id,communicationKind,status:message.status,effectId:queued.effect.id,
     queued:queued.effect.status==='PENDING'};
 }

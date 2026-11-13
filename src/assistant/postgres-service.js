@@ -2224,6 +2224,11 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
     // Job 181: the activity log records what allowed each completed agent action.
     if(job||automatic)await require('../autopilot/agent-activity').completed(client,ctx,{proposal,capability:contract.name,job,automatic,
       missionPlanId,routineAuthority,trained:taughtRule,account:agentAccount});
+    // Job 201: a change a routine or approved plan carried out counts toward
+    // StockChief's usual day, with its money when it has any.
+    if(automatic)await require('../autopilot/circuit-breaker').note(client,ctx.workspaceId,{key:'proposal:'+id,
+      kind:require('../autopilot/circuit-breaker').kindOf(proposal.action_type),reference:proposal.summary,
+      amountMinor:approvalRequest?.amountMinor??null,currency:approvalRequest?.currency??null});
     return {...changed.rows[0],replayed:false};
   },{isolation:'SERIALIZABLE',retrySafe:true});
   await require('./postgres-business-memory').rememberProposal(database,ctx,committed).catch((error)=>
