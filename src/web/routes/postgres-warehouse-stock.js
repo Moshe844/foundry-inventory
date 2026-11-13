@@ -85,6 +85,7 @@ function protection(db){const router=createRouter(db);return async(req,res,next)
      req.method==='POST'&&(transferReceipt.test(req.path)||transferCheck.test(req.path)))return next();
   if(['GET','POST'].includes(req.method)&&/^\/warehouse\/bin-corrections(?:\/[A-Za-z0-9_-]+(?:\/scan)?)?$/.test(req.path))return next();
   if(req.method==='GET'&&req.path==='/warehouse/staff-tasks')return next();
+  if(req.method==='GET'&&/^\/team-procedures(?:\/[A-Za-z0-9_-]+(?:\/document\.txt)?)?$/.test(req.path))return next();
   if(req.method==='GET'&&/^\/warehouse\/putaway\/[A-Za-z0-9_-]+$/.test(req.path)||req.method==='POST'&&/^\/warehouse\/putaway\/[A-Za-z0-9_-]+\/confirm$/.test(req.path))return next();
   if(req.path==='/warehouse/stock'||req.path==='/warehouse/stock/receive'||req.path==='/warehouse/stock/count')return router(req,res,next);
   if(req.method==='GET'&&!req.path.startsWith('/api/'))return res.redirect(302,'/warehouse/stock');

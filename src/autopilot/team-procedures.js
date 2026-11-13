@@ -26,18 +26,38 @@ async function save(db,ctx,input){
 async function generate(db,ctx,id){
  return db.transaction(async c=>{
   await access(c,ctx,{automatic:true});const p=await get(c,ctx,id,{lock:true});if(!p.enabled||p.authorized_by!==ctx.actorId||!(await require('./postgres-service').getState(c,ctx.workspaceId)).canAutomate)throw new ValidationError('Private procedure updates are stopped or need the current owner’s routine authority.');
-  const facts=await source.facts(c,ctx,scope(p)),result=await record(c,ctx,p,facts,{automatic:true});await c.query('UPDATE stockchief_runtime.agent_team_procedure_sets SET last_checked_at=clock_timestamp(),next_check_at=clock_timestamp()+make_interval(days=>refresh_days),last_issue=NULL WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]);return result;
+  const facts=await source.facts(c,ctx,scope(p)),result=await record(c,ctx,p,facts,{automatic:true});await c.query('UPDATE stockchief_runtime.agent_team_procedure_sets SET last_checked_at=clock_timestamp(),next_check_at=clock_timestamp()+make_interval(days=>refresh_days),last_issue=NULL WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]);return {...result,...await autoPublish(c,ctx,p,result)};
  },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+// Pro and Custom, when the owner allowed it: a changed procedure reaches staff
+// on its own, keeping the owner's notes. If the owner edited the staff text,
+// StockChief stops and asks instead of replacing their words.
+async function autoPublish(c,ctx,p,result){
+ if(!p.auto_publish||result.replayed)return {};
+ const version=(await c.query('SELECT * FROM stockchief_runtime.agent_team_procedure_versions WHERE workspace_id=$1 AND procedure_id=$2 AND id=$3',[ctx.workspaceId,p.id,result.id])).rows[0];
+ const current=(await c.query('SELECT a.*,v.document_hash AS version_hash FROM stockchief_runtime.agent_team_procedure_current h JOIN stockchief_runtime.agent_team_procedure_publications a ON a.workspace_id=h.workspace_id AND a.procedure_id=h.procedure_id AND a.id=h.publication_id JOIN stockchief_runtime.agent_team_procedure_versions v ON v.workspace_id=a.workspace_id AND v.procedure_id=a.procedure_id AND v.id=a.version_id WHERE h.workspace_id=$1 AND h.procedure_id=$2 FOR UPDATE OF h',[ctx.workspaceId,p.id])).rows[0];
+ if(current&&current.version_hash===version.document_hash)return {};
+ if(current?.edited){
+  await c.query('UPDATE stockchief_runtime.agent_team_procedure_sets SET pending_review=true,last_issue=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,p.id,'You edited the staff version, so StockChief did not replace it. Review the new draft and publish it yourself.']);
+  return {publishHeld:true};
+ }
+ const approved={...version.document,ownerNotes:current?.approved_document.ownerNotes||''},key='auto:'+version.id,pub=newId('procedure-publication');
+ await c.query('INSERT INTO stockchief_runtime.agent_team_procedure_publications(id,workspace_id,procedure_id,version_id,approved_document,approved_by,request_key,request_hash,automatic) VALUES($1,$2,$3,$4,$5,$6,$7,$8,true)',[pub,ctx.workspaceId,p.id,version.id,approved,ctx.actorId,key,hash({procedureId:p.id,versionId:version.id,approved})]);
+ await c.query('INSERT INTO stockchief_runtime.agent_team_procedure_current(procedure_id,workspace_id,publication_id) VALUES($1,$2,$3) ON CONFLICT(procedure_id) DO UPDATE SET publication_id=EXCLUDED.publication_id',[p.id,ctx.workspaceId,pub]);
+ await c.query('UPDATE stockchief_runtime.agent_team_procedure_sets SET pending_review=false WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,p.id]);
+ await require('../operations/postgres-security-audit').record(c,ctx,{action:'Team procedure published to staff by StockChief',reference:pub,before:{publicationId:current?.id||null},after:{procedureId:p.id,versionId:version.id,approvedDocument:approved,sourceFingerprint:version.source_fingerprint}});
+ return {publicationId:pub};
 }
 async function configure(db,ctx,id,input){
  return db.transaction(async c=>{
   await ownerLock(c,ctx);const p=await get(c,ctx,id,{lock:true});if(p.revision!==Number(input.revision))throw new ValidationError('Reload the current procedure-update settings.');
-  if(input.stop==='yes'){await c.query('UPDATE stockchief_runtime.agent_team_procedure_sets SET enabled=false,revision=revision+1,next_check_at=NULL,last_issue=NULL WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]);await require('../operations/postgres-security-audit').record(c,ctx,{action:'Private procedure updates stopped',reference:id});return;}
+  if(input.stop==='yes'){await c.query('UPDATE stockchief_runtime.agent_team_procedure_sets SET enabled=false,auto_publish=false,revision=revision+1,next_check_at=NULL,last_issue=NULL WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]);await require('../operations/postgres-security-audit').record(c,ctx,{action:'Private procedure updates stopped',reference:id});return;}
   await access(c,ctx,{automatic:true});const refresh=String(input.refreshDays??'');if(input.confirmed!=='yes'||!/^\d{1,2}$/.test(refresh)||Number(refresh)<1||Number(refresh)>90||!(await require('./postgres-service').getState(c,ctx.workspaceId)).canAutomate)throw new ValidationError('Choose an explicit update interval from one to ninety days and authorize private drafts for this workflow and location.');
   const facts=await source.facts(c,ctx,scope(p));if(input.sourceFingerprint!==facts.sourceFingerprint)throw new ValidationError('Reload the current recorded examples before enabling private updates.');
   await require('../manager/postgres-operating-instructions').checkRuleLimit(c,ctx,[],p.enabled?0:1);
-  await c.query('UPDATE stockchief_runtime.agent_team_procedure_sets SET enabled=true,refresh_days=$3,authorized_by=$4,revision=revision+1,next_check_at=clock_timestamp(),last_issue=NULL WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,Number(refresh),ctx.actorId]);await enqueue(c,ctx.workspaceId,id,p.revision+1);
-  await require('../operations/postgres-security-audit').record(c,ctx,{action:'Private procedure updates authorized',reference:id,after:{scope:scope(p),refreshDays:Number(refresh),staffPublication:'requires separate owner review'}});
+  const publish=input.publish==='yes';
+  await c.query('UPDATE stockchief_runtime.agent_team_procedure_sets SET enabled=true,auto_publish=$5,refresh_days=$3,authorized_by=$4,revision=revision+1,next_check_at=clock_timestamp(),last_issue=NULL WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,Number(refresh),ctx.actorId,publish]);await enqueue(c,ctx.workspaceId,id,p.revision+1);
+  await require('../operations/postgres-security-audit').record(c,ctx,{action:'Private procedure updates authorized',reference:id,after:{scope:scope(p),refreshDays:Number(refresh),staffPublication:publish?'published on its own':'requires separate owner review'}});
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 async function publish(db,ctx,id,input){
@@ -47,14 +67,50 @@ async function publish(db,ctx,id,input){
   if(hash(version.source_snapshot.scope)!==hash(scope(p)))throw new ValidationError('This version uses a different lookback or workflow scope. Review a current draft before publishing.');
   const original=version.source_snapshot,verified=await source.facts(c,ctx,scope(p),{exampleIds:original.examples.map(e=>e.id),recordedFrom:original.recordedFrom,recordedThrough:original.recordedThrough});if(verified.sourceFingerprint!==version.source_fingerprint)throw new ValidationError('The original examples or their stock/cost proof changed, or they are outside the history available on this plan. Create and review a fresh draft.');
   const notes=String(input.ownerNotes||'').trim();if(notes.length>4000)throw new ValidationError('Use up to 4,000 characters for the owner’s additional notes.');
-  const approved={...version.document,ownerNotes:notes},requestHash=hash({procedureId:id,versionId:version.id,approved}),prior=(await c.query('SELECT id,request_hash FROM stockchief_runtime.agent_team_procedure_publications WHERE workspace_id=$1 AND request_key=$2',[ctx.workspaceId,input.requestKey])).rows[0];
+  const text=editable(input,version.document),edited=hash(text)!==hash({title:version.document.title,steps:version.document.steps,outcome:version.document.outcome});
+  const approved={...version.document,...text,ownerNotes:notes},requestHash=hash({procedureId:id,versionId:version.id,approved}),prior=(await c.query('SELECT id,request_hash FROM stockchief_runtime.agent_team_procedure_publications WHERE workspace_id=$1 AND request_key=$2',[ctx.workspaceId,input.requestKey])).rows[0];
   if(prior){if(prior.request_hash!==requestHash)throw new ValidationError('This publication request was already used for different text. Reload before approving another version.');return {id:prior.id,replayed:true};}
   const current=(await c.query('SELECT publication_id FROM stockchief_runtime.agent_team_procedure_current WHERE workspace_id=$1 AND procedure_id=$2',[ctx.workspaceId,id])).rows[0];if((current?.publication_id||'')!==String(input.expectedPublicationId||''))throw new ValidationError('The staff procedure changed after this review. Reload its current published version before replacing it.');
-  const pub=newId('procedure-publication');await c.query('INSERT INTO stockchief_runtime.agent_team_procedure_publications(id,workspace_id,procedure_id,version_id,approved_document,approved_by,request_key,request_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[pub,ctx.workspaceId,id,version.id,approved,ctx.actorId,input.requestKey,requestHash]);
+  const pub=newId('procedure-publication');await c.query('INSERT INTO stockchief_runtime.agent_team_procedure_publications(id,workspace_id,procedure_id,version_id,approved_document,approved_by,request_key,request_hash,edited) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[pub,ctx.workspaceId,id,version.id,approved,ctx.actorId,input.requestKey,requestHash,edited]);
   await c.query('INSERT INTO stockchief_runtime.agent_team_procedure_current(procedure_id,workspace_id,publication_id) VALUES($1,$2,$3) ON CONFLICT(procedure_id) DO UPDATE SET publication_id=EXCLUDED.publication_id',[id,ctx.workspaceId,pub]);
   await c.query('UPDATE stockchief_runtime.agent_team_procedure_sets p SET pending_review=coalesce((SELECT document_hash<>$3 FROM stockchief_runtime.agent_team_procedure_versions WHERE workspace_id=p.workspace_id AND procedure_id=p.id ORDER BY created_at DESC,id DESC LIMIT 1),false) WHERE p.workspace_id=$1 AND p.id=$2',[ctx.workspaceId,id,version.document_hash]);
-  await require('../operations/postgres-security-audit').record(c,ctx,{action:'Team procedure approved for staff',reference:pub,after:{procedureId:id,versionId:version.id,approvedDocument:approved,sourceFingerprint:version.source_fingerprint}});return {id:pub,replayed:false};
+  if(p.last_issue)await c.query('UPDATE stockchief_runtime.agent_team_procedure_sets SET last_issue=NULL WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]);
+  await require('../operations/postgres-security-audit').record(c,ctx,{action:'Team procedure approved for staff',reference:pub,after:{procedureId:id,versionId:version.id,approvedDocument:approved,edited,sourceFingerprint:version.source_fingerprint}});return {id:pub,replayed:false};
  },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+// The owner's edits to the staff text: one step per line.
+function editable(input,doc){
+ if(input.steps==null&&input.title==null&&input.outcome==null)return {title:doc.title,steps:doc.steps,outcome:doc.outcome};
+ const title=String(input.title??doc.title).trim(),outcome=String(input.outcome??doc.outcome).trim();
+ const steps=(input.steps==null?doc.steps:String(input.steps).split(/\r?\n/)).map(s=>String(s).trim()).filter(Boolean);
+ if(!title||title.length>200)throw new ValidationError('Give the procedure a title of up to 200 characters.');
+ if(!steps.length||steps.length>40||steps.some(s=>s.length>500))throw new ValidationError('Write from 1 to 40 steps, one per line, each up to 500 characters.');
+ if(outcome.length>1000)throw new ValidationError('Use up to 1,000 characters for what the procedure achieves.');
+ return {title,steps,outcome};
+}
+// Undo: the owner puts an earlier staff version back. StockChief then stops
+// publishing updates on its own until the owner allows it again.
+async function restore(db,ctx,id,input){
+ return db.transaction(async c=>{
+  await access(c,ctx);const p=await get(c,ctx,id,{lock:true});
+  const target=(await c.query('SELECT id FROM stockchief_runtime.agent_team_procedure_publications WHERE workspace_id=$1 AND procedure_id=$2 AND id=$3',[ctx.workspaceId,id,String(input.publicationId||'')])).rows[0];
+  if(!target)throw new NotFoundError('That staff version is not part of this procedure.');
+  const current=(await c.query('SELECT publication_id FROM stockchief_runtime.agent_team_procedure_current WHERE workspace_id=$1 AND procedure_id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];
+  if(current?.publication_id===target.id)return {replayed:true};
+  if((current?.publication_id||'')!==String(input.expectedPublicationId||''))throw new ValidationError('The staff procedure changed after this review. Reload it first.');
+  await c.query('INSERT INTO stockchief_runtime.agent_team_procedure_current(procedure_id,workspace_id,publication_id) VALUES($1,$2,$3) ON CONFLICT(procedure_id) DO UPDATE SET publication_id=EXCLUDED.publication_id',[id,ctx.workspaceId,target.id]);
+  await c.query('UPDATE stockchief_runtime.agent_team_procedure_sets SET auto_publish=false,pending_review=true,revision=revision+1 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]);
+  await require('../operations/postgres-security-audit').record(c,ctx,{action:'Team procedure restored to an earlier staff version',reference:id,before:{publicationId:current?.publication_id||null},after:{publicationId:target.id,publishOnItsOwn:false,wasPublishingOnItsOwn:p.auto_publish}});
+  return {restored:true};
+ },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+// Published procedures the current person can open.
+async function staffList(db,ctx){
+ const actor=(await db.query('SELECT u.role,u.warehouse_location_ids FROM users u WHERE u.workspace_id=$1 AND u.id=$2 AND NOT EXISTS(SELECT 1 FROM platform_account_access a WHERE a.account_id=u.account_id AND a.disabled_at IS NOT NULL)',[ctx.workspaceId,ctx.actorId])).rows[0];if(!actor)throw new AuthorizationError('Choose an inventory you can access.');
+ const state=await policy.accountState(db,ctx.workspaceId);if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,178,'suggest'))return {locked:true,rows:[]};
+ const rows=(await db.query("SELECT p.id,p.kind,p.location_id,l.name AS location,a.approved_at,a.approved_document->>'title' AS title FROM stockchief_runtime.agent_team_procedure_current v JOIN stockchief_runtime.agent_team_procedure_publications a ON a.workspace_id=v.workspace_id AND a.procedure_id=v.procedure_id AND a.id=v.publication_id JOIN stockchief_runtime.agent_team_procedure_sets p ON p.workspace_id=v.workspace_id AND p.id=v.procedure_id JOIN locations l ON l.workspace_id=p.workspace_id AND l.id=p.location_id WHERE v.workspace_id=$1 ORDER BY 6,p.id LIMIT 200",[ctx.workspaceId])).rows;
+ const roots=await require('../operations/postgres-warehouse-access').scope(db,ctx);if(roots===null)return {locked:false,rows};
+ const allowed=new Set((await require('../operations/postgres-warehouse-access').locations(db,ctx.workspaceId,roots)).map(l=>l.id));return {locked:false,rows:rows.filter(r=>allowed.has(r.location_id))};
 }
 async function unpublish(db,ctx,id,input){
  return db.transaction(async c=>{await ownerLock(c,ctx);await get(c,ctx,id,{lock:true});const current=(await c.query('SELECT publication_id FROM stockchief_runtime.agent_team_procedure_current WHERE workspace_id=$1 AND procedure_id=$2',[ctx.workspaceId,id])).rows[0];if(input.confirmed!=='yes'||(current?.publication_id||'')!==String(input.expectedPublicationId||''))throw new ValidationError('Reload and confirm the current staff procedure before removing it.');const removed=await c.query('DELETE FROM stockchief_runtime.agent_team_procedure_current WHERE workspace_id=$1 AND procedure_id=$2',[ctx.workspaceId,id]);await c.query('UPDATE stockchief_runtime.agent_team_procedure_sets SET pending_review=false WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id]);await require('../operations/postgres-security-audit').record(c,ctx,{action:'Team procedure removed from staff view',reference:id});return {removed:removed.rowCount>0};},{isolation:'SERIALIZABLE',retrySafe:true});
@@ -72,8 +128,9 @@ async function list(db,ctx,{page=1}={}){
 async function page(db,ctx,id){
  await source.owner(db,ctx);await policy.requireWorkspaceJob(db,ctx.workspaceId,178,'draft');const p=await get(db,ctx,id),versions=(await db.query("SELECT id,source_fingerprint,document_hash,created_at,automatic,document->>'title' AS title FROM stockchief_runtime.agent_team_procedure_versions WHERE workspace_id=$1 AND procedure_id=$2 ORDER BY created_at DESC,id DESC LIMIT 20",[ctx.workspaceId,id])).rows,latest=versions[0]?(await db.query('SELECT * FROM stockchief_runtime.agent_team_procedure_versions WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,versions[0].id])).rows[0]:null;
  const current=(await db.query('SELECT a.* FROM stockchief_runtime.agent_team_procedure_current v JOIN stockchief_runtime.agent_team_procedure_publications a ON a.workspace_id=v.workspace_id AND a.procedure_id=v.procedure_id AND a.id=v.publication_id WHERE v.workspace_id=$1 AND v.procedure_id=$2',[ctx.workspaceId,id])).rows[0]||null,state=await policy.accountState(db,ctx.workspaceId),history=await require('../commercial/agent-history').access(db,ctx.workspaceId);
+ const publications=(await db.query("SELECT a.id,a.approved_at,a.automatic,a.edited,a.approved_document->>'title' AS title,u.name AS approver FROM stockchief_runtime.agent_team_procedure_publications a LEFT JOIN users u ON u.workspace_id=a.workspace_id AND u.id=a.approved_by WHERE a.workspace_id=$1 AND a.procedure_id=$2 ORDER BY a.approved_at DESC,a.id DESC LIMIT 10",[ctx.workspaceId,id])).rows;
  let fresh=null,problem=null;try{fresh=await source.facts(db,ctx,scope(p));}catch(error){if(![400,402,403,404,422].includes(error.status))throw error;problem=error.message;}
- return {procedure:p,latest,versions,current,plan:state.plan,shadow:state.shadow,problem:problem||p.last_issue,freshFingerprint:fresh?.sourceFingerprint||null,evidence:latest?.source_snapshot.examples.filter(e=>!history.activityAfter||e.recorded_at>=history.activityAfter)||[],evidenceHidden:Boolean(latest?.source_snapshot.examples.some(e=>history.activityAfter&&e.recorded_at<history.activityAfter))};
+ return {procedure:p,latest,versions,current,publications,plan:state.plan,shadow:state.shadow,problem:problem||p.last_issue,freshFingerprint:fresh?.sourceFingerprint||null,evidence:latest?.source_snapshot.examples.filter(e=>!history.activityAfter||e.recorded_at>=history.activityAfter)||[],evidenceHidden:Boolean(latest?.source_snapshot.examples.some(e=>history.activityAfter&&e.recorded_at<history.activityAfter))};
 }
 async function enqueue(c,workspaceId,id,revision){return require('../operations/postgres-job-queue').enqueue(typeof c.transaction==='function'?c:{query:(...a)=>c.query(...a),transaction:fn=>fn(c)},{workspaceId,kind:jobKind,idempotencyKey:'team-procedure:'+id+':'+revision+':'+new Date().toISOString().slice(0,10),payload:{procedureId:id},priority:30,maxAttempts:3});}
 async function onProcedure(db,workspaceId,id){
@@ -85,4 +142,4 @@ async function inbox(db,workspaceId,actorId){
  const rows=(await db.query('SELECT p.id,p.kind,p.pending_review,p.last_issue,p.last_checked_at,l.name FROM stockchief_runtime.agent_team_procedure_sets p JOIN locations l ON l.workspace_id=p.workspace_id AND l.id=p.location_id WHERE p.workspace_id=$1 AND ((p.enabled AND p.last_issue IS NOT NULL) OR p.pending_review) ORDER BY p.last_checked_at NULLS FIRST,p.id LIMIT 50',[workspaceId])).rows;if(!rows.length)return [];await source.owner(db,{workspaceId,actorId});const state=await policy.accountState(db,workspaceId),eligible=policy.usesAgentTerms(state)&&policy.permits(state.plan,178,'draft');
  return rows.filter(row=>eligible||row.last_issue).map(row=>({kind:'team',importance:'Needs You',priority:69,title:(row.last_issue?'Review private procedure updates: ':'Review changed staff procedure: ')+source.kinds[row.kind]+' at '+row.name,happened:row.last_issue?'An authorized private update stopped for review.':'A private draft changes the instructions in the currently published staff procedure.',why:row.last_issue||'The staff version stays as you approved it until you review and publish the new text.',recommendation:eligible?'Review the recorded workflow and exact private draft.':'This plan does not include procedure writing. Stop the saved update or review an upgrade.',href:eligible?'/autopilot/team-procedures/'+row.id:'/autopilot/team-procedures',actionLabel:'Review procedure',sourceId:'team-procedure:'+row.id,at:row.last_checked_at,createdAt:row.last_checked_at}));
 }
-module.exports={preview,save,generate,configure,publish,unpublish,published,list,page,schedule,onProcedure,enqueue,inbox,jobKind,action,definition:{id:178,key:'team-procedures',label:'Write team procedures from completed app workflows',readPage:async()=>({summary:'Prepare step-by-step instructions from verified receiving, dispatch and count records. Growth requires individual approval. Pro and Custom can maintain private drafts within owner authority. Staff see a version only after its separate owner publication.',rows:[{Action:'Open team procedures',link:'/autopilot/team-procedures'}],more:false})}};
+module.exports={preview,save,generate,configure,publish,unpublish,restore,staffList,published,list,page,schedule,onProcedure,enqueue,inbox,jobKind,action,definition:{id:178,key:'team-procedures',label:'Write team procedures from how your team really works',readPage:async()=>({summary:'Writes step-by-step procedures for receiving, picking, dispatch, counting and customer returns from the steps staff actually recorded. Growth drafts each one for your approval. Pro and Custom keep them current and, when you allow it, publish updates to staff on their own. You can edit the staff text and go back to an earlier version.',rows:[{Action:'Open team procedures',link:'/autopilot/team-procedures'}],more:false})}};
