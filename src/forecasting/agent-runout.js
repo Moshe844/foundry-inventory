@@ -81,13 +81,26 @@ async function demandFor(db,workspaceId,skuIds,today,rows){
 }
 
 // One estimate per product: the same calculation the daily run saves.
-async function estimate(db,workspaceId,skuIds,{today=null}={}){
+// A scenario (job 149's "what if" answers) changes the same calculation:
+//   demandFactor   multiplies demand every day;
+//   supplierId with extraLeadDays moves that supplier's dated deliveries;
+//   supplierId with withoutSupplier drops that supplier's deliveries;
+//   leads          Map(skuId -> lead days) for an order placed today;
+//   noSupplier     Set(skuId) with no other supplier: nothing can arrive
+//                  within noSupplyDays.
+async function estimate(db,workspaceId,skuIds,{today=null,scenario=null}={}){
   if(!skuIds.length)return [];
   today=today||await time.today(db,workspaceId);
+  const data=await load(db,workspaceId,skuIds,today);
+  return data?compute(data,scenario):[];
+}
+
+// Everything the calculation reads, once, so several scenarios can share it.
+async function load(db,workspaceId,skuIds,today){
   const args=[workspaceId,skuIds];
   const products=(await db.query(`SELECT s.id sku_id,s.code,i.id item_id,i.name,i.unit_label FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
     WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) AND s.is_active=1 AND i.is_active=1 ORDER BY s.id`,args)).rows;
-  if(!products.length)return [];
+  if(!products.length)return null;
   const ids=products.map(p=>p.sku_id);
   const rows=await require('../purchasing/postgres-replenishment-state').rows(db,workspaceId,{onlySkuIds:ids});
   const kits=require('../domain/postgres-kit-availability'),usable=await kits.stock(db,workspaceId,ids),kitCapacity=await kits.read(db,workspaceId,ids);
@@ -98,7 +111,7 @@ async function estimate(db,workspaceId,skuIds,{today=null}={}){
     FROM sales_order_lines l JOIN sales_orders o ON o.workspace_id=l.workspace_id AND o.id=l.sales_order_id
     WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND o.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
     ORDER BY o.allocation_priority,o.needed_by NULLS LAST,o.order_date,o.order_number,o.id`,[workspaceId,ids])).rows.filter(r=>r.units>0);
-  const incoming=(await db.query(`SELECT l.sku_id,o.po_number,o.expected_date::text AS expected,(l.quantity_units-l.quantity_received_units)::float8 AS units
+  const incoming=(await db.query(`SELECT l.sku_id,o.po_number,o.supplier_id,o.expected_date::text AS expected,(l.quantity_units-l.quantity_received_units)::float8 AS units
     FROM purchase_order_lines l JOIN purchase_orders o ON o.workspace_id=l.workspace_id AND o.id=l.purchase_order_id
     WHERE l.workspace_id=$1 AND l.sku_id=ANY($2::text[]) AND o.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED')
       AND coalesce(to_jsonb(o)->>'delivery_kind','WAREHOUSE')='WAREHOUSE' AND l.quantity_units>l.quantity_received_units
@@ -114,15 +127,24 @@ async function estimate(db,workspaceId,skuIds,{today=null}={}){
       FROM accounting_inventory_cost_balances b WHERE b.workspace_id=s.workspace_id AND b.sku_id=s.id) stock ON true
     WHERE s.workspace_id=$1 AND s.id=ANY($2::text[])`,[workspaceId,ids])).rows.map(r=>[r.id,r]));
   const demand=await demandFor(db,workspaceId,ids,today,rows);
+  return {today,products,rows,free,kitCapacity,waiting,incoming,prices,demand};
+}
+
+function compute({today,products,rows,free,kitCapacity,waiting,incoming,prices,demand},scenario=null){
+  const factor=scenario?.demandFactor??1,moved=scenario?.supplierId||null;
   const result=[];
   for(const p of products){
     const list=rows.filter(r=>r.sku_id===p.sku_id);
     const sites=list.filter(r=>r.location_id&&r.scope!=='workspace'),global=list.find(r=>r.scope==='workspace');
     const kit=kitCapacity.get(p.sku_id),available=kit?Number(kit.buildable||0):round(free.get(p.sku_id)||0,6);
     const orders=waiting.filter(o=>o.sku_id===p.sku_id),owed=round(orders.reduce((n,o)=>n+o.units,0),6);
-    const lines=incoming.filter(l=>l.sku_id===p.sku_id);
-    const dated=lines.filter(l=>l.expected&&l.expected>=today),unknown=lines.filter(l=>!l.expected||l.expected<today);
-    const want=demand.get(p.sku_id),daily=want.daily;
+    let lines=incoming.filter(l=>l.sku_id===p.sku_id);
+    if(moved&&scenario.withoutSupplier)lines=lines.filter(l=>l.supplier_id!==moved);
+    else if(moved&&scenario.extraLeadDays)lines=lines.map(l=>l.supplier_id===moved&&l.expected&&l.expected>=today?
+      {...l,expected:[addDays(l.expected,scenario.extraLeadDays),today].sort().at(-1)}:l);
+    const dated=lines.filter(l=>l.expected&&l.expected>=today).sort((a,b)=>a.expected.localeCompare(b.expected)),
+      unknown=lines.filter(l=>!l.expected||l.expected<today);
+    const want=demand.get(p.sku_id),daily=factor===1?want.daily:want.daily.map(v=>v*factor);
     if(!available&&!owed&&!lines.length&&want.basis==='NONE'&&!Number(sites.reduce((n,r)=>n+Number(r.on_hand||0),0)))continue;
     // Customer orders already waiting come first, in their order priority.
     let left=available,affected=0;
@@ -132,9 +154,9 @@ async function estimate(db,workspaceId,skuIds,{today=null}={}){
     // The next delivery: the first dated purchase order, or an order placed
     // today arriving after the recorded lead time.
     const leads=[...(global?[global]:[]),...sites].filter(r=>!r.lead_time_assumed&&r.lead_time_days!=null).map(r=>Math.ceil(Number(r.local_lead??r.lead_time_days)));
-    const lead=leads.length?Math.min(...leads):null;
-    const next=dated[0]||null;
-    const nextDay=next?between(today,next.expected):lead??decision.DEFAULT_LEAD_DAYS;
+    const lead=scenario?.leads?.has(p.sku_id)?scenario.leads.get(p.sku_id):leads.length?Math.min(...leads):null;
+    const next=dated[0]||null,cutOff=!next&&Boolean(scenario?.noSupplier?.has(p.sku_id));
+    const nextDay=next?between(today,next.expected):cutOff?scenario.noSupplyDays||90:lead??decision.DEFAULT_LEAD_DAYS;
     let stock=available-owed,runout=null,unmet=0,unmetDays=0;
     for(let d=0;d<HORIZON;d++){
       stock+=arrivals.get(d)||0;
@@ -153,15 +175,16 @@ async function estimate(db,workspaceId,skuIds,{today=null}={}){
     const lost=margin==null||!flagged?null:Math.round(unmet*margin);
     let reason=null;
     if(flagged)reason=runout===0?'Out of stock now':'Runs out '+(runout===1?'tomorrow':'in '+runout+' days');
-    if(flagged)reason+=next?', before '+next.po_number+' arrives on '+next.expected+'.':lead!=null?
+    if(flagged)reason+=next?', before '+next.po_number+' arrives on '+next.expected+'.':cutOff?'. No delivery is due and no other supplier is on record.':lead!=null?
       '. No delivery is due, and an order placed today would arrive in about '+lead+' days.':'. No delivery is due and no lead time is recorded.';
     else if(runout===null)reason=want.basis==='NONE'&&!owed?'No recorded sales or open orders.':'Enough stock for the next year.';
     else reason='Runs out after its next delivery.';
     if(flagged&&margin==null)reason+=' Record a selling price and cost to see what it costs.';
     result.push({skuId:p.sku_id,itemId:p.item_id,code:p.code,name:p.name,unit:p.unit_label,available,waiting:owed,dailyDemand:round(month,4),
-      basis:want.basis,label:want.label,runout:runout===null?null:addDays(today,runout),nextDelivery:nextDay<HORIZON?addDays(today,nextDay):null,
+      basis:want.basis,label:want.label,runout:runout===null?null:addDays(today,runout),nextDelivery:!cutOff&&nextDay<HORIZON?addDays(today,nextDay):null,
       nextReference:next?next.po_number:null,beforeDelivery:flagged,daysShort,unitsShort:flagged?round(unmet,4):null,
       currency:margin==null?null:value.price_currency,unitMargin:margin,dailyMargin,lostMargin:lost,ordersAffected:affected,reason,
+      price:value.price==null?null:Number(value.price),priceCurrency:value.price_currency||null,cost:cost?.minor??null,costCurrency:cost?.currency||null,noSupplier:cutOff,
       evidence:{lead,leadRecorded:lead!=null,orders:orders.map(o=>({number:o.order_number,units:o.units})).slice(0,20),
         incoming:dated.map(l=>({po:l.po_number,date:l.expected,units:l.units})).slice(0,20),
         notCounted:unknown.map(l=>({po:l.po_number,date:l.expected||null,units:l.units})).slice(0,20)}});
@@ -295,4 +318,4 @@ async function review(db,ctx,{filter,page:number,today}){
   return {rows,more:selected.rows.length>25,summary:'Free stock after open orders, against the forecast day by day and purchase orders with a delivery date. Margin is the current selling price less cost. Overdue or undated deliveries are not counted.'};
 }
 
-module.exports={JOB,KIND,href,estimate,process,schedule,requestCheck,page,inbox,review};
+module.exports={JOB,KIND,href,estimate,load,compute,process,schedule,requestCheck,page,inbox,review};
