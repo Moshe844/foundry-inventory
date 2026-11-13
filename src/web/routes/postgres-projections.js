@@ -188,10 +188,23 @@ function createPostgresProjectionsRouter(database){
     const size=require('../presentation/pagination').pageSize(req),found=await require('../../projections/postgres-work-inbox').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});return res.page('manager/work-inbox',{title:'Replenishment decisions',nav:'attention',...found,pager:require('../presentation/pagination').pager(req,{page:found.page,size,total:found.total,shown:found.rows.length})});
   }));
   router.post('/needs-you/work/approve',requireAuth,asyncRoute(async(req,res)=>{
-    const autonomy=require('../../autopilot/postgres-service'),ids=[].concat(req.body.ids||[]).filter(id=>typeof id==='string'&&id).slice(0,75),back='/needs-you/work?'+new URLSearchParams({kind:String(req.body.kind||''),location:String(req.body.location||''),currency:String(req.body.currency||'')});
+    const autonomy=require('../../autopilot/postgres-service'),kind=req.body.kind==='transfer'?'transfer':'purchase';
+    const location=String(req.body.location||'').slice(0,160),currency=String(req.body.currency||'').slice(0,8);
+    const ids=[...new Set([].concat(req.body.ids||[]).filter(id=>typeof id==='string'&&id))].slice(0,75);
+    const back='/needs-you/work?'+new URLSearchParams({kind,location,currency});
+    permissions.assertCan(req.user,kind==='transfer'?permissions.VIEW_TRANSFERS:permissions.VIEW_PURCHASING,'review replenishment decisions');
     if(!ids.length){req.flash('error','Choose at least one decision to approve.');return res.redirect(303,back);}
+    const selected=await require('../../projections/postgres-work-inbox').selection(database,req.ctx.workspaceId,{kind,location,currency,ids});
     let approved=0;const problems=[];
-    for(const id of ids){try{await autonomy.approve(database,req.ctx,req.user,id,{destinationLocationId:req.body.destinationLocationId||null});approved++;}catch(error){if(error.code==='permission_denied'||error.status===403)throw error;problems.push(error.message);}}
+    for(const id of ids){
+      const action=selected.get(id);
+      if(!action){problems.push('The decision changed or is outside this group.');continue;}
+      const needsDestination=action.type==='purchase'&&action.quantityScope==='workspace'&&!action.destinationLocationId;
+      try{
+        await autonomy.approve(database,req.ctx,req.user,id,{destinationLocationId:needsDestination?req.body.destinationLocationId||null:null});
+        approved++;
+      }catch(error){if(error.code==='permission_denied'||error.status===403)throw error;problems.push(error.message);}
+    }
     if(approved)req.flash('success',approved.toLocaleString()+(approved===1?' decision':' decisions')+' approved. StockChief will follow each one through.');
     if(problems.length)req.flash('error',problems.length.toLocaleString()+(problems.length===1?' decision':' decisions')+' could not be approved: '+[...new Set(problems)].slice(0,2).join(' '));
     return res.redirect(303,back);
