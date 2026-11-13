@@ -686,6 +686,12 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'import.read-shipping-document.v1':external((job,database)=>require('../documents/agent-shipping-document-reader').run(job,database),'reading'),
   'import.read-contract.v1':external((job,database)=>require('../documents/agent-contract-reader').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-sop.v1':external((job,database)=>require('../documents/agent-sop-sources').run(job,database,{provider:options.aiProvider}),'reading'),
+  // Job 212: each clause of a read procedure becomes a rule for the owner to confirm, or is kept for people.
+  'agent.sop-rules.v1':external(async(job,database)=>{
+    const sop=require('../documents/agent-sop-sources');
+    try{return await sop.runFollow(job,database,{provider:options.aiProvider});}
+    catch(error){if(![400,402,403,404].includes(error.status))throw error;await sop.followStopped(database,job,error);return {held:true,reason:error.message};}
+  },'reading'),
   'ask.read-voice-note.v1':external((job,database)=>require('../assistant/ask-voice').run(job,database,{transcriber:options.audioTranscriber}),'reading'),
   'import.read-voice-receipt.v1':external((job,database)=>require('../documents/agent-voice-receiving').run(job,database,
     {provider:options.aiProvider,transcriber:options.audioTranscriber}),'reading'),
@@ -745,7 +751,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     catch(error){if(error.retryable||[400,402,403,404].includes(error.status))await require('../connections/agent-partner-stock-reads').noteIssue(database,job,error);if(!error.retryable&&[400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}
   }),
   'agent.playbook':external(async(job,database)=>{
-    try{return await require('../autopilot/playbooks').run(database,{workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.id,job.payload.key);}
+    try{return await require('../autopilot/playbooks').run(database,{workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.id,job.payload.key,{scheduled:true});}
     catch(error){if([400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}
   }),
   'mail.customer-order':external((job,database)=>require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId)),

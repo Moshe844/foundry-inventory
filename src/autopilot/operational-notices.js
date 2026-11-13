@@ -18,7 +18,7 @@ const orderCredit=require('../sales/order-credit-exposure');
 const customerHealth=require('../sales/customer-health');
 const monitoredJobs=[10,77,80,82,88,91,110,116];
 const historyScopedJobs=[82,88,116];
-const noticeOperation=job=>[50,77].includes(job)?'suggest':job===21?'draft':'automatic';
+const noticeOperation=job=>[50,77].includes(job)?'suggest':[21,212,213].includes(job)?'draft':'automatic';
 const transfers=`WITH positions AS (
     SELECT t.id,t.transfer_number,t.status,${transferArrivals.expectedDate} AS due,src.name AS source,dst.name AS destination,
       CASE WHEN count(DISTINCT i.unit_label)=1 THEN min(i.unit_label) END AS unit,
@@ -314,6 +314,12 @@ async function inbox(db,workspaceId,actorId=null){
     if(Number(r.job_id)===67)return {kind:'inventory',grouped:true,importance:'Important',priority:80,title:'A recurring customer order needs review',
       happened:r.n+' recurring schedule'+(r.n===1?' is':'s are')+' paused.',why:'A current plan, price, customer or authority check requires a decision.',
       recommendation:'Review the schedule and its current order details.',href:'/autopilot/reviews/recurring-customer-orders',actionLabel:'Review recurring orders',sourceId:'agent-notice-67'};
+    if(Number(r.job_id)===212)return {kind:'inventory',grouped:true,importance:'Important',priority:62,title:'Rules from your procedures are ready to confirm',
+      happened:r.n+' procedure'+(r.n===1?' has':'s have')+' rules waiting for you.',why:'StockChief read each clause and prepared the exact rule where one fits. Clauses it could not match exactly are kept for people.',
+      recommendation:'Check each rule against its clause, then confirm it or keep the clause for people.',href:'/autopilot/procedure-originals',actionLabel:'Review procedure rules',sourceId:'agent-notice-212',ownerOnly:true};
+    if(Number(r.job_id)===213)return {kind:'inventory',grouped:true,importance:'Important',priority:72,title:'A playbook stopped and needs you',
+      happened:r.n+' playbook run'+(r.n===1?' is':'s are')+' waiting for you.',why:'A step failed, left work only a person can do, or is set to ask you first.',
+      recommendation:'See where it stopped, deal with what waits, then continue the run.',href:'/autopilot/playbooks',actionLabel:'Review playbooks',sourceId:'agent-notice-213',ownerOnly:true};
     if(Number(r.job_id)===206)return {kind:'inventory',grouped:true,importance:'Information',priority:40,title:'Review this month’s automation opportunities',
       happened:'Repeated owner approvals can become taught routines.',why:'The work stayed inside the same customer, supplier or product scope.',
       recommendation:'Review the examples and choose the limits for each rule.',href:'/autopilot/reviews/automation-opportunities',actionLabel:'Review routines',sourceId:'agent-notice-206'};

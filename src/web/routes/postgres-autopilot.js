@@ -172,7 +172,25 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   router.post(sopPath+'/:id/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const proposal=await sop.prepare(database,req.ctx,{...req.body,sourceId:req.params.id},{provider:options.provider});
+    await sop.syncNotice(database,req.ctx.workspaceId,req.params.id);
     res.redirect(303,'/operating-instructions/'+proposal.id);
+  }));
+  // Job 212: follow the whole procedure, then confirm or keep each prepared rule.
+  router.post(sopPath+'/:id/follow',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await sop.follow(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.replayed?'StockChief is already following this procedure.':'StockChief is going through each clause. Refresh to see the rules it prepares.');
+    res.redirect(303,sopPath+'/'+result.id);
+  }));
+  router.post(sopPath+'/:id/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await sop.confirm(database,req.ctx,req.params.id,req.body);
+    if(result.confirmed)req.flash('success',result.confirmed+(result.confirmed===1?' rule is':' rules are')+' now in force.');
+    if(result.problem)req.flash('error',result.problem+(result.waiting?' '+result.waiting+(result.waiting===1?' rule still waits.':' rules still wait.'):''));
+    res.redirect(303,sopPath+'/'+result.id);
+  }));
+  router.post(sopPath+'/:id/keep',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await sop.keep(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Kept for people. No rule was set.');
+    res.redirect(303,sopPath+'/'+result.id);
   }));
   const voice=require('../../documents/agent-voice-receiving'),voicePath='/autopilot/receiving-voice-notes';
   const voiceAvailable=options.voiceAvailable??Boolean(process.env.OPENAI_API_KEY&&require('../../config').ai.configured);
@@ -2300,14 +2318,23 @@ function createPostgresAutopilotRouter(database,options={}){
     await timeSaved.sample(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/time-saved'+(req.body.period==='month'?'?period=month':''));
   }));
-  router.get('/autopilot/playbooks',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/playbooks',{
-    title:'Playbooks',nav:'autopilot',backTo:{href:'/autopilot',label:'StockChief AI'},requestKey:newId('run'),
-    ...(await playbooks.list(database,req.ctx))})));
+  router.get('/autopilot/playbooks',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const locals={title:'Playbooks',nav:'autopilot',backTo:{href:'/autopilot',label:'StockChief AI'}};
+    const state=await policy.accountState(database,req.ctx.workspaceId);
+    if(!policy.usesAgentTerms(state))return planCard(req,res,playbooks.JOB,locals);
+    if(!policy.permits(state.plan,playbooks.JOB,'automatic',{trained:true})){res.status(402);return planCard(req,res,playbooks.JOB,locals);}
+    return res.page('autopilot/playbooks',{...locals,requestKey:newId('run'),...(await playbooks.list(database,req.ctx))});
+  }));
   router.post('/autopilot/playbooks',requireAuth,owner,asyncRoute(async(req,res)=>{
     await playbooks.create(database,req.ctx,req.body);res.redirect(303,'/autopilot/playbooks');
   }));
   router.post('/autopilot/playbooks/:id/run',requireAuth,owner,asyncRoute(async(req,res)=>{
-    await playbooks.run(database,req.ctx,req.params.id,req.body.requestKey);res.redirect(303,'/autopilot/playbooks');
+    const result=await playbooks.run(database,req.ctx,req.params.id,req.body.requestKey);
+    if(result?.held)req.flash('info',result.reason);res.redirect(303,'/autopilot/playbooks');
+  }));
+  // Job 213: continue a run that stopped to ask, or start one waiting for the owner.
+  router.post('/autopilot/playbooks/runs/:runId/continue',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await playbooks.resume(database,req.ctx,req.params.runId);res.redirect(303,'/autopilot/playbooks');
   }));
   router.post('/autopilot/playbooks/:id/delete',requireAuth,owner,asyncRoute(async(req,res)=>{
     await playbooks.remove(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/playbooks');
