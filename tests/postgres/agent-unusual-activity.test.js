@@ -17,9 +17,14 @@ test('unusual price history stays bounded when thousands of SKUs change together
       CASE WHEN step=5 THEN 1500 WHEN step%2=0 THEN 1050 ELSE 1000 END,'USD','owner',$2,
       ($3::date::timestamp AT TIME ZONE 'UTC' - make_interval(days=>(5-step)*50) + interval '1 hour')::text
     FROM generate_series(1,2500) n CROSS JOIN generate_series(1,5) step`,[ws,ctx.actorId,day]);
-  const sql=require('../../src/autopilot/unusual-activity').sql;
-  const result=await db.transaction(c=>c.query(sql,[ws,'',day]),{statementTimeoutMs:6000,readOnly:true});
-  assert.equal(result.rows.filter(row=>row.Alert==='Unusual price change').length,2500);
+  const unusual=require('../../src/autopilot/unusual-activity');
+  const rows=await db.transaction(async c=>{
+    await c.query('SET LOCAL enable_nestloop = on');
+    const alerts=await unusual.read(c,[ws,'',day]);
+    assert.equal((await c.query('SHOW enable_nestloop')).rows[0].enable_nestloop,'on');
+    return alerts;
+  },{statementTimeoutMs:6000,readOnly:true});
+  assert.equal(rows.filter(row=>row.Alert==='Unusual price change').length,2500);
 });
 
 // Job 171 is excluded on Starter and Growth and alone on Pro and Custom. The

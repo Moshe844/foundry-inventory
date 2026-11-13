@@ -168,9 +168,24 @@ function describe(r){
 
 async function ready(db){return require('../db/schema-installed').has(db,'stockchief_runtime.agent_alert_settings','edit_count');}
 
+async function read(db,args,{page}={}){
+  const statement=page===undefined?sql:sql+' LIMIT 101 OFFSET $4';
+  const values=page===undefined?args:[...args,(page-1)*100];
+  const run=async client=>{
+    // Large inventories can produce a nested-loop plan that repeatedly scans
+    // the alert history. Limit the planner change to this read.
+    const {rows:[{previous}]}=await client.query("SELECT current_setting('enable_nestloop') AS previous");
+    await client.query('SET LOCAL enable_nestloop = off');
+    const result=await client.query(statement,values);
+    await client.query("SELECT set_config('enable_nestloop',$1,true)",[previous]);
+    return result.rows;
+  };
+  return typeof db.transaction==='function'?db.transaction(run,{readOnly:true,isolation:'READ COMMITTED'}):run(db);
+}
+
 async function review(db,ctx,{filter='',page=1,today}){
   if(!await ready(db))return {rows:[],more:false,summary:'Unusual activity alerts are being upgraded. Check back shortly.'};
-  const {rows}=await db.query(sql+' LIMIT 101 OFFSET $4',[ctx.workspaceId,filter||'',today,(page-1)*100]);
+  const rows=await read(db,[ctx.workspaceId,filter||'',today],{page});
   return {rows:rows.slice(0,100).map(describe),more:rows.length>100,summary};
 }
 
@@ -180,9 +195,9 @@ function line(r){
 }
 async function lines(db,workspaceId,keys){
   const today=await require('../lib/business-time').today(db,workspaceId);
-  const rows=(await db.query(sql,[workspaceId,'',today])).rows;
+  const rows=await read(db,[workspaceId,'',today]);
   const found=new Map(rows.map(r=>[r.Alert+'\u0000'+r.reference+'\u0000'+r.link,r]));
   return keys.map(k=>{const r=found.get(k.kind+'\u0000'+k.reference+'\u0000'+k.link);return r?line(r):k.kind+'.';});
 }
 
-module.exports={JOB,key,path,label,summary,sql,ready,review,lines,describe};
+module.exports={JOB,key,path,label,summary,sql,ready,read,review,lines,describe};
