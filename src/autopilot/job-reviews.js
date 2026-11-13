@@ -33,7 +33,7 @@ const definitions=[
   require('../sales/agent-ship-from').definition,
   require('../operations/agent-annual-stocktakes').definition,
   require('../connections/agent-channel-buffers').definition,
-  require('../connections/agent-channel-recovery').definition,
+  require('../connections/agent-channel-sync-fixes').definition,
   require('../connections/agent-slack').definition,
   ...require('../sales/agent-order-reservations').definitions,
   require('../purchasing/agent-supplier-rfqs').definition,
@@ -102,6 +102,7 @@ const definitions=[
   ...require('./daily-briefs').definitions,
   require('./team-summary').definition,
   require('./stock-alerts').definition,
+  require('../connections/agent-channel-alerts').definition,
   ...require('../forecasting/agent-service-levels').definitions,
   require('./escalations').definition,
   require('./watch-rules').definition,
@@ -193,6 +194,8 @@ function firstSuggestion(def,rows){
   if(def.id===97)return rows.slice(0,1).map(row=>({Suggestion:row.Suggestion}));
   // Build counts are answers, so Starter sees every kit and warehouse on the page.
   if(def.id===13)return rows.slice(0,100).map(row=>({Suggestion:suggestions[13](row)}));
+  // Job 182: Starter sees a suggested fix for every channel sync problem.
+  if(def.id===182)return rows.slice(0,100).map(row=>({Suggestion:row.Problem+' '+row.Suggestion,link:row.link}));
   const describe=suggestions[def.id];
   if(!describe)return [];
   return rows.slice(0,1).map(row=>({Suggestion:describe(row)}));
@@ -231,6 +234,7 @@ async function run(db,ctx,key,options={}){
       ...(result.negotiationForm?{negotiationForm:result.negotiationForm}:{}),
       ...(result.recurringForm?{recurringForm:result.recurringForm}:{}),
       ...(result.mapForm?{mapForm:result.mapForm}:{}),
+      ...(result.syncFixForm?{syncFixForm:result.syncFixForm}:{}),
       ...(result.undoForm?{undoForm:result.undoForm}:{}),
       ...(result.bankMatchForm?{bankMatchForm:result.bankMatchForm}:{}),
       ...(result.reminderForm?{reminderForm:result.reminderForm}:{}),
