@@ -450,6 +450,9 @@ async function autopilotEvaluate(job,client){
     // Job 172: follow unanswered alerts and approvals, once this check has raised them.
     if(await require('../autopilot/escalations').enabled(client,job.workspaceId,account))
       await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'agent.escalations',idempotencyKey:'escalations:'+cycleId,payload:{cycleId},priority:66,maxAttempts:3});
+    // Job 175: send links for approvals waiting in each person's Needs you.
+    if(await require('../autopilot/approval-links').enabled(client,job.workspaceId,account))
+      await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'agent.approval-links',idempotencyKey:'approval-links:'+cycleId,payload:{cycleId},priority:66,maxAttempts:3});
     if(account.plan==='enterprise')await require('../purchasing/negotiation-drafts').queue(client,job.workspaceId,await require('../lib/business-time').today(client,job.workspaceId));
     if(account.plan==='enterprise')await require('../purchasing/agent-open-to-buy').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     if(account.plan==='enterprise')await require('../forecasting/warehouse-slotting').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
@@ -869,6 +872,9 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.sales-quote.cross-sell.v1':external((job,database)=>require('../sales/agent-quote-companions').run(database,job.workspaceId,job.payload.quoteId)),
   'agent.customer-invoice':external((job,database)=>require('../accounting/agent-customer-invoices').work(database,job.workspaceId,job.payload.invoiceId)),
   'agent.escalations':external((job,database)=>require('../autopilot/escalations').run(database,job.workspaceId)),
+  'agent.approval-links':external((job,database)=>require('../autopilot/approval-links').run(database,job.workspaceId)),
+  // Job 173: one text or push, sent once. Tests pass fake senders.
+  'agent.alert-message':external((job,database)=>require('../autopilot/alert-phones').process(database,job,{sms:options.smsSender,push:options.pushSender})),
   'agent.supplier-claims':external(async(job,database)=>{
     const result=await require('../purchasing/agent-supplier-claims').run(database,job.workspaceId,job.payload);
     // After the last claim page, follow sent claims: replies, settlements and reminders.

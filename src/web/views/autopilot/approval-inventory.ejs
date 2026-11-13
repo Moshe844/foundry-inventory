@@ -1,4 +1,4 @@
-<h1>Review purchases in <%= workspace.name %></h1>
+<h1><%= locals.heading||('Review purchases in '+workspace.name) %></h1>
 <form action="/inventories/switch" method="post">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
   <input type="hidden" name="workspaceId" value="<%= workspaceId %>">
