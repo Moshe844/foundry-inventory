@@ -85,6 +85,8 @@ const definitions=[
   ...require('../sales/agent-customer-orders').definitions,
   require('../actions/financial-visibility').definition,
   ...require('./automation-opportunities').definitions,
+  require('./correction-rules').definition,
+  require('./rule-rehearsal').definition,
   {id:13,key:'kit-capacity',label:'Kits you can build now',filterLabel:'Kit SKU',readPage:require('../purchasing/agent-kit-reorders').review},
   require('../forecasting/warehouse-slotting').definition,
   {id:15,key:'monthly-product-classes',label:'Review monthly ABC product classes',filterLabel:'Product code, name or class',readPage:require('../forecasting/monthly-product-classes').review},

@@ -688,6 +688,24 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',result.replayed?'You already chose. Change a single job in Authority by job.':result.areas.length?'Automatic work is on for the areas you chose. The rest keep watching.':'StockChief keeps watching. Nothing changes on its own.');
     res.redirect(303,shadowMode.path);
   }));
+  // Job 208: offers to stop asking about routines the owner always approves.
+  // Job 209: rules suggested by repeated fixes. Both show job 210's past-data
+  // test before anything is switched on.
+  const approvalLearning=require('../../autopilot/approval-learning'),correctionRules=require('../../autopilot/correction-rules');
+  router.get(approvalLearning.path,requireAuth,owner,asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');
+    return reportPage(req,res,approvalLearning.JOB,'autopilot/approval-learning',{title:'Stop asking about routines',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},
+      async()=>({screen:await approvalLearning.page(database,req.ctx)}),402);}));
+  router.post(approvalLearning.path+'/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await approvalLearning.confirm(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'StockChief already does this routine alone.':'StockChief will stop asking about '+r.label+' up to '+r.maximum+'.');res.redirect(303,approvalLearning.path+'#learned');}));
+  router.post(approvalLearning.path+'/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await approvalLearning.dismiss(database,req.ctx,req.body);
+    req.flash('success','StockChief will keep asking. It offers again only after another run of approvals.');res.redirect(303,approvalLearning.path);}));
+  router.get(correctionRules.path,requireAuth,owner,asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');
+    return reportPage(req,res,correctionRules.JOB,'autopilot/correction-rules',{title:'Rules from your repeated fixes',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},
+      async()=>({screen:await correctionRules.page(database,req.ctx)}),402);}));
+  router.post(correctionRules.path+'/accept',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await correctionRules.accept(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'That rule is already saved.':'Rule saved: '+r.rule);res.redirect(303,r.ruleId?'/operating-instructions/'+r.ruleId:correctionRules.path);}));
+  router.post(correctionRules.path+'/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await correctionRules.dismiss(database,req.ctx,req.body);
+    req.flash('success','Not now. StockChief suggests it again only if you make the same fix again.');res.redirect(303,correctionRules.path);}));
   // Job 199: how sure StockChief must be to act on its own.
   router.post('/autopilot/confidence',requireAuth,owner,asyncRoute(async(req,res)=>{
     const result=await require('../../autopilot/confidence').configure(database,req.ctx,req.body);
