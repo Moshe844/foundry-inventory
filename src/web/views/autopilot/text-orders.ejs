@@ -1,0 +1,105 @@
+<% const base='/autopilot/text-orders',s=screen,sel=s.selected; %>
+<header class="rm-head">
+  <h1>Orders by text and WhatsApp</h1>
+  <p><%= s.mode==='alone'?'When a known customer texts or WhatsApps an order to your number, StockChief creates and confirms it on its own when every product, quantity, address and price matches and the order is within your limits.':
+    'When a known customer texts or WhatsApps an order to your number, StockChief prepares it for you to approve. Once you confirm one from a customer, or save a rule for them, it takes their next orders on its own within your limits.' %>
+    Anything new or unclear waits for you. StockChief answers the customer once, from the same number.</p>
+</header>
+<% if(s.stop){ %><p class="notice notice--warn" data-text-orders-stop><%= s.stop %></p><% } %>
+
+<% if(sel){ %>
+<section class="rm-panel" data-text-order="<%= sel.id %>"><div class="rm-panel__body">
+  <h2><%= sel.channel %> from <%= sel.who %></h2>
+  <p><small><%= sel.sender %> · <%= sel.label %><%= sel.order?' · '+sel.order:'' %><%= sel.amount?' · '+sel.amount:'' %></small></p>
+  <blockquote data-text-order-body><%= sel.body %></blockquote>
+  <% if(sel.reason){ %><p data-text-order-reason><%= sel.reason %></p><% } %>
+  <% if(sel.replyBody){ %><p><small>Answer <%= sel.reply==='SENT'?'sent':sel.reply==='SENDING'?'being sent':'not delivered' %>: “<%= sel.replyBody %>”</small></p><% } %>
+  <% if(sel.review){ const r=sel.review; %>
+    <h3>The order it reads</h3>
+    <ul class="rm-list" data-text-order-lines>
+      <% for(const l of r.lines){ %><li class="list-row"><span><strong><%= l.code %></strong><small><%= l.name %></small></span><span><%= l.quantity %></span></li><% } %>
+    </ul>
+    <p><%= r.customer %> · <%= r.total %> at your prices<%= r.address?' · '+r.address:' · Pickup' %></p>
+    <% if(r.problems.length){ %><ul data-text-order-problems><% for(const p of r.problems){ %><li><%= p %></li><% } %></ul><% } %>
+    <form method="post" action="<%= base %>/<%= encodeURIComponent(sel.id) %>/prepare" class="form-inline">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="digest" value="<%= r.digest %>">
+      <button class="rm-btn">Prepare the draft order at your prices</button>
+    </form>
+  <% }else if(sel.unreadable){ %><p data-text-order-unreadable><%= sel.unreadable %></p><% } %>
+  <div class="actions">
+    <% if(sel.canRetry){ %><form method="post" action="<%= base %>/<%= encodeURIComponent(sel.id) %>/retry"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="rm-btn rm-btn--ghost">Read it again</button></form><% } %>
+    <% if(sel.canDismiss){ %><form method="post" action="<%= base %>/<%= encodeURIComponent(sel.id) %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="rm-btn rm-btn--ghost">Dismiss</button></form><% } %>
+    <% if(sel.canUndo){ %><form method="post" action="<%= base %>/<%= encodeURIComponent(sel.id) %>/undo"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="rm-btn rm-btn--ghost">Undo</button></form><% } %>
+  </div>
+</div></section>
+<% } %>
+
+<h2>Waiting for you</h2>
+<% if(!s.waiting.length){ %><p>Nothing is waiting.</p><% } %>
+<ul class="rm-list" data-text-orders-waiting>
+<% for(const w of s.waiting){ %>
+  <li class="list-row" data-text-order-work="<%= w.id %>">
+    <span><a href="<%= w.href %>"><strong><%= w.order?w.order+' · ':'' %><%= w.who %></strong></a>
+      <small><%= w.channel %><%= w.amount?' · '+w.amount:'' %></small>
+      <% if(w.reason){ %><small><%= w.reason %></small><% } %></span>
+    <span><a href="<%= base %>/<%= encodeURIComponent(w.id) %>"><%= w.label %></a></span>
+  </li>
+<% } %>
+</ul>
+
+<% if(s.recent.length){ %>
+<h2>Recent messages</h2>
+<ul class="rm-list" data-text-orders-recent>
+<% for(const w of s.recent){ %>
+  <li class="list-row" data-text-order-done="<%= w.id %>">
+    <span><a href="<%= w.href %>"><strong><%= w.order?w.order+' · ':'' %><%= w.who %></strong></a>
+      <small><%= w.channel %><%= w.amount?' · '+w.amount:'' %></small></span>
+    <span><%= w.label %>
+      <% if(w.canUndo){ %><form method="post" action="<%= base %>/<%= encodeURIComponent(w.id) %>/undo">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost">Undo</button></form><% } %></span>
+  </li>
+<% } %>
+</ul>
+<% } %>
+
+<section class="rm-panel" id="numbers" data-text-order-numbers><div class="rm-panel__body">
+  <h2>Your numbers</h2>
+  <p>Give each channel the number your customers text. Your text provider sends that number’s messages to its link below.</p>
+  <% for(const c of s.channels){ const l=c.line; %>
+    <h3><%= c.label %></h3>
+    <% if(!c.available){ %><p>This server does not offer <%= c.label.toLowerCase() %> orders yet.</p><% } %>
+    <% if(l){ %><p data-text-order-line="<%= c.channel %>"><%= l.enabled?'StockChief reads orders sent to '+l.number+'.':'StockChief stopped reading messages to '+l.number+'.' %></p>
+      <% if(l.enabled){ %><p><small>Link for the provider: <code data-text-order-link="<%= c.channel %>"><%= l.link %></code></small></p><% } %><% } %>
+    <% if(c.available||l){ %>
+    <form method="post" action="<%= base %>/lines" class="form-inline">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="channel" value="<%= c.channel %>">
+      <input type="hidden" name="revision" value="<%= l?l.revision:0 %>">
+      <label class="field"><span class="field-label">Number with country code</span><input class="input" name="number" inputmode="tel" maxlength="20" value="<%= l?l.number:'' %>" required></label>
+      <button class="rm-btn" name="enabled" value="yes"><%= l&&l.enabled?'Change the number':'Save the number' %></button>
+      <% if(l&&l.enabled){ %><button class="rm-btn rm-btn--ghost" name="enabled" value="no" formnovalidate>Stop reading this number</button><% } %>
+    </form>
+    <% } %>
+  <% } %>
+</div></section>
+
+<section class="rm-panel" id="customers" data-text-order-customers><div class="rm-panel__body">
+  <h2>Customers</h2>
+  <p>StockChief knows a customer by the phone number on their record. <%= s.mode==='trained'?'It takes a customer’s orders on its own after you confirm one of their text orders, or save a rule for them.':'Choose a customer to always ask you first.' %>
+    <%= s.limit&&s.limit.enabled?'Your limits for customer orders apply: up to '+helpers.money(s.limit.maximumMinor,s.limit.currency)+' and '+s.limit.maximumUnits+' units an order.':'Save your limits on Customer orders from email before StockChief confirms orders on its own.' %></p>
+  <% if(s.taught.length){ %><ul class="rm-list">
+    <% for(const t of s.taught){ %><li class="list-row" data-text-order-customer="<%= t.id %>"><span><strong><%= t.name %></strong>
+      <small><%= t.state==='rule'?'Taken on its own by your rule':t.state==='example'?'Taken on its own: you confirmed one of their text orders':t.state==='ask'?'Always asks you first':'Waits for you' %></small></span></li><% } %>
+  </ul><% } %>
+  <form method="post" action="<%= base %>/rules" class="form-inline">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="field"><span class="field-label">Customer</span><select class="select" name="customerId" required>
+      <option value="">Choose a customer</option>
+      <% for(const c of s.customers){ %><option value="<%= c.id %>"><%= c.name %></option><% } %>
+    </select></label>
+    <button class="rm-btn" name="enabled" value="yes">Take their orders on its own</button>
+    <button class="rm-btn rm-btn--ghost" name="enabled" value="no">Always ask me</button>
+  </form>
+</div></section>

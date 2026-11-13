@@ -103,6 +103,7 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.use(createPostgresShippingWebhooks(database,shippingOptions || {}));
   app.use(require('./web/routes/agent-slack-command').router(database));
   app.use(require('./web/routes/agent-chat-inbound').router(database));
+  app.use(require('./web/routes/text-order-webhooks').router(database));
   app.use(require('./web/routes/postgres-shipstation-custom').createShipStationCustomRouter(database));
   app.use(createPostgresPaymentWebhooks(database,paymentOptions || {}));
   app.use(require('./web/routes/postgres-cardknox').createCardknoxPublicRouter(database));
@@ -117,6 +118,7 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.post('/autopilot/product-facts',multipart({limit:20*1024*1024+65536,maxFiles:1,memoryBudgetBytes:32*1024*1024}));
   app.post('/autopilot/procedure-originals',multipart({limit:20*1024*1024+65536,maxFiles:1,memoryBudgetBytes:32*1024*1024}));
   app.post('/autopilot/receiving-voice-notes',multipart({limit:12*1024*1024+65536,maxFiles:1,memoryBudgetBytes:24*1024*1024}));
+  app.post('/autopilot/voice-paperwork',multipart({limit:12*1024*1024+65536,maxFiles:1,memoryBudgetBytes:24*1024*1024}));
   app.use(multipart({limit:config.uploads.maxBytes,maxFiles:config.uploads.maxFiles}));
   // One bounded JSON field carries up to 500 checked packing profiles.
   // Keep the larger form allowance specific to this owner-only workflow.

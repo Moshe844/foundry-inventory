@@ -1,0 +1,79 @@
+<% const base='/autopilot/voice-paperwork',s=screen,note=s.note,d=note&&note.draft; %>
+<header class="rm-head">
+  <h1>Voice note paperwork</h1>
+  <p>Say what happened, for example “3 boxes of tape just came in” or “moved 10 mugs from the back room to the shop”. StockChief turns it into the receipt, count, transfer or stock correction.
+    <%= s.mode==='alone'?'It posts counts, transfers and found stock on its own within your limits.':'You check the paperwork and confirm it before anything changes.' %>
+    A person always confirms receipts, write-offs and big differences. Anything unclear waits for you.</p>
+</header>
+
+<% if(note){ %>
+<section class="rm-panel" data-voice-paperwork="<%= note.id %>">
+  <h2><%= note.filename %></h2>
+  <audio controls preload="none" src="<%= base %>/<%= note.id %>/audio">Play the original voice note.</audio>
+  <p><small><%= note.label %><%= note.kindLabel?' · '+note.kindLabel:'' %><%= note.state==='READY'?' · '+note.credits_used+' AI credits used':'' %></small></p>
+  <% if(note.transcript){ %><h3>Transcript</h3><blockquote data-voice-transcript><%= note.transcript %></blockquote><% } %>
+  <% if(note.reason){ %><p data-voice-reason><%= note.reason %></p><% } %>
+  <% if(d&&d.rows&&d.rows.length){ %>
+    <h3><%= note.kindLabel %><%= d.order?' for '+d.order.number:'' %><%= d.from?' from '+d.from.name+' to '+d.to.name:'' %><%= d.location?' at '+d.location.name:'' %></h3>
+    <ul class="rm-list" data-voice-rows>
+    <% for(const r of d.rows){ %><li class="list-row"><span><strong><%= r.name %> · <%= r.code %></strong>
+      <small>“<%= r.quote %>”</small></span>
+      <span><%= d.kind==='COUNT'?'Counted '+r.counted+' '+r.unit+' (was '+r.before.physical+')':d.kind==='ADJUSTMENT'?(r.change>0?'+':'')+r.change+' '+r.unit:r.quantity+' '+r.unit %><% if(r.locationName){ %> at <%= r.locationName %><% } %></span></li><% } %>
+    </ul>
+    <% if(d.valueMinor!=null){ %><p><small>Stock value: <%= helpers.money(d.valueMinor,d.currency) %></small></p><% } %>
+  <% } %>
+  <% if(note.status==='DRAFT'){ %>
+    <form method="post" action="<%= base %>/<%= note.id %>/confirm" class="rm-form" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="fingerprint" value="<%= d.fingerprint %>">
+      <label><input type="checkbox" name="confirmed" value="yes" required> I checked the original<%= d.kind==='RECEIPT'?' and these goods physically arrived':'' %>.</label>
+      <button class="rm-button">Confirm and post</button>
+    </form>
+  <% } %>
+  <% if(note.link){ %><p><a href="<%= note.link.href %>"><%= note.link.label %></a></p><% } %>
+  <% if(['DRAFT','REVIEW','FAILED'].includes(note.status)){ %>
+    <form method="post" action="<%= base %>/<%= note.id %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="rm-btn rm-btn--ghost">Dismiss</button></form>
+  <% } %>
+  <% if(note.state!=='READY'&&note.state!=='FAILED'){ %><p role="status">StockChief is reading your voice note. Refresh to check progress.</p><% } %>
+</section>
+<% } %>
+
+<section class="rm-panel">
+  <h2>Record a voice note</h2>
+  <% if(providerAvailable){ %>
+  <form method="post" action="<%= base %>" enctype="multipart/form-data" class="rm-form" data-busy data-receiving-voice-form>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="rm-field"><span>Voice note</span><input type="file" name="recording" accept=".wav,audio/wav" required></label>
+    <p><button type="button" class="rm-button" data-record-voice hidden>Record a voice note</button>
+      <button type="button" class="rm-button" data-stop-voice hidden>Stop recording</button></p>
+    <p role="status" data-voice-status>Record here or upload a mono WAV up to two minutes.</p>
+    <label><input type="checkbox" name="confirmed" value="yes" required> I approve reading this recording.</label>
+    <p>A completed reading uses one document and AI credits. Failed readings return the allowance. For lots, serial numbers and weights, use <a href="/autopilot/receiving-voice-notes">receiving voice notes</a> on the purchase order.</p>
+    <button class="rm-button">Prepare the paperwork</button>
+  </form>
+  <script defer src="/receiving-voice-recorder.js"></script>
+  <% }else{ %><p>Voice note reading is currently unavailable. Saved notes are below.</p><% } %>
+</section>
+
+<% if(s.canSetLimits){ const l=s.limit; %>
+<section class="rm-panel" id="limits" data-voice-limits><div class="rm-panel__body">
+  <h2>Your limits</h2>
+  <p><%= l&&l.enabled?'StockChief posts counts, transfers and found stock on its own up to '+l.maximumUnits+' units a line and '+helpers.money(l.maximumMinor,l.currency)+' of stock a note. Bigger changes wait for you.':
+    l?'Every voice note waits for you.':'Every voice note waits for you until you save your limits.' %></p>
+  <form method="post" action="<%= base %>/limits" class="form-inline">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= l?l.revision:0 %>">
+    <label class="field"><span class="field-label">Most units a line</span><input class="input" name="maximumUnits" inputmode="decimal" required value="<%= l?l.maximumUnits:'' %>"></label>
+    <label class="field"><span class="field-label">Most stock value a note (<%= s.currency %>)</span><input class="input" name="maximum" inputmode="decimal" required value="<%= l?l.maximum:'' %>"></label>
+    <button class="rm-btn" name="enabled" value="yes"><%= l&&l.enabled?'Change the limits':'Save the limits' %></button>
+    <% if(l&&l.enabled){ %><button class="rm-btn rm-btn--ghost" name="enabled" value="no">Ask me about every note</button><% } %>
+  </form>
+</div></section>
+<% } %>
+
+<section class="rm-panel">
+  <h2>Saved notes</h2>
+  <% if(!s.rows.length){ %><p>Your voice notes will appear here.</p><% } %>
+  <ul class="rm-list" data-voice-notes>
+  <% for(const r of s.rows){ %><li class="list-row"><span><a href="<%= r.href %>"><strong><%= r.filename %></strong></a><small><%= r.kind %><%= r.reason?' · '+r.reason:'' %></small></span><span><%= r.label %></span></li><% } %>
+  </ul>
+</section>

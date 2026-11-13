@@ -9,6 +9,7 @@ const documentRecovery = new Map([
   ['import.read-shelf-photo.v1', () => require('../warehouse/agent-shelf-photos')],
   ['import.read-sop.v1', () => require('../documents/agent-sop-sources')],
   ['import.read-voice-receipt.v1', () => require('../documents/agent-voice-receiving')],
+  ['import.voice-paperwork.v1', () => require('../documents/agent-voice-paperwork')],
 ]);
 
 const { newId } = require('../lib/util');

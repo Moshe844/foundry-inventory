@@ -705,6 +705,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     catch(error){if(![400,402,403,404].includes(error.status))throw error;await sop.followStopped(database,job,error);return {held:true,reason:error.message};}
   },'reading'),
   'ask.read-voice-note.v1':external((job,database)=>require('../assistant/ask-voice').run(job,database,{transcriber:options.audioTranscriber}),'reading'),
+  'import.voice-paperwork.v1':external((job,database)=>require('../documents/agent-voice-paperwork').run(job,database,
+    {provider:options.aiProvider,transcriber:options.audioTranscriber}),'reading'),
   'import.read-voice-receipt.v1':external((job,database)=>require('../documents/agent-voice-receiving').run(job,database,
     {provider:options.aiProvider,transcriber:options.audioTranscriber}),'reading'),
   'import.analyse-handwriting.v1':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
@@ -778,6 +780,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.accounting-documents.v1':external((job,database)=>require('../accounting/agent-accounting-documents').run(database,job.workspaceId)),
   'mail.customer-quote.v1':external((job,database)=>require('../sales/agent-quote-requests').fromEmail(database,job.workspaceId,job.payload.messageId)),
   'mail.customer-return.v1':external((job,database)=>require('../sales/agent-customer-return-emails').onArrival(database,job.workspaceId,job.payload.messageId)),
+  'customer.text-order.v1':external((job,database)=>require('../sales/agent-text-orders').process(database,job.workspaceId,job.payload.id,{send:options.textSender})),
   'customer.order-page.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId)),
   'customer.preorder.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId,{preorder:true})),
   'customer.preorder-arrival.v1':external((job,database)=>require('../sales/agent-customer-order-pages').settlePreorders(database,job.workspaceId,{receiptId:job.payload.receiptId})),

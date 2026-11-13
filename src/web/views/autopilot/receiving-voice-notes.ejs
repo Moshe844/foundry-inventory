@@ -2,6 +2,7 @@
   <h2>Prepare receiving paperwork</h2>
   <p>Choose the placed purchase order and record a short note with the products and quantities you received. StockChief shows the original and transcript beside the prepared receipt. You confirm the goods before stock is updated.</p>
   <p>For individually weighed items, say each serial number and its own weight together.</p>
+  <p>No purchase order at hand, or a count, a move or found stock? Use <a href="/autopilot/voice-paperwork">voice note paperwork</a>.</p>
   <% if(providerAvailable){ %>
   <form method="post" action="/autopilot/receiving-voice-notes" enctype="multipart/form-data" class="rm-form" data-busy data-receiving-voice-form>
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
