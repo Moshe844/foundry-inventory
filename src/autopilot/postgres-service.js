@@ -267,7 +267,7 @@ async function configureRoutine(database,ctx,membership,input){assertAdmin(membe
 async function planningRows(database,workspaceId,options={}){return require('../purchasing/postgres-replenishment-state').rows(database,workspaceId,{...options,eligibleOnly:!options.onlySkuIds});}
 function position(row){return {...row,...require('../purchasing/replenishment-decision').derive(row)};}
 
-async function planningSuppliers(database,workspaceId,skuIds){
+async function planningSuppliers(database,workspaceId,skuIds,state){
  if(!skuIds.length)return new Map();
  const rows=(await database.query(`WITH purchase_history AS MATERIALIZED (${require('./confidence').purchaseHistoryRows()})
   SELECT si.*,s.name AS supplier_name,s.currency,s.minimum_order_amount,s.free_freight_threshold_minor,s.ordinary_freight_minor,s.freight_terms_currency,
@@ -279,8 +279,11 @@ async function planningSuppliers(database,workspaceId,skuIds){
   WHERE si.workspace_id=$1 AND si.sku_id=ANY($2::text[]) AND si.is_active=1 AND s.status='active'
   ORDER BY si.sku_id,si.is_preferred DESC,COALESCE(si.last_unit_cost,1e100),effective_lead,si.id`,[workspaceId,skuIds])).rows;
  // Job 211: the supplier's usual lead time; job 207: suppliers the owner ruled out.
- await require('./partner-habits').applyToOffers(database,workspaceId,rows);
- const bySku=new Map();for(const row of await require('../purchasing/supplier-choice-rules').filter(database,workspaceId,rows)){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}return bySku;
+ if(state.agentTerms&&agentPlan.permits(state.plan,211,'automatic')&&state.mode!==MODES.OBSERVE&&!state.paused&&!state.suspended){
+   await require('./partner-habits').applyToOffers(database,workspaceId,rows);
+ }
+ const offers=state.agentTerms?await require('../purchasing/supplier-choice-rules').filter(database,workspaceId,rows):rows;
+ const bySku=new Map();for(const row of offers){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}return bySku;
 }
 async function supplierChoice(database,workspaceId,shortage,state,cached=null){const result=cached?{rows:(cached.get(shortage.sku_id)||[]).filter(row=>!shortage.preferred_supplier_id||row.supplier_id===shortage.preferred_supplier_id)}:await database.query(`SELECT si.*,s.name AS supplier_name,
     s.currency,s.minimum_order_amount,s.free_freight_threshold_minor,s.ordinary_freight_minor,s.freight_terms_currency,COALESCE(lead.effective_lead,${require('../purchasing/replenishment-decision').DEFAULT_LEAD_DAYS}) AS effective_lead,lead.samples
@@ -424,10 +427,11 @@ async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,process
   const state=await getState(database,workspaceId);
   if(state.agentTerms&&state.mode===MODES.POLICY_AUTOMATED&&!state.paused&&!state.suspended){const account=await agentPlan.accountState(database,workspaceId);Object.defineProperty(state,planningRuleQuota,{value:await require('../commercial/agent-rule-quota').restriction(database,account)});}
   if(!onlySkuIds&&!cycleId&&!afterSkuId)await database.query('UPDATE workspace_autopilot SET replenishment_dirty_at=NULL WHERE workspace_id=$1',[workspaceId]);
-  planningRevision=planningRevision??state.replenishmentRevision;const rows=(await planningRows(database,workspaceId,{afterSkuId,limitSkus,cycleId,onlySkuIds})).map(position);
+  const learnSupplierHabits=state.agentTerms&&agentPlan.permits(state.plan,211,'automatic')&&state.mode!==MODES.OBSERVE&&!state.paused&&!state.suspended;
+  planningRevision=planningRevision??state.replenishmentRevision;const rows=(await planningRows(database,workspaceId,{afterSkuId,limitSkus,cycleId,onlySkuIds,learnSupplierHabits})).map(position);
   const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
   const selected=Array.from(bySku.entries()).slice(0,limitSkus??bySku.size),partial=limitSkus!==null&&bySku.size>limitSkus;
-  const prepared=[];const considered=[];const suppliers=await planningSuppliers(database,workspaceId,selected.map(([id])=>id));
+  const prepared=[];const considered=[];const suppliers=await planningSuppliers(database,workspaceId,selected.map(([id])=>id),state);
   const selectedPositions=selected.flatMap(([,locations])=>locations);
   // On plans with the kits job, parts with kit demand are bought by that job,
   // and a warehouse never gives away parts its own kits need.
