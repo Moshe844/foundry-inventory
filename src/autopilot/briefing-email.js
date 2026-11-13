@@ -229,7 +229,18 @@ async function inbox(db,workspaceId){
   if(!await ready(db))return [];
   const row=(await db.query(`SELECT report_date::text AS day,from_date::text AS from_day,status,hold_reason,recipients,slot_at FROM ${table}
     WHERE workspace_id=$1 ORDER BY report_date DESC LIMIT 1`,[workspaceId])).rows[0];
-  if(!row)return [];
+  if(!row){
+    const brief=(await db.query(`SELECT report_date,generated_at FROM workspace_daily_digests
+      WHERE workspace_id=$1 AND summary::jsonb->>'format'='agent-brief'
+      ORDER BY report_date DESC LIMIT 1`,[workspaceId])).rows[0];
+    if(!brief)return [];
+    return [{kind:'inventory',grouped:true,importance:'Information',priority:45,title:'Your daily briefing',
+      happened:'The briefing for '+brief.report_date+' is ready.',
+      why:'StockChief prepares the briefing from your inventory records.',
+      recommendation:'Read it and follow up on anything waiting.',
+      href:path+'?filter='+encodeURIComponent(brief.report_date),actionLabel:'Read the briefing',
+      sourceId:'daily-briefing:'+brief.report_date,createdAt:brief.generated_at,at:brief.generated_at}];
+  }
   const email=row.status==='HELD'?' The email is waiting: '+row.hold_reason:row.status==='CANCELLED'?'':' '+said[row.status]+' to '+plural(row.recipients.length,'person','people')+'.';
   return [{kind:'inventory',grouped:true,importance:'Information',priority:45,title:'Your daily briefing',
     happened:'What happened on '+span(row.from_day,row.day)+', and what needs you now.'+email,

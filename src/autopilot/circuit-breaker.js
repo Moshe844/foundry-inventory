@@ -65,7 +65,8 @@ async function note(db,workspaceId,{key:actionKey,kind,reference=null,amountMino
 async function observations(db,workspaceId,{all=false}={}){
   const {calendarDate:today,timeZone}=await time.forWorkspace(db,workspaceId);
   const totals=require('../operations/postgres-team-access').purchaseTotalsSql('p.workspace_id','p.id',"power(10::numeric,($6::jsonb->>p.currency)::int)");
-  const ledger=await has(db,TABLE)?`UNION ALL SELECT a.at,a.kind,a.currency,a.amount_minor::numeric FROM ${TABLE} a
+  const ledgerInstalled=await has(db,TABLE);
+  const ledger=ledgerInstalled?`UNION ALL SELECT a.at,a.kind,a.currency,a.amount_minor::numeric FROM ${TABLE} a
     WHERE a.workspace_id=$1 AND a.at BETWEEN $2 AND clock_timestamp()`:'';
   const threshold='greatest(2*b.median,b.q3+1.5*(b.q3-b.q1))';
   const result=await db.query(`WITH acknowledged AS MATERIALIZED (
@@ -81,6 +82,15 @@ async function observations(db,workspaceId,{all=false}={}){
     JOIN stockchief_runtime.provider_effects e ON e.workspace_id=t.workspace_id AND e.kind='shipping.label.purchase'
       AND e.payload->>'transactionId'=t.id AND e.payload->>'agentPostageScope'='automatic'
     WHERE t.workspace_id=$1 AND t.operation='PURCHASE' AND t.status='SUCCEEDED' AND t.completed_at::timestamptz BETWEEN $2 AND clock_timestamp()
+    UNION ALL SELECT a.executed_at,'change',NULL::text,NULL::numeric
+    FROM stockchief_runtime.assistant_action_proposals a
+    WHERE a.workspace_id=$1 AND a.status='EXECUTED' AND a.executed_at BETWEEN $2 AND clock_timestamp()
+      AND a.result#>>'{executionAuthority,kind}'='standing_job_rule'
+      AND a.result->>'replayed' IS DISTINCT FROM 'true' AND a.action_type<>'shipping.label'
+      AND NOT EXISTS(SELECT 1 FROM work_items w WHERE w.workspace_id=a.workspace_id AND w.proposal_id=a.id
+        AND w.source='postgres_autopilot' AND w.approval_requirement='NONE' AND w.execution_status IN ('COMPLETED','EXECUTING'))
+      ${ledgerInstalled?`AND NOT EXISTS(SELECT 1 FROM ${TABLE} recorded WHERE recorded.workspace_id=a.workspace_id
+        AND recorded.action_key='proposal:'||a.id)`:''}
     ${ledger}
   ), counted AS (
     -- Today's activity before the owner's last resume was reviewed already.

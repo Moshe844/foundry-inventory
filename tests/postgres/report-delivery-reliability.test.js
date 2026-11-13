@@ -3,11 +3,34 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 test('scheduled reports deliver once per due slot on every plan and hold changed reports or recipients',{timeout:150000},async t=>{
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx,owner}=f;
+ const live=require('node:process').env.STOCKCHIEF_SYNTHETIC_SCHEDULED_EMAIL==='1';
+ const recipient=live?'delivered+stockchief-reports@resend.dev':f.email;
+ if(live){
+   const config=require('../../src/config');
+   assert.ok(config.email.configured);
+   require('../../src/net-trust').installSystemCertificates();
+   const response=await fetch('https://api.resend.com/usage',{
+     headers:{Authorization:'Bearer '+config.email.apiKey},signal:AbortSignal.timeout(15000)
+   });
+   assert.ok(response.ok);
+   const quota=await response.json();
+   for(const period of ['daily','monthly']){
+     const usage=quota.emails?.[period];
+     assert.ok(Number.isSafeInteger(usage?.used)&&Number.isSafeInteger(usage?.limit)&&usage.used+4<=usage.limit);
+   }
+   await db.query('UPDATE accounts SET email=$2 WHERE id=$1',[owner.accountId,recipient]);
+ }
  const reports=require('../../src/reports/postgres-service'),scheduling=require('../../src/reports/postgres-scheduling');
  const jobs=require('../../src/operations/postgres-job-queue');
- const actor={role:'owner',permissions:[],email:f.email},sent=[];
+ const actor={role:'owner',permissions:[],email:recipient},sent=[];
  const handlers=require('../../src/operations/postgres-runtime-handlers').create(undefined,{emailSender:async(message,options)=>{
-   sent.push({message,key:options.idempotencyKey});return {provider:'resend',externalId:'report-acceptance-'+sent.length};
+   assert.equal(message.to,recipient);
+   assert.match(message.subject,/^StockChief report: Weekly stock/);
+   assert.ok(!message.cc&&!message.bcc&&sent.length<4);
+   const result=live?await require('../../src/operations/email').sendResend(message,{...options,signal:AbortSignal.timeout(15000)})
+     :{provider:'resend',externalId:'report-acceptance-'+(sent.length+1)};
+   sent.push({message,key:options.idempotencyKey,id:result.externalId});
+   return result;
  }});
  const process=kind=>jobs.processOne(db,{[kind]:handlers[kind]},{owner:'scheduled-report-test'});
  const schedule={frequency:'weekly',hour:9,minute:17,weekday:2,timeZone:'America/New_York'};
@@ -30,14 +53,16 @@ test('scheduled reports deliver once per due slot on every plan and hold changed
    assert.equal((await process('system.email-send')).status,'COMPLETED');
    const completed=await delivery(report);
    assert.equal(completed.status,'SENT');
-   assert.equal(completed.provider_message_id,'report-acceptance-'+sent.length);
-   assert.equal(sent.at(-1).message.to,f.email);
+   assert.ok(completed.provider_message_id);
+   assert.equal(completed.provider_message_id,sent.at(-1).id);
+   assert.equal(sent.at(-1).message.to,recipient);
    assert.match(sent.at(-1).message.subject,new RegExp('Weekly stock '+plan));
    assert.equal(await process('system.email-send'),null);
    await require('../../src/reports/postgres-delivery-controls').change(db,ctx,actor,report.id,{action:'pause',expectedRevision:report.revision});
  }
  assert.equal(sent.length,4);
  assert.equal(new Set(sent.map(entry=>entry.key)).size,4);
+ if(live)t.diagnostic('Resend accepted one scheduled synthetic report per plan with four distinct provider IDs.');
  for(const change of ['definition','recipient']){
    const report=await reports.save(db,ctx,actor,{dataset:'stock',title:'Stale '+change,columns:['sku','on_hand']},{schedule});
    const due=new Date(report.next_send_at);
