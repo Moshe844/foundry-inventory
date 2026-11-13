@@ -107,11 +107,11 @@ test('job 208: a run of identical approvals becomes a taught rule after one owne
    VALUES($1,$2,$3,$4,$5,$6,$1,$1,$7,$8,$9,now()-make_interval(mins=>$10))`,[randomUUID(),ctx.workspaceId,f.location.id,status,status==='RELEASED'?'INDIVIDUAL':null,
   JSON.stringify({location:'Dispatch',orders:[{id:'a'},{id:'b'},{id:'c'}]}),ctx.actorId,status==='RELEASED'?ctx.actorId:null,status==='RELEASED'?new Date(Date.now()-minutes*60000).toISOString():null,minutes]);
  for(const [status,minutes] of [['RELEASED',100],['RELEASED',90],['DISCARDED',80],['RELEASED',70],['RELEASED',60],['RELEASED',50],['RELEASED',40]])await recorded(status,minutes);
- assert(!(await learning.offers(db,ctx)).some(o=>o.source==='release'),'Four releases after a discarded one are not a run');
+ assert(!(await learning.offers(db,ctx)).some(o=>o.source==='warehouse.release_orders'),'Four releases after a discarded one are not a run');
  await recorded('RELEASED',30);
- const released=(await learning.offers(db,ctx)).find(o=>o.source==='release');
+ const released=(await learning.offers(db,ctx)).find(o=>o.source==='warehouse.release_orders');
  assert.equal(released.run,5);assert.equal(released.maximum,'3 orders at a time');assert.match(released.test.sections[0].summary,/released orders at Dispatch 5 times in a row/);
- await subscribe('pro');assert(!(await learning.offers(db,ctx)).some(o=>o.source==='release'),'Pro releases alone without training');await subscribe('growth');
+ await subscribe('pro');assert(!(await learning.offers(db,ctx)).some(o=>o.source==='warehouse.release_orders'),'Pro releases alone without training');await subscribe('growth');
  assert.equal(await release.trained(db,ctx.workspaceId,{locationId:f.location.id}),false);
  await learning.confirm(db,ctx,{latestId:released.latestId,maximum:'0'});
  assert.deepEqual((await db.query('SELECT batch_orders,automatic,enabled FROM stockchief_runtime.agent_pick_release_rules WHERE workspace_id=$1 AND location_id=$2',[ctx.workspaceId,f.location.id])).rows,[{batch_orders:3,automatic:true,enabled:true}]);

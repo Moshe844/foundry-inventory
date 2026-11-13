@@ -45,7 +45,7 @@ test('job 208 runs: five identical approvals in a row, back to the last no',()=>
  assert.equal(runs([[1],[2],[3,{person:true}],[4],[5],[6]])[0].rows.length,5,'an approval that always needs a person neither counts nor breaks the run');
  assert.equal(runs([[1,{variant:'x'}],[2,{variant:'y'}],[3,{variant:'y'}],[4,{variant:'y'}],[5,{variant:'y'}]]).length,0,'a changed choice breaks the run');
  assert.equal(runs([[1],[2],[3],[5,{scope:'b'}],[6]]).length,0,'scopes are counted apart');
- const latest=runs([[1],[2],[3],[4],[5],[6]])[0];assert.equal(latest.latest.id,'r5');assert.equal(latest.first.id,'r1');
+ const latest=runs([[1],[2],[3],[4],[5],[6]])[0];assert.equal(latest.latest.id,'r5');assert.equal(latest.first.id,'r0');assert.equal(latest.rows.length,6,'the run is every identical approval back to the last no');
  // Keep asking: nothing up to the newest approval the owner saw counts again.
  const decided=new Map([['job:test\u0000a',at(5)]]);
  assert.equal(learning.runsOf(adapter,rows([[1],[2],[3],[4],[5],[6],[7],[8],[9]]),decided).length,0);
