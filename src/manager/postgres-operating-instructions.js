@@ -340,12 +340,22 @@ async function prepareReorderForm(database,ctx,input){
    reorderPoint:read('reorderPoint'),targetStock:read('targetStock'),safetyStock:read('safetyStock')};
  if(raw.reorderPoint<0&&raw.targetStock<0&&raw.safetyStock<0)throw new ValidationError('Enter at least one reorder setting.');
  if(raw.targetStock>=0&&raw.reorderPoint>=0&&raw.targetStock<raw.reorderPoint)throw new ValidationError('Target stock must be at least the reorder point.');
+ return prepareTyped(database,ctx,raw);
+}
+async function prepareTyped(database,ctx,raw){
  const change=await resolveChange(database,ctx.workspaceId,raw);if(change.questions.length)throw new ValidationError(change.questions[0]);
  const {questions,...resolved}=change;resolved.policyContract=policyContracts.compile(resolved);
  const statedAs=describe(resolved),id=newId('oin'),at=nowIso(),resolvedChanges=[resolved];
  await database.query(`INSERT INTO operating_instruction_proposals(id,workspace_id,created_by_user_id,stated_as,summary,changes,resolved_changes,questions,status,integrity_hash,created_at,updated_at)
    VALUES($1,$2,$3,$4,$4,$5,$6,'[]','PENDING',$7,$8,$8)`,[id,ctx.workspaceId,ctx.actorId,statedAs,JSON.stringify([cleanChange(raw)]),JSON.stringify(resolvedChanges),hash({statedAs,resolvedChanges}),at]);
  return get(database,ctx.workspaceId,id);
+}
+// Job 209: a rule suggested by repeated corrections states its exact effect,
+// so it uses the same typed path as the reorder form, without a model.
+async function prepareSuggested(database,ctx,raw){
+ await assertOwner(database,ctx);
+ if(!['replenishment','supplier_terms'].includes(raw?.domain)||raw.operation!=='set')throw new ValidationError('StockChief can only suggest reorder settings and supplier terms from repeated corrections.');
+ return prepareTyped(database,ctx,raw);
 }
 
 async function applyChange(client,ctx,change){const at=nowIso();
@@ -612,5 +622,5 @@ async function answer(database,ctx,id,value,options={}){const proposal=await get
   await database.query(`UPDATE operating_instruction_proposals SET status='SUPERSEDED',updated_at=$3
     WHERE workspace_id=$1 AND id=$2 AND status='PENDING'`,[ctx.workspaceId,id,nowIso()]);return replacement;}
 
-module.exports={SCHEMA,SYSTEM,PROPOSED_CHANGES_SCHEMA,interpret,get,approve,cancel,answer,describe,prepareReorderForm,checkRuleLimit};
-require('../commercial/enforcement').guardExports(module.exports,0,1,{interpret:'ask.prepare_actions',answer:'ask.prepare_actions',approve:'ask.prepare_actions',prepareReorderForm:'ask.prepare_actions'});
+module.exports={SCHEMA,SYSTEM,PROPOSED_CHANGES_SCHEMA,interpret,get,approve,cancel,answer,describe,prepareReorderForm,prepareSuggested,checkRuleLimit};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{interpret:'ask.prepare_actions',answer:'ask.prepare_actions',approve:'ask.prepare_actions',prepareReorderForm:'ask.prepare_actions',prepareSuggested:'ask.prepare_actions'});
