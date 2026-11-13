@@ -316,6 +316,8 @@ async function inbox(db,workspaceId){
       :'It watched for 14 days and found nothing it would have done on its own. Nothing was changed.',
     why:'Until you choose, StockChief asks you before it acts.',
     recommendation:'Read what it would have done and saved, then switch on the areas you want it to handle.',
+    // Only the owner chooses what StockChief may do, so this is never passed on (job 172).
+    ownerOnly:true,
     href:path,actionLabel:'See the report',sourceId:'shadow-report',createdAt:account.shadowEndsAt,timeLabel:'Watching ended',at:account.shadowEndsAt}];
 }
 

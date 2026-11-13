@@ -97,7 +97,8 @@ async function requests(db,workspaceId){
       ORDER BY p.created_at,p.id LIMIT 200`,[workspaceId,Object.keys(ACTIONS)]),
   ]);
   const adjustments=prepared.rows.filter(p=>p.action_type==='inventory.adjust').map(p=>p.id);
-  const valued=adjustments.length?new Map((await db.query(`SELECT p.id,coalesce(b.on_hand,0)::text AS physical,coalesce(c.quantity_units,0)::text AS costed,
+  const valued=adjustments.length?new Map((await db.query(`SELECT p.id,coalesce(b.on_hand,0)::text AS physical,
+      (SELECT name FROM locations WHERE workspace_id=p.workspace_id AND id=p.payload->>'locationId') AS location,coalesce(c.quantity_units,0)::text AS costed,
       coalesce(c.total_cost_minor,0)::text AS value,(SELECT base_currency FROM accounting_settings WHERE workspace_id=p.workspace_id AND enabled=1) AS currency
     FROM stockchief_runtime.assistant_action_proposals p
     LEFT JOIN balances b ON b.workspace_id=p.workspace_id AND b.sku_id=p.payload->>'skuId' AND b.location_id=p.payload->>'locationId'
@@ -128,7 +129,8 @@ async function requests(db,workspaceId){
     }
     out.push({key:'proposal:'+p.id,source:'proposal',id:p.id,kind:spec.kind,actionType:p.action_type,permission:contract.permission,readPermission:readPermission(contract.permission),
       ownerOnly:Boolean(contract.ownerOnly),...amount,href:'/actions/'+p.id,title:require('../web/proposal-presentation').summary(p),at:p.created_at,
-      preparedBy:p.actor_user_id,facts:{actionType:p.action_type,payload}});
+      preparedBy:p.actor_user_id,facts:{actionType:p.action_type,payload,...(p.action_type==='inventory.adjust'?{location:valued.get(p.id)?.location,
+        direction:Number(payload.countedQuantity)<Number(valued.get(p.id)?.physical)?'down':'up'}:{})}});
   }
   return out;
 }
@@ -184,6 +186,7 @@ function byAuthority(request,limits){
 }
 function route(request,{people:team,limits,rules,held}){
   const owner=team.find(p=>p.role==='owner');
+  if(request.signed?.length)return second(request,{people:team,limits,rules});
   if(!held){
     const rule=ruleFor(request,rules),named=rule&&team.find(p=>p.id===rule.user_id);
     if(named&&eligible(named,request,limits))return {person:named,reason:'Your rule: '+describeRule(rule,named.name)+'.',rule:rule.id};
@@ -192,6 +195,20 @@ function route(request,{people:team,limits,rules,held}){
     if(owner)return {person:owner,reason:request.ownerOnly?'Only the owner can approve this.':KINDS[request.kind].money&&request.amountMinor==null?'StockChief could not work out its amount, so it stays with the owner.':'No one else on the team can approve this.'};
   }
   return owner?{person:owner,reason:held}:{person:null,reason:'No one can approve this yet.'};
+}
+// Job 205: after one approval, the next person who can approve it and has not.
+// A second approval is required, so it is sent even while routing is held.
+function second(request,{people:team,limits,rules}){
+  const twoPerson=require('./two-person-approval'),done=new Set(request.signed.map(p=>p.account_id)),names=request.signed.map(p=>p.name).join(' and ');
+  const owner=team.find(p=>p.role==='owner');
+  if(request.signed.length>=2)return owner?{person:owner,reason:names+' approved it. Approve it to post it.'}:{person:null,reason:names+' approved it.'};
+  const free=p=>!done.has(p.account_id)&&twoPerson.canSign(p,request,limits),lead='Needs a second approval: '+names+' approved it. ';
+  const rule=ruleFor(request,rules),named=rule&&team.find(p=>p.id===rule.user_id);
+  if(named&&free(named))return {person:named,reason:lead+'Your rule: '+describeRule(rule,named.name)+'.'};
+  const staff=team.filter(p=>p.role!=='owner'&&free(p)).sort(byAuthority(request,limits));
+  if(staff.length)return {person:staff[0],reason:lead+why(staff[0],request,limits)};
+  if(owner&&free(owner))return {person:owner,reason:lead.trim()};
+  return {person:null,reason:lead+'No one else can approve it. Review team permissions and limits.'};
 }
 // Why routing is held, or null when StockChief may route on its own.
 async function holdReason(db,workspaceId,state){
@@ -202,25 +219,31 @@ async function desk(db,workspaceId,{state=null}={}){
   state=state||await policy.accountState(db,workspaceId);
   const [list,team,saved,held]=await Promise.all([requests(db,workspaceId),people(db,workspaceId),settings(db,workspaceId),holdReason(db,workspaceId,state)]);
   const context={people:team,limits:saved.limits,rules:saved.rules,held};
+  const approved=await require('./two-person-approval').approvals(db,workspaceId,list),threshold=await require('../purchasing/dual-approval').setting(db,workspaceId);
+  for(const r of list)if(r.source==='purchase'&&threshold.amount_minor!=null&&(r.amountMinor==null||r.currency!==threshold.currency||r.amountMinor>Number(threshold.amount_minor)))r.twoPeople=true;
+  for(const r of list)if(approved.has(r.key)){r.twoPeople=true;r.signed=approved.get(r.key).people;}
   return {state,held,people:team,...saved,rows:list.map(r=>({...r,...route(r,context)}))};
 }
 
-// Needs you: the approvals routed to this person.
+// Needs you: the approvals routed to this person. Below Pro (job 176 is not
+// included) every approval is the owner's, in the one list of job 174, which
+// also groups similar ones for one tap.
 async function inbox(db,workspaceId,actorId){
   const state=await policy.accountState(db,workspaceId);
-  if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,JOB,'automatic'))return [];
-  const {rows}=await desk(db,workspaceId,{state});
-  return rows.filter(r=>r.person?.id===actorId).map(r=>item(r));
+  if(!policy.usesAgentTerms(state))return [];
+  const groups=require('./approval-groups');
+  const [{rows,held},grouping]=await Promise.all([desk(db,workspaceId,{state}),groups.held(db,workspaceId,state)]);
+  return rows.filter(r=>r.person?.id===actorId).map(r=>item(r,{held:Boolean(held)&&!r.signed?.length,group:grouping?null:groups.groupFor(r)}));
 }
-function item(r){
+function item(r,{held=false,group=null}={}){
   const amount=format(r);
   return {kind:'approval',importance:'Needs You',priority:83,title:r.title,
-    happened:(r.person?.role==='owner'?'':'Sent to you. ')+r.reason,
-    why:KINDS[r.kind].label+(amount?' · '+amount:'')+'. Nothing changes until it is approved.',
+    happened:held?'Waiting for your approval.':(r.person?.role==='owner'?'':'Sent to you. ')+r.reason,
+    why:KINDS[r.kind].label+(amount?' · '+amount:'')+'. '+(r.twoPeople?'Two people must approve it. ':'')+'Nothing changes until it is approved.',
     recommendation:'Open it, check the details, then approve or decline.',href:r.href,actionLabel:'Review',
     sourceId:'approval-'+r.key,createdAt:r.at,timeLabel:'Waiting since',at:r.at,
     ...(r.amountMinor==null?{}:{moneyValue:r.amountMinor,moneyCurrency:r.currency}),
-    approvalRequest:{key:r.key,kind:r.kind,source:r.source,id:r.id}};
+    approvalRequest:{key:r.key,kind:r.kind,source:r.source,id:r.id,twoPeople:Boolean(r.twoPeople),group}};
 }
 
 // The routine keeps a record of where each approval went, and audits changes.

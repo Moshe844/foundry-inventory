@@ -100,10 +100,10 @@ async function guardOrderMessage(db,workspaceId,id){
   const order=(await db.query("SELECT * FROM purchase_orders WHERE workspace_id=$1 AND id=$2 AND status IN('DRAFT','AWAITING_APPROVAL','APPROVED')",[workspaceId,id])).rows[0];
   if(order)await assertApproved(db,order);
 }
-const definition={id:205,key:'purchase-approval-threshold',label:'Require two people to approve large purchases',
+const definition={id:205,key:'purchase-approval-threshold',label:'Require two people above your amount',
   read:async(db,ctx)=>{
     const rule=await setting(db,ctx.workspaceId);
-    return {summary:'Two authorized people must sign a purchase order above your threshold. Orders in another currency always require two signatures when this rule is active.',
+    return {summary:'Two different people, each allowed to approve it, must approve any purchase order, refund or credit, stock adjustment or write-off, or landed cost above your amount. Anything in another currency, or whose amount is unknown, also needs two people.',
       rows:rule.amount_minor==null?[]:[{Currency:rule.currency,'Require two people above':money.format(rule.amount_minor,rule.currency)}]};
   }};
 module.exports={configure,setting,view,sign,assertApproved,guardOrderMessage,definition,recordFields,digestFor,eligible};

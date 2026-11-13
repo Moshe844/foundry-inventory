@@ -18,17 +18,36 @@ const sources=[
  ['agent_reorder_refresh_rules','enabled'],['agent_backorder_rules','enabled'],['agent_stock_sharing_rules','enabled'],['agent_slow_stock_rules','enabled'],['agent_annual_stocktake_rules','enabled'],['agent_incoming_rules','enabled'],['agent_warehouse_routing_rules','enabled'],['agent_expiry_warning_rules','enabled'],['agent_compliance_schedules','enabled'],['agent_container_order_rules','enabled'],['agent_landed_cost_rules','enabled'],['agent_fx_alert_rules','enabled'],['agent_supplier_benefit_programs','enabled AND claim_limit_minor IS NOT NULL'],['agent_rfq_competition_rules','enabled'],['agent_invoice_dispute_rules','enabled'],['agent_customer_order_limits','enabled'],['agent_channel_fee_rules','enabled'],['agent_net_margin_rules','enabled'],['agent_pick_release_rules','enabled'],['agent_pick_wave_rules','enabled'],['agent_split_rules','enabled'],['agent_shipping_rate_rules','enabled'],['agent_catalog_fix_rules','enabled'],['agent_board_pack_schedules','enabled'],['agent_watch_rules','enabled'],['agent_product_classification_rules','enabled'],['agent_product_retirement_rules','enabled'],['agent_approval_routes','enabled'],['agent_staff_task_rules','enabled']
 ];
 const limits={starter:5,growth:50,pro:500};
-const configured=sources.map(([table,predicate])=>`(SELECT count(*) FROM(SELECT 1 FROM stockchief_runtime.${table} t JOIN owned o ON o.id=t.workspace_id ${predicate?'WHERE '+predicate:''} LIMIT $2::int) bounded)`).join('+');
-const sql=`WITH owned AS MATERIALIZED(SELECT id FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL)
- SELECT ${configured}+(SELECT count(*) FROM(SELECT 1 FROM stockchief_runtime.agent_instruction_rule_targets t JOIN owned o ON o.id=t.workspace_id WHERE t.active LIMIT $2::int) bounded) AS used,
- EXISTS(SELECT 1 FROM stockchief_runtime.agent_instruction_rule_targets t JOIN owned o ON o.id=t.workspace_id WHERE t.active AND t.unrecognized LIMIT 1) AS unrecognized`;
+const newerTables={
+ 'agent_approval_routes':'482-agent-approval-routing.sql',
+ 'agent_staff_task_rules':'484-agent-staff-tasks.sql'
+};
+async function configuredSources(db){
+ const {hasVerifiedMigration}=require('../db/migrate-postgres');
+ const {has}=require('../db/schema-installed');
+ const missing=new Set();
+ for(const [table,migration] of Object.entries(newerTables))
+  if(!hasVerifiedMigration(db,migration)&&!await has(db,'stockchief_runtime.'+table))missing.add(table);
+ return sources.filter(([table])=>!missing.has(table));
+}
+const ownership=`WITH owned AS MATERIALIZED(SELECT id FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL)`;
+const configuredQuery=([table,predicate],bounded)=>`(SELECT count(*) FROM(SELECT 1 FROM stockchief_runtime.${table} t
+  JOIN owned o ON o.id=t.workspace_id ${predicate?'WHERE '+predicate:''}${bounded?' LIMIT $2::int':''}) counted)`;
+async function countConfigured(db,accountId){
+ const configured=(await configuredSources(db)).map(source=>configuredQuery(source,false)).join('+');
+ const {rows:[row]}=await db.query(`${ownership} SELECT ${configured} AS used`,[accountId]);
+ return Number(row.used);
+}
 async function restriction(db,account){
  const limit=Object.hasOwn(limits,account.plan)?limits[account.plan]:undefined;if(limit===undefined)return null;
  if(!account.accountId)return 'Review the account’s saved-rule allowance before automatic work can resume.';
- const row=(await db.query(sql,[account.accountId,limit+1])).rows[0];
+ const configured=(await configuredSources(db)).map(source=>configuredQuery(source,true)).join('+');
+ const row=(await db.query(`${ownership}
+  SELECT ${configured}+(SELECT count(*) FROM(SELECT 1 FROM stockchief_runtime.agent_instruction_rule_targets t JOIN owned o ON o.id=t.workspace_id WHERE t.active LIMIT $2::int) bounded) AS used,
+  EXISTS(SELECT 1 FROM stockchief_runtime.agent_instruction_rule_targets t JOIN owned o ON o.id=t.workspace_id WHERE t.active AND t.unrecognized LIMIT 1) AS unrecognized`,[account.accountId,limit+1])).rows[0];
  if(!row||!Number.isSafeInteger(Number(row.used)))return 'StockChief could not verify the saved-rule allowance. Automatic work is paused for review.';
  if(row.unrecognized)return 'Some saved operating instructions need review before automatic work can resume.';
  if(Number(row.used)>limit)return `Your current plan allows ${limit} active rules across your inventories. Automatic work is paused while saved rules exceed that allowance. Stop or remove extra rules, or upgrade; saved instructions are preserved.`;
  return null;
 }
-module.exports={restriction,sources,limits};
+module.exports={restriction,sources,countConfigured,limits};
