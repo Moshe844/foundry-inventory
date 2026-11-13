@@ -1,0 +1,44 @@
+<h1>3PL orders</h1>
+<p>Orders that ship from a warehouse your 3PL runs go to the 3PL. Its shipping, tracking and stock come back here.</p>
+<% if(typeof upgrading!=='undefined'&&upgrading){ %><p class="notice">3PL orders are being upgraded. Try again shortly.</p><% }else{ %>
+<% if(automatic&&stop){ %><p class="notice">Orders wait for you now. <%= stop %></p><% } %>
+<section class="card section" id="connections"><h2>Your 3PLs</h2>
+<% if(!connections.length){ %><p>No 3PL is connected yet.</p><% } %>
+<% for(const c of connections){ %><p><strong><%= c.label %></strong> · account <%= c.account %></p><% } %>
+<p><a href="/autopilot/shipbob">Connect or manage the ShipBob sandbox</a></p>
+<% for(const a of available){ %><form method="post" action="/autopilot/3pl-orders/connect" class="form-stack section"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="provider" value="<%= a.key %>"><h3>Connect <%= a.label %></h3>
+<label class="rm-field"><span>Account or channel ID</span><input name="account" required maxlength="80"></label>
+<label class="rm-field"><span>API key</span><input name="apiKey" type="password" autocomplete="new-password" required></label><button class="btn">Check and connect</button></form><% } %>
+</section>
+<section class="card section" id="routes"><h2>Which warehouse each 3PL runs</h2>
+<p>Orders confirmed to ship from that warehouse after you save the route go to its 3PL. <%= automatic?'Tick the box to let StockChief send them on its own; otherwise each one waits for your approval.':'StockChief drafts each order for your approval.' %> Each route is one saved rule.</p>
+<% for(const r of routes){ %><form method="post" action="/autopilot/3pl-orders/routes" class="form-stack section"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="locationId" value="<%= r.location_id %>"><input type="hidden" name="revision" value="<%= r.revision %>">
+<h3><%= r.location %> · <%= r.provider %></h3><p><%= r.enabled?(r.automatic?'Sends on its own':'Each order waits for your approval'):'Stopped' %></p>
+<% if(connections.length){ %><label class="rm-field"><span>3PL</span><select name="connectorId"><% for(const c of connections){ %><option value="<%= c.id %>" <%= c.id===r.connector_id?'selected':'' %>><%= c.label %></option><% } %></select></label>
+<label><input type="checkbox" name="automatic" value="yes" <%= r.enabled&&r.automatic?'checked':'' %> <%= automatic?'':'disabled' %>> <span class="badge">Pro / Custom</span> Send orders on their own</label><% } %>
+<div class="btn-row"><% if(connections.length){ %><button class="btn"><%= r.enabled?'Save route':'Start this route again' %></button><% } %><% if(r.enabled){ %><button class="btn" name="stop" value="yes" formnovalidate>Stop this route</button><% } %></div></form><% } %>
+<% const free=warehouses.filter(w=>!routes.some(r=>r.location_id===w.id)); if(connections.length&&free.length){ %><form method="post" action="/autopilot/3pl-orders/routes" class="form-stack section"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><h3>Add a route</h3>
+<label class="rm-field"><span>Warehouse</span><select name="locationId" required><% for(const w of free){ %><option value="<%= w.id %>"><%= w.name %></option><% } %></select></label>
+<label class="rm-field"><span>3PL that runs it</span><select name="connectorId" required><% for(const c of connections){ %><option value="<%= c.id %>"><%= c.label %></option><% } %></select></label>
+<label><input type="checkbox" name="automatic" value="yes" <%= automatic?'':'disabled' %>> <span class="badge">Pro / Custom</span> Send orders on their own</label><button class="btn">Save route</button></form><% }else if(!connections.length){ %><p>Connect a 3PL first.</p><% } %>
+</section>
+<section class="card section" id="orders"><h2>Orders</h2><% if(!orders.length){ %><p>No orders have gone to a 3PL yet.</p><% } %>
+<% for(const o of orders){ %><article class="section"><h3><a href="/orders/<%= o.sales_order_id %>"><%= o.order_number %></a> · <%= o.location %> · <%= o.provider %></h3>
+<p><%= ({DRAFT:'Waits for your approval.',HELD:'Waits for you.',SENDING:'The 3PL has not confirmed it yet.',SENT:(o.automatic?'Sent on its own':'Sent')+(o.sent_at?' '+helpers.dateTime(o.sent_at):'')+'.',DISMISSED:'Dismissed.'})[o.status] %> <%= o.reason||'' %></p>
+<% if(o.provider_order_id){ %><p>3PL order <%= o.provider_order_id %> · <%= o.provider_status %></p><% (o.shipments||[]).forEach(s=>{ %><p>Shipment <%= s.id %> · <%= s.status %><% if(s.tracking){ %> · <%= s.carrier||'' %> <%= s.tracking %><% } %></p><% }); } %>
+<% if(['DRAFT','HELD','SENDING'].includes(o.status)){ %><form method="post" action="/autopilot/3pl-orders/orders/<%= o.sales_order_id %>/approve" class="btn-row"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary"><%= o.status==='SENDING'?'Check again with the 3PL':'Send to the 3PL' %></button><% if(o.status!=='SENDING'){ %><button class="btn" formaction="/autopilot/3pl-orders/orders/<%= o.sales_order_id %>/dismiss">Dismiss</button><% } %></form><% } %>
+<% if(o.status==='SENT'&&['CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED'].includes(o.order_status)){ %><form method="post" action="/autopilot/3pl-orders/orders/<%= o.sales_order_id %>/refresh"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Read shipping now</button></form><% } %></article><% } %>
+</section>
+<section class="card section" id="shipments"><h2>Shipments from the 3PL</h2><% if(!parcels.length){ %><p>None yet.</p><% } %>
+<% for(const p of parcels){ %><article class="section"><h3><a href="/orders/<%= p.sales_order_id %>"><%= p.order_number %></a> · <%= p.provider %> shipment <%= p.provider_shipment_id %></h3>
+<p><%= (p.lines||[]).map(l=>l.quantity+' × '+l.sku).join(', ') %><% if(p.tracking_number){ %> · <%= p.carrier||'' %> <%= p.tracking_number %><% } %></p>
+<p><%= p.status==='RECORDED'?'Recorded as '+(p.shipment_number||'a shipment')+(p.automatic?' on its own':'')+'.':p.status==='HELD'?'Waits for you. '+(p.reason||''):'Waits to be recorded. '+(p.reason||'') %></p>
+<% if(p.status!=='RECORDED'){ %><form method="post" action="/autopilot/3pl-orders/shipments/<%= p.connector_id %>/<%= encodeURIComponent(p.provider_shipment_id) %>/record"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary"><%= p.status==='HELD'?'Try recording it again':'Record this shipment' %></button></form><% } %></article><% } %>
+</section>
+<section class="card section" id="stock"><h2>Stock the 3PL reports</h2><p>Readings also show with your stock at partners. ShipBob sandbox readings stay on its own page.</p>
+<% if(connections.some(c=>c.key!=='shipbob')){ %><form method="post" action="/autopilot/3pl-orders/stock" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label class="rm-field"><span>3PL</span><select name="connectorId" required><% for(const c of connections.filter(c=>c.key!=='shipbob')){ %><option value="<%= c.id %>"><%= c.label %></option><% } %></select></label>
+<label class="rm-field"><span>StockChief SKU</span><input name="sku" required></label><label class="rm-field"><span>3PL inventory ID</span><input name="inventoryRef" required maxlength="120"></label><button class="btn">Read stock</button></form><% } %>
+<% for(const s of stock){ %><p><%= s.code %> · <%= s.provider %> · <%= s.on_hand %> on hand · <%= s.available %> available · <%= helpers.dateTime(s.observed_at) %></p><% } %>
+</section>
+<% } %>

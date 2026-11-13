@@ -49,7 +49,6 @@ async function disconnect(db,ctx){
   await db.transaction(async c=>{
     await ownerState(c,ctx);
     const con=await connection(c,ctx);
-    await c.query('DELETE FROM stockchief_runtime.shipbob_sandbox_rules WHERE workspace_id=$1',[ctx.workspaceId]);
     await vault.remove(c,ctx.workspaceId,con.id);
     await c.query("UPDATE workspace_connectors SET status='disconnected',setup_status='DISCONNECTED',credential_ref=NULL,paused_at=$3,updated_at=$3 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,con.id,nowIso()]);
   });
@@ -57,21 +56,9 @@ async function disconnect(db,ctx){
 async function draft(db,ctx,orderId){
   await access(db,ctx);
   const con=await connection(db,ctx);
-  const order=(await db.query(`SELECT o.*,c.name FROM sales_orders o JOIN customers c ON c.workspace_id=o.workspace_id AND c.id=o.customer_id
-    WHERE o.workspace_id=$1 AND o.id=$2`,[ctx.workspaceId,orderId])).rows[0];
-  if(!order)throw new NotFoundError('The sales order was not found in this inventory.');
-  if((await db.query("SELECT 1 FROM sales_shipments WHERE workspace_id=$1 AND sales_order_id=$2 AND status IN ('PICKING','PACKED') LIMIT 1",[ctx.workspaceId,orderId])).rowCount)throw new ValidationError('This order already has an unshipped StockChief box. Resolve it before sending the order to ShipBob.');
-  if(order.status!=='CONFIRMED'||order.delivery_method!=='SHIP'||Number(order.customer_decision_required)!==0||Number(order.delivery_decision_required)!==0)
-    throw new ValidationError('Choose a confirmed, unfulfilled delivery order with a verified customer and destination.');
-  const address=require('../shipping/address').parse(order.ship_to_address);
-  if(!address.complete)throw new ValidationError('Complete the order’s delivery address before sending.');
-  const lines=(await db.query(`SELECT s.code,i.name,l.quantity_ordered,l.quantity_fulfilled FROM sales_order_lines l JOIN skus s ON s.id=l.sku_id
-    JOIN items i ON i.id=s.item_id WHERE l.workspace_id=$1 AND l.sales_order_id=$2 ORDER BY l.id`,[ctx.workspaceId,orderId])).rows;
-  if(!lines.length || lines.some(l=>Number(l.quantity_fulfilled)!==0||!Number.isSafeInteger(Number(l.quantity_ordered))||Number(l.quantity_ordered)<1))
-    throw new ValidationError('ShipBob needs whole-unit lines with no prior fulfillment.');
-  const payload={reference_id:orderId,order_number:order.order_number,type:'DTC',shipping_method:'Standard',
-    recipient:{name:address.name||order.name,address:{address1:address.line1,address2:address.line2,city:address.city,state:address.state,country:address.country,zip_code:address.postalCode}},
-    products:lines.map(l=>({reference_id:l.code,name:l.name,quantity:Number(l.quantity_ordered)}))};
+  // The same plain order and ShipBob request the 3PL routes of job 186 send.
+  const {plain}=await require('./agent-3pl-orders').plainOrder(db,ctx,orderId);
+  const payload=require('./third-party-logistics').get('shipbob').payload(plain);
   return {payload,channelId:con.channelId,hash:fingerprint([con.id,con.channelId,payload])};
 }
 function snapshot(order){
@@ -84,23 +71,24 @@ async function save(db,ctx,orderId,hash,order){
     WHERE workspace_id=$1 AND sales_order_id=$2 AND request_hash=$3 AND (provider_order_id IS NULL OR provider_order_id=$4)`,[ctx.workspaceId,orderId,hash,id,status,shipments]);
   if(saved.rowCount!==1)throw new ValidationError('The saved ShipBob reference changed. Review the original order.');
 }
-async function send(db,ctx,orderId,expectedHash,transport,generation=null){
-  const {con,review}=await db.transaction(async c=>{
+async function send(db,ctx,orderId,expectedHash,transport){
+  const {con,review,known}=await db.transaction(async c=>{
     await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['fulfillment-wave:'+ctx.workspaceId]);
-    if(generation)await validateRule(c,ctx,orderId,generation);
     const review=await draft(c,ctx,orderId),con=await connection(c,ctx);
     if(review.hash!==expectedHash)throw new ValidationError('This order changed. Review its destination and lines again.');
     await c.query(`INSERT INTO stockchief_runtime.shipbob_sandbox_orders(workspace_id,sales_order_id,connector_id,channel_id,request_hash,prepared_by)
       VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,[ctx.workspaceId,orderId,con.id,con.channelId,review.hash,ctx.actorId]);
     const previous=(await c.query('SELECT * FROM stockchief_runtime.shipbob_sandbox_orders WHERE workspace_id=$1 AND sales_order_id=$2',[ctx.workspaceId,orderId])).rows[0];
     if(previous.request_hash!==review.hash)throw new ValidationError('A different version was submitted. Reconcile the original ShipBob order first.');
-    return {review,con};
+    return {review,con,known:previous.provider_order_id};
   },{isolation:'SERIALIZABLE',retrySafe:true});
-  if(generation)await validateRule(db,ctx,orderId,generation);
-  else await access(db,ctx);
+  await access(db,ctx);
   const response=await (await remote(db,ctx,con,transport)).send(review.payload,
     ()=>require('../sales/agent-order-checks').assertCanRelease(db,ctx.workspaceId,orderId));
   await save(db,ctx,orderId,review.hash,response);
+  // A person's own send is audited once too; the activity log shows only StockChief's.
+  if(!known)await require('../operations/postgres-security-audit').record(db,ctx,{action:require('./agent-3pl-orders').SENT_ACTION,reference:orderId,
+    after:{automatic:false,provider:'ShipBob sandbox',providerOrder:String(response.id),order:review.payload.order_number,lines:review.payload.products.length}});
 }
 async function refresh(db,ctx,orderId,transport){
   await access(db,ctx);
@@ -127,55 +115,20 @@ async function stock(db,ctx,input,transport,authorizeRefresh){
    [ctx.workspaceId,skus[0].id,String(value.inventory_id),con.id,value.total_on_hand_quantity,value.total_fulfillable_quantity,requestedAt]);
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
+// The warehouse rule is a job 186 route: orders confirmed for that warehouse go to ShipBob on their own.
 async function configureRule(db,ctx,input){
-  return db.transaction(async c=>{
-    await ownerState(c,ctx);
-    if(input.action==='disable'){
-      await c.query('DELETE FROM stockchief_runtime.shipbob_sandbox_rules WHERE workspace_id=$1',[ctx.workspaceId]);return;
-    }
-    if(input.action!=='enable')throw new ValidationError('Choose a sandbox order rule.');
-    await access(c,ctx,'automatic');await connection(c,ctx);
-    const warehouse=await c.query("SELECT 1 FROM locations WHERE workspace_id=$1 AND id=$2 AND kind='warehouse' AND is_active=1 AND custody_agreement_id IS NULL",[ctx.workspaceId,input.locationId]);
-    if(!warehouse.rowCount)throw new ValidationError('Choose an active warehouse in this inventory.');
-    await c.query(`INSERT INTO stockchief_runtime.shipbob_sandbox_rules(workspace_id,location_id,actor_id,generation) VALUES($1,$2,$3,$4)
-      ON CONFLICT(workspace_id) DO UPDATE SET location_id=excluded.location_id,actor_id=excluded.actor_id,generation=excluded.generation,enabled_at=now()`,
-    [ctx.workspaceId,input.locationId,ctx.actorId,newId('rule')]);
-  },{isolation:'SERIALIZABLE',retrySafe:true});
-}
-async function validateRule(db,ctx,orderId,generation){
-  await access(db,ctx,'automatic');
-  const state=await require('../autopilot/postgres-service').getState(db,ctx.workspaceId);
-  if(state.paused||state.suspended||state.mode!=='POLICY_AUTOMATED')throw new ValidationError('Automatic work must be enabled to send sandbox orders.');
-  const valid=await db.query(`SELECT 1 FROM stockchief_runtime.shipbob_sandbox_rules r JOIN sales_orders o ON o.workspace_id=r.workspace_id
-    AND o.fulfillment_location_id=r.location_id AND o.confirmed_at::timestamptz>=r.enabled_at JOIN locations l ON l.id=r.location_id AND l.is_active=1
-    WHERE r.workspace_id=$1 AND r.actor_id=$2 AND r.generation=$3 AND o.id=$4 AND o.status='CONFIRMED' AND o.delivery_method='SHIP'`,[ctx.workspaceId,ctx.actorId,generation,orderId]);
-  if(!valid.rowCount)throw new ValidationError('The warehouse rule or this order changed.');
-}
-async function schedule(client){
-  const rows=(await client.query(`SELECT r.*,o.id AS order_id,o.version FROM stockchief_runtime.shipbob_sandbox_rules r JOIN sales_orders o
-    ON o.workspace_id=r.workspace_id AND o.fulfillment_location_id=r.location_id AND o.confirmed_at::timestamptz>=r.enabled_at
-    JOIN workspace_autopilot a ON a.workspace_id=r.workspace_id AND a.mode='POLICY_AUTOMATED' AND a.paused=0 AND a.suspended=0
-    WHERE o.status='CONFIRMED' AND o.delivery_method='SHIP' AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.shipbob_sandbox_orders x
-      WHERE x.workspace_id=o.workspace_id AND x.sales_order_id=o.id AND x.provider_order_id IS NOT NULL)
-    AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs j WHERE j.workspace_id=o.workspace_id AND j.kind='shipbob.sandbox-order'
-      AND j.idempotency_key=r.generation||'/'||o.id||'/'||o.version::text)
-    ORDER BY o.confirmed_at,o.id LIMIT 50`)).rows;
-  const jobs=require('../operations/postgres-job-queue');
-  for(const row of rows){
-    const version=row.version;
-    await jobs.enqueue({query:client.query.bind(client),transaction:fn=>fn(client)},{kind:'shipbob.sandbox-order',workspaceId:row.workspace_id,
-      idempotencyKey:[row.generation,row.order_id,version].join('/'),payload:{generation:row.generation,actorId:row.actor_id,orderId:row.order_id,version}});
+  const routes=require('./agent-3pl-orders'),con=await connection(db,ctx);
+  if(input.action==='disable'){
+    const route=(await db.query("SELECT location_id,revision FROM stockchief_runtime.agent_3pl_routes WHERE workspace_id=$1 AND connector_id=$2 AND enabled",[ctx.workspaceId,con.id])).rows[0];
+    if(!route)return;
+    return routes.saveRoute(db,ctx,{locationId:route.location_id,revision:route.revision,stop:'yes'});
   }
+  if(input.action!=='enable')throw new ValidationError('Choose a sandbox order rule.');
+  const prior=(await db.query('SELECT revision FROM stockchief_runtime.agent_3pl_routes WHERE workspace_id=$1 AND location_id=$2',[ctx.workspaceId,String(input.locationId||'')])).rows[0];
+  return routes.saveRoute(db,ctx,{locationId:input.locationId,connectorId:con.id,automatic:'yes',revision:prior?.revision});
 }
-async function runJob(db,job,transport){
-  const ctx={workspaceId:job.workspaceId,actorId:job.payload.actorId},orderId=job.payload.orderId;
-  await validateRule(db,ctx,orderId,job.payload.generation);
-  const version=(await db.query('SELECT version FROM sales_orders WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,orderId])).rows[0]?.version;
-  if(String(version)!==String(job.payload.version))throw new ValidationError('The queued order version has changed.');
-  const review=await draft(db,ctx,orderId);
-  await send(db,ctx,orderId,review.hash,transport,job.payload.generation);
-  return {submitted:true};
-}
+// Older queued sandbox orders: the 3PL routes now send them.
+async function runJob(){return {held:true,reason:'3PL routes now send these orders.'};}
 async function dashboard(db,ctx){
   const state=await ownerState(db,ctx),enabled=plan.usesAgentTerms(state)&&plan.permits(state.plan,186,'draft');
   const linked=(await db.query("SELECT 1 FROM workspace_connectors WHERE workspace_id=$1 AND connector_key=$2 AND status='connected' AND paused_at IS NULL",[ctx.workspaceId,connectorKey])).rowCount===1;
@@ -185,8 +138,7 @@ async function dashboard(db,ctx){
     WHERE o.workspace_id=$1 AND ((o.status='CONFIRMED' AND o.delivery_method='SHIP') OR x.sales_order_id IS NOT NULL)
     ORDER BY coalesce(x.observed_at,o.created_at::timestamptz) DESC,o.id LIMIT 100`,[ctx.workspaceId])).rows;
   const stock=(await db.query('SELECT s.code,x.* FROM stockchief_runtime.shipbob_sandbox_stock x JOIN skus s ON s.id=x.sku_id WHERE x.workspace_id=$1 ORDER BY s.code',[ctx.workspaceId])).rows;
-  const automatic=plan.permits(state.plan,186,'automatic'),rule=(await db.query('SELECT l.name FROM stockchief_runtime.shipbob_sandbox_rules r JOIN locations l ON l.id=r.location_id WHERE r.workspace_id=$1',[ctx.workspaceId])).rows[0];
-  const warehouses=automatic?(await db.query("SELECT id,name FROM locations WHERE workspace_id=$1 AND kind='warehouse' AND is_active=1 AND custody_agreement_id IS NULL ORDER BY name,id",[ctx.workspaceId])).rows:[];
-  return {enabled,linked,orders,stock,automatic,rule,warehouses};
+  const automatic=plan.permits(state.plan,186,'automatic');
+  return {enabled,linked,orders,stock,automatic};
 }
-module.exports={connect,disconnect,draft,send,refresh,stock,dashboard,configureRule,runJob,schedule};
+module.exports={connect,disconnect,draft,send,refresh,stock,dashboard,configureRule,runJob};
