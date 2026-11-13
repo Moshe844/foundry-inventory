@@ -1,0 +1,41 @@
+<% const m=panel, briefing=m.job===156, pad=n=>String(n).padStart(2,'0'); %>
+<section class="card card-body stack" data-report-email="<%= m.job %>">
+  <% if(briefing){ %><h2>How you get the briefing</h2>
+  <p>It shows in Needs you at <%= pad(m.hour) %>:<%= pad(m.minute) %> <%= m.days==='weekdays'?'Monday to Friday':'every day' %><% if(m.chosen&&!m.chosen.missing){ %>, and is emailed from <%= m.chosen.name %><% } %>. <%= m.zone.replaceAll('_',' ') %> time.</p>
+  <% if(m.next){ %><p class="hint">Next briefing: <%= m.next %></p><% } %>
+  <% }else{ %><h2>How reports are emailed</h2>
+  <p>Each scheduled report is emailed on its own<% if(m.chosen&&!m.chosen.missing){ %> from <%= m.chosen.name %><% } %>, to the people chosen on the report, with the report attached. Choose who gets a report when you schedule it.</p><% } %>
+  <% if(m.chosen&&m.chosen.missing){ %><p class="notice notice--warn">The mailbox you chose is no longer connected. Choose another, or reconnect it in <a href="/settings/connections">Connections</a>.</p><% } %>
+  <% if(!m.chosen){ %><p class="notice notice--warn" data-report-email-ask><%= m.mailboxes.length?'Choose the mailbox these emails are sent from. StockChief never picks one on its own.':'Connect a mailbox in Connections, then choose it here.' %></p><% } %>
+  <% if(m.chosen&&m.stop){ %><p class="notice notice--warn" data-report-email-stop>Emails wait: <%= m.stop %></p><% } %>
+  <% if(briefing&&m.latest){ %>
+    <p data-briefing-status>Latest briefing (<%= m.latest.day %>): <%= {QUEUED:'on its way by email',SENT:'emailed',FAILED:'the email could not be sent',CANCELLED:'shown in the app',HELD:'shown in the app, email waiting'}[m.latest.status] %><% if(m.latest.status==='HELD'&&m.latest.hold_reason){ %>. <%= m.latest.hold_reason %><% } %><% if(m.latest.status==='FAILED'&&m.latest.hold_reason){ %>. <%= m.latest.hold_reason %><% } %></p>
+    <% if(m.canSend){ %><form method="post" action="<%= m.action %>/send"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary">Email the briefing now</button></form><% } %>
+  <% } %>
+  <% if(!briefing&&m.held.length){ %>
+    <h3>Waiting for you</h3>
+    <ul class="rm-list">
+      <% m.held.forEach(h=>{ %><li class="list-row" data-held-report="<%= h.id %>"><span><strong><%= h.title %></strong> · <%= h.at %><br><span class="cell-sub"><%= h.reason %></span></span>
+        <% if(m.canSend){ %><form method="post" action="<%= m.action %>/send"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="deliveryId" value="<%= h.id %>"><button class="btn btn--sm">Send it now</button></form><% } %></li><% }) %>
+    </ul>
+  <% } %>
+  <form method="post" action="<%= m.action %>" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= m.revision %>">
+    <label>Send from
+      <select name="mailbox">
+        <option value=""><%= m.mailboxes.length?'Choose a mailbox':'No mailbox connected' %></option>
+        <% for(const box of m.mailboxes){ %><option value="<%= box.id %>"<%= m.chosen&&m.chosen.id===box.id?' selected':'' %>><%= box.name %><%= box.address?' ('+box.address+')':'' %></option><% } %>
+      </select>
+    </label>
+    <% if(!m.mailboxes.length){ %><p class="hint">Connect a mailbox in <a href="/settings/connections">Connections</a> to send these emails.</p><% } %>
+    <% if(briefing){ %>
+      <input type="hidden" name="recipientsShown" value="1">
+      <fieldset><legend>Send to</legend><% m.people.forEach(person=>{ %><label><input type="checkbox" name="recipients" value="<%= person.id %>"<%= person.chosen?' checked':'' %>> <%= person.name %></label><% }) %></fieldset>
+      <label>Hour<input type="number" name="hour" min="0" max="23" step="1" value="<%= m.hour %>" required></label>
+      <label>Minute<input type="number" name="minute" min="0" max="59" step="1" value="<%= m.minute %>" required></label>
+      <label>Days<select name="days"><option value="daily"<%= m.days==='daily'?' selected':'' %>>Every day</option><option value="weekdays"<%= m.days==='weekdays'?' selected':'' %>>Monday to Friday</option></select></label>
+      <p class="hint">On Monday to Friday, Monday's briefing covers the weekend too.</p>
+    <% } %>
+    <p><button class="btn">Save email settings</button></p>
+  </form>
+</section>

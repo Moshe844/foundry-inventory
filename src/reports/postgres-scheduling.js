@@ -50,6 +50,8 @@ async function enqueueDueInTransaction(client,at){const when=new Date(at),local=
       FROM stockchief_runtime.report_deliveries WHERE completed_at IS NOT NULL
       ORDER BY template_id,completed_at DESC) d
     WHERE d.template_id=t.id AND (t.last_delivered_at IS NULL OR t.last_delivered_at<=d.completed_at)`);
+  // Jobs 155 and 156: scheduled report emails and briefings sent from a mailbox.
+  await require('./agent-report-email').settle(client);
   return {queued};
 }
 
@@ -59,9 +61,19 @@ async function recordEmailAcceptance(client,workspaceId,emailJobId){
  for(const d of accepted.rows)await client.query(`UPDATE stockchief_runtime.report_templates SET last_delivered_at=$3,last_error=NULL WHERE workspace_id=$1 AND id=$2 AND (last_delivered_at IS NULL OR last_delivered_at<=$3)`,[workspaceId,d.template_id,d.completed_at]);
  return {sent:accepted.rowCount};
 }
+async function agentEmail(database,workspaceId,deliveryId){
+  if(!await require('./agent-report-email').ready(database))return false;
+  const policy=require('../commercial/agent-plan');
+  if(!policy.usesAgentTerms(await policy.accountState(database,workspaceId)))return false;
+  const row=(await database.query("SELECT schedule_key FROM stockchief_runtime.report_deliveries WHERE workspace_id=$1 AND id=$2",[workspaceId,deliveryId])).rows[0];
+  return Boolean(row&&!row.schedule_key.startsWith('manual:'));
+}
 async function generateDelivery(database,job){
   const {templateId,deliveryId}=job.payload||{};
   if(!job.workspaceId||!templateId||!deliveryId)throw new Error('A report delivery needs exact workspace and template identity.');
+  // Job 155: on the Agent terms a scheduled slot goes from the owner's chosen
+  // mailbox to the people chosen on the report (agent-report-email.js).
+  if(await agentEmail(database,job.workspaceId,deliveryId))return require('./agent-report-email').deliver(database,job.workspaceId,templateId,deliveryId);
   const template=(await database.query(`SELECT t.*,a.id AS account_id,a.email,u.role,u.permissions,d.schedule_key,coalesce(t.delivery_email,a.email) delivery_email
     FROM stockchief_runtime.report_templates t JOIN users u ON u.id=t.owner_user_id
       AND u.workspace_id=t.workspace_id JOIN accounts a ON a.id=u.account_id

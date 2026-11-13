@@ -1874,6 +1874,9 @@ function createPostgresAutopilotRouter(database,options={}){
       }
       const alertJob=require('../../autopilot/agent-alerts').forKey(req.params.job);
       if(alertJob)result.alerts=await require('../../autopilot/agent-alerts').panel(database,req.ctx,alertJob);
+      // Jobs 155 and 156: how report emails and the briefing are sent.
+      if(req.params.job===require('../../reports/agent-report-email').key)result.reportEmail=await require('../../reports/agent-report-email').panel(database,req.ctx);
+      if(req.params.job===require('../../autopilot/briefing-email').key)result.reportEmail=await require('../../autopilot/briefing-email').panel(database,req.ctx);
       if(req.params.job===require('../../autopilot/escalations').key)result.escalations=await require('../../autopilot/escalations').actions(database,req.ctx);
       if(req.params.job==='staff-count-lists')result.countAssignments={...await require('../../operations/agent-count-tasks').setup(database,req.ctx),requestKey:newId('count-assignment'),selectedLocationId:req.query.locationId};
       if(req.params.job==='vacation-deputy')result.vacation=await require('../../autopilot/vacation-deputy').setup(database,req.ctx);
@@ -1905,6 +1908,21 @@ function createPostgresAutopilotRouter(database,options={}){
     const alerts=require('../../autopilot/agent-alerts'),sent=await alerts.sendNow(database,req.ctx,req.params.job);
     req.flash('success',sent.emailed===1?'1 alert is on its way to you.':sent.emailed+' alerts are on their way to you.');
     res.redirect(303,alerts.pathFor(Number(req.params.job)));
+  }));
+  // Jobs 155 and 156: the mailbox, people and time, and sending a waiting email.
+  router.post('/autopilot/report-emails/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const mail=require('../../reports/agent-report-email'),saved=await mail.configure(database,req.ctx,req.params.job,req.body);
+    req.flash('success',saved.unchanged?'Nothing changed.':'Email settings saved.');
+    res.redirect(303,Number(req.params.job)===156?require('../../autopilot/briefing-email').path:mail.path);
+  }));
+  router.post('/autopilot/report-emails/:job/send',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const mail=require('../../reports/agent-report-email'),job=Number(req.params.job);
+    if(job===156){const sent=await require('../../autopilot/briefing-email').sendNow(database,req.ctx);
+      req.flash('success',sent.emailed===1?'The briefing is on its way.':'The briefing is on its way to '+sent.emailed+' people.');return res.redirect(303,require('../../autopilot/briefing-email').path);}
+    if(job!==155)throw new (require('../../domain/errors').NotFoundError)('Those email settings are not available.');
+    const sent=await mail.sendHeld(database,req.ctx,req.body.deliveryId);
+    req.flash('success',sent.queued===1?'The report is on its way.':'The report is on its way to '+sent.queued+' people.');
+    res.redirect(303,mail.path);
   }));
   // Job 172: answer an item passed on, answer every alert of a kind, or pass one on now.
   const back=(req,fallback)=>{const to=String(req.body.returnTo||'');return to.startsWith('/')&&!to.startsWith('//')?to:fallback;};

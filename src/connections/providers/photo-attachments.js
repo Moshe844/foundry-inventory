@@ -1,12 +1,15 @@
 'use strict';
 const {ValidationError}=require('../../domain/errors');
+const XLSX='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 function validate(value){
  if(value===undefined)return [];
  if(!Array.isArray(value)||value.length>3)throw new ValidationError('Choose up to three delivery photo copies.');
  return value.map(p=>{
-  // Delivery photos (job 46) and one statement PDF (job 81).
-  const document=p?.contentType==='application/pdf';
-  if(!p||!Buffer.isBuffer(p.content)||!p.content.length||p.content.length>(document?2097152:614400)||!['image/jpeg','image/png','application/pdf'].includes(p.contentType)||!/^[-a-zA-Z0-9_.]{1,120}$/.test(p.filename)||document&&p.content.subarray(0,5).toString()!=='%PDF-')throw new ValidationError(document?'This PDF attachment needs review before sending.':'This photo attachment needs review before sending.');
+  // Delivery photos (job 46), one statement PDF (job 81) and one report
+  // file, Excel or PDF (job 155).
+  const document=p?.contentType==='application/pdf'||p?.contentType===XLSX;
+  if(!p||!Buffer.isBuffer(p.content)||!p.content.length||p.content.length>(document?2097152:614400)||!['image/jpeg','image/png','application/pdf',XLSX].includes(p.contentType)||!/^[-a-zA-Z0-9_.]{1,120}$/.test(p.filename)
+    ||p.contentType==='application/pdf'&&p.content.subarray(0,5).toString()!=='%PDF-'||p.contentType===XLSX&&p.content.readUInt32LE(0)!==0x04034b50)throw new ValidationError(p?.contentType===XLSX?'This Excel attachment needs review before sending.':document?'This PDF attachment needs review before sending.':'This photo attachment needs review before sending.');
   return p;
  });
 }

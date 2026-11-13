@@ -167,6 +167,8 @@ async function runtimeSweep(job,client,options={}){
   await require('../assistant/postgres-credit-maintenance').reconcile(client,{olderThan:new Date(now-30*60_000).toISOString()});
   await require('../commercial/ai-spending-notifications').sweep(client);
   await require('../reports/postgres-scheduling').enqueueDue(client,at);
+  // Job 156: the daily briefing at each business's chosen time.
+  await require('../autopilot/briefing-email').enqueueDue(client,at);
   await require('../custody/postgres-billing').enqueueDue(client);
   await require('../payments/postgres-provenance').queueMissing(scopedDatabase(client));
   const staleImportAt=new Date(now-15*60_000).toISOString();
@@ -873,6 +875,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.sales-quote.cross-sell.v1':external((job,database)=>require('../sales/agent-quote-companions').run(database,job.workspaceId,job.payload.quoteId)),
   'agent.customer-invoice':external((job,database)=>require('../accounting/agent-customer-invoices').work(database,job.workspaceId,job.payload.invoiceId)),
   'agent.escalations':external((job,database)=>require('../autopilot/escalations').run(database,job.workspaceId)),
+  'agent.briefing-delivery':external((job,database)=>require('../autopilot/briefing-email').run(database,job.workspaceId,job.payload)),
   'agent.supplier-claims':external(async(job,database)=>{
     const result=await require('../purchasing/agent-supplier-claims').run(database,job.workspaceId,job.payload);
     // After the last claim page, follow sent claims: replies, settlements and reminders.
