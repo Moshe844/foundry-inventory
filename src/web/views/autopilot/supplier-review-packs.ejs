@@ -33,8 +33,9 @@
 <p class="cell-sub">Each supplier’s pack goes to the email on their supplier record. A supplier with no email waits in Needs you.</p>
 </section>
 
-<section class="card section"><h2>One supplier’s pack for <%= current.label %></h2>
+<section class="card section"><h2>One supplier’s pack for <%= lookupSpan.label %></h2>
 <form method="get" action="<%= lookup %>" class="form-stack">
-<label class="rm-field"><span>Exact supplier name or ID</span><input name="filter" maxlength="150" required></label>
+<label class="rm-field"><span>Exact supplier name or ID</span><input name="filter" value="<%= filter %>" maxlength="150" required></label>
+<label class="rm-field"><span>Completed quarter</span><input name="quarter" value="<%= quarter %>" pattern="[0-9]{4}-Q[1-4]" maxlength="7" required></label>
 <button class="btn">Download PDF</button></form>
 </section>

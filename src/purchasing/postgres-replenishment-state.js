@@ -1,6 +1,6 @@
 'use strict';
 const decision=require('./replenishment-decision');
-async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibleOnly=false,onlySkuIds=null,cycleId=null}={}){
+async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibleOnly=false,onlySkuIds=null,cycleId=null,learnSupplierHabits=true}={}){
  // Fresh imports can underestimate thousands of variants as one row. Drive
  // eligibility and final detail from their IDs with bounded primary-key reads;
  // do not repeatedly scan the catalogue or the same position CTE for each SKU.
@@ -81,7 +81,7 @@ async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibl
  // Job 211: a product with no deliveries of its own and no lead time from the
  // owner plans with its supplier's usual lead time instead of the promise.
  const habitIds=result.rows.flatMap(row=>[row.habit_supplier_id,row.global_policy?.habit_supplier_id]).filter(Boolean);
- const learned=habitIds.length?await require('../autopilot/partner-habits').leads(database,workspaceId,habitIds):new Map();
+ const learned=learnSupplierHabits&&habitIds.length?await require('../autopilot/partner-habits').leads(database,workspaceId,habitIds):new Map();
  for(const row of result.rows){
   if(learned.has(row.habit_supplier_id)){row.lead_time_days=learned.get(row.habit_supplier_id);row.lead_time_assumed=false;}
   if(row.global_policy&&learned.has(row.global_policy.habit_supplier_id))row.global_policy.effective_lead=learned.get(row.global_policy.habit_supplier_id);

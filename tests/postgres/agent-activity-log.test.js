@@ -117,6 +117,15 @@ test('the activity log says what StockChief did and why, undoes it safely, and t
  assert.equal(written.day,today);assert.ok(written.actions>=3);
  assert.deepEqual(await digest.deliver(db,ws,{now:tomorrow}),{replayed:true,day:today});
  assert.equal(await audits('Daily work digest prepared'),1);
+ for(const tier of ['pro','enterprise']){
+  await subscribe(tier);
+  const saved=await digest.report(db,ctx,{filter:today});
+  assert.ok(saved.activity.entries.length>=3,tier+' opens the same digest');
+  assert.ok(saved.activity.entries.some(entry=>entry.undo),tier+' includes one-tap undo');
+  assert.deepEqual(await digest.deliver(db,ws,{now:tomorrow}),{replayed:true,day:today});
+  await browser.get(digest.path+'?filter='+today).expect(200);
+ }
+ await subscribe('growth');
  const lines=await digest.lines(db,ws,[{reference:today}]);
  assert.match(lines[0],new RegExp('^What StockChief did on '+today+': \\d+ actions\\.$'));
  assert.ok(lines.some(l=>l.startsWith('Catalog fix made on its own')&&l.includes('Already undone.')),lines.join('\n'));

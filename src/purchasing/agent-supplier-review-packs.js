@@ -294,9 +294,11 @@ async function page(db,ctx,query={}){
   const setting=(await db.query(`SELECT connector_id,revision FROM ${SETTINGS} WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0]||null;
   const paused=await reports.paused(db,ctx.workspaceId);
   const who=policy.permits(state.plan,JOB,'draft')?await authority(db,ctx.workspaceId,state):{mode:'watch',reason:null};
+  const lookupSpan=source.quarter(today,query.quarter),quarter=lookupSpan.end.slice(0,4)+'-Q'+Math.ceil(Number(lookupSpan.end.slice(5,7))/3);
   return {span,period,periods,current,packs,sender,setting,paused,who,shadow:Boolean(state.shadow),
     waiting:packs.filter(p=>p.status==='WAITING').length,
-    lookup:'/autopilot/reviews/quarterly-supplier-pack/download'};
+    lookupSpan,quarter,filter:String(query.filter||'').slice(0,150),
+    lookup:'/autopilot/reviews/quarterly-supplier-pack/download?'+new URLSearchParams({quarter})};
 }
 async function kept(db,ctx,id){
   await access(db,ctx);
