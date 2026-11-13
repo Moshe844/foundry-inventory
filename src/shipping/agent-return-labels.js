@@ -273,7 +273,7 @@ async function schedule(c,workspaceId,cycleId){
   if(!await installed(c))return {queued:false};
   const account=await policy.accountState(c,workspaceId);
   if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,JOB,'draft'))return {queued:false};
-  if(!(await c.query(`SELECT 1 FROM (${CANDIDATES} UNION ALL SELECT shipment_id FROM (${SENDABLE}) s) waiting LIMIT 1`,[workspaceId])).rowCount)return {queued:false};
+  if(!(await c.query(`SELECT 1 FROM (SELECT 1 FROM (${CANDIDATES}) a UNION ALL SELECT 1 FROM (${SENDABLE}) b) waiting LIMIT 1`,[workspaceId])).rowCount)return {queued:false};
   await jobs.enqueue(scoped(c),{workspaceId,kind:KIND,idempotencyKey:'return-labels:cycle:'+cycleId,payload:{cycleId},priority:45,maxAttempts:3});
   return {queued:true};
 }

@@ -79,7 +79,10 @@ test('Pro and Custom buy and email alone within the owner’s $ per label; first
  await f.limits(2000);await f.routine();run=await f.runOf(first.id);assert.equal(run.status,'SUGGESTED');assert.match(run.label_reason,/first email/);
  await f.approve(first);await f.cycle();assert.equal(f.sent.length,1);
  for(const plan of ['pro','enterprise']){
-  await f.subscribe(plan);const r=await f.rma();await f.cycle();run=await f.runOf(r.id);
+  await f.subscribe(plan);const r=await f.rma();
+  // The routine's own cycle finds the waiting return.
+  assert.deepEqual(await db.transaction(c=>require('../../src/shipping/agent-return-labels').schedule(c,ctx.workspaceId,'schedule-'+plan)),{queued:true},plan);
+  await f.cycle();run=await f.runOf(r.id);
   assert.deepEqual([run.status,run.mode,run.decided_by],['QUEUED','automatic',null],plan);
  }
  assert.equal(f.sent.length,3);assert.equal(f.state.buys,3);
