@@ -98,7 +98,8 @@ async function currentItems(database,workspaceId,owner,state){
   const decisions=await require('../projections/postgres-service').needs(database,workspaceId,owner.id);
   for(const d of decisions){
     const source=String(d.sourceId||'');
-    if(d.kind!=='approval'||!d.href||source.startsWith('escalation:')||source.startsWith('po-signature-'))continue;
+    // A decision only the owner may make (ownerOnly) is never passed to staff.
+    if(d.kind!=='approval'||!d.href||d.ownerOnly||source.startsWith('escalation:')||source.startsWith('po-signature-'))continue;
     const amount=Number.isSafeInteger(d.moneyValue)&&/^[A-Z]{3}$/.test(d.moneyCurrency||'')?d.moneyValue:null;
     items.push({key:'approval:'+hash([source,d.href]),source:'APPROVAL',job_id:null,title:String(d.title||'An approval').slice(0,300),href:String(d.href).slice(0,500),
       permission:String((d.requiredPermissions||[])[0]||permissions.VIEW).slice(0,60),amount_minor:amount,currency:amount==null?null:d.moneyCurrency,
