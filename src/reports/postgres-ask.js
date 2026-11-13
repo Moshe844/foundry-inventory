@@ -71,6 +71,7 @@ function normalizeProposal(proposed,actor){
 
 async function resolveUniqueCategory(database,ctx,actor,spec){
   const enumerated=registry.get(spec.dataset)?.enumFields||[];
+  if(!Array.isArray(spec.filters))return null;// A combined report filters each source, not the whole.
   for(const [index,filter] of spec.filters.entries()){
     if(filter.operator!=='equals'||!enumerated.includes(filter.field))continue;
     const matchingFilters=spec.filters.map((entry,entryIndex)=>entryIndex===index
@@ -218,7 +219,7 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
         const resolved=await resolveUniqueCategory(database,ctx,actor,spec);
         if(resolved){({spec,result,interpretation}=resolved);}
       }
-      if(attempt===0&&!result.rows.length&&spec.filters.some((filter)=>
+      if(attempt===0&&!result.rows.length&&(spec.filters||[]).some((filter)=>
         filter.operator==='equals'&&registry.get(spec.dataset)?.fields[filter.field]==='text'))
         throw new Error('The exact text filter returned no records. Reconsider whether the owner gave a partial text/category label; use contains only if that preserves the requested meaning. Never fabricate matching rows.');
       const visible=result.displayRows.slice(0,50).map((row,index)=>({...row,
@@ -251,8 +252,10 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
         continue;}
       console.warn('[stockchief] governed Ask report failed',error.code||error.name||'unknown',
         String(error.details?.technical||error.message||'').slice(0,180));
-      return {status:'CLARIFY',answer:error.code==='validation_error'?String(error.message).slice(0,500):'StockChief could not finish that report. Your records are unchanged. Open Reports to choose different fields.',
-        rows:[],columns:[],handoff:{href:'/reports',label:'Browse available datasets'}};
+      // Job 154: a refused sentence comes back with sentences that do build a report here.
+      const examples=await require('./build-availability').examples(database,ctx,actor).catch(()=>[]);
+      return {status:'CLARIFY',answer:(error.code==='validation_error'?String(error.message).slice(0,500):'StockChief could not finish that report. Your records are unchanged. Open Reports to choose different fields.')+(examples.length?' You could ask for one of these instead.':''),
+        rows:[],columns:[],choices:examples.map(example=>({label:example,value:example})),handoff:{href:'/reports',label:'Browse available datasets'}};
     }
   }
 }

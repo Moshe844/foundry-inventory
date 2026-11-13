@@ -13,7 +13,7 @@ async function progress(db,ctx,id){return (await db.query(`SELECT id,status,answ
   WHERE kind='database-read' AND last_seen_at>now()-interval '30 seconds') ELSE
  COALESCE((SELECT p.worker_seen_at>now()-interval '30 seconds' FROM stockchief_runtime.codex_pilot_workspace_access p WHERE p.workspace_id=assistant_goals.workspace_id),false) END AS worker_available,
  jsonb_build_object('runtime',checkpoint->'runtime','runStartedAt',checkpoint->'runStartedAt',
- 'conversationState',checkpoint->'conversationState','delivery',checkpoint->'delivery','prerequisiteHandoffs',checkpoint->'prerequisiteHandoffs','lifecycleStage',checkpoint->'lifecycleStage',
+ 'conversationState',checkpoint->'conversationState','delivery',checkpoint->'delivery','prerequisiteHandoffs',checkpoint->'prerequisiteHandoffs','lifecycleStage',checkpoint->'lifecycleStage','answerSources',checkpoint->'answerSources',
  'harness',jsonb_build_object('requestRefused',COALESCE(checkpoint#>>'{harness,failure,code}'='REQUEST_REFUSED',false),'userQuestion',checkpoint#>'{harness,userQuestion}','interruption',checkpoint#>'{harness,interruption}',
  'goalExpired',COALESCE(checkpoint#>>'{harness,failure,code}'='GOAL_EXPIRED',false),
  'completionSource',checkpoint#>'{harness,completionSource}','admissionBlock',checkpoint#>'{harness,admissionBlock}',

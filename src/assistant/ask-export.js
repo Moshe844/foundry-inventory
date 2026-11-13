@@ -86,6 +86,23 @@ function goal(found,index,fullAnswer=false,format){
  if(!table)throw new NotFoundError('That answer has no table to download.');
  return fromTable(table,found.original_request);
 }
+// Job 160: a document the agent wrote for an answer (a draft, a plan, a list)
+// downloads like any answer: its tables in columns for a spreadsheet, its
+// words in a PDF.
+function work(product,format){
+ if(!product||typeof product.content!=='string')throw new NotFoundError('That work product is not available.');
+ const title=String(product.title||'StockChief work').slice(0,120),inText=SHEET.has(format)?tables(product.content):[];
+ if(inText.length)return inText.length===1?fromTable(inText[0],title):stacked(inText,title);
+ const text=written(product.content);return {...text,config:{title},sourceLabel:title};
+}
+// A whole conversation: each question and answer in order, long answers split
+// between words so no cell or PDF row cuts one short.
+function conversation(turns,publicText=text=>text){
+ if(!Array.isArray(turns)||!turns.length)throw new NotFoundError('That conversation has nothing to download.');
+ const lines=(who,text)=>String(text).split(/\r?\n/).flatMap(line=>wrap(line)).map((line,index)=>[index?'':who,line]);
+ const rows=turns.flatMap(turn=>[...lines('You',turn.message||''),...lines('StockChief',publicText(turn.answer||'(no answer recorded)'))]);
+ return {...shape({title:'StockChief conversation',columns:['who','said'],labels:{who:'Who',said:'Said'},rows}),sourceLabel:'StockChief conversation'};
+}
 // A download is offered only for an answer worth keeping: one with records, a
 // table, or a written report. "Opening Purchasing." is not a document.
 // ask-tools.js applies the same length to answers written in the page.
@@ -101,4 +118,4 @@ async function keepable(database,ctx,ids){
    FROM stockchief_runtime.assistant_interactions WHERE workspace_id=$1 AND actor_user_id=$2 AND id=ANY($3::text[])`,[ctx.workspaceId,ctx.actorId,wanted])).rows;
  return rows.filter(row=>worthKeeping(row.answer,row.row_count)).map(row=>row.id);
 }
-module.exports={TYPES,LONG_ANSWER,tables,send,interaction,goal,worthKeeping,keepable};
+module.exports={TYPES,LONG_ANSWER,tables,send,interaction,goal,work,conversation,worthKeeping,keepable};

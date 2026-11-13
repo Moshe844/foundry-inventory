@@ -410,6 +410,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
      progress:h.admissionBlock?{...h.progress,finalReason:h.admissionBlock.code,requiresUserInput:false}:h.progress});
     goal.status=classified.status;goal.answer=classified.answer;
     if(verified&&goal.status==='COMPLETED'&&check.delivery)goal.checkpoint.delivery=check.delivery;
+    if(verified&&goal.status==='COMPLETED'&&check.sources?.length)goal.checkpoint.answerSources=check.sources;
     if(verified&&navigation&&goal.status==='COMPLETED'){
      // A private browser observation is preparation, not user-visible delivery.
      // The authenticated website acknowledges the actual rendered destination.

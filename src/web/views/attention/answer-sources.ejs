@@ -1,0 +1,9 @@
+<%# Job 153: the records behind an answer. The list it counted from, filtered the same way, then the records themselves. Only pages this person may open reach here. %>
+<% var links=(locals.sources||[]).filter(function(link){return !(locals.skip||[]).includes(link.href);}); if(links.length){ var records=links.filter(function(link){return link.kind==='record';}); %>
+<details class="rm-chat-evidence" data-answer-sources <%= locals.open?'open':'' %>>
+  <summary><span><%- helpers.icon('layers',{size:15}) %> Records behind this answer</span><small><%= records.length?helpers.qty(records.length)+' '+helpers.plural(records.length,'record'):helpers.qty(links.length)+' '+helpers.plural(links.length,'list') %></small></summary>
+  <div class="rm-chat-evidence__rows">
+    <% links.forEach(function(link){ %><div class="rm-chat-evidence__row"><span><a href="<%= link.href %>"><%= link.label %></a></span><small><%= link.kind==='record'?'Record':'The matching records' %></small></div><% }) %>
+  </div>
+</details>
+<% } %>

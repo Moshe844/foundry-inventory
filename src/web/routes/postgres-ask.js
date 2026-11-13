@@ -61,7 +61,8 @@ function goalFor(turn,index,position=0,proposal=null){
         ?proposal.deliveryStatus==='SENT'?'Sent':proposal.deliveryStatus==='FAILED'?'Delivery issue':'Sending'
         :'Completed'
       :['CANCELLED','SUPERSEDED'].includes(proposal?.status)?'Discarded':label.label,
-    statusTone:label.tone,createdAt:turn.created_at,updatedAt:turn.created_at,index};
+    statusTone:label.tone,createdAt:turn.created_at,updatedAt:turn.created_at,index,
+    sources:status==='answered'||status==='clarify'?turn.intent?.presentation?.sources||[]:[]};
 }
 
 function transcriptFor(interactions,proposals=new Map()){
@@ -101,6 +102,7 @@ function resultFor(turn,proposal=null){
   return {question:turn.message,answer,spoken:null,progressiveDisclosure:false,rows,columns,
     columnLabels:turn.intent?.presentation?.columnLabels||{},
     reportConfig:turn.intent?.reportConfig||null,
+    sources:turn.intent?.presentation?.sources||[],
     comparisonSafe:turn.intent?.comparisonSafe!==false,
     chartAmounts:turn.intent?.presentation?.chartAmounts||null,
     rowCount:rows.length,totalMatches:rows.length,sections:[],supported:turn.status!=='CLARIFY',
@@ -207,6 +209,13 @@ function createPostgresAskRouter(database,options={}){
       continuation:{sourceGoalId:goal.id,deliveryId:saved.id,sourcePage:goal.checkpoint.page,workProducts:saved.workProducts}});
     req.session.postgresAskNavigationGoal=next.goalId;return next;
   }
+  // Job 160: the same work product as a PDF, a spreadsheet or CSV.
+  router.get('/ask/goals/:id/work/:workId.:format(pdf|xlsx|csv)',asyncRoute(async(req,res)=>{
+    const goal=await deliveredGoal(req),work=delivery.visible(goal).workProducts.find(p=>p.id===req.params.workId);
+    if(!work)throw new ValidationError('That work product is not available.');
+    const exporter=require('../../assistant/ask-export');
+    return exporter.send(res,req.params.format,exporter.work(work,req.params.format));
+  }));
   router.get('/ask/goals/:id/work/:workId',asyncRoute(async(req,res)=>{
     const goal=await deliveredGoal(req),work=delivery.visible(goal).workProducts.find(p=>p.id===req.params.workId);
     if(!work)throw new ValidationError('That work product is not available.');
@@ -302,7 +311,8 @@ function createPostgresAskRouter(database,options={}){
       detail:{kind:e.detail.kind,tool:typeof e.detail.tool==='string'?e.detail.tool:null,status:e.detail.kind==='runtime_starting'?e.detail.status:null}}));
     return {id:goal.id,status:goal.status,answer:state.message,conversation:state,createdAt:goal.created_at,updatedAt:goal.updated_at,runStartedAt:goal.checkpoint.runStartedAt,turns:goal.turns,tools:goal.tool_calls,events:safeEvents,
       workerAvailable,continuation,approvalIds:(approvalInbox?.approvals||[]).map(card=>card.id),
-      delivery:delivery.visible(goal),prerequisiteHandoffs:goal.checkpoint.prerequisiteHandoffs||[],navigation:navigation?{...navigation,automatic:req.session.postgresAskNavigationGoal===goal.id}:null};
+      delivery:delivery.visible(goal),prerequisiteHandoffs:goal.checkpoint.prerequisiteHandoffs||[],
+      sources:goal.status==='COMPLETED'?require('../../assistant/answer-sources').visible(req.user,goal.checkpoint.answerSources):[],navigation:navigation?{...navigation,automatic:req.session.postgresAskNavigationGoal===goal.id}:null};
   }
   router.get('/ask/goals/:id',asyncRoute(async(req,res)=>{
     res.set('Cache-Control','no-store');const goal=await goalSnapshot(req);
@@ -480,10 +490,18 @@ function createPostgresAskRouter(database,options={}){
     const recentRequests=await chats.list(database,req.ctx,{limit:40}),businessZone=(await require('../../lib/business-time').forWorkspace(database,req.ctx.workspaceId)).timeZone;
     const currentChat=recentRequests.find(chat=>chat.chat_id===req.session.postgresAskConversationId)||null;
     const downloadableAnswers=await require('../../assistant/ask-export').keepable(database,req.ctx,transcript.flatMap(turn=>(turn.goals||[]).map(goal=>goal.id)));
+    // Job 153: each answer's records, limited to the pages this person may open.
+    const answerSources=require('../../assistant/answer-sources');
+    for(const turn of transcript){for(const goal of turn.goals||[])goal.sources=answerSources.visible(req.user,goal.sources);
+      if(turn.agentGoal)turn.agentGoal.answerSources=answerSources.visible(req.user,turn.agentGoal.checkpoint?.answerSources);}
+    const latestResult=submission?null:resultFor(latest,latestProposal);
+    if(latestResult){latestResult.sources=answerSources.visible(req.user,latestResult.sources);
+      // A row whose record page this person may not open is shown without its link.
+      latestResult.rows=latestResult.rows.map(row=>row?.href&&!answerSources.visible(req.user,[{href:row.href}]).length?{...row,href:undefined}:row);}
     return res.page('attention/ask',{voiceNotes:true,downloadableAnswers,recentRequests,chatGroups:chats.groups(recentRequests,businessZone),currentChat,chatReturn:'/ask',title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,aiCost:require('../../commercial/ai-spending-limits').forAsk(await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId)),...rules,
       codexPilot:pilotView,adaptiveGoal:activeGoal,agentInspection:Boolean(options.agentInspection),focusedGoalId:focusedGoal?.id||null,renderAgentAnswer:require('../public/agent-answer').render,
       about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
-      question:submission?.draft||latest?.message||'',result:submission?null:resultFor(latest,latestProposal),error:submission?.message||null,submissionError:submission,
+      question:submission?.draft||latest?.message||'',result:latestResult,error:submission?.message||null,submissionError:submission,
       autoSend:req.query.send==='1',prefill:String(req.query.q||'').slice(0,2000),
       conversation:null,transcript,currentGoalId:latest?.id||null,conversationId:`postgres:${req.ctx.workspaceId}`,currentChatId:req.session.postgresAskConversationId,currentChatContext:require('../../assistant/ask-chat-context').issue(options.conversationSecret,{workspaceId:req.ctx.workspaceId,actorId:req.ctx.actorId,sessionId:req.sessionID,chatId:req.session.postgresAskConversationId,startedAt:req.session.postgresAskStartedAt||null}),
       aiConfigured:Boolean(options.provider||config.ai.configured||nativeServiceSelected||options.agentInspection&&activeGoal?.checkpoint.runtime==='codex-staging'),usageKey:newId('askusage'),
@@ -502,6 +520,11 @@ function createPostgresAskRouter(database,options={}){
     if(req.session.postgresAskConversationId===req.params.id){req.session.postgresAskStartedAt=(await database.query('SELECT clock_timestamp()::text AS started_at')).rows[0].started_at;req.session.postgresAskConversationId=newId('chat');delete req.session.askSubmission;req.session.postgresAskNavigationGoal=null;}
     req.flash('success','Conversation deleted.');
     return res.redirect(303,/[?&]chat=/.test(chatReturn(req))?'/ask':chatReturn(req));
+  }));
+  // Job 160: the whole conversation as a PDF, a spreadsheet or CSV too.
+  router.get('/ask/chats/:id/download.:format(pdf|xlsx|csv)',asyncRoute(async(req,res)=>{
+    const exporter=require('../../assistant/ask-export');
+    return exporter.send(res,req.params.format,exporter.conversation(await chats.transcript(database,req.ctx,req.params.id),text=>conversation.publicText(text)));
   }));
   router.get('/ask/chats/:id/download',asyncRoute(async(req,res)=>{
     const turns=await chats.transcript(database,req.ctx,req.params.id),text=turns.map(turn=>'You: '+turn.message+'\n\nStockChief: '+conversation.publicText(turn.answer||'(no answer recorded)')).join('\n\n---\n\n');

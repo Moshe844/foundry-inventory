@@ -200,12 +200,22 @@ function createPostgresReportsRouter(database){
     const description=String(req.body.q||'').trim();
     if(!description||description.length>1800)throw new ValidationError('Describe the report in 1 to 1,800 characters.');
     const previous=req.session.reportDraft?.workspaceId===req.ctx.workspaceId?req.session.reportDraft.definition:null;
-    const result=await require('../../assistant/postgres-service').buildReportDefinition(database,req.ctx,description,{provider:req.app.locals.aiProvider,priorReport:previous,acceptReport:async reportConfig=>{
+    // Job 154: a sentence StockChief cannot turn into a report is refused with
+    // sentences this person can build instead; nothing is saved or charged.
+    const refuse=async(message,status=422)=>{const building=require('../../reports/build-availability');
+      // Sentences are suggested only while sentences can be built; otherwise templates remain.
+      const examples=(await building.state(database,{provider:req.app.locals.aiProvider})).available?await building.examples(database,req.ctx,await actorFor(database,req.ctx)):[];
+      return res.status(status).json({ok:false,creditsUsed:0,examples,message:String(message).replace(/\s*No AI credits will be used\.?\s*$/,'')+(examples.length?' For example: '+examples.map(example=>'“'+example+'”').join(', ')+'.':'')+' No AI credits were used. Nothing was saved.'});};
+    let result;
+    try{result=await require('../../assistant/postgres-service').buildReportDefinition(database,req.ctx,description,{provider:req.app.locals.aiProvider,priorReport:previous,acceptReport:async reportConfig=>{
       const actor=await actorFor(database,req.ctx),definition=await reports.assertWritableCapabilities(database,req.ctx,reportConfig,actor);
-      req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition,schedule:null};
+      req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition,schedule:null,sentence:description};
       await saveDraftSession(req);return definition;
-    }});
-    if(!result.reportConfig)return res.status(422).json({ok:false,creditsUsed:0,message:(result.answer||'What would you like this report to measure?')+' No AI credits were used.'});
+    }});}
+    catch(error){if(error.code!=='entitlement_required')throw error;
+      // A report that needs a source this plan does not include shows the lock, not an error page.
+      return refuse('That report needs records your plan does not include.',402);}
+    if(!result.reportConfig)return refuse(result.answer||'What would you like this report to measure?');
     const definition=result.reportConfig;
     req.flash('success',`Report ready. AI credits used: ${result.creditsUsed||0}.`);
     const url='/reports/builder?draft=1#report-manual';
@@ -227,7 +237,8 @@ function createPostgresReportsRouter(database){
       message:'This report dataset is unavailable to your account.'});
     const saved=req.query.saved?await reports.load(database,req.ctx,actor,String(req.query.saved)):null;
     return res.page('reports/builder',{title:saved?'Edit report':'Build a report',nav:'accounting',
-      datasets,dataset,saved,draft,draftSchedule,builderEntry,unavailableSources,startInEditor:Boolean(req.query.dataset),reportCurrency:await baseCurrency(database,req.ctx),reportBuildAvailability:await require('../../reports/build-availability').state(database,{provider:req.app.locals.aiProvider}),reportDescription:String(req.query.q||'').slice(0,1800)});
+      datasets,dataset,saved,draft,draftSchedule,builderEntry,unavailableSources,startInEditor:Boolean(req.query.dataset),
+      draftSentence:draft?String(req.session.reportDraft.sentence||'').slice(0,1800)||null:null,reportCurrency:await baseCurrency(database,req.ctx),reportBuildAvailability:await require('../../reports/build-availability').state(database,{provider:req.app.locals.aiProvider}),reportDescription:String(req.query.q||'').slice(0,1800)});
   }));
   router.post('/reports/preview',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
@@ -261,7 +272,7 @@ function createPostgresReportsRouter(database){
     const dimension=dimensions.find((entry)=>entry.key===(req.query.dimension||selection?.dimension))||dimensions[0];
     if(!dimension)throw new ValidationError('No governed shared identifiers are available to this account.');
     return res.page('reports/compose',{title:saved?'Edit combined report':'Combine datasets',
-      nav:'accounting',saved,draft,dimensions,dimension,
+      nav:'accounting',saved,draft,dimensions,dimension,draftSentence:draft?String(req.session.reportDraft.sentence||'').slice(0,1800)||null:null,
       draftSchedule:draft?req.session.reportDraft.schedule||null:null});
   }));
   router.get('/reports/run',asyncRoute(async(req,res)=>{

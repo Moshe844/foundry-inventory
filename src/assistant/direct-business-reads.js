@@ -49,13 +49,15 @@ async function balances(db,ctx,query){
  const nothing=query.party?(bills?'You have no unpaid bills from ':'You have no unpaid invoices for ')+query.party+'.':bills?(query.late?'You have no late bills.':'You have no unpaid bills.'):(query.late?'Nobody is late paying you.':'Nobody owes you money right now.');
  if(!open.length)return {answer:nothing,rows:[],columns:[],handoff:{href,label}};
  const byParty=new Map();
- for(const r of open){const key=r.currency+'|'+r.party_id,p=byParty.get(key)||{name:r.party_name,currency:r.currency,totalMinor:0,count:0,lateMinor:0};p.totalMinor+=Number(r.balance_minor);p.count++;if(r.daysLate>0)p.lateMinor+=Number(r.balance_minor);byParty.set(key,p);}
+ for(const r of open){const key=r.currency+'|'+r.party_id,p=byParty.get(key)||{name:r.party_name,partyId:r.party_id,currency:r.currency,totalMinor:0,count:0,lateMinor:0};p.totalMinor+=Number(r.balance_minor);p.count++;if(r.daysLate>0)p.lateMinor+=Number(r.balance_minor);byParty.set(key,p);}
  const currencies=[...new Set(open.map(r=>r.currency))],parties=[...byParty.values()].sort((a,b)=>b.totalMinor-a.totalMinor||a.name.localeCompare(b.name));
  const sentences=currencies.map(currency=>{const list=parties.filter(p=>p.currency===currency),total=list.reduce((n,p)=>n+p.totalMinor,0),late=list.reduce((n,p)=>n+p.lateMinor,0),names=list.map(p=>p.name+' '+format(p.totalMinor,currency)).join(', '),who=bills?'supplier':'customer';
   const lead=list.length>3?(query.late?list.length+(bills?' suppliers are overdue':' customers are late'):bills?list.length+' suppliers to pay':list.length+' customers owe you'):names;
   return lead+'.\n'+(query.late?'Total late: ':bills?'Total you owe: ':'Total owed: ')+format(total,currency)+(late&&!query.late?'\n'+format(late,currency)+' of that is late.':'');});
  const named=parties.length<=3;return {answer:(query.late&&named?(bills?'Late bills: ':'Late to pay you: '):bills&&named?'You owe: ':'')+sentences.join('\n\n'),
-  rows:parties.map(p=>({[bills?'supplier':'customer']:p.name,documents:p.count,amount:format(p.totalMinor,p.currency),late:p.lateMinor?format(p.lateMinor,p.currency):'None'})),
+  // Job 153: each name opens exactly the open documents it counted.
+  rows:parties.map(p=>({[bills?'supplier':'customer']:p.name,documents:p.count,amount:format(p.totalMinor,p.currency),late:p.lateMinor?format(p.lateMinor,p.currency):'None',
+   href:'/money/'+query.side+'?'+new URLSearchParams({party:p.partyId,...(query.late?{aging:'late'}:{})})})),
   columns:[bills?'supplier':'customer','documents','amount','late'],handoff:{href,label}};
 }
 // "Give me a table" with nothing else named means the answer just given.

@@ -24,6 +24,7 @@
     <p data-goal-recovery-reason class="rm-agent__hint" <%= goal.status==='BLOCKED'&&goal.continuation?.eligible===false?'':'hidden' %>><%= goal.continuation?.eligible===false?goal.continuation.reason:'' %></p>
   <% } %>
   <div data-goal-delivery data-revision="<%= delivered?.id||'' %>"><%- include('agent-delivery',{goal,delivery:delivered}) %></div>
+  <div data-goal-sources><%- include('../attention/answer-sources',{sources:goal.status==='COMPLETED'?goal.answerSources||[]:[]}) %></div>
   <div data-goal-prerequisites>
     <% for(const handoff of goal.checkpoint.prerequisiteHandoffs||[]){ %>
       <a class="rm-btn rm-btn--sm" href="<%= handoff.href %>"><%= handoff.label %></a>
