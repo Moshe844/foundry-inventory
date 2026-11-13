@@ -26,7 +26,11 @@ function createPostgresPlanningRouter(database) {
     const recommendations=agentTerms?overview.recommendations.filter(r=>r.kind!=='reorder_point'||!r.evidence.locationId):overview.recommendations;
     const reorderRefresh=agentTerms&&permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)&&agent.permits(state.plan,21,'suggest');
     const demandForecasts=agentTerms&&permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)&&agent.permits(state.plan,144,'suggest');
-    return res.page('planning/postgres-index',{title:'What happens next',nav:'inventory',room:true,...overview,recommendations,agentTerms,manageRules,rules,safetyStock,runOut,reorderRefresh,demandForecasts,planLocksReorder:agentTerms&&state.plan==='starter',
+    // Job 203: the value of excess stock is a cost, and the total held is a valuation.
+    const seesCosts=require('../../actions/financial-visibility').costs(req.user),seesValue=permissions.can(req.user,permissions.VIEW_ACCOUNTING);
+    if(!seesCosts)overview.excess=overview.excess.map(row=>({...row,excessValueMinor:null,costMinor:null}));
+    if(!seesValue)overview.heldMinor=null;
+    return res.page('planning/postgres-index',{title:'What happens next',nav:'inventory',room:true,...overview,recommendations,seesCosts,agentTerms,manageRules,rules,safetyStock,runOut,reorderRefresh,demandForecasts,planLocksReorder:agentTerms&&state.plan==='starter',
       mayAccept:row=>!agentTerms||permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)&&agent.permits(state.plan,row.kind==='safety_stock'?150:row.evidence.locationId?120:21,'draft'),
       canOperate:permissions.can(req.user,permissions.OPERATE),canAdmin:permissions.can(req.user,permissions.ADMIN)});
   }));
@@ -159,6 +163,11 @@ function createPostgresPlanningRouter(database) {
       reviewTerms:agent.permits(state.plan,runout().JOB,'suggest'),backTo:{href:'/planning',label:'Planning'}});
     try{
       const model=await runout().page(database,req.ctx,{number:req.query.page||1});
+      // Job 203: gross margin is for people who see accounting.
+      if(!permissions.can(req.user,permissions.VIEW_ACCOUNTING)){
+        const hide=r=>({...r,unit_margin_minor:null,daily_margin_minor:null,lost_margin_minor:null});
+        Object.assign(model,{flagged:model.flagged.map(hide),later:model.later.map(hide),marginHidden:true});
+      }
       return res.page('planning/run-out',{...view,model});
     }catch(error){
       if(error.code!=='entitlement_required'||!req.accepts('html'))throw error;

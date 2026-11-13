@@ -60,8 +60,12 @@ function createPostgresInventoryRouter(database) {
       layoutOnboardingEntry:{...res.locals.globalOnboardingEntry,state}});
   };
   router.get('/inventory',asyncRoute(renderList));
-  router.get('/inventory/overview',asyncRoute(async(req,res)=>res.page('inventory/position',{title:'Stock overview',nav:'inventory',room:true,postgresNative:true,
-    ...(await presenters.inventoryPosition(database,req.ctx.workspaceId))})));
+  router.get('/inventory/overview',asyncRoute(async(req,res)=>{
+    // Job 203: stock value is a valuation, shown only to people who see accounting.
+    const position=await presenters.inventoryPosition(database,req.ctx.workspaceId),valueHidden=!permissions.can(req.user,permissions.VIEW_ACCOUNTING);
+    return res.page('inventory/position',{title:'Stock overview',nav:'inventory',room:true,postgresNative:true,...position,
+      ...(valueHidden?{stockValue:null,valueHidden:true}:{})});
+  }));
   router.get('/inventory/table',asyncRoute(renderList));
   router.get('/inventory/variant-products',requirePermission(permissions.VIEW,'see products'),asyncRoute(async(req,res)=>res.json({products:await require('../../domain/postgres-variant-data').products(database,req.ctx.workspaceId,req.query)})));
   router.get('/inventory/:id/variants/data',requirePermission(permissions.VIEW,'see variants'),asyncRoute(async(req,res)=>res.json(await require('../../domain/postgres-variant-data').load(database,req.ctx.workspaceId,req.params.id,req.query))));

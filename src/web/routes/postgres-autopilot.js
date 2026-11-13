@@ -688,6 +688,24 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',result.replayed?'You already chose. Change a single job in Authority by job.':result.areas.length?'Automatic work is on for the areas you chose. The rest keep watching.':'StockChief keeps watching. Nothing changes on its own.');
     res.redirect(303,shadowMode.path);
   }));
+  // Job 208: offers to stop asking about routines the owner always approves.
+  // Job 209: rules suggested by repeated fixes. Both show job 210's past-data
+  // test before anything is switched on.
+  const approvalLearning=require('../../autopilot/approval-learning'),correctionRules=require('../../autopilot/correction-rules');
+  router.get(approvalLearning.path,requireAuth,owner,asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');
+    return reportPage(req,res,approvalLearning.JOB,'autopilot/approval-learning',{title:'Stop asking about routines',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},
+      async()=>({screen:await approvalLearning.page(database,req.ctx)}),402);}));
+  router.post(approvalLearning.path+'/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await approvalLearning.confirm(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'StockChief already does this routine alone.':'StockChief will stop asking about '+r.label+' up to '+r.maximum+'.');res.redirect(303,approvalLearning.path+'#learned');}));
+  router.post(approvalLearning.path+'/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await approvalLearning.dismiss(database,req.ctx,req.body);
+    req.flash('success','StockChief will keep asking. It offers again only after another run of approvals.');res.redirect(303,approvalLearning.path);}));
+  router.get(correctionRules.path,requireAuth,owner,asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');
+    return reportPage(req,res,correctionRules.JOB,'autopilot/correction-rules',{title:'Rules from your repeated fixes',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},
+      async()=>({screen:await correctionRules.page(database,req.ctx)}),402);}));
+  router.post(correctionRules.path+'/accept',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await correctionRules.accept(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'That rule is already saved.':'Rule saved: '+r.rule);res.redirect(303,r.ruleId?'/operating-instructions/'+r.ruleId:correctionRules.path);}));
+  router.post(correctionRules.path+'/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await correctionRules.dismiss(database,req.ctx,req.body);
+    req.flash('success','Not now. StockChief suggests it again only if you make the same fix again.');res.redirect(303,correctionRules.path);}));
   // Job 199: how sure StockChief must be to act on its own.
   router.post('/autopilot/confidence',requireAuth,owner,asyncRoute(async(req,res)=>{
     const result=await require('../../autopilot/confidence').configure(database,req.ctx,req.body);
@@ -2060,6 +2078,20 @@ function createPostgresAutopilotRouter(database,options={}){
   });
   router.post('/autopilot/reviews/watch-rules/rules',requireAuth,owner,saveWatchRule);
   router.post('/autopilot/reviews/brand-watches/rules',requireAuth,owner,saveWatchRule);
+  // Job 207: any rule in plain words, read exactly, confirmed, then saved by
+  // its own kind's service. An unreadable rule is explained and saves nothing.
+  const plainRules=require('../../autopilot/plain-rules');
+  router.get(plainRules.path,requireAuth,owner,asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');
+    return reportPage(req,res,plainRules.JOB,'autopilot/plain-rules',{title:'Rules in plain words',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},
+      async()=>({screen:await plainRules.page(database,req.ctx,req.query)}),402);}));
+  router.post(plainRules.path+'/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{
+    try{const saved=await plainRules.confirm(database,req.ctx,req.body);req.flash('success',saved.message);return res.redirect(303,saved.href);}
+    catch(error){if(error?.code!=='validation_error')throw error;req.flash('error',error.message);
+      return res.redirect(303,plainRules.path+'?'+new URLSearchParams({rule:String(req.body.rule||'').slice(0,400)}));}
+  }));
+  router.post(plainRules.path+'/supplier-rules/remove',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const removed=await require('../../purchasing/supplier-choice-rules').remove(database,req.ctx,req.body.id);
+    req.flash('success',removed.removed?'Supplier rule removed.':'That rule was already removed.');res.redirect(303,plainRules.path+'#supplier-rules');}));
   router.post('/autopilot/reviews/payment-run/approve',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../accounting/agent-cash-planning').approvePaymentRun(database,req.ctx,req.body);
     req.flash('success','Payment review recorded. Pay suppliers and record payments from their individual bills.');

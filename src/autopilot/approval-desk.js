@@ -245,6 +245,7 @@ function item(r,{held=false,group=null}={}){
     happened:held?'Waiting for your approval.':(r.person?.role==='owner'?'':'Sent to you. ')+r.reason,
     why:KINDS[r.kind].label+(amount?' · '+amount:'')+'. '+(r.twoPeople?'Two people must approve it. ':'')+'Nothing changes until it is approved.',
     recommendation:'Open it, check the details, then approve or decline.',href:r.href,actionLabel:'Review',
+    requiredPermissions:[r.permission,r.readPermission].filter(Boolean),
     sourceId:'approval-'+r.key,createdAt:r.at,timeLabel:'Waiting since',at:r.at,
     ...(r.amountMinor==null?{}:{moneyValue:r.amountMinor,moneyCurrency:r.currency}),
     approvalRequest:{key:r.key,kind:r.kind,source:r.source,id:r.id,twoPeople:Boolean(r.twoPeople),group}};

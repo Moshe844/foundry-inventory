@@ -171,7 +171,7 @@ function needs(database,workspaceId,actorId=null){
       actor?.role==='owner'?require('../accounting/agent-customer-credits').inbox(database,workspaceId):[],
       actor?.role==='owner'?require('../catalog/agent-supplier-catalog').inbox(database,workspaceId):[],
       actor?.role==='owner'?require('../onboarding/agent-old-system-migration').inbox(database,workspaceId):[],
-      actor&&require('../actions/permissions').can(actor,require('../actions/permissions').MANAGE_REPLENISHMENT)?require('../forecasting/agent-runout').inbox(database,workspaceId):[],
+      actor&&require('../actions/permissions').can(actor,require('../actions/permissions').MANAGE_REPLENISHMENT)?require('../forecasting/agent-runout').inbox(database,workspaceId,actor):[],
       actor?.role==='owner'?require('../catalog/agent-product-classification').inbox(database,workspaceId):[],
       actorId?require('../autopilot/escalations').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../sales/agent-customer-return-emails').inbox(database,workspaceId):[],

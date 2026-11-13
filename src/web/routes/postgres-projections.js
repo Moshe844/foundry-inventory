@@ -216,7 +216,10 @@ function createPostgresProjectionsRouter(database){
     if(!r.done.length&&!r.failed.length)req.flash('info','Those approvals are no longer waiting for you.');
     return res.redirect(303,'/needs-you');
   }));
-  router.get('/needs-you/findings',requireAuth,requirePermission(permissions.VIEW,'review inventory findings'),asyncRoute(async(req,res)=>{const size=require('../presentation/pagination').pageSize(req),found=await require('../../projections/postgres-attention-inbox').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});return res.page('manager/inventory-findings',{title:'Inventory findings',nav:'attention',...found,pager:require('../presentation/pagination').pager(req,{page:found.page,size,total:found.total,shown:found.rows.length})});}));
+  router.get('/needs-you/findings',requireAuth,requirePermission(permissions.VIEW,'review inventory findings'),asyncRoute(async(req,res)=>{const size=require('../presentation/pagination').pageSize(req),found=await require('../../projections/postgres-attention-inbox').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});
+    // Job 203: recorded stock value is a valuation, for people who see accounting.
+    const valueShown=permissions.can(req.user,permissions.VIEW_ACCOUNTING);if(!valueShown)found.rows=found.rows.map(row=>({...row,stock_value:null}));
+    return res.page('manager/inventory-findings',{title:'Inventory findings',nav:'attention',...found,valueShown,pager:require('../presentation/pagination').pager(req,{page:found.page,size,total:found.total,shown:found.rows.length})});}));
   router.get(['/needs-you','/needs-you/all'],requireAuth,asyncRoute(async(req,res)=>{
     const [items,failures,dailyBrief,managerView]=await Promise.all([projections.needs(database,req.ctx.workspaceId,req.ctx.actorId),
       req.user.role==='owner'?projections.runtimeFailures(database,req.ctx.workspaceId):null,

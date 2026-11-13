@@ -18,6 +18,9 @@
       <div><button class="rm-btn" type="submit">Continue this instruction</button></div>
     </form></section>
 <% } else if (proposal.status === 'PENDING') { %>
+  <% if(locals.ruleTest){ %><section class="rm-card" id="rule-test"><h2>What it would have done</h2>
+    <p class="rm-note">Tested on your records from the last <%= ruleTest.days %> days. The test changed nothing.</p>
+    <%- include('../autopilot/rule-test',{test:ruleTest}) %></section><% } %>
   <section class="rm-card"><h2>Turn this on?</h2><p>Approval applies only the exact records and limits shown above.</p>
     <div class="rm-actions"><form method="post" action="/operating-instructions/<%= proposal.id %>/approve">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= proposal.integrityHash %>"><% if (fromAsk) { %><input type="hidden" name="fromAsk" value="1"><% } %>

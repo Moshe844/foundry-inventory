@@ -1,0 +1,9 @@
+<%# Job 210: what a rule would have done with the recorded history, before it is switched on. %>
+<% (test&&test.sections||[]).forEach(function(s){ %>
+<div data-rule-test>
+  <p><strong><%= s.title %></strong><br><span data-rule-test-summary><%= s.summary %></span></p>
+  <% if(s.rows.length){ %><div class="table-wrap"><table class="table table--stack"><thead><tr><th>When</th><th>It would have</th><th>What happened</th></tr></thead><tbody>
+  <% s.rows.forEach(function(r){ %><tr><td data-label="When"><%= r.When %></td><td data-label="It would have"><%= r['Would have'] %></td><td data-label="What happened"><%= r['What happened'] %></td></tr><% }) %>
+  </tbody></table></div><% if(s.more){ %><p class="cell-sub">Showing the latest <%= s.rows.length %>.</p><% } %><% } %>
+</div>
+<% }) %>

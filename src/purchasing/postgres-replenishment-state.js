@@ -1,6 +1,6 @@
 'use strict';
 const decision=require('./replenishment-decision');
-async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibleOnly=false,onlySkuIds=null,cycleId=null}={}){
+async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibleOnly=false,onlySkuIds=null,cycleId=null,learnSupplierHabits=true}={}){
  // Fresh imports can underestimate thousands of variants as one row. Drive
  // eligibility and final detail from their IDs with bounded primary-key reads;
  // do not repeatedly scan the catalogue or the same position CTE for each SKU.
@@ -57,22 +57,36 @@ async function rows(database,workspaceId,{afterSkuId=null,limitSkus=null,eligibl
     SELECT coalesce(lead.observed_lead,global_policy.lead_time_days,lead.configured_lead) FROM stockchief_runtime.supplier_planning_leads lead
     JOIN supplier_items si ON si.id=lead.supplier_item_id WHERE lead.workspace_id=s.workspace_id AND lead.sku_id=s.id
     AND (global_policy.preferred_supplier_id IS NULL OR lead.supplier_id=global_policy.preferred_supplier_id)
-    ORDER BY si.is_preferred DESC,si.last_unit_cost NULLS LAST,lead.effective_lead NULLS LAST,si.id LIMIT 1),global_policy.lead_time_days,$7)) FROM reorder_policies global_policy WHERE global_policy.workspace_id=s.workspace_id AND global_policy.sku_id=s.id AND global_policy.location_id IS NULL LIMIT 1) AS global_policy,
+    ORDER BY si.is_preferred DESC,si.last_unit_cost NULLS LAST,lead.effective_lead NULLS LAST,si.id LIMIT 1),global_policy.lead_time_days,$7),'habit_supplier_id',(
+    SELECT CASE WHEN lead.observed_lead IS NULL AND global_policy.lead_time_days IS NULL THEN lead.supplier_id END FROM stockchief_runtime.supplier_planning_leads lead
+    JOIN supplier_items si ON si.id=lead.supplier_item_id WHERE lead.workspace_id=s.workspace_id AND lead.sku_id=s.id
+    AND (global_policy.preferred_supplier_id IS NULL OR lead.supplier_id=global_policy.preferred_supplier_id)
+    ORDER BY si.is_preferred DESC,si.last_unit_cost NULLS LAST,lead.effective_lead NULLS LAST,si.id LIMIT 1)) FROM reorder_policies global_policy WHERE global_policy.workspace_id=s.workspace_id AND global_policy.sku_id=s.id AND global_policy.location_id IS NULL LIMIT 1) AS global_policy,
   (SELECT value FROM operational_preferences preference WHERE preference.workspace_id=$1 AND preference.key='target_days_of_stock') AS saved_cover_days,
   CASE WHEN rp.location_id=l.id THEN rp.lead_time_days END AS local_lead,
   CASE WHEN rp.location_id=l.id THEN rp.updated_at END AS local_policy_updated_at,
   COALESCE(terms.observed_lead,rp.lead_time_days,terms.configured_lead,$7) AS lead_time_days,
-  COALESCE(terms.observed_lead,rp.lead_time_days,terms.configured_lead) IS NULL AS lead_time_assumed,cost.amount_minor AS cost_minor
+  COALESCE(terms.observed_lead,rp.lead_time_days,terms.configured_lead) IS NULL AS lead_time_assumed,cost.amount_minor AS cost_minor,
+  CASE WHEN terms.observed_lead IS NULL AND rp.lead_time_days IS NULL THEN terms.supplier_id END AS habit_supplier_id
  FROM positions pos CROSS JOIN LATERAL(SELECT s.* FROM skus s WHERE s.id=pos.sku_id LIMIT 1)s
  CROSS JOIN LATERAL(SELECT i.* FROM items i WHERE i.id=s.item_id LIMIT 1)i
  JOIN active_locations l ON l.id=pos.location_id LEFT JOIN stockchief_runtime.replenishment_source_versions source_version ON source_version.workspace_id=s.workspace_id AND source_version.sku_id=s.id LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=l.id
  LEFT JOIN committed c ON c.sku_id=s.id AND c.location_id=l.id LEFT JOIN incoming inc ON inc.sku_id=s.id AND inc.location_id=l.id LEFT JOIN demand d ON d.sku_id=s.id AND d.location_id=l.id
  LEFT JOIN LATERAL(SELECT * FROM reorder_policies p WHERE p.workspace_id=s.workspace_id AND p.sku_id=s.id AND(p.location_id=l.id OR p.location_id IS NULL) ORDER BY(p.location_id IS NOT NULL) DESC,p.updated_at DESC,p.id LIMIT 1) rp ON true
- LEFT JOIN LATERAL(SELECT lead.observed_lead,lead.configured_lead FROM stockchief_runtime.supplier_planning_leads lead JOIN supplier_items si ON si.id=lead.supplier_item_id WHERE lead.workspace_id=s.workspace_id AND lead.sku_id=s.id AND(rp.preferred_supplier_id IS NULL OR si.supplier_id=rp.preferred_supplier_id) ORDER BY si.is_preferred DESC,COALESCE(si.last_unit_cost,1e100),COALESCE(lead.effective_lead,$7),si.id LIMIT 1) terms ON true
+ LEFT JOIN LATERAL(SELECT lead.observed_lead,lead.configured_lead,lead.supplier_id FROM stockchief_runtime.supplier_planning_leads lead JOIN supplier_items si ON si.id=lead.supplier_item_id WHERE lead.workspace_id=s.workspace_id AND lead.sku_id=s.id AND(rp.preferred_supplier_id IS NULL OR si.supplier_id=rp.preferred_supplier_id) ORDER BY si.is_preferred DESC,COALESCE(si.last_unit_cost,1e100),COALESCE(lead.effective_lead,$7),si.id LIMIT 1) terms ON true
  LEFT JOIN LATERAL(SELECT amount_minor FROM sku_purchase_costs WHERE workspace_id=s.workspace_id AND sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1) cost ON true
  WHERE s.workspace_id=$1 AND i.workspace_id=s.workspace_id
  ORDER BY s.id,l.id`,[workspaceId,afterSkuId,limitSkus===null?null:limitSkus+1,eligibleOnly,decision.WINDOW_DAYS,decision.MIN_ISSUE_EVENTS,decision.DEFAULT_LEAD_DAYS,onlySkuIds,...(cycleId?[cycleId]:[])]);
  for(const row of result.rows)if(!row.supplier_supply_held)delete row.supplier_supply_held;
+ // Job 211: a product with no deliveries of its own and no lead time from the
+ // owner plans with its supplier's usual lead time instead of the promise.
+ const habitIds=result.rows.flatMap(row=>[row.habit_supplier_id,row.global_policy?.habit_supplier_id]).filter(Boolean);
+ const learned=learnSupplierHabits&&habitIds.length?await require('../autopilot/partner-habits').leads(database,workspaceId,habitIds):new Map();
+ for(const row of result.rows){
+  if(learned.has(row.habit_supplier_id)){row.lead_time_days=learned.get(row.habit_supplier_id);row.lead_time_assumed=false;}
+  if(row.global_policy&&learned.has(row.global_policy.habit_supplier_id))row.global_policy.effective_lead=learned.get(row.global_policy.habit_supplier_id);
+  delete row.habit_supplier_id;if(row.global_policy)delete row.global_policy.habit_supplier_id;
+ }
  // Job 132: discontinued products are never reordered.
  const discontinued=await require('../catalog/retirement-guidance').discontinued(database,workspaceId,result.rows.map(row=>row.sku_id));
  for(const row of result.rows)if(discontinued.has(row.sku_id))row.discontinued=true;

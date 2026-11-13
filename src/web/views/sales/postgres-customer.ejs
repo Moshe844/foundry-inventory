@@ -11,6 +11,17 @@
   </div><div class="card-foot"><button class="btn btn--primary" type="submit">Save customer</button></div></form>
   <section class="card"><div class="card-head"><h2>Order history</h2></div><div class="card-body"><% if(!orders.length){ %><p class="muted">No orders yet.</p><% } else { %><div class="list-rows"><% orders.forEach(function(order){ %><a class="list-row" href="/orders/<%= order.id %>"><strong><%= order.order_number %></strong><span><%= helpers.shortDate(order.order_date) %> · <%= order.status.replaceAll('_',' ') %></span></a><% }); %></div><% } %></div></section>
 </div>
+<% if(locals.habits){ const h=habits.habit; %>
+<section class="card section" id="customer-habits" data-customer-habits><div class="card-head"><h2>Habits</h2></div><div class="card-body">
+<% if(habits.locked){ %><p class="cell-sub">Learning each customer’s habits comes with Growth. <a href="/billing">Review plans</a></p>
+<% }else if(!h){ %><p class="cell-sub"><%= habits.empty %></p>
+<% }else{ %><dl class="kv">
+  <dt>How often</dt><dd><%= h.interval %></dd>
+  <dt>Usual day</dt><dd><%= h.weekday %></dd>
+  <dt>Usual order</dt><dd><%= h.size %></dd>
+  <dt>Next order</dt><dd><% if(h.due.state!=='later'){ %><span class="badge badge--<%= h.due.state==='late'?'warn':'info' %>"><%= h.due.state==='late'?'Later than usual':'Due now' %></span> <% } %><%= h.due.detail %></dd>
+</dl><p class="cell-sub">From <%= h.samples %> ordering days, the last on <%= h.latest %>.</p><% } %>
+</div></section><% } %>
 <% if(locals.canEditTerms){ const own=terms?.customer_id===customer.id?terms:null; %>
 <section class="card section"><div class="card-head"><h2>Agreed payment terms</h2></div>
 <form class="card-body form-stack" method="post" action="/sales/customers/<%= customer.id %>/payment-terms">

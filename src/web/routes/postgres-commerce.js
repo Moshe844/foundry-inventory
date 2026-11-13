@@ -350,7 +350,9 @@ function createPostgresCommerceRouter(database,options={}){
       isActive:Boolean(Number(row.is_active))}));
     const buyView=require('../buy-view');
     const view=await buyView.supplierView(database,req.ctx.workspaceId,supplier,orderRows,purchasingPermissions(req),dateToday(req));
-    return res.page('buy/supplier',{title:supplier.name,nav:'purchasing',supplier,items,view,shortDate:buyView.shortDay,pane:['orders','bills'].includes(req.query.tab)?req.query.tab:'products',
+    // Job 211: this supplier's delivery habits.
+    const habits=await require('../../autopilot/partner-habits').panel(database,req.ctx,'supplier',supplier.id);
+    return res.page('buy/supplier',{title:supplier.name,nav:'purchasing',supplier,items,view,habits,shortDate:buyView.shortDay,pane:['orders','bills'].includes(req.query.tab)?req.query.tab:'products',
       ownSectionTabs:true,suppressBack:true,screenGuide:null,
       orders:orderRows.filter((row)=>row.supplier_id===supplier.id).slice(0,10).map(purchaseOrderForView),
       mailboxConnections:mailboxRows.rows,senderRules:senderRows.rows,reliability:null,priceHistory:priceRows.rows,
@@ -1128,7 +1130,9 @@ function createPostgresCommerceRouter(database,options={}){
       database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId]),
       require('../../sales/customer-commercial-terms').current(database,req.ctx.workspaceId,customer.id),
     ]);
-    return res.page('sales/postgres-customer',{title:customer.name,nav:'sales',customer,
+    // Job 211: this customer's ordering habits.
+    const habits=await require('../../autopilot/partner-habits').panel(database,req.ctx,'customer',customer.id);
+    return res.page('sales/postgres-customer',{title:customer.name,nav:'sales',customer,habits,
       orders:orders.rows,balanceMinor:Number(balance.rows[0].minor),currency:settings.rows[0]?.base_currency||'USD',
       terms,depositInput:terms?.deposit_minor==null?'':require('../../domain/currency').fromMinor(terms.deposit_minor,terms.deposit_currency||settings.rows[0]?.base_currency||'USD'),
       canEditTerms:req.user?.role==='owner'&&customer.record_state==='ACTIVE'});
