@@ -500,7 +500,7 @@ async function providerEffect(job,database,options={},providers=defaultProviders
   require('./agent-return-refund-protocol').assertJob(effect,job.kind);
   const capability={'shipping.label.purchase':'shipping.labels','mail.reply.send':'communications.send_approved',
     'mail.outbound.send':'communications.send_approved','payment.request.create':'payments.customer',
-    'payment.refund.create':'payments.customer','accounting.journal.export':'accounting.post_connected','commerce.position.publish':'connections.commerce'}[effect.kind];
+    'payment.refund.create':'payments.customer','accounting.journal.export':'accounting.post_connected','accounting.document.export':'accounting.post_connected','commerce.position.publish':'connections.commerce'}[effect.kind];
   if(capability&&effect.status==='PENDING'){
     const scope=await entitlements.ownerScopeForWorkspace(database,job.workspaceId);
     await entitlements.assertCapability(database,scope,capability);
@@ -545,6 +545,10 @@ async function providerEffect(job,database,options={},providers=defaultProviders
   if(effect.kind==='accounting.journal.export')return accountingSync.executeExportEffect(database,job.workspaceId,effectId,{
     provider:options.accountingProviderResolver?options.accountingProviderResolver(effect.provider):providers.get(effect.provider),
     credentials:options.accountingCredentials,
+  });
+  // Job 184: an invoice or bill sent to QuickBooks or Xero.
+  if(effect.kind==='accounting.document.export')return require('../accounting/agent-accounting-documents').executeEffect(database,job.workspaceId,effectId,{
+    provider:options.accountingProviderResolver?options.accountingProviderResolver(effect.provider):undefined,credentials:options.accountingCredentials,
   });
   if(effect.kind==='commerce.position.publish')return require('../connections/postgres-commerce-sync').execute(database,job.workspaceId,effectId,{providers});
   throw Object.assign(new Error(`No provider-effect handler is registered for ${effect.kind}.`),
@@ -761,6 +765,10 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'mail.customer-repeat-order.v1':external((job,database)=>require('../sales/agent-repeat-orders').fromEmail(database,job.workspaceId,job.payload.messageId)),
   'mail.customer-statement.v1':external((job,database)=>require('../accounting/agent-statement-requests').fromEmail(database,job.workspaceId,job.payload.messageId)),
   'mail.customer-question.v1':external((job,database)=>require('../sales/agent-customer-questions').fromEmail(database,job.workspaceId,job.payload.messageId)),
+  // Job 187: a reply StockChief wrote is sent on its own, kept for a person or held.
+  'mail.agent-reply.v1':external((job,database)=>require('../connections/agent-mail-replies').fromDraft(database,job.workspaceId,job.payload.messageId)),
+  // Job 184: open invoices and bills go to the connected books.
+  'agent.accounting-documents.v1':external((job,database)=>require('../accounting/agent-accounting-documents').run(database,job.workspaceId)),
   'mail.customer-quote.v1':external((job,database)=>require('../sales/agent-quote-requests').fromEmail(database,job.workspaceId,job.payload.messageId)),
   'mail.customer-return.v1':external((job,database)=>require('../sales/agent-customer-return-emails').onArrival(database,job.workspaceId,job.payload.messageId)),
   'customer.order-page.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId)),

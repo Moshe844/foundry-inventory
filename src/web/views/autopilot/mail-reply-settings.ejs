@@ -1,0 +1,13 @@
+<% const mf=result.mailReplyForm; %>
+<section class="card section" data-mail-reply-rules><h2>Replies sent on their own</h2>
+<p>A reply always goes from the mailbox the email came to, in the same conversation.</p>
+<% if(mf.needsChoice){ %><p class="notice">You have more than one mailbox. Choose the one StockChief answers from on its own; until then every reply waits for you.</p><% } %>
+<% if(!mf.mailboxes.length){ %><p>Connect a mailbox first. <a href="/settings/connections">Open connections</a></p><% }else{ %>
+<form method="post" action="/autopilot/mail-replies/settings" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= mf.revision %>">
+<label class="rm-field"><span>Mailbox StockChief answers from</span><select name="connectorId">
+<option value=""<%= mf.connectorId?'':' selected' %>><%= mf.mailboxes.length===1?'The only connected mailbox':'Not chosen yet' %></option>
+<% for(const b of mf.mailboxes){ %><option value="<%= b.id %>"<%= mf.connectorId===b.id?' selected':'' %>><%= b.name %></option><% } %></select></label>
+<fieldset class="rm-field"><legend>Answer on its own</legend>
+<label><input type="checkbox" name="kinds" value="customer"<%= mf.customers?' checked':'' %>> Customers</label>
+<label><input type="checkbox" name="kinds" value="supplier"<%= mf.suppliers?' checked':'' %>> Suppliers</label></fieldset>
+<button class="btn btn--primary">Save reply rules</button></form><% } %></section>

@@ -207,6 +207,62 @@ async function verifyJournalEntry({credentials,entry,externalId}){
  return {...verifyJournalPayload(entry,remote,homeCurrency),externalId:String(remote.Id),version:remote.SyncToken};
 }
 
+// Job 184: customer invoices and supplier bills as QuickBooks invoices and
+// bills. The document carries StockChief's exact amounts per line, the mapped
+// tax code and the stated total tax; read-back must match all of them.
+const documentEntity=d=>d.kind==='invoice'?'Invoice':'Bill';
+function documentBody(d){
+ if(String(d.number).length>21)throw new ValidationError('QuickBooks document numbers are at most 21 characters.');
+ const base={DocNumber:d.number,TxnDate:d.issueDate,...(d.dueDate?{DueDate:d.dueDate}:{}),CurrencyRef:{value:money.code(d.currency)},PrivateNote:d.reference,
+  TxnTaxDetail:{TotalTax:exactDecimal(d.tax,d.currency)}};
+ if(d.kind==='invoice')return {...base,CustomerRef:{value:d.contactExternalId},Line:d.lines.map(l=>({Amount:exactDecimal(l.amount,d.currency),Description:l.description,
+  DetailType:'SalesItemLineDetail',SalesItemLineDetail:{ItemRef:{value:l.itemExternalId},Qty:1,UnitPrice:exactDecimal(l.amount,d.currency),TaxCodeRef:{value:d.taxCode}}}))};
+ return {...base,VendorRef:{value:d.contactExternalId},Line:d.lines.map(l=>({Amount:exactDecimal(l.amount,d.currency),Description:l.description,
+  DetailType:'AccountBasedExpenseLineDetail',AccountBasedExpenseLineDetail:{AccountRef:{value:l.accountExternalId},TaxCodeRef:{value:d.taxCode}}}))};
+}
+async function postDocument({credentials,document,idempotencyKey}){
+ const requestId=`foundry-${crypto.createHash('sha256').update(String(idempotencyKey)).digest('hex').slice(0,32)}`;
+ const entity=documentEntity(document);
+ const response=await api(credentials,`/v3/company/${encodeURIComponent(credentials.realmId)}/${entity.toLowerCase()}?requestid=${encodeURIComponent(requestId)}&minorversion=75`,
+  {method:'POST',body:JSON.stringify(documentBody(document))});
+ const created=response.body[entity];
+ if(!created?.Id)throw new ValidationError('QuickBooks did not confirm the new '+document.kind+'.');
+ return {externalId:String(created.Id),version:created.SyncToken==null?null:String(created.SyncToken)};
+}
+// Documents with the same number for the same customer or supplier, so a
+// retry or a document someone already entered is never posted twice.
+async function findDocument({credentials,document}){
+ const entity=documentEntity(document),number=String(document.number).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+ const query=encodeURIComponent(`select * from ${entity} where DocNumber = '${number}'`);
+ const rows=(await api(credentials,`/v3/company/${encodeURIComponent(credentials.realmId)}/query?query=${query}&minorversion=75`)).body.QueryResponse?.[entity]||[];
+ const ref=document.kind==='invoice'?'CustomerRef':'VendorRef';
+ const same=rows.filter(r=>String(r[ref]?.value||'')===String(document.contactExternalId));
+ if(same.length>1)throw Object.assign(new ValidationError('QuickBooks has more than one '+document.kind+' numbered '+document.number+' for this contact. A person checks them.'),{status:409,definite:true});
+ return same[0]?{externalId:String(same[0].Id),version:same[0].SyncToken==null?null:String(same[0].SyncToken),reference:same[0].PrivateNote||null}:null;
+}
+function verifyDocumentPayload(document,remote){
+ const ref=document.kind==='invoice'?'CustomerRef':'VendorRef',currency=money.code(remote.CurrencyRef?.value||document.currency);
+ if(String(remote.DocNumber||'')!==String(document.number)||String(remote[ref]?.value||'')!==String(document.contactExternalId)||remote.TxnDate!==document.issueDate||currency!==money.code(document.currency))
+  throw new ValidationError('QuickBooks returned a different number, contact, date or currency for this '+document.kind+'.');
+ if(money.toMinor(remote.TotalAmt??'0',currency)!==Number(document.total)||money.toMinor(remote.TxnTaxDetail?.TotalTax??'0',currency)!==Number(document.tax))
+  throw new ValidationError('QuickBooks shows a different total or tax for this '+document.kind+'.');
+ const detail=document.kind==='invoice'?'SalesItemLineDetail':'AccountBasedExpenseLineDetail';
+ const lines=(remote.Line||[]).filter(l=>!['SubTotalLineDetail','DescriptionOnly'].includes(l.DetailType));
+ if(lines.some(l=>l.DetailType!==detail))throw new ValidationError('QuickBooks added a line StockChief did not send.');
+ const key=l=>document.kind==='invoice'?String(l.itemExternalId):String(l.accountExternalId);
+ const expected=document.lines.map(l=>JSON.stringify([key(l),Number(l.amount)])).sort();
+ const actual=lines.map(l=>JSON.stringify([String(document.kind==='invoice'?l.SalesItemLineDetail?.ItemRef?.value:l.AccountBasedExpenseLineDetail?.AccountRef?.value),money.toMinor(l.Amount,currency)])).sort();
+ if(JSON.stringify(expected)!==JSON.stringify(actual))throw new ValidationError('QuickBooks lines do not match the '+document.kind+' StockChief sent.');
+ return {verified:true,lineCount:actual.length};
+}
+async function verifyDocument({credentials,document,externalId}){
+ if(!externalId)throw new ValidationError('Checking a document needs its QuickBooks identity.');
+ const entity=documentEntity(document);
+ const remote=(await api(credentials,`/v3/company/${encodeURIComponent(credentials.realmId)}/${entity.toLowerCase()}/${encodeURIComponent(externalId)}?minorversion=75`)).body[entity];
+ if(!remote||String(remote.Id)!==String(externalId))throw new ValidationError('QuickBooks did not return the '+document.kind+' it confirmed.');
+ return {...verifyDocumentPayload(document,remote),externalId:String(remote.Id),version:remote.SyncToken==null?null:String(remote.SyncToken)};
+}
+
 module.exports = { integrationClass: 'accounting',catalogueCapabilities:Object.freeze(['products','skus','stock','locations']),discover, metadata, authorizationUrl, exchangeAuthorization,
   refresh, refreshCredentials, verifyReadOnly, readAccountingSnapshot, listPostingParties, createPostingParty,
-  postJournalEntry,verifyJournalEntry,verifyJournalPayload,exactDecimal };
+  postJournalEntry,verifyJournalEntry,verifyJournalPayload,exactDecimal,postDocument,findDocument,verifyDocument,verifyDocumentPayload };

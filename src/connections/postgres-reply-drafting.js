@@ -75,6 +75,8 @@ async function savePrepared(database,ctx,id,draft,{expectedDraftDigest=null}={})
   if(rejected)throw new ValidationError('The model draft was rejected because '+rejected+'.');
   await client.query(`UPDATE connection_email_messages SET draft_subject=$3,draft_body=$4,draft_source='model',
     draft_rejected_because=NULL,draft_at=$5 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,draft.subject,draft.body,nowIso()]);
+  // Job 187: what happens to the prepared reply is decided by its own worker.
+  await require('./agent-mail-replies').queueAfterDraft(client,ctx.workspaceId,id,draftDigest({draft_subject:draft.subject,draft_body:draft.body,draft_source:'model'}));
   return {...draft,facts};
  };
  return typeof database.transaction==='function'?database.transaction(save,{isolation:'SERIALIZABLE',retrySafe:true}):save(database);

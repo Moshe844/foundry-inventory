@@ -506,6 +506,8 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){const
       throw Object.assign(new ValidationError('Reconnect or resume this mailbox before sending.'),{code:'email_connection_unavailable'});
     return {message,connection};},{isolation:'SERIALIZABLE',retrySafe:true});message=loaded.message;connection=loaded.connection;
     if(!provider?.send)throw Object.assign(new ValidationError('This mailbox connection cannot send replies.'),{code:'email_send_unavailable'});
+    // Job 187: a reply StockChief queued on its own is checked again here.
+    if(input.agentJob===187)await require('./agent-mail-replies').authority(database,workspaceId,input);
     const providerCredentials=await providerService.loadProviderCredentials(database,connection,provider);
     providerCalled=true;const result=await require('../commercial/operations').run(database,workspaceId,{capability:'communications.send_approved',
       key:effect.idempotencyKey,provider:effect.provider,operation:'reply_email',unit:'message'},async()=>{const accepted=await provider.send({credentials:providerCredentials,message:{id:outbox.id,recipient:outbox.recipient,
@@ -514,14 +516,17 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){const
       result:{externalMessageId:result.externalMessageId||null,externalThreadId:result.externalThreadId||null},apply:async(client)=>{const at=nowIso();
       await client.query(`UPDATE stockchief_runtime.email_reply_outbox SET status='SENT',provider_message_id=$2,
         provider_thread_id=$3,error_message=NULL,finished_at=$4 WHERE id=$1`,[outbox.id,result.externalMessageId||null,result.externalThreadId||null,at]);
-      await client.query(`UPDATE connection_email_messages SET reply_state='WAITING',reply_reason='Reply sent; waiting on them.',
+      await client.query(`UPDATE connection_email_messages SET reply_state='WAITING',reply_reason=$6,
         reply_state_by_user_id=$3,reply_state_at=$4,reply_sent_at=$4,reply_external_message_id=$5
-        WHERE workspace_id=$1 AND id=$2`,[workspaceId,input.messageId,input.actorId,at,result.externalMessageId||null]);}});
+        WHERE workspace_id=$1 AND id=$2`,[workspaceId,input.messageId,input.actorId,at,result.externalMessageId||null,
+        input.agentJob===187?'StockChief sent this reply on its own; waiting on them.':'Reply sent; waiting on them.']);
+      await require('./agent-mail-replies').settled(client,workspaceId,input,{status:'SENT'});}});
     return {message:await get(database,workspaceId,input.messageId),replayed:false};
   }catch(error){const ambiguous=providerCalled&&!providerEffects.definiteFailure(error);await providerEffects.finishError(database,workspaceId,effectId,
     effect.claimToken,error,{ambiguous,apply:async(client)=>{const at=nowIso();await client.query(`UPDATE stockchief_runtime.email_reply_outbox
       SET status=$2,error_message=$3,finished_at=$4 WHERE workspace_id=$5 AND id=$1 AND status IN ('PENDING','SENDING')`,
     [input.outboxId,ambiguous?'AMBIGUOUS':'FAILED',String(error.message||'Mailbox provider failed.').slice(0,500),at,workspaceId]);
+    await require('./agent-mail-replies').settled(client,workspaceId,input,{status:'FAILED',reason:ambiguous?'The mailbox may have sent it. Check Sent mail before replying again.':error.message});
     if(ambiguous)await client.query(`INSERT INTO connection_issues
       (id,workspace_id,connector_id,external_event_id,issue_type,fingerprint,title,detail,resolution_hint,status,created_at,updated_at)
       VALUES($1,$2,$3,$4,'EMAIL_SEND_AMBIGUOUS',$5,'Email delivery could not be verified',$6,$7,'OPEN',$8,$8)

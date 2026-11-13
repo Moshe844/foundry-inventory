@@ -84,6 +84,8 @@
 <% if(result.returnLabelForm){ %><%- include('return-labels',{result,csrfToken}) %><% } %>
 <% if(result.customerStatementForm){ %><%- include('customer-statements',{result,csrfToken}) %><% } %>
 <% if(result.customerQuestionForm){ %><%- include('customer-questions',{result,csrfToken}) %><% } %>
+<% if(result.mailReplyForm){ %><%- include('mail-reply-settings',{result,csrfToken}) %><% } %>
+<% if(result.accountingDocumentsForm){ %><%- include('accounting-documents',{result,csrfToken}) %><% } %>
 <% if(result.quoteRequestForm){ %><%- include('quote-requests',{result,csrfToken}) %><% } %>
 <% if(result.quoteFollowupDefaults){ %><%- include('quote-followup-defaults',{result,csrfToken}) %><% } %>
 <% if(result.creditForm){ %><%- include('customer-credits',{result,csrfToken}) %><% } %>
