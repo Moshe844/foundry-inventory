@@ -92,6 +92,9 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   // (agent-channel-alerts.js), then kept open or cleared like the others.
   if(policy.permits(account.plan,169,'automatic'))args.push(JSON.stringify(await require('../connections/agent-channel-alerts').candidates(db,workspaceId)));
   const channelAlerts=policy.permits(account.plan,169,'automatic')?' UNION ALL SELECT 169,kind,ref,link,$3::date FROM jsonb_to_recordset($'+args.length+'::jsonb) AS channel(kind text,ref text,link text)':'';
+  const learned=await require('./approval-learning').notices(db,workspaceId,account);
+  if(learned.length)args.push(JSON.stringify(learned));
+  const learning=learned.length?' UNION ALL SELECT 208,kind,ref,link,$3::date FROM jsonb_to_recordset($'+args.length+'::jsonb) AS learned(kind text,ref text,link text)':'';
   // Job 209: every kind of repeated fix, from records.
   const corrections=policy.permits(account.plan,209,'automatic')?` UNION ALL SELECT 209,'Correction',reference,link,$3::date FROM (`+await require('./correction-rules').noticeSql(db)+`) corrections`:'';
   if(policy.permits(account.plan,3,'automatic'))await checkStockDiscrepancies(db,workspaceId,today);

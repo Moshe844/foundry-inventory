@@ -36,8 +36,8 @@ test('owners route actual packed shipments on Pro and Custom with exact, plan-bo
   await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
   for(const plan of ['starter','growth']){
     await f.subscribe(plan);
-    const locked=await browser.get(pagePath).expect(200);
-    assert.match(locked.text,/Van routes require Pro or Custom/);
+    const locked=await browser.get(pagePath).expect(402);
+    assert.match(locked.text,/requires the Pro plan/);
     assert.doesNotMatch(locked.text,/Plan delivery routes|Jobsite Rd/);
     await assert.rejects(vans.prepare(db,ctx,input(packed)),error=>error.code==='entitlement_required'&&/Pro/.test(error.message));
     await assert.rejects(vans.approve(db,ctx,'unknown',{}),error=>error.code==='entitlement_required');
@@ -54,11 +54,16 @@ test('owners route actual packed shipments on Pro and Custom with exact, plan-bo
   const view=await browser.get(response.headers.location).expect(200);
   assert.match(view.text,/08:10–08:20/);
   assert.match(view.text,/Needs your review/);
-  await assert.rejects(vans.configure(db,ctx,id,makeRule),/approve a matching example/i);
+  // Before a route of this fleet is published by the owner, a Pro rule only prepares routes for review.
+  await vans.configure(db,ctx,id,makeRule);
+  const untaught=await f.parcel();
+  const drafted=await vans.prepare(db,ctx,input(untaught,{routine:'yes'}));
+  assert.equal(drafted.published,false);
+  await vans.stop(db,ctx,drafted.id,{confirmed:'yes',revision:1});
   await browser.post(vans.path+'/'+id+'/approve').type('form').send({confirmed:'yes',revision:1,_csrf:csrf(view.text)}).expect(303);
   assert.equal((await run(id)).status,'READY');
   assert.equal(await f.balance(),12);
-  await vans.configure(db,ctx,id,makeRule);
+  assert.equal((await db.query('SELECT example_id FROM stockchief_runtime.agent_van_route_rules WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].example_id,id,'publishing it taught the rule');
   const repeat=await f.parcel();
   const jobModes=require('../../src/autopilot/job-modes');
   await jobModes.save(db,ctx,71,{mode:'ask',revision:0});
@@ -108,7 +113,7 @@ test('owners route actual packed shipments on Pro and Custom with exact, plan-bo
   assert.equal((await run(routed.id)).manifest.routes[0].stops[0].arrival,491);
   assert.equal(roadFetch.mock.callCount(),1);
   await f.subscribe('growth');
-  assert.doesNotMatch((await browser.get(vans.path+'/'+id).expect(200)).text,/Jobsite Rd/);
+  assert.doesNotMatch((await browser.get(vans.path+'/'+id).expect(402)).text,/Jobsite Rd/);
   await assert.rejects(vans.prepare(db,ctx,input(downgradeBox,{routine:'yes'})),error=>error.code==='entitlement_required');
   await assert.rejects(vans.prepare(db,ctx,input(downgradeBox,pins)),error=>error.code==='entitlement_required');
   assert.equal(roadFetch.mock.callCount(),1);

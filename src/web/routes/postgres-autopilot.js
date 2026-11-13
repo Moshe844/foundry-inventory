@@ -1160,9 +1160,11 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   const vanRoutes=require('../../shipping/agent-van-routes');
   const vanPath=vanRoutes.path;
-  const vansPage=async(req,res)=>res.set('Cache-Control','private, no-store').page('autopilot/van-routes',{
-    title:'Own-van delivery routes',nav:'autopilot',backTo:{href:req.params.id?vanPath:'/autopilot/reviews',label:req.params.id?'Van routes':'Agent reviews'},
-    ...await vanRoutes.page(database,req.ctx,{id:req.params.id,depotId:req.query.depot})});
+  // Job 71: older terms see the shared plan card; Agent terms below Pro keep the 402 lock.
+  const vansPage=async(req,res)=>{res.set('Cache-Control','private, no-store');
+    return reportPage(req,res,vanRoutes.definition.id,'autopilot/van-routes',{title:'Own-van delivery routes',nav:'autopilot',
+      backTo:{href:req.params.id?vanPath:'/autopilot/reviews',label:req.params.id?'Van routes':'Agent reviews'}},
+    ()=>vanRoutes.page(database,req.ctx,{id:req.params.id,depotId:req.query.depot}),402);};
   router.get(vanPath,requireAuth,owner,asyncRoute(vansPage));
   router.get(vanPath+'/:id',requireAuth,owner,asyncRoute(vansPage));
   router.post(vanPath,requireAuth,owner,asyncRoute(async(req,res)=>{

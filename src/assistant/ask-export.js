@@ -103,14 +103,7 @@ function conversation(turns,publicText=text=>text){
  const rows=turns.flatMap(turn=>[...lines('You',turn.message||''),...lines('StockChief',publicText(turn.answer||'(no answer recorded)'))]);
  return {...shape({title:'StockChief conversation',columns:['who','said'],labels:{who:'Who',said:'Said'},rows}),sourceLabel:'StockChief conversation'};
 }
-// A download is offered only for an answer worth keeping: one with records, a
-// table, or a written report. "Opening Purchasing." is not a document.
-// ask-tools.js applies the same length to answers written in the page.
-const LONG_ANSWER=400;
-function worthKeeping(answer,rowCount=0){
- return Number(rowCount)>0||tables(answer).length>0||String(answer||'').trim().length>=LONG_ANSWER;
-}
-// Which of these saved answers (one query for the whole page) are worth keeping.
+// Look up completed answers shown in this chat in one query.
 async function keepable(database,ctx,ids){
  const wanted=[...new Set(ids.filter(id=>typeof id==='string'))];
  if(!wanted.length)return [];
@@ -119,4 +112,4 @@ async function keepable(database,ctx,ids){
    AND status='ANSWERED' AND btrim(answer)<>'' AND intent->>'intent' IS DISTINCT FROM 'navigation'`,[ctx.workspaceId,ctx.actorId,wanted])).rows;
  return rows.map(row=>row.id);
 }
-module.exports={TYPES,LONG_ANSWER,tables,send,interaction,goal,work,conversation,worthKeeping,keepable};
+module.exports={TYPES,tables,send,interaction,goal,work,conversation,keepable};

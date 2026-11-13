@@ -77,7 +77,7 @@ const SOURCES=[
  {job:68,actions:['Reserved arrived stock for accepted preorder'],why:'Stock arrived for a preorder the customer had accepted.',rule:'Your preorder routine',page:'/autopilot/preorders',fix:'Take it back from picking on Preorders until the box is packed.'},
  {job:69,actions:['Applied the carrier’s address formatting','Held a label for an address check'],why:'The carrier checked the delivery address.',rule:'Your address check routine',page:'/settings/shipping',fix:'Confirm or change the address on the shipment before the label is bought.'},
  {job:70,actions:['Export papers prepared on its own','Export papers held for a person'],why:'A packed shipment was leaving the country and needed its paperwork.',rule:'Your confirmed exporter and product trade facts',page:'/autopilot/export-papers',fix:'Stop the draft or confirm the missing facts on International paperwork. Nothing was filed or sent.'},
- {job:71,actions:['Van manifest published'],when:'automatic',why:'Packed local deliveries were ready for the vans.',rule:'Your van route routine',page:'/autopilot/van-routes',fix:'Stop or replan the manifest on Van routes.'},
+ {job:71,actions:['Van manifest published'],when:'automatic',why:'Packed local deliveries were ready for the vans.',rule:'Your fleet rule and its stop limit',page:'/autopilot/van-routes',undo:'vanRoute',fix:'Stop or replan the manifest on Van routes.'},
  {job:78,actions:['Prepared a private customer check-in'],why:'A customer was due a check-in by your rule.',rule:'Your routine customer check-ins',page:'/autopilot/customer-check-ins',fix:'It is a private draft. Edit or discard it on Customer check-ins.'},
  {job:85,actions:['StockChief checked net margins'],why:'Orders are checked against your net margin rule.',rule:'Your net margin rule',page:'/autopilot/net-contribution',none:true},
  {job:86,actions:['Clearance plan prepared on its own'],why:'Stock was slow and your clearance rule allows a plan.',rule:'Your clearance rule',page:'/autopilot/clearance-plans',fix:'Cancel the plan on Clearance plans before its prices change.'},
@@ -516,6 +516,10 @@ const status=(table,{id='t.id',ready,done})=>async(db,ws,items)=>{
 };
 const confirmed={confirmed:'yes'};
 const UNDO={
+ vanRoute:{what:'Stop the route while every delivery on it is still at the depot.',check:status('stockchief_runtime.agent_van_routes',{done:"t.status='STOPPED'",
+   ready:`t.status='READY' AND t.automatic AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(t.facts->'stops') x
+    JOIN sales_shipments s ON s.workspace_id=t.workspace_id AND s.id=x->>'id' WHERE s.status<>'PACKED')`}),
+  run:(c,ctx,id)=>require('../shipping/agent-van-routes').undo(scoped(c),ctx,id)},
  routing:{what:'Undo the warehouse choice. Refused once picking starts.',check:status('stockchief_runtime.agent_warehouse_routings',{ready:"t.status='APPLIED'",done:"t.status='UNDONE'"}),
   run:(c,ctx,id)=>require('../sales/agent-ship-from').undo(scoped(c),ctx,id,confirmed)},
  release:{what:'Take the orders back from the warehouse. Refused once picking starts.',check:status('stockchief_runtime.agent_pick_releases',{ready:"t.status='RELEASED'",done:"t.status='UNDONE'"}),
