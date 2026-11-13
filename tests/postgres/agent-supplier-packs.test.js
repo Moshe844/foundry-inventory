@@ -156,7 +156,25 @@ test('a stock issue or sales reservation queues a ready PO before the next catal
   const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:12}),{db,ctx,subscribe,browser,workflows}=f;
   const sku=f.item.skuIds[0],supplierId='fixture-supplier',locationId=f.location.id;
   const priorEmail=process.env.RESEND_API_KEY,priorFrom=process.env.FOUNDRY_FROM_EMAIL;
-  process.env.RESEND_API_KEY='fixture-only';process.env.FOUNDRY_FROM_EMAIL='test@example.test';
+  const realEmail=process.env.STOCKCHIEF_SYNTHETIC_REORDER_EMAIL==='1';
+  const recipient=realEmail?'delivered+stockchief-reorder@resend.dev':f.email;
+  if(realEmail){
+    assert.ok(priorEmail&&priorFrom,'A configured Resend account and sender are required');
+    require('../../src/net-trust').installSystemCertificates();
+    const quotaResponse=await fetch('https://api.resend.com/usage',{
+      headers:{Authorization:'Bearer '+priorEmail},signal:AbortSignal.timeout(15000)
+    }).catch(error=>{throw new Error('Could not read the Resend quota: '+(error.cause?.code||error.name));});
+    assert.ok(quotaResponse.ok,'The Resend quota must be available');
+    const quota=await quotaResponse.json();
+    for(const period of ['daily','monthly']){
+      const usage=quota.emails?.[period];
+      assert.ok(Number.isSafeInteger(usage?.used)&&Number.isSafeInteger(usage?.limit)&&usage.used<usage.limit,
+        'The test must fit the account’s existing sending quota');
+    }
+    await db.query('UPDATE accounts SET email=$2 WHERE id=$1',[f.owner.accountId,recipient]);
+  }else{
+    process.env.RESEND_API_KEY='fixture-only';process.env.FOUNDRY_FROM_EMAIL='test@example.test';
+  }
   t.after(()=>{if(priorEmail===undefined)delete process.env.RESEND_API_KEY;else process.env.RESEND_API_KEY=priorEmail;
     if(priorFrom===undefined)delete process.env.FOUNDRY_FROM_EMAIL;else process.env.FOUNDRY_FROM_EMAIL=priorFrom;});
   await subscribe('pro');await db.query("UPDATE accounts SET created_at=(now()-interval '16 days')::text WHERE id=$1",[f.owner.accountId]);
@@ -173,8 +191,14 @@ test('a stock issue or sales reservation queues a ready PO before the next catal
     .send({_csrf:f.csrf(settings.text),enabled:enabled?'1':'0',minimumSeverity:'important',recipients}).expect(303);
   await alerts(true);
   const messages=[];
-  const mailHandlers=require('../../src/operations/postgres-runtime-handlers').create(undefined,{emailSender:async message=>{
-    messages.push(message);return {provider:'test',externalId:'mail-'+messages.length};}});
+  const mailHandlers=require('../../src/operations/postgres-runtime-handlers').create(undefined,{emailSender:async (message,options)=>{
+    messages.push(message);
+    if(!realEmail)return {provider:'test',externalId:'mail-'+messages.length};
+    assert.equal(message.to,recipient);
+    assert.ok(!message.cc&&!message.bcc);
+    assert.match(message.subject,/purchase approval/);
+    return require('../../src/operations/email').sendResend(message,{...options,signal:AbortSignal.timeout(15000)});
+  }});
   const deliver=()=>queue.processOne(db,mailHandlers,{owner:'approval-email-test',kinds:['system.email-send']});
   const pending=()=>db.query("SELECT id FROM work_items WHERE workspace_id=$1 AND execution_status='WAITING_FOR_APPROVAL' AND recommended_action::jsonb->>'skuId'=$2",[ctx.workspaceId,sku]);
   const issue=()=>require('../../src/domain/postgres-inventory-engine').issue(db,ctx,{skuId:sku,locationId,quantity:4,reasonCode:'sold',idempotencyKey:randomUUID()});
@@ -195,7 +219,11 @@ test('a stock issue or sales reservation queues a ready PO before the next catal
   await workflows.confirmSalesOrder(db,ctx,order.salesOrderId,{idempotencyKey:randomUUID()});assert.equal((await signalWorker()).status,'COMPLETED');
   const fresh=(await pending()).rows[0].id;assert.notEqual(fresh,id);id=fresh;
   const obsolete=await deliver();assert.equal(obsolete.status,'COMPLETED');assert(obsolete.result.skipped);assert.equal(messages.length,0);
-  const notice=await deliver();assert.equal(notice.status,'COMPLETED');assert.equal(messages.length,1);assert.equal(messages[0].to,f.email);
+  const notice=await deliver();assert.equal(notice.status,'COMPLETED');assert.equal(messages.length,1);assert.equal(messages[0].to,recipient);
+  if(realEmail){
+    assert.ok(notice.result.externalId,'Resend accepted the message and assigned a delivery ID');
+    t.diagnostic('Resend accepted the reorder approval notice for its simulated-delivery address');
+  }
   const emailPath=new URL(messages[0].text.match(/https:\/\/\S+$/)[0]).pathname;
   assert.equal(emailPath,'/autopilot/approval-email/'+ctx.workspaceId+'/'+id);
   for(const tier of ['starter','growth','pro','enterprise']){
@@ -205,16 +233,16 @@ test('a stock issue or sales reservation queues a ready PO before the next catal
   assert.equal((await remaining()).rows[0].n,0);
   assert.equal((await require('../../src/operations/postgres-runtime-handlers').systemEmail(notice,db,{emailSender:()=>assert.fail('duplicate email')})).replayed,true);
   const guard=require('../../src/autopilot/approval-email').stillWanted;
-  await alerts(true,'elsewhere@example.test');assert.equal(await guard(db,notice,f.email),false);
-  await alerts(false);assert.equal(await guard(db,notice,f.email),false);
+  await alerts(true,'elsewhere@example.test');assert.equal(await guard(db,notice,recipient),false);
+  await alerts(false);assert.equal(await guard(db,notice,recipient),false);
   await alerts(true);
   await db.query("UPDATE accounts SET created_at=now()::text WHERE id=$1",[f.owner.accountId]);
-  assert.equal(await guard(db,notice,f.email),false);
+  assert.equal(await guard(db,notice,recipient),false);
   await db.query("UPDATE accounts SET created_at=(now()-interval '16 days')::text WHERE id=$1",[f.owner.accountId]);
   await db.query("UPDATE workspace_autopilot SET mode='OBSERVE' WHERE workspace_id=$1",[ctx.workspaceId]);
-  assert.equal(await guard(db,notice,f.email),false);
+  assert.equal(await guard(db,notice,recipient),false);
   await db.query("UPDATE workspace_autopilot SET mode='SUPERVISED' WHERE workspace_id=$1",[ctx.workspaceId]);
-  assert.equal(await guard(db,notice,f.email),true);
+  assert.equal(await guard(db,notice,recipient),true);
   const alternate=await require('../../src/domain/postgres-auth-service').createWorkspace(db,f.owner.accountId,{name:'Alternate inventory'});
   await browser.post('/inventories/switch').type('form').send({_csrf:f.csrf(settings.text),workspaceId:alternate.workspaceId}).expect(303);
   const picker=await browser.get(emailPath).expect(200);assert.match(picker.text,/Open this inventory/);
@@ -228,13 +256,13 @@ test('a stock issue or sales reservation queues a ready PO before the next catal
   const chrome=await require('playwright').chromium.launch();f.cleanup(()=>chrome.close());
   const mobile=await chrome.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
   await mobile.goto('http://127.0.0.1:'+server.address().port+emailPath);
-  await mobile.locator('[name=email]').fill(f.email);await mobile.locator('[name=password]').fill(f.password);
+  await mobile.locator('[name=email]').fill(recipient);await mobile.locator('[name=password]').fill(f.password);
   await Promise.all([mobile.waitForNavigation(),mobile.getByRole('button',{name:'Sign in',exact:true}).click()]);
   assert.equal(await mobile.getByRole('button',{name:'Send to supplier'}).isVisible(),true);
   assert.equal((await remaining()).rows[0].n,0);
   await Promise.all([mobile.waitForNavigation(),mobile.getByRole('button',{name:'Send to supplier'}).click()]);
   await send().expect(303);
-  assert.equal(await guard(db,notice,f.email),false);
+  assert.equal(await guard(db,notice,recipient),false);
   assert.equal((await remaining()).rows[0].n,1);
   const stored=(await db.query("SELECT w.outcome::jsonb outcome,l.quantity_units FROM work_items w JOIN purchase_order_lines l ON l.purchase_order_id=w.purchase_order_id WHERE w.workspace_id=$1 AND w.id=$2",[ctx.workspaceId,id])).rows[0];
   assert.equal(Number(stored.quantity_units),14);assert.ok(stored.outcome.effectId);
