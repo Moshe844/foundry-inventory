@@ -605,6 +605,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.supplier_direct.dispatch.v1':external((job,database)=>require('../purchasing/agent-direct-shipments').process(job,database)),
   'agent.supplier_direct.orders.v1':external((job,database)=>require('../purchasing/direct-shipment-routines').process(job,database)),
   'agent.slack.answer.v1':external((job,database)=>require('../connections/agent-slack').process(job,database,{provider:options.aiProvider}),'reading'),
+  'agent.chat.answer.v1':external((job,database)=>require('../connections/agent-chat').process(job,database,{provider:options.aiProvider}),'reading'),
   'assistant.run-goal':external(async(job,database)=>{
     const ctx={workspaceId:job.workspaceId,actorId:job.payload.actorId};
     const goal=await require('../assistant/postgres-goal-store').get(database,ctx,job.payload.goalId);

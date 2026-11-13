@@ -1,11 +1,13 @@
-<h1>Ask StockChief in Slack</h1>
-<p>Use <code>/stockchief</code> to ask about your business records. The answer appears privately for the linked user.</p>
+<h1>Ask StockChief in Slack, Teams or WhatsApp</h1>
+<p>Ask about your business records from Slack, Microsoft Teams or WhatsApp. Each answer is private, uses your own StockChief permissions and changes nothing. To change something, open StockChief.</p>
 <% if(!allowed){ %>
-  <p class="notice"><strong>Pro / Custom</strong> · Slack answers require Pro or Custom. <a class="btn" href="/billing">Upgrade</a></p>
+  <p class="notice"><strong>Pro / Custom</strong> · Slack answers require Pro or Custom, as do Teams and WhatsApp answers. <a class="btn" href="/billing">Upgrade</a></p>
 <% } %>
+<h2>Slack</h2>
+<p>Use <code>/stockchief</code> to ask about your business records. The answer appears privately for the linked user.</p>
 <% if(owner&&allowed){ %>
   <section class="card"><div class="card-body">
-    <h2>Slack app</h2>
+    <h3>Slack app</h3>
     <% if(connection?.enabled){ %><p>Saved Slack configuration for team <%= connection.slack_team %>.</p><% } %>
     <% if(requestUrl){ %>
       <label>Request URL for <code>/stockchief</code>
@@ -23,12 +25,6 @@
     </form>
   </div></section>
 <% } %>
-<% if(allowed&&recent.length){ const statuses={PENDING:'Waiting',CLAIMED:'Sending',REPLIED:'Replied',HELD:'Held for review'}; %>
-  <section class="card"><div class="card-body">
-    <h2>Your recent Slack questions</h2>
-    <ul><% for(const row of recent){ %><li><%= row.created_at %> · <%= row.problem_code?'Needs review':statuses[row.status] %></li><% } %></ul>
-  </div></section>
-<% } %>
 <% if(owner&&connection?.enabled){ %>
   <form method="post" action="/autopilot/slack/connection">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -39,7 +35,7 @@
 <% } %>
 <% if(allowed&&connection?.enabled){ %>
   <section class="card"><div class="card-body">
-    <h2>Your Slack user</h2>
+    <h3>Your Slack user</h3>
     <% if(issuedCode){ %><p>Run this command yourself in the connected Slack team within ten minutes.</p><p><code>/stockchief connect <%= issuedCode %></code></p><% } %>
     <% if(linked){ %><p>Your user <%= linked %> is linked.</p><% } %>
     <form method="post" action="/autopilot/slack/code">
@@ -52,5 +48,96 @@
         <button type="submit" class="btn">Unlink my Slack user</button>
       </form>
     <% } %>
+  </div></section>
+<% } %>
+
+<% const teams=chats.teams||{}, wa=chats.whatsapp||{}; %>
+<h2>Microsoft Teams</h2>
+<p>Chat privately with your business’s StockChief bot in Teams. Answers appear only in that private chat.</p>
+<% if(owner&&allowed){ %>
+  <section class="card"><div class="card-body">
+    <h3>Teams bot</h3>
+    <% if(teams.connection?.enabled){ %><p>Saved Teams bot for tenant <%= teams.connection.tenant %>.</p><% } %>
+    <% if(teamsUrl){ %><label>Messaging endpoint for the bot <input readonly value="<%= teamsUrl %>"></label><% } %>
+    <form class="form-stack" method="post" action="/autopilot/chat/teams/connection">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="revision" value="<%= teams.connection?.revision||0 %>">
+      <label>Microsoft tenant ID <input name="tenant" value="<%= teams.connection?.tenant||'' %>" required autocomplete="off"></label>
+      <label>Bot app ID <input name="app" value="<%= teams.connection?.app||'' %>" required autocomplete="off"></label>
+      <label>Bot client secret <input type="password" name="secret" autocomplete="new-password" required></label>
+      <label><input type="checkbox" name="confirmed" value="yes" required> Allow current inventory-wide members to link their own Teams users and receive private answers using their StockChief permissions.</label>
+      <button type="submit" class="btn btn-primary"><%= teams.connection?.enabled?'Replace Teams bot':'Save Teams bot' %></button>
+    </form>
+    <% if(teams.connection?.enabled){ %>
+      <form method="post" action="/autopilot/chat/teams/connection">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="revision" value="<%= teams.connection.revision %>">
+        <input type="hidden" name="confirmed" value="yes">
+        <button type="submit" class="btn" name="stop" value="yes">Disconnect Teams for this inventory</button>
+      </form>
+    <% } %>
+  </div></section>
+<% } %>
+<% if(allowed&&teams.connection?.enabled){ %>
+  <section class="card"><div class="card-body">
+    <h3>Your Teams user</h3>
+    <% if(teamsCode){ %><p>Send this to the StockChief bot in a private Teams chat within ten minutes.</p><p><code>connect <%= teamsCode %></code></p><% } %>
+    <% if(teams.linked){ %><p>Your Teams user is linked.</p><% } %>
+    <form method="post" action="/autopilot/chat/teams/code">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button type="submit" class="btn"><%= teams.linked?'Make a new Teams link code':'Make my Teams link code' %></button>
+    </form>
+    <% if(teams.linked){ %>
+      <form method="post" action="/autopilot/chat/teams/unlink">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button type="submit" class="btn">Unlink my Teams user</button>
+      </form>
+    <% } %>
+  </div></section>
+<% } else if(allowed&&!owner){ %><p>Ask the owner to connect the Teams bot.</p><% } %>
+
+<h2>WhatsApp</h2>
+<% if(!chats.whatsappReady){ %>
+  <p>WhatsApp questions are not set up on this server yet.</p>
+<% } else { %>
+  <p>Send your question to StockChief’s WhatsApp number<%= whatsappNumber?' '+whatsappNumber:'' %> from the mobile number you confirmed for alerts.</p>
+  <% if(owner&&allowed){ %>
+    <form method="post" action="/autopilot/chat/whatsapp/connection">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="revision" value="<%= wa.connection?.revision||0 %>">
+      <input type="hidden" name="confirmed" value="yes">
+      <% if(wa.connection?.enabled){ %>
+        <button type="submit" class="btn" name="stop" value="yes">Turn off WhatsApp questions for this inventory</button>
+      <% } else { %>
+        <button type="submit" class="btn btn-primary">Turn on WhatsApp questions for this inventory</button>
+      <% } %>
+    </form>
+  <% } %>
+  <% if(allowed&&wa.connection?.enabled){ %>
+    <section class="card"><div class="card-body">
+      <h3>Your WhatsApp number</h3>
+      <% if(wa.linked){ %>
+        <p>Questions from <%= wa.linked %> are answered.</p>
+        <form method="post" action="/autopilot/chat/whatsapp/unlink">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button type="submit" class="btn">Stop answering my WhatsApp</button>
+        </form>
+      <% } else if(chats.phone){ %>
+        <form method="post" action="/autopilot/chat/whatsapp/link">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button type="submit" class="btn">Answer my WhatsApp at <%= chats.phone %></button>
+        </form>
+      <% } else { %>
+        <p>Confirm your mobile number first. <a href="/autopilot/alert-devices#phone">Your phone and devices</a></p>
+      <% } %>
+    </div></section>
+  <% } %>
+<% } %>
+
+<% const statuses={PENDING:'Waiting',CLAIMED:'Sending',REPLIED:'Replied',HELD:'Held for review'}, names={slack:'Slack',teams:'Teams',whatsapp:'WhatsApp'}; const all=(recent||[]).map(function(r){return Object.assign({channel:'slack'},r);}).concat(chats.recent||[]).sort(function(a,b){return String(b.created_at).localeCompare(String(a.created_at));}).slice(0,30); %>
+<% if(allowed&&all.length){ %>
+  <section class="card"><div class="card-body">
+    <h2>Your recent questions</h2>
+    <ul><% for(const row of all){ %><li><%= row.created_at %> · <%= names[row.channel] %> · <%= row.problem_code?'Needs review':statuses[row.status] %></li><% } %></ul>
   </div></section>
 <% } %>

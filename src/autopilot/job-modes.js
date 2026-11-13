@@ -53,12 +53,14 @@ async function save(db,ctx,raw,input){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
+// Answer-only jobs (84) read this to hand each question to a person instead.
+const ASK_FIRST='This job is set to Ask me first. It needs individual approval.';
 async function restriction(db,workspaceId,job,automatic){
   if(!auditedJobs.has(job))return null;
   const {rows:[setting]}=await db.query('SELECT mode FROM stockchief_runtime.agent_job_modes WHERE workspace_id=$1 AND job_id=$2',[workspaceId,job]);
   if(setting?.mode==='watch')return 'This job is set to Watch only. The owner can change its mode in StockChief AI.';
-  if(setting?.mode==='ask'&&automatic)return 'This job is set to Ask me first. It needs individual approval.';
+  if(setting?.mode==='ask'&&automatic)return ASK_FIRST;
   return null;
 }
 
-module.exports={page,save,restriction,modes,choices,auditedJobs};
+module.exports={page,save,restriction,modes,choices,auditedJobs,ASK_FIRST};
