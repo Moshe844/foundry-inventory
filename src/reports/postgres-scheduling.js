@@ -96,8 +96,12 @@ async function agentEmail(database,workspaceId,deliveryId){
   if(!await require('./agent-report-email').ready(database))return false;
   const policy=require('../commercial/agent-plan');
   if(!policy.usesAgentTerms(await policy.accountState(database,workspaceId)))return false;
-  const row=(await database.query("SELECT schedule_key FROM stockchief_runtime.report_deliveries WHERE workspace_id=$1 AND id=$2",[workspaceId,deliveryId])).rows[0];
-  return Boolean(row&&!row.schedule_key.startsWith('manual:'));
+  const row=(await database.query(`SELECT d.schedule_key,
+    COALESCE((to_jsonb(t)->>'use_chosen_mailbox')::boolean,false) AS use_chosen_mailbox
+    FROM stockchief_runtime.report_deliveries d JOIN stockchief_runtime.report_templates t
+      ON t.id=d.template_id AND t.workspace_id=d.workspace_id
+    WHERE d.workspace_id=$1 AND d.id=$2`,[workspaceId,deliveryId])).rows[0];
+  return Boolean(row?.use_chosen_mailbox&&!row.schedule_key.startsWith('manual:'));
 }
 async function generateDelivery(database,job){
   const {templateId,deliveryId}=job.payload||{};

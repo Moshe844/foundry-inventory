@@ -245,7 +245,7 @@ async function settle(db,workspaceId=null){
 // person may choose only themselves; the owner may choose anyone in the
 // business who may see the report.
 async function saveRecipients(c,ctx,row,input={}){
-  if(!input.recipientsShown||!await installed.has(c,'stockchief_runtime.report_templates','recipient_user_ids'))return;
+  if(!input.recipientsShown||!await installed.has(c,'stockchief_runtime.report_templates','use_chosen_mailbox'))return;
   const ids=[...new Set([].concat(input.recipients||[]).map(String).filter(Boolean))];
   const format=input.attach==null||input.attach===''?row.attachment_format||'xlsx':String(input.attach);
   if(!['xlsx','pdf'].includes(format))throw new ValidationError('Attach an Excel or a PDF file.');
@@ -260,8 +260,8 @@ async function saveRecipients(c,ctx,row,input={}){
   }
   const stored=ids.length===1&&ids[0]===row.owner_user_id?[]:ids;
   const before=row.recipient_user_ids||[];
-  if(JSON.stringify(before)===JSON.stringify(stored)&&row.attachment_format===format)return;
-  await c.query('UPDATE stockchief_runtime.report_templates SET recipient_user_ids=$3,attachment_format=$4 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,row.id,stored,format]);
+  if(row.use_chosen_mailbox&&JSON.stringify(before)===JSON.stringify(stored)&&row.attachment_format===format)return;
+  await c.query('UPDATE stockchief_runtime.report_templates SET recipient_user_ids=$3,attachment_format=$4,use_chosen_mailbox=true WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,row.id,stored,format]);
   await audit.record(c,ctx,{action:'Report recipients saved',reference:row.id,before:{to:before.length?before:[row.owner_user_id],file:row.attachment_format},
     after:{to:stored.length?stored:[row.owner_user_id],file:format}});
 }

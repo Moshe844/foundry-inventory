@@ -189,21 +189,36 @@ test('alerts go by text and push as well as email, chosen per alert, on every pl
   assert.equal(texts.at(-1).to,'+15555550188');assert.match(texts.at(-1).body,/^StockChief: Out of stock: SMS-H/);
   await db.transaction(async c=>alerts.deliver(c,ws,await policy.accountState(c,ws),{only:172}));
   assert.equal((await messages("job_id=172")).length,1,'passed-on items are texted once');
-  assert.deepEqual((await alerts.kinds(db,ws,await policy.accountState(db,ws))).map(k=>k.job),[166,167,168,169,170,171,172,175]);
+  assert.deepEqual((await alerts.kinds(db,ws,await policy.accountState(db,ws))).map(k=>k.job),[50,166,167,168,169,170,171,172,175,180,201,204]);
 
   // The page reads well on a desktop and on a 390 px phone.
   const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()}),listener=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
   const chrome=await require('playwright').chromium.launch();
   t.after(async()=>{await chrome.close();listener.closeAllConnections();await new Promise(r=>listener.close(r));await app.locals.sessionStore.close();});
   const base='http://127.0.0.1:'+listener.address().port,folder=require('node:path').join(process.cwd(),'output','agent-plan-review');require('node:fs').mkdirSync(folder,{recursive:true});
+  const appleUserAgent='Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1';
   for(const [name,viewport,phone] of [['desktop',{width:1366,height:900},false],['phone',{width:390,height:844},true]]){
-    const tab=await chrome.newPage({viewport,isMobile:phone,hasTouch:phone});tab.setDefaultTimeout(15000);
+    const tab=await chrome.newPage({viewport,isMobile:phone,hasTouch:phone,...(phone?{userAgent:appleUserAgent}:{})});tab.setDefaultTimeout(15000);
     await tab.goto(base+'/login');await tab.getByLabel('Work email').fill(f.email);await tab.locator('[name=password]').fill(f.password);
     await Promise.all([tab.waitForNavigation(),tab.getByRole('button',{name:'Sign in',exact:true}).click()]);
     await tab.goto(base+phones.path);
     assert(await tab.getByRole('heading',{name:'Your phone and devices'}).isVisible());
     assert(await tab.getByRole('button',{name:'Send a code'}).isVisible());
     assert(await tab.getByRole('button',{name:'Turn on push on this device'}).isVisible());
+    assert.equal(await tab.locator('[data-ios-push-help]').isVisible(),phone);
+    if(phone){
+      await tab.getByRole('button',{name:'Turn on push on this device'}).click();
+      assert.match(await tab.locator('[data-push-status]').innerText(),/Open StockChief from the Home Screen/);
+    }
+    const manifestUrl=await tab.locator('link[rel=manifest]').getAttribute('href');
+    const manifest=await (await tab.request.get(base+manifestUrl)).json();
+    assert.equal(manifest.display,'standalone');
+    assert.equal(manifest.start_url,'/');
+    for(const icon of manifest.icons){
+      const file=await tab.request.get(base+icon.src);
+      assert.ok(file.ok());
+      assert.equal((await file.body()).readUInt32BE(16),Number(icon.sizes.split('x')[0]));
+    }
     assert(await tab.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),name+' must not scroll sideways');
     await tab.screenshot({path:require('node:path').join(folder,'alert-devices-'+name+'.png'),fullPage:true});
     await tab.goto(base+stock.path);

@@ -5,6 +5,10 @@
 (function(){
   var form=document.querySelector('[data-push-subscribe]');if(!form)return;
   var status=document.querySelector('[data-push-status]');
+  var appleMobile=/iPhone|iPad|iPod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  var installed=navigator.standalone===true||window.matchMedia('(display-mode: standalone)').matches;
+  var installHelp=document.querySelector('[data-ios-push-help]');
+  if(installHelp&&appleMobile&&!installed)installHelp.hidden=false;
   function say(text){if(status)status.textContent=text;}
   function key(value){var padded=(value+'===='.slice((value.length+3)%4)).replace(/-/g,'+').replace(/_/g,'/'),raw=atob(padded),out=new Uint8Array(raw.length);
     for(var i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);return out;}
@@ -13,7 +17,8 @@
   form.addEventListener('submit',function(event){
     if(form.elements.endpoint.value)return;
     event.preventDefault();
-    if(!('serviceWorker' in navigator)||!('PushManager' in window)||!window.isSecureContext){
+    if(appleMobile&&!installed){say('Open StockChief from the Home Screen to turn on push.');return;}
+    if(!('serviceWorker' in navigator)||!('PushManager' in window)||!('Notification' in window)||!window.isSecureContext){
       say('This browser cannot get push notifications. Use text messages instead.');return;}
     var button=form.querySelector('button');button.disabled=true;say('Asking your browser…');
     Notification.requestPermission().then(function(answer){
