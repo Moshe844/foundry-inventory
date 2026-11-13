@@ -29,6 +29,12 @@ function smsSettings(env=process.env){
   const sid=env.TWILIO_ACCOUNT_SID,token=env.TWILIO_AUTH_TOKEN,from=env.TWILIO_FROM_NUMBER,service=env.TWILIO_MESSAGING_SERVICE_SID;
   return sid&&token&&(from||service)?{sid,token,from:from||null,service:service||null}:null;
 }
+// Job 188: WhatsApp questions and answers use the same Twilio account with a
+// WhatsApp-enabled sender (TWILIO_WHATSAPP_FROM, an E.164 number).
+function whatsappSettings(env=process.env){
+  const sid=env.TWILIO_ACCOUNT_SID,token=env.TWILIO_AUTH_TOKEN,from=env.TWILIO_WHATSAPP_FROM;
+  return sid&&token&&PHONE.test(String(from||''))?{sid,token,from}:null;
+}
 function pushSettings(env=process.env){
   const publicKey=env.WEB_PUSH_PUBLIC_KEY,privateKey=env.WEB_PUSH_PRIVATE_KEY,subject=env.WEB_PUSH_SUBJECT||'mailto:support@stockchiefhq.com';
   if(!publicKey||!privateKey)return null;
@@ -65,6 +71,20 @@ async function sendSms({to,body},settings=smsSettings()){
     headers:{authorization:'Basic '+Buffer.from(settings.sid+':'+settings.token).toString('base64'),'content-type':'application/x-www-form-urlencoded'},body:form});
   const answer=await response.json().catch(()=>({}));
   if(!response.ok)throw Object.assign(new Error(String(answer.message||'The text message provider refused the message.').slice(0,300)),{status:response.status});
+  return {reference:String(answer.sid||'')};
+}
+
+// Twilio's Messages API on the WhatsApp channel. Twilio only delivers a
+// free-form reply inside the 24 hours after the person last wrote. Returns {reference}.
+async function sendWhatsApp({to,body},settings=whatsappSettings()){
+  refuseInTests();
+  if(!settings)throw Object.assign(new Error('WhatsApp is not set up on this server.'),{status:400});
+  if(!PHONE.test(String(to||'')))throw Object.assign(new Error('That is not a WhatsApp number StockChief can answer.'),{status:400});
+  const form=new URLSearchParams({To:'whatsapp:'+to,From:'whatsapp:'+settings.from,Body:String(body).slice(0,1500)});
+  const response=await post('https://api.twilio.com/2010-04-01/Accounts/'+encodeURIComponent(settings.sid)+'/Messages.json',{method:'POST',
+    headers:{authorization:'Basic '+Buffer.from(settings.sid+':'+settings.token).toString('base64'),'content-type':'application/x-www-form-urlencoded'},body:form});
+  const answer=await response.json().catch(()=>({}));
+  if(!response.ok)throw Object.assign(new Error(String(answer.message||'WhatsApp refused the message.').slice(0,300)),{status:response.status});
   return {reference:String(answer.sid||'')};
 }
 
@@ -109,4 +129,4 @@ async function sendPush({device,message},settings=pushSettings()){
   return {reference:String(response.headers.get('location')||'').slice(0,300)};
 }
 
-module.exports={PHONE,available,publicKey,validEndpoint,sendSms,sendPush,encrypt,vapid,smsSettings,pushSettings};
+module.exports={PHONE,available,publicKey,validEndpoint,sendSms,sendPush,sendWhatsApp,encrypt,vapid,smsSettings,pushSettings,whatsappSettings};

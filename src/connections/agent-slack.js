@@ -7,7 +7,8 @@ const policy=require('../commercial/agent-plan');
 const credentials=require('./credentials');
 const slack=require('./slack-agent-command');
 const jobs=require('../operations/postgres-job-queue');
-const bounded=require('../assistant/bounded-business-read');
+const chat=require('./chat-providers');
+const answers=require('./chat-answers');
 
 const path='/autopilot/slack',publicPath='/integrations/stockchief/slack/command',kind='agent.slack.answer.v1';
 const apps='stockchief_runtime.agent_slack_apps',members='stockchief_runtime.agent_slack_members',questions='stockchief_runtime.agent_slack_questions';
@@ -125,8 +126,8 @@ async function linkWithin(db,app,input,token){
 }
 
 async function receive(db,endpoint,raw,signature){
-  const initial=await resolve(db,endpoint),input=slack.parse(raw,{...credentials.decrypt(initial.sealed_secret),
-    team:initial.slack_team,app:initial.slack_app},signature);
+  const initial=await resolve(db,endpoint),input=chat.get('slack').inbound({raw,connection:{...credentials.decrypt(initial.sealed_secret),
+    team:initial.slack_team,app:initial.slack_app},headers:{'x-slack-request-timestamp':signature.timestamp,'x-slack-signature':signature.signature}});
   if(input.sslCheck)return null;
   return db.transaction(async c=>{
     await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['agent-slack:'+initial.workspace_id]);
@@ -171,26 +172,6 @@ async function mark(db,workspaceId,id,status,prior){
     [workspaceId,id,status,prior])).rowCount;
 }
 
-async function answer(db,ctx,actor,text,raw,id){
-  if(!bounded.selected(text))return 'Ask a question about your inventory or orders. Open StockChief to prepare or approve changes.';
-  const config=require('../config');
-  raw ||=config.ai.configured?require('../ai/provider').createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null;
-  if(!raw)return 'The answer service is unavailable. Open StockChief to check your records.';
-  const clock=await bounded.businessClock(db,ctx.workspaceId),provider=require('../commercial/model').wrap(db,ctx,raw,'ask','slack:'+id,{deferCustomerCommit:true});
-  const datasets=bounded.contracts(actor).map(({dataset,label,fields,metrics})=>({dataset,label,fields,metrics}));
-  let result;
-  await provider.complete({system:bounded.system,prompt:JSON.stringify({request:text,clock,conversation:[],datasets,
-    syntax:require('../reports/postgres-service').querySyntax}),schema:bounded.schema,schemaName:'bounded_business_read',maxOutputTokens:1800,
-    onValidated:async value=>{
-      const plan=bounded.validate(value,actor);
-      result=plan.status==='clarify'?plan.question:bounded.render(await bounded.execute(db,ctx,actor,plan));
-    }});
-  const credits=(await db.query(`SELECT coalesce(sum(units),0)::text AS used FROM commercial_usage_events
-    WHERE workspace_id=$1 AND meter='ai_work_credits' AND idempotency_key=$2 AND status IN ('RESERVED','COMMITTED')`,
-    [ctx.workspaceId,ctx.workspaceId+':slack:'+id])).rows[0].used;
-  return result+'\n\nAI credits used '+credits+'.';
-}
-
 async function refund(db,ctx,id){
   const scope=await require('../commercial/entitlements').ownerScopeForWorkspace(db,ctx.workspaceId);
   const key=ctx.workspaceId+':slack:'+id;
@@ -209,8 +190,8 @@ async function process(job,db,options={}){
   catch(error){if(error.status>=400&&error.status<500){await mark(db,workspaceId,id,'HELD','PENDING');return {status:'authority_changed'};}throw error;}
   const {text,callback}=credentials.decrypt(question.sealed_question);
   const destination=slack.destination(callback,question.slack_team);
-  let result,problem=null;
-  try{result=await answer(db,ctx,actor,text,options.provider,id);}
+  let result,problem=null,outcome='failed';
+  try{({text:result,outcome}=await answers.answer(db,ctx,actor,text,{provider:options.provider,key:'slack:'+id}));}
   catch(error){
     problem={code:error.code||'answer_failed',message:error.message};
     await db.query(`UPDATE ${questions} SET problem_code=$3 WHERE workspace_id=$1 AND id=$2`,[workspaceId,id,problem.code]);
@@ -240,9 +221,7 @@ async function process(job,db,options={}){
         const current=await authorize(tx,ctx,{routine:true});
         if(current.role!==actor.role||JSON.stringify(current.permissions)!==JSON.stringify(actor.permissions))
           throw new AuthorizationError('Your StockChief permissions changed before delivery.');
-        const response=await require('../lib/provider-http').providerFetch(destination,{method:'POST',redirect:'error',
-          headers:{'Content-Type':'application/json'},body:JSON.stringify(slack.reply(result))},{provider:providerName,timeoutMs:8000,retries:0});
-        if(!response.ok)throw new ValidationError('Slack did not confirm the private answer.');
+        await chat.get('slack').deliver({connection:{team:question.slack_team},target:{callback:destination},text:result});
       },{isolation:'READ COMMITTED'});
     });
   }catch(error){await mark(db,workspaceId,id,'HELD','CLAIMED');await refund(db,ctx,id);throw error;}
@@ -252,7 +231,7 @@ async function process(job,db,options={}){
     if((await client.query(`SELECT 1 FROM commercial_usage_events WHERE workspace_id=$1 AND meter='ai_work_credits'
       AND idempotency_key=$2 AND status='RESERVED'`,[workspaceId,key])).rowCount)
       await require('../commercial/entitlements').commitUsage(tx,scope,{meter:'ai_work_credits',idempotencyKey:key});
-    await mark(client,workspaceId,id,'REPLIED','CLAIMED');
+    if(await mark(client,workspaceId,id,'REPLIED','CLAIMED'))await answers.audited(client,ctx,{channel:'slack',question:id,outcome});
   },{isolation:'SERIALIZABLE',retrySafe:true});
   return {status:'replied',answerProblem:problem};
 }
@@ -267,12 +246,13 @@ async function recover(db,job){
 }
 
 async function review(db,ctx){
-  const data=await page(db,ctx);
-  return {rows:data.recent.map(row=>({Received:row.created_at,Status:row.problem_code?'Needs review':
-    ({PENDING:'Waiting',CLAIMED:'Sending',REPLIED:'Replied',HELD:'Held for review'})[row.status],link:path})),
-    action:{label:'Open Slack answers',href:path},
-    summary:'Ask StockChief in a connected Slack team. Each linked user receives private answers using their current inventory permissions.'};
+  const data=await page(db,ctx),chats=await require('./agent-chat').page(db,ctx),names={slack:'Slack',teams:'Teams',whatsapp:'WhatsApp'};
+  const rows=data.recent.map(row=>({...row,channel:'slack'})).concat(chats.recent).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,30);
+  return {rows:rows.map(row=>({Received:row.created_at,Channel:names[row.channel],Status:row.problem_code?'Needs review':
+    ({PENDING:'Waiting',CLAIMED:'Sending',REPLIED:'Replied',HELD:'Held for review'})[row.status],link:'/autopilot/chat'})),
+    action:{label:'Open chat answers',href:'/autopilot/chat'},
+    summary:'Ask StockChief in Slack, Microsoft Teams or WhatsApp. Each linked person receives private answers using their current inventory permissions, and nothing is changed from a chat.'};
 }
 
 module.exports={path,publicPath,kind,configure,code,unlink,page,receive,process,recover,providerName,
-  definition:{id:188,key:'slack-answers',label:'Ask StockChief in Slack',readPage:review}};
+  definition:{id:188,key:'slack-answers',label:'Ask StockChief in Slack, Teams or WhatsApp',readPage:review}};

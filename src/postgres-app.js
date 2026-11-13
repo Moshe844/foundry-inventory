@@ -102,6 +102,7 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
     provider:commercialOptions.billingProvider,providerOptions:commercialOptions.providerOptions||{}}:{}));
   app.use(createPostgresShippingWebhooks(database,shippingOptions || {}));
   app.use(require('./web/routes/agent-slack-command').router(database));
+  app.use(require('./web/routes/agent-chat-inbound').router(database));
   app.use(require('./web/routes/postgres-shipstation-custom').createShipStationCustomRouter(database));
   app.use(createPostgresPaymentWebhooks(database,paymentOptions || {}));
   app.use(require('./web/routes/postgres-cardknox').createCardknoxPublicRouter(database));

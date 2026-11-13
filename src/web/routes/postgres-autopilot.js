@@ -800,6 +800,7 @@ function createPostgresAutopilotRouter(database,options={}){
   router.get('/autopilot/website-stock-chat',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/website-stock-chat',{title:'Website stock and delivery answers',nav:'autopilot',suppressBack:true,issuedUrl:null,screen:await stockChat.screen(database,req.ctx,req.query)})));
   router.post('/autopilot/website-stock-chat/publish',requireAuth,owner,asyncRoute(async(req,res)=>{const base=new URL(req.protocol+'://'+req.get('host'));if(!['https:','http:'].includes(base.protocol)||base.username||base.password)throw new ValidationError('Open the current StockChief website before publishing its assistant link.');const p=await stockChat.publish(database,req.ctx,req.body);res.page('autopilot/website-stock-chat',{title:'Website assistant ready',nav:'autopilot',suppressBack:true,issuedUrl:new URL('/stock-assistant/'+p.token,base.origin).href,screen:await stockChat.screen(database,req.ctx)});}));
   router.post('/autopilot/website-stock-chat/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{await stockChat.stop(database,req.ctx,req.params.id,req.body);req.flash('success','Public stock answers stopped.');res.redirect(303,'/autopilot/website-stock-chat');}));
+  router.post('/autopilot/website-stock-chat/handoffs/:id/done',requireAuth,owner,asyncRoute(async(req,res)=>{await stockChat.closeHandoff(database,req.ctx,req.params.id);req.flash('success','Website question marked done.');res.redirect(303,'/autopilot/website-stock-chat#handoffs');}));
   const customerPages=require('../../sales/agent-customer-order-pages');
   const preorderFills=require('../../sales/agent-preorder-fills');
   router.get('/autopilot/reviews/preorders',requireAuth,owner,(_req,res)=>res.redirect(303,preorderFills.href));
@@ -1082,14 +1083,35 @@ function createPostgresAutopilotRouter(database,options={}){
     await require('../../purchasing/direct-shipment-routines').configure(database,req.ctx,req.params.id,req.body);
     res.redirect(303,direct.path+'/'+req.params.id);
   }));
-  const slackPage=async(req,res,issuedCode=null)=>{
-    const data=await slack.page(database,req.ctx);
+  // Job 188: one page for Slack, Microsoft Teams and WhatsApp answers.
+  const agentChat=require('../../connections/agent-chat');
+  const slackPage=async(req,res,issuedCode=null,teamsCode=null)=>{
+    const title='Ask StockChief in Slack, Teams or WhatsApp';
+    if(await olderTerms(req))return planCard(req,res,188,{title,nav:'autopilot'});
+    const data=await slack.page(database,req.ctx),chats=await agentChat.page(database,req.ctx);
     const origin=require('../../config').connections.publicOrigin;
+    const absolute=path=>path&&origin?new URL(path,origin).href:path;
     const requestPath=data.owner&&data.connection?slack.publicPath+'/'+data.connection.endpoint_id:null;
-    return res.set('Cache-Control','private, no-store').page('autopilot/slack',{title:'Ask StockChief in Slack',nav:'autopilot',issuedCode,
-      requestUrl:origin&&requestPath?new URL(requestPath,origin).href:requestPath,...data});
+    const teamsPath=chats.owner&&chats.teams?.connection?agentChat.publicPaths.teams+'/'+chats.teams.connection.endpoint_id:null;
+    return res.set('Cache-Control','private, no-store').page('autopilot/slack',{title,nav:'autopilot',issuedCode,teamsCode,
+      requestUrl:absolute(requestPath),teamsUrl:absolute(teamsPath),whatsappNumber:require('../../connections/chat-providers').get('whatsapp').number(),chats,...data});
   };
   router.get(slack.path,requireAuth,asyncRoute((req,res)=>slackPage(req,res)));
+  router.get(agentChat.path,requireAuth,asyncRoute((req,res)=>slackPage(req,res)));
+  router.post(agentChat.path+'/:channel/connection',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await agentChat.configure(database,req.ctx,req.params.channel,req.body);
+    res.redirect(303,agentChat.path);
+  }));
+  router.post(agentChat.path+'/teams/code',requireAuth,asyncRoute(async(req,res)=>slackPage(req,res,null,await agentChat.code(database,req.ctx))));
+  router.post(agentChat.path+'/whatsapp/link',requireAuth,asyncRoute(async(req,res)=>{
+    await agentChat.linkPhone(database,req.ctx);
+    req.flash('success','WhatsApp questions are on for your confirmed number.');
+    res.redirect(303,agentChat.path);
+  }));
+  router.post(agentChat.path+'/:channel/unlink',requireAuth,asyncRoute(async(req,res)=>{
+    await agentChat.unlink(database,req.ctx,req.params.channel);
+    res.redirect(303,agentChat.path);
+  }));
   router.post(slack.path+'/connection',requireAuth,owner,asyncRoute(async(req,res)=>{
     await slack.configure(database,req.ctx,req.body);
     res.redirect(303,slack.path);
