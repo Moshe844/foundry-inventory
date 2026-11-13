@@ -125,6 +125,8 @@ async function stock(db,ctx,input,transport,authorizeRefresh){
     connector_id=excluded.connector_id,on_hand=excluded.on_hand,fulfillable=excluded.fulfillable,observed_at=excluded.observed_at
     WHERE shipbob_sandbox_stock.observed_at<=excluded.observed_at`,
    [ctx.workspaceId,skus[0].id,String(value.inventory_id),con.id,value.total_on_hand_quantity,value.total_fulfillable_quantity,requestedAt]);
+   // Job 123: compare the reading with StockChief's records at the ShipBob partner location.
+   await require('../autopilot/partner-stock').compareShipBob(c,ctx.workspaceId,skus[0].id,{quiet:true});
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 async function configureRule(db,ctx,input){

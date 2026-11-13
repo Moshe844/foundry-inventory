@@ -1,13 +1,13 @@
 <h1>Inbound ocean and air freight</h1>
-<p>Keep port and airport arrival updates, purchase orders, and expected deposits together. The freight arrival and warehouse delivery dates are shown separately.</p>
+<p>Keep port and airport arrival updates, purchase orders, and expected deposits together. When the arrival moves, each linked purchase order’s warehouse date moves by the same number of days.</p>
 <% if(!allowed){ %>
   <p class="notice"><strong>Growth / Pro / Custom</strong> · Inbound freight tracking starts at Growth. <a class="btn" href="/billing">Upgrade</a></p>
 <% } %>
-<% if(freight){ %>
+<% if(freight){ const money=helpers.money; %>
   <section class="card"><div class="card-body">
     <h2><%= freight.reference %> · <%= freight.mode==='ocean'?'Ocean':'Air' %></h2>
     <p><%= freight.forwarder %> → <%= freight.destination %></p>
-    <p><strong><%= statusLabels[freight.status] %></strong><%= freight.eta?' · Expected arrival '+freight.eta:'' %></p>
+    <p><strong><%= statusLabels[freight.status] %></strong><%= freight.eta?' · Expected at the port or airport '+freight.eta:'' %></p>
     <% if(issuedLink){ %>
       <p class="notice">Share this private link with the forwarder responsible for this shipment.</p>
       <label>Private update link<input readonly value="<%= origin+issuedLink %>"></label>
@@ -29,7 +29,7 @@
       <form method="post" action="/autopilot/inbound-freight/<%= freight.id %>/routine" class="form-stack">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="revision" value="<%= freight.revision %>">
-        <p>Routine updates are <strong><%= freight.routine?'on':'off' %></strong>.</p>
+        <p>Routine updates are <strong><%= freight.routine?'on':'off' %></strong>. They apply forwarder and carrier updates, and move purchase-order dates, within your day limit.</p>
         <% if(allowed){ %>
           <label>Maximum change from the confirmed arrival date (days)<input type="number" min="1" max="365" name="maximumShiftDays"
             value="<%= freight.maximum_shift_days||'' %>"></label>
@@ -40,18 +40,66 @@
       </form>
     <% } %>
   </div></section>
-  <section class="card"><div class="card-body">
+  <section class="card" id="tracking"><div class="card-body">
+    <h2>Carrier tracking</h2>
+    <% if(freight.tracking){ %>
+      <p>StockChief reads the carrier’s tracking every few hours<%= freight.carrier_code?' for '+freight.carrier_code:'' %>.
+        <%= freight.tracking_checked_at?'Last checked '+helpers.dateTime(freight.tracking_checked_at)+'.':'Not checked yet.' %></p>
+      <% if(freight.tracking_issue){ %><p class="notice notice--warn">Needs attention: <%= freight.tracking_issue %></p><% } %>
+    <% }else if(!trackingAvailable){ %>
+      <p>Carrier tracking is not set up on this server. Arrival updates come from the forwarder link.</p>
+    <% }else{ %>
+      <p>Follow the carrier’s own tracking to keep the arrival date current. Updates outside your day limit wait for you.</p>
+    <% } %>
+    <% if(allowed&&(trackingAvailable||freight.tracking)){ %>
+      <form method="post" action="/autopilot/inbound-freight/<%= freight.id %>/tracking" class="form-stack">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="revision" value="<%= freight.revision %>">
+        <label><%= freight.mode==='ocean'?'Shipping line code (SCAC)':'Airline code (optional)' %><input name="carrierCode" maxlength="4" value="<%= freight.carrier_code||'' %>"></label>
+        <label><input type="checkbox" name="confirmed" value="yes" required> Confirm the carrier tracking setting.</label>
+        <% if(trackingAvailable){ %><button class="btn" name="tracking" value="yes"><%= freight.tracking?'Save':'Follow carrier tracking' %></button><% } %>
+        <% if(freight.tracking){ %><button class="btn" name="tracking" value="no">Stop following</button><% } %>
+      </form>
+    <% } %>
+  </div></section>
+  <section class="card" id="orders"><div class="card-body">
     <h2>Purchase orders and deposits</h2>
-    <% for(const po of orders){ const deposit=deposits.find(row=>row.purchase_order_id===po.id); %>
+    <p>StockChief records deposits and balances and reminds you when they fall due. A person pays them; StockChief never sends money.</p>
+    <% for(const po of orders){ const deposit=deposits.find(row=>row.purchase_order_id===po.id),value=orderValues[po.id]||{},moves=dateChanges.filter(row=>row.purchase_order_id===po.id); %>
       <section>
         <h3><a href="/purchasing/orders/<%= po.id %>"><%= po.po_number %></a></h3>
         <p>Expected at warehouse <%= po.expected_date||'No date recorded' %></p>
+        <% const moveWords={APPLIED:'Moved on its own',APPROVED:'Moved with your approval',HELD:'Waiting for your approval',WATCH:'Would move (StockChief is only watching)',UNDONE:'Change undone'}; %>
+        <% const move=moves[0]; if(move){ %>
+          <p><%= moveWords[move.status] %>: <%= move.previous_date %> → <%= move.proposed_date %></p>
+          <% if(move.shortage.length&&move.status!=='UNDONE'){ %>
+            <p class="notice notice--warn"><% for(const s of move.shortage.slice(0,5)){ %><%= s.code %> runs out on <%= s.runsOut %>. <% } %>The goods reach the warehouse after that.</p>
+            <% if(allowed&&!move.alert_seen_at){ %>
+              <form method="post" action="/autopilot/inbound-freight/<%= freight.id %>/seen"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <input type="hidden" name="dateId" value="<%= move.id %>"><button class="btn">I have seen this</button></form>
+            <% } %>
+          <% } %>
+          <% if(allowed&&['APPLIED','APPROVED'].includes(move.status)&&po.expected_date===move.proposed_date){ %>
+            <form method="post" action="/autopilot/inbound-freight/<%= freight.id %>/undo" class="form-stack">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="dateId" value="<%= move.id %>">
+              <label><input type="checkbox" name="confirmed" value="yes" required> Put back <%= move.previous_date %> on <%= po.po_number %>.</label>
+              <button class="btn">Undo this date change</button>
+            </form>
+          <% } %>
+          <% if(moves.length>1){ %><details><summary>Earlier date changes (<%= moves.length-1 %>)</summary><ul>
+            <% for(const earlier of moves.slice(1,20)){ %><li><%= moveWords[earlier.status] %>: <%= earlier.previous_date %> → <%= earlier.proposed_date %></li><% } %>
+          </ul></details><% } %>
+        <% } %>
         <% if(deposit){ const paid=Number(deposit.paid),expected=Number(deposit.amount_minor); %>
-          <p>Deposit <strong><%= helpers.money(expected,deposit.currency) %></strong> due <%= deposit.due_date %>.
-            <%= deposit.bill_number?'Recorded payments '+helpers.money(paid,deposit.currency)+'.':'Awaiting a matched posted deposit bill.' %>
-            <% if(deposit.bill_number){ %>Remaining <%= helpers.money(Math.max(0,expected-paid),deposit.currency) %>.<% } %>
+          <p>Deposit <strong><%= money(expected,deposit.currency) %></strong> due <%= deposit.due_date %>.
+            <%= deposit.bill_number?'Recorded payments '+money(paid,deposit.currency)+'.':'Awaiting a matched posted deposit bill.' %>
+            <% if(deposit.bill_number){ %>Remaining <%= money(Math.max(0,expected-paid),deposit.currency) %>.<% } %>
           </p>
         <% } %>
+        <% if(value.valueMinor!=null){ %>
+          <p>Goods on this order <%= money(value.valueMinor,po.currency) %> · Paid on its bills <%= money(value.paidMinor,po.currency) %> ·
+            Left to pay <strong><%= money(Math.max(0,value.valueMinor-value.paidMinor),po.currency) %></strong><%= deposit?.balance_due_date?' · Balance due '+deposit.balance_due_date:'' %></p>
+        <% }else{ %><p>Add every line’s cost to see what is left to pay on this order.</p><% } %>
         <% if(allowed){ %>
           <details><summary><%= deposit?'Edit deposit details':'Track a deposit' %></summary>
             <form method="post" action="/autopilot/inbound-freight/<%= freight.id %>/deposit" class="form-stack">
@@ -59,8 +107,9 @@
               <input type="hidden" name="orderId" value="<%= po.id %>">
               <input type="hidden" name="revision" value="<%= deposit?.revision||0 %>">
               <label>Expected deposit (<%= po.currency %>)<input name="amount" inputmode="decimal" required
-                value="<%= deposit?helpers.money(Number(deposit.amount_minor),po.currency):'' %>"></label>
-              <label>Due date<input type="date" name="dueDate" value="<%= deposit?.due_date||'' %>" required></label>
+                value="<%= deposit?money(Number(deposit.amount_minor),po.currency):'' %>"></label>
+              <label>Deposit due date<input type="date" name="dueDate" value="<%= deposit?.due_date||'' %>" required></label>
+              <label>Balance due date (optional)<input type="date" name="balanceDueDate" value="<%= deposit?.balance_due_date||'' %>"></label>
               <label>Posted deposit bill number (optional)<input name="billNumber" maxlength="150" value="<%= deposit?.bill_number||'' %>"></label>
               <label><input type="checkbox" name="confirmed" value="yes" required> These deposit terms belong to this purchase order.</label>
               <button class="btn">Save deposit</button>
@@ -70,25 +119,29 @@
       </section>
     <% } %>
   </div></section>
-  <section class="card"><div class="card-body">
-    <h2>Forwarder updates</h2>
-    <% if(!history.length){ %><p>No forwarder updates yet.</p><% } %>
-    <% for(const update of history){ %>
+  <section class="card" id="updates"><div class="card-body">
+    <h2>Arrival updates</h2>
+    <% if(!history.length){ %><p>No arrival updates yet.</p><% } %>
+    <% history.forEach(function(update,index){ %>
+      <% if(index===3){ %><details><summary>Earlier updates (<%= history.length-3 %>)</summary><% } %>
       <article>
         <h3><%= statusLabels[update.status] %><%= update.eta?' · '+update.eta:'' %></h3>
-        <p><%= update.disposition==='APPLIED'?'Applied':update.revision===freight.revision?'Needs your review':'Earlier update retained' %></p>
+        <p><%= update.source==='carrier'?'From carrier tracking':'From the forwarder' %> ·
+          <%= update.disposition==='APPLIED'?'Applied':update.revision!==freight.revision?'Earlier update retained':update.disposition==='WATCH'?'Recorded while StockChief only watches':'Needs your review' %></p>
+        <% if(update.held_reason&&update.disposition!=='APPLIED'&&update.revision===freight.revision){ %><p><%= update.held_reason %></p><% } %>
         <% if(update.note){ %><blockquote><%= update.note %></blockquote><% } %>
-        <% if(allowed&&update.disposition==='REVIEW'&&update.revision===freight.revision){ %>
+        <% if(allowed&&update.disposition!=='APPLIED'&&update.revision===freight.revision){ %>
           <form method="post" action="/autopilot/inbound-freight/<%= freight.id %>/review" class="form-stack">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <input type="hidden" name="updateId" value="<%= update.id %>">
             <input type="hidden" name="revision" value="<%= freight.revision %>">
-            <label><input type="checkbox" name="confirmed" value="yes" required> Use this exact status and arrival update.</label>
+            <label><input type="checkbox" name="confirmed" value="yes" required> Use this exact status and arrival date, and move the purchase-order dates shown above.</label>
             <button class="btn">Apply update</button>
           </form>
         <% } %>
       </article>
-    <% } %>
+    <% }) %>
+    <% if(history.length>3){ %></details><% } %>
   </div></section>
 <% }else if(allowed){ %>
   <section class="card"><div class="card-body">

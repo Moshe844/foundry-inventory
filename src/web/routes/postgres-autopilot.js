@@ -985,6 +985,14 @@ function createPostgresAutopilotRouter(database,options={}){
       res.redirect(303,inboundPath+'/'+req.params.id);
     }));
   }
+  // Job 39: carrier tracking, undoing a purchase-order date change and noting a run-out alert.
+  const arrivals=require('../../purchasing/inbound-freight-arrivals');
+  for(const [step,method,anchor] of [['tracking','configureTracking','#tracking'],['undo','undo','#orders'],['seen','seen','#orders']]){
+    router.post(inboundPath+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await arrivals[method](database,req.ctx,req.params.id,req.body);
+      res.redirect(303,inboundPath+'/'+req.params.id+anchor);
+    }));
+  }
   const carrierClaims=require('../../shipping/agent-carrier-claims');
   const claimPath=carrierClaims.path;
   const carrierClaimPage=async(req,res)=>res.set('Cache-Control','private, no-store').page('autopilot/carrier-claims',{
@@ -1950,6 +1958,39 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/partner-stock-readings',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../connections/agent-partner-stock-reads').configure(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/third-party-stock');
+  }));
+  // Job 123: partner locations, their counts and the differences from StockChief's records.
+  const partnerStock=require('../../autopilot/partner-stock');
+  const partnerLocals={title:'Stock at partners',nav:'autopilot',backTo:{href:'/autopilot/reviews/third-party-stock',label:'Partner stock review'}};
+  const partnerPage=(req,res,extra={})=>reportPage(req,res,partnerStock.JOB,'autopilot/partner-stock',{...partnerLocals,issuedFeed:null,...extra},
+    async()=>{res.set('Cache-Control','private, no-store');return partnerStock.page(database,req.ctx);},402);
+  router.get(partnerStock.path,requireAuth,owner,asyncRoute((req,res)=>partnerPage(req,res)));
+  router.post(partnerStock.path,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const saved=await partnerStock.savePartner(database,req.ctx,req.body);
+    req.flash('success',saved.removed?'Removed the partner location. Its counts are no longer compared.':'Saved the partner location.');
+    res.redirect(303,partnerStock.path);
+  }));
+  router.post(partnerStock.path+'/:locationId/feed',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const issued=await partnerStock.issueFeed(database,req.ctx,req.params.locationId,req.body);
+    return partnerPage(req,res,{issuedFeed:{locationId:req.params.locationId,path:issued}});
+  }));
+  router.post(partnerStock.path+'/:locationId/feed/stop',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await partnerStock.stopFeed(database,req.ctx,req.params.locationId);
+    req.flash('success','The partner’s feed link no longer works.');
+    res.redirect(303,partnerStock.path);
+  }));
+  router.post(partnerStock.path+'/:locationId/upload',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const files=req.files||[];
+    if(files.length!==1||files[0].field!=='counts')throw new ValidationError('Choose one stock file from the partner.');
+    const saved=await partnerStock.upload(database,req.ctx,req.params.locationId,files[0],req.body);
+    req.flash('success',saved.replayed?'This file was already recorded. Nothing changed.':'Recorded '+saved.lines+' partner counts. '+
+      (saved.differences?saved.differences+' differ from your records.':'They agree with your records.'));
+    res.redirect(303,partnerStock.path+'#differences');
+  }));
+  router.post(partnerStock.path+'/:locationId/explain',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await partnerStock.explain(database,req.ctx,req.params.locationId,req.body);
+    req.flash('success','Your note is saved. Stock did not change.');
+    res.redirect(303,partnerStock.path+'#differences');
   }));
   const abcPath=require('../../forecasting/monthly-product-classes').path;
   router.get(abcPath+'/products/:itemId',requireAuth,owner,starterAgentPage(15,'suggest','ABC count and safety planning',async(req,res)=>{
