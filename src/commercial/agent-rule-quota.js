@@ -24,12 +24,14 @@ const newerTables={
  'agent_customer_answer_rules':'488-agent-customer-questions.sql',
  'agent_quote_settings':'489-agent-quote-requests.sql'
 };
+const fullyInstalled=new WeakSet();
 async function configuredSources(db){
+ if(fullyInstalled.has(db))return sources;
  const {hasVerifiedMigration}=require('../db/migrate-postgres');
- const {has}=require('../db/schema-installed');
- const missing=new Set();
- for(const [table,migration] of Object.entries(newerTables))
-  if(!hasVerifiedMigration(db,migration)&&!await has(db,'stockchief_runtime.'+table))missing.add(table);
+ const unchecked=Object.entries(newerTables).filter(([,migration])=>!hasVerifiedMigration(db,migration)).map(([table])=>table);
+ const missing=new Set(unchecked.length?(await db.query(`SELECT name FROM unnest($1::text[]) AS tables(name)
+  WHERE to_regclass('stockchief_runtime.'||name) IS NULL`,[unchecked])).rows.map(row=>row.name):[]);
+ if(!missing.size)fullyInstalled.add(db);
  return sources.filter(([table])=>!missing.has(table));
 }
 const ownership=`WITH owned AS MATERIALIZED(SELECT id FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL)`;

@@ -230,7 +230,7 @@ const actionJobs=new Map([
   ['catalog.clearance_plan',86],
   ['inventory.slow_stock_step',9],
   ['inventory.expiry_warning',191],
-  ['alert.low_stock',166],['alert.watch_rule',167],['alert.overdue',168],['alert.cost_margin',170],['alert.unusual_activity',171],['alert.escalation',172],['alert.send',173],['approval.link',175],
+  ['alert.low_stock',166],['alert.watch_rule',167],['alert.overdue',168],['alert.channel',169],['alert.cost_margin',170],['alert.unusual_activity',171],['alert.escalation',172],['alert.send',173],['approval.link',175],
   ['report.compliance',197],
   ['inventory.write_down_aged',17],
   ['manufacturing.create_work_order',14],['manufacturing.start',14],['manufacturing.complete',14],

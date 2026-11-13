@@ -26,6 +26,7 @@ const expected={
  'foundry/document-intake.js':1,'foundry/understanding-service.js':3,'imports/mapping-service.js':1,'imports/workbook-relations.js':1,'imports/handwritten-table.js':1,
  'lib/provider-http.js':1,'lib/postal-lookup.js':1,'manager/operating-instructions.js':1,
  'manager/postgres-operating-instructions.js':1,'operations/email.js':1,'operations/monitoring.js':1,
+ 'notifications/alert-providers.js':1,
  'operations/postgres-monitoring.js':1,'payments/connect.js':3,'payments/providers/stripe.js':1,
  'product-brain/navigation.js':1,'purchasing/supplier-document-extractor.js':1,
  'sales/order-from-email.js':1,'shipping/providers/easypost-partner.js':1,
@@ -72,6 +73,7 @@ test('PostgreSQL production dependency graph has no unclassified direct provider
  assert.match(read('lib/provider-http.js'),/no commercial operation scope/);
  assert.match(read('operations/postgres-runtime-handlers.js'),/provider:'resend',operation:'system_email'/);
  assert.match(read('operations/postgres-monitoring.js'),/operation:'operational_alert'/);
+ assert.match(read('autopilot/alert-phones.js'),/recordCost\([\s\S]*?operation:'alert_delivery'/);
  assert.match(read('operations/monitoring.js'),/legacy alert dispatcher is unavailable in PostgreSQL/);
  assert.match(read('shipping/shipengine-platform.js'),/legacy ShipEngine platform connector is not enabled in PostgreSQL/);
 });

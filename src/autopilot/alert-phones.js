@@ -177,6 +177,11 @@ async function process(database,job,senders={}){
         WHERE workspace_id=$1 AND user_id=$2`,[workspaceId,m.user_id,codeHash(row,code)]);
       body='StockChief code: '+code+'. It works for 15 minutes. Reply STOP to stop texts.';
     }
+    const scope=await require('../commercial/entitlements').ownerScopeForWorkspace(c,workspaceId);
+    await require('../commercial/control-service').recordCost(c,scope,{
+      provider:m.channel==='SMS'?'twilio':'web_push',operation:'alert_delivery',unit:'submission',quantity:1,
+      idempotencyKey:`alert-delivery:${id}:attempt:${job.attemptCount||1}`,detail:{channel:m.channel,purpose:m.purpose}
+    });
     await c.query(`UPDATE ${messages} SET status='SENDING',updated_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2`,[workspaceId,id]);
     return {m,target,body};
   });
