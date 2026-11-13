@@ -372,5 +372,5 @@ async function download(db,ctx,query={}){
   return {filename:'roi-report-'+month+'.'+format,format,body};
 }
 
-module.exports={JOB,ACTION,KIND,href,STANDARD_MINUTES,KINDS,compute,headline,run,schedule,checkNow,page,readPage,download,
+module.exports={JOB,ACTION,KIND,href,STANDARD_MINUTES,KINDS,compute,headline,run,schedule,checkNow,page,readPage,download,email,
   definition:{id:JOB,key:'roi-report',label:'Monthly ROI report: hours saved and money caught',filterLabel:'Completed month (YYYY-MM)',readPage}};

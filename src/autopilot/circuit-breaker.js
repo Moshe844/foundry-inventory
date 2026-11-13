@@ -66,7 +66,7 @@ async function observations(db,workspaceId,{all=false}={}){
   const {calendarDate:today,timeZone}=await time.forWorkspace(db,workspaceId);
   const totals=require('../operations/postgres-team-access').purchaseTotalsSql('p.workspace_id','p.id',"power(10::numeric,($6::jsonb->>p.currency)::int)");
   const ledger=await has(db,TABLE)?`UNION ALL SELECT a.at,a.kind,a.currency,a.amount_minor::numeric FROM ${TABLE} a
-    WHERE a.workspace_id=$1 AND a.at BETWEEN $2 AND now()`:'';
+    WHERE a.workspace_id=$1 AND a.at BETWEEN $2 AND clock_timestamp()`:'';
   const threshold='greatest(2*b.median,b.q3+1.5*(b.q3-b.q1))';
   const result=await db.query(`WITH acknowledged AS MATERIALIZED (
     SELECT coalesce((SELECT anomaly_acknowledged_at FROM workspace_autopilot WHERE workspace_id=$1),'-infinity'::timestamptz) AS at
@@ -76,11 +76,11 @@ async function observations(db,workspaceId,{all=false}={}){
     FROM work_items w LEFT JOIN purchase_orders p ON p.workspace_id=w.workspace_id AND p.id=w.purchase_order_id
     LEFT JOIN LATERAL (${totals}) t ON p.id IS NOT NULL
     WHERE w.workspace_id=$1 AND w.source='postgres_autopilot' AND w.approval_requirement='NONE' AND w.execution_status IN ('COMPLETED','EXECUTING')
-      AND w.approved_at::timestamptz BETWEEN $2 AND now()
+      AND w.approved_at::timestamptz BETWEEN $2 AND clock_timestamp()
     UNION ALL SELECT t.completed_at::timestamptz,'label',t.currency,t.amount_minor::numeric FROM shipping_label_transactions t
     JOIN stockchief_runtime.provider_effects e ON e.workspace_id=t.workspace_id AND e.kind='shipping.label.purchase'
       AND e.payload->>'transactionId'=t.id AND e.payload->>'agentPostageScope'='automatic'
-    WHERE t.workspace_id=$1 AND t.operation='PURCHASE' AND t.status='SUCCEEDED' AND t.completed_at::timestamptz BETWEEN $2 AND now()
+    WHERE t.workspace_id=$1 AND t.operation='PURCHASE' AND t.status='SUCCEEDED' AND t.completed_at::timestamptz BETWEEN $2 AND clock_timestamp()
     ${ledger}
   ), counted AS (
     -- Today's activity before the owner's last resume was reviewed already.

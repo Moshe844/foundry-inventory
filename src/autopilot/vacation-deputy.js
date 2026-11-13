@@ -120,7 +120,7 @@ async function record(db,workspaceId){
   if(!await has(db,DELEGATIONS))return {skipped:'schema'};
   const state=await policy.accountState(db,workspaceId),cover=await coverage(db,workspaceId,state);
   if(!cover)return {recorded:0};
-  const [{rows},signatures]=await Promise.all([desk().desk(db,workspaceId,{state}),require('../purchasing/approval-routing').assignments(db,workspaceId)]);
+  const {rows}=await desk().desk(db,workspaceId,{state}),signatures=await require('../purchasing/approval-routing').assignments(db,workspaceId);
   const covered=rows.filter(r=>r.covering).map(r=>({key:r.key,kind:desk().KINDS[r.kind].label,title:r.title,href:r.href,person:r.person.name,amount:r.amountMinor==null?null:money.format(r.amountMinor,r.currency)}))
     .concat(signatures.filter(s=>s.covering).map(s=>({key:'purchase-signature:'+s.id,kind:desk().KINDS.purchase.label,title:'Second approval for purchase '+s.order,href:'/purchasing/orders/'+s.id,person:s.reviewer,amount:null})));
   if(!covered.length)return {recorded:0};
@@ -150,7 +150,7 @@ async function handback(db,workspaceId){
   if(!coverageRow)return null;
   const delegated=(await db.query(`SELECT request_key,kind,title,href FROM ${DELEGATIONS} WHERE workspace_id=$1 AND revision=$2 ORDER BY delegated_at,request_key LIMIT 500`,
     [workspaceId,coverageRow.revision])).rows;
-  const [requests,signatures]=await Promise.all([desk().requests(db,workspaceId),require('../purchasing/approval-routing').assignments(db,workspaceId)]);
+  const requests=await desk().requests(db,workspaceId),signatures=await require('../purchasing/approval-routing').assignments(db,workspaceId);
   const waiting=new Set(requests.map(r=>r.key).concat(signatures.map(s=>'purchase-signature:'+s.id)));
   const rows=delegated.map(d=>({title:d.title,href:d.href,kind:d.kind,waiting:waiting.has(d.request_key)}));
   return {revision:coverageRow.revision,deputy:coverageRow.deputy_name,from:coverageRow.starts_on,through:coverageRow.ended_on||coverageRow.ends_on,rows,
