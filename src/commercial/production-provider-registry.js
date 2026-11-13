@@ -52,6 +52,8 @@ const classification=Object.freeze({
  'lib/postal-lookup.js':'METERED',
  'manager/operating-instructions.js':'NOT_PG_ENABLED',
  'manager/postgres-operating-instructions.js':'METERED',
+ // The durable alert worker records each SMS and Web Push submission before dispatch.
+ 'notifications/alert-providers.js':'METERED_INTERNAL_COST',
  'operations/email.js':'METERED_INTERNAL_COST',
  'operations/monitoring.js':'NOT_PG_ENABLED',
  'operations/postgres-monitoring.js':'METERED_INTERNAL_COST',

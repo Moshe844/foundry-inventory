@@ -302,7 +302,8 @@ function createPostgresAskRouter(database,options={}){
       detail:{kind:e.detail.kind,tool:typeof e.detail.tool==='string'?e.detail.tool:null,status:e.detail.kind==='runtime_starting'?e.detail.status:null}}));
     return {id:goal.id,status:goal.status,answer:state.message,conversation:state,createdAt:goal.created_at,updatedAt:goal.updated_at,runStartedAt:goal.checkpoint.runStartedAt,turns:goal.turns,tools:goal.tool_calls,events:safeEvents,
       workerAvailable,continuation,navigationOnly:goal.checkpoint.navigation?.state==='DELIVERED'&&!goal.checkpoint.navigation.resultAnswer,approvalIds:(approvalInbox?.approvals||[]).map(card=>card.id),
-      delivery:delivery.visible(goal),prerequisiteHandoffs:goal.checkpoint.prerequisiteHandoffs||[],navigation:navigation?{...navigation,automatic:req.session.postgresAskNavigationGoal===goal.id}:null};
+      delivery:delivery.visible(goal),answerSources:goal.status==='COMPLETED'?goal.checkpoint.answerSources||[]:[],
+      prerequisiteHandoffs:goal.checkpoint.prerequisiteHandoffs||[],navigation:navigation?{...navigation,automatic:req.session.postgresAskNavigationGoal===goal.id}:null};
   }
   router.get('/ask/goals/:id',asyncRoute(async(req,res)=>{
     res.set('Cache-Control','no-store');const goal=await goalSnapshot(req);

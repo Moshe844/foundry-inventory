@@ -5,7 +5,7 @@ const {restriction,sources,countConfigured}=require('../../src/commercial/agent-
 test('saving and executing rules count the same sources and use exact plan ceilings',async()=>{
  const statements=[];
  const database=(used,{installed=true}={})=>({query:async(sql,args)=>{
-  if(sql.includes('to_regclass'))return {rows:[{ok:installed}]};
+  if(sql.includes('to_regclass'))return {rows:installed?[]:args[0].map(name=>({name}))};
   statements.push({sql,args});
   return {rows:[{used,unrecognized:false}]};
  }});
@@ -29,5 +29,5 @@ test('saving and executing rules count the same sources and use exact plan ceili
  assert.doesNotMatch(statements.at(-1).sql,/agent_approval_routes|agent_staff_task_rules/);
  assert.equal(await restriction({query:()=>{throw Error('Custom must not acquire a finite quota');}},{plan:'enterprise'}),null);
  assert.match(await restriction({}, {plan:'growth'}),/review/i);
- assert.match(await restriction({query:async(sql)=>({rows:sql.includes('to_regclass')?[{ok:false}]:[]})},{plan:'growth',accountId:'owner'}),/could not verify/);
+ assert.match(await restriction({query:async()=>({rows:[]})},{plan:'growth',accountId:'owner'}),/could not verify/);
 });

@@ -27,6 +27,46 @@ function completed(job){
   assert.equal(job?.status,'COMPLETED',JSON.stringify(job?.lastError));
   return job.result;
 }
+
+test('an unavailable mailbox keeps its checkpoint, backs off independently and resumes after recovery',{timeout:300000},async t=>{
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx}=f;
+  await f.subscribe('growth');
+  const microsoft=await mailbox(f,'microsoft365'),gmail=await mailbox(f,'gmail');
+  let reachable=false;
+  const ms={poll(){},async pollPage(){
+    if(!reachable)throw Object.assign(new Error('Provider unavailable'),{code:'provider_unavailable',httpStatus:503});
+    return {messages:[],next:null};
+  }};
+  const google={poll(){},async pollPage(){return {messages:[],next:null};}};
+  const providers={get:type=>type==='microsoft365'?ms:type==='gmail'?google:null},handlers=runtime.create(providers);
+  const queued=await enqueue(f,microsoft);
+  const failed=await processPage(f,handlers);
+  assert.equal(failed.status,'RETRY');
+  assert.equal(failed.lastError.code,'provider_unavailable');
+  const read=async()=>((await db.query('SELECT config::jsonb AS config,last_error FROM workspace_connectors WHERE id=$1',[microsoft.id])).rows[0]);
+  const first=await read();
+  assert.equal(first.config.syncFailureCount,1);
+  assert.match(first.last_error,/will retry automatically/);
+  const firstWindow=(await db.query('SELECT window_id FROM '+progress+' WHERE connector_id=$1',[microsoft.id])).rows[0].window_id;
+  const forceDue=()=>db.query('UPDATE stockchief_runtime.jobs SET available_at=0 WHERE id=$1',[queued.job.id]);
+  await forceDue();
+  assert.equal((await processPage(f,handlers)).status,'RETRY');
+  const second=await read();
+  assert.equal(second.config.syncFailureCount,2);
+  assert.ok(Date.parse(second.config.syncRetryAt)-Date.parse(first.config.syncRetryAt)>=119000);
+  assert.equal((await db.query('SELECT window_id FROM '+progress+' WHERE connector_id=$1',[microsoft.id])).rows[0].window_id,firstWindow);
+  await enqueue(f,gmail);
+  assert.equal((await processPage(f,handlers)).status,'COMPLETED');
+  const same=await read();assert.deepEqual(same,second);
+  reachable=true;
+  await forceDue();
+  assert.equal((await processPage(f,handlers)).status,'COMPLETED');
+  const restored=await read();
+  assert.equal(restored.config.syncRetryAt,undefined);
+  assert.equal(restored.last_error,null);
+  assert.equal((await db.query('SELECT 1 FROM '+progress+' WHERE workspace_id=$1',[ctx.workspaceId])).rowCount,0);
+});
+
 async function records(f){
   return (await f.db.query(`SELECT external_message_id AS id,agent_category AS category,agent_category_reason AS reason,'business' AS source
     FROM connection_email_messages WHERE workspace_id=$1

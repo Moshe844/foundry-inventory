@@ -1,0 +1,11 @@
+<% const rf=result.quoteRequestForm; %>
+<section class="card section" data-quote-request-settings><h2>How long your quotes stay valid</h2>
+<p>StockChief writes quotes on its own only after you choose this. Each quote is valid this many days from the day it is written.</p>
+<form method="post" action="/autopilot/quote-requests/settings" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rf.revision %>">
+<label class="rm-field"><span>Days a quote stays valid</span><small>Leave empty to stop writing quotes on its own.</small><input name="days" type="number" min="1" max="365" inputmode="numeric" value="<%= rf.validDays %>"></label>
+<button class="btn btn--primary">Save</button></form></section>
+<section class="card section" data-quote-requests><h2>Requests waiting for you</h2>
+<% if(!rf.waiting.length){ %><p>No quote request is waiting for you.</p><% }else{ %><ul class="rm-list">
+<% for(const r of rf.waiting){ %><li class="list-row"><span><a href="/mail/<%= encodeURIComponent(r.id) %>"><strong><%= r.who %></strong></a><small><%= r.outcome %></small><% if(r.reason){ %><small><%= r.reason %></small><% } %></span>
+<form method="post" action="/autopilot/quote-requests/<%= encodeURIComponent(r.id) %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm">Dismiss</button></form></li><% } %>
+</ul><% } %></section>

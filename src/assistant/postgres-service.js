@@ -2122,7 +2122,7 @@ async function continueApprovedPlans(database,ctx,proposalId,options={}){
   });
 }
 
-async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRoutine=false,invoiceRoutine=false,arrivedStockRoutine=false,pickReleaseRoutine=false,repeatRoutine=false,statementRoutine=false}={}){
+async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRoutine=false,invoiceRoutine=false,arrivedStockRoutine=false,pickReleaseRoutine=false,repeatRoutine=false,statementRoutine=false,quoteRoutine=false}={}){
   await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),'ask.prepare_actions');
   const committed=await database.transaction(async(client)=>{
     const proposal=await getProposal(database,ctx.workspaceId,id,true,client);
@@ -2158,7 +2158,11 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
       if(contract.name!=='customer.statement')throw new ValidationError('Statement request authority cannot run another kind of action.');
       routineAuthority=await require('../accounting/agent-statement-requests').requireRoutineAuthority(client,ctx,proposal.payload);
     }
-    const automatic=Boolean(missionPlanId)||receiptRoutine||invoiceRoutine||arrivedStockRoutine||pickReleaseRoutine||repeatRoutine||statementRoutine;
+    if(quoteRoutine){
+      if(contract.name!=='sales_quote.create')throw new ValidationError('Quote request authority cannot run another kind of action.');
+      routineAuthority=await require('../sales/agent-quote-requests').requireRoutineAuthority(client,ctx,proposal.payload);
+    }
+    const automatic=Boolean(missionPlanId)||receiptRoutine||invoiceRoutine||arrivedStockRoutine||pickReleaseRoutine||repeatRoutine||statementRoutine||quoteRoutine;
     const stopped=await agentPolicy.stopped(client,ctx.workspaceId,agentAccount,contract.name,automatic,proposal.payload);
     if(stopped)throw new ValidationError(stopped);
     const operation=automatic?'automatic':'draft', job=agentPolicy.actionJob(contract.name,operation,{...proposal.payload,idempotencyKey:proposal.idempotency_key});
@@ -2261,6 +2265,11 @@ async function executeRepeatRoutine(database,ctx,id){
 // Job 81: a customer's statement request the owner's authority lets StockChief send alone.
 async function executeStatementRoutine(database,ctx,id){
   const committed=await executeProposalCore(database,ctx,id,{statementRoutine:true});
+  return continueRoutineProposal(database,ctx,committed);
+}
+// Job 73: a customer's emailed quote request the owner's authority lets StockChief write alone.
+async function executeQuoteRoutine(database,ctx,id){
+  const committed=await executeProposalCore(database,ctx,id,{quoteRoutine:true});
   return continueRoutineProposal(database,ctx,committed);
 }
 async function continueRoutineProposal(database,ctx,committed){
@@ -2371,5 +2380,5 @@ async function ask(database,ctx,message,options={}){
 }
 
 module.exports={lookup,prepareAction,createProposal,ask,readQuestionInEnglish,askLegacy:askCapabilities,listInteractions,capabilityService,recordCapabilityOutcome,
-  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeReceiptRoutine,executeInvoiceRoutine,executeArrivedStockRoutine,executePickReleaseRoutine,executeRepeatRoutine,executeStatementRoutine,executeMission,resumeMission,cancelProposal,
+  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeReceiptRoutine,executeInvoiceRoutine,executeArrivedStockRoutine,executePickReleaseRoutine,executeRepeatRoutine,executeStatementRoutine,executeQuoteRoutine,executeMission,resumeMission,cancelProposal,
   fundedAskProvider,buildReportDefinition,summarizeCustomerOrders};

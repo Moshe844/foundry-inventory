@@ -15,19 +15,23 @@ const sources=[
  ['agent_channel_buffer_recipes','active_members>0'],['agent_bin_correction_rules'],['agent_brand_watches'],['agent_count_rules'],['agent_count_schedules'],
  ['agent_putaway_rules'],['recurring_customer_orders','NOT paused'],['channel_map_rules'],['location_reorder_rules'],['daily_cycle_count_rules'],
  ['agent_freight_combine_rules'],['agent_purchase_split_rules'],['supplier_negotiation_rules'],['agent_overdue_order_rules'],['class_service_levels'],
- ['agent_reorder_refresh_rules','enabled'],['agent_backorder_rules','enabled'],['agent_stock_sharing_rules','enabled'],['agent_slow_stock_rules','enabled'],['agent_annual_stocktake_rules','enabled'],['agent_incoming_rules','enabled'],['agent_warehouse_routing_rules','enabled'],['agent_expiry_warning_rules','enabled'],['agent_compliance_schedules','enabled'],['agent_container_order_rules','enabled'],['agent_landed_cost_rules','enabled'],['agent_fx_alert_rules','enabled'],['agent_supplier_benefit_programs','enabled AND claim_limit_minor IS NOT NULL'],['agent_rfq_competition_rules','enabled'],['agent_invoice_dispute_rules','enabled'],['agent_customer_order_limits','enabled'],['agent_channel_fee_rules','enabled'],['agent_net_margin_rules','enabled'],['agent_pick_release_rules','enabled'],['agent_pick_wave_rules','enabled'],['agent_split_rules','enabled'],['agent_shipping_rate_rules','enabled'],['agent_catalog_fix_rules','enabled'],['agent_board_pack_schedules','enabled'],['agent_watch_rules','enabled'],['agent_product_classification_rules','enabled'],['agent_product_retirement_rules','enabled'],['agent_approval_routes','enabled'],['agent_staff_task_rules','enabled']
+ ['agent_reorder_refresh_rules','enabled'],['agent_backorder_rules','enabled'],['agent_stock_sharing_rules','enabled'],['agent_slow_stock_rules','enabled'],['agent_annual_stocktake_rules','enabled'],['agent_incoming_rules','enabled'],['agent_warehouse_routing_rules','enabled'],['agent_expiry_warning_rules','enabled'],['agent_compliance_schedules','enabled'],['agent_container_order_rules','enabled'],['agent_landed_cost_rules','enabled'],['agent_fx_alert_rules','enabled'],['agent_supplier_benefit_programs','enabled AND claim_limit_minor IS NOT NULL'],['agent_rfq_competition_rules','enabled'],['agent_invoice_dispute_rules','enabled'],['agent_customer_order_limits','enabled'],['agent_channel_fee_rules','enabled'],['agent_net_margin_rules','enabled'],['agent_pick_release_rules','enabled'],['agent_pick_wave_rules','enabled'],['agent_split_rules','enabled'],['agent_shipping_rate_rules','enabled'],['agent_catalog_fix_rules','enabled'],['agent_board_pack_schedules','enabled'],['agent_watch_rules','enabled'],['agent_product_classification_rules','enabled'],['agent_product_retirement_rules','enabled'],['agent_approval_routes','enabled'],['agent_staff_task_rules','enabled'],['agent_customer_answer_rules','enabled'],['agent_quote_settings','enabled']
 ];
 const limits={starter:5,growth:50,pro:500};
 const newerTables={
  'agent_approval_routes':'482-agent-approval-routing.sql',
- 'agent_staff_task_rules':'484-agent-staff-tasks.sql'
+ 'agent_staff_task_rules':'484-agent-staff-tasks.sql',
+ 'agent_customer_answer_rules':'488-agent-customer-questions.sql',
+ 'agent_quote_settings':'489-agent-quote-requests.sql'
 };
+const fullyInstalled=new WeakSet();
 async function configuredSources(db){
+ if(fullyInstalled.has(db))return sources;
  const {hasVerifiedMigration}=require('../db/migrate-postgres');
- const {has}=require('../db/schema-installed');
- const missing=new Set();
- for(const [table,migration] of Object.entries(newerTables))
-  if(!hasVerifiedMigration(db,migration)&&!await has(db,'stockchief_runtime.'+table))missing.add(table);
+ const unchecked=Object.entries(newerTables).filter(([,migration])=>!hasVerifiedMigration(db,migration)).map(([table])=>table);
+ const missing=new Set(unchecked.length?(await db.query(`SELECT name FROM unnest($1::text[]) AS tables(name)
+  WHERE to_regclass('stockchief_runtime.'||name) IS NULL`,[unchecked])).rows.map(row=>row.name):[]);
+ if(!missing.size)fullyInstalled.add(db);
  return sources.filter(([table])=>!missing.has(table));
 }
 const ownership=`WITH owned AS MATERIALIZED(SELECT id FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL)`;

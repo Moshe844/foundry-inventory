@@ -1,0 +1,31 @@
+<% const l=link,e=l.entry; %>
+<h1><%= l.status==='waiting'?e.title:l.title %></h1>
+<section class="card card-body stack" data-approval-link="<%= l.status %>">
+<% if(l.status==='approved'){ %>
+  <p class="notice notice--success"><%= l.outcome %></p>
+  <p>Approved<% if(l.by){ %> by <%= l.by %><% } %> · <%= helpers.dateTime(l.at) %>. Opening this link again does nothing more.</p>
+  <p><a class="btn" href="<%= l.href %>">Open it</a></p>
+<% }else if(l.status==='gone'){ %>
+  <p>This is no longer waiting for you. It may have been decided already, or someone else has it now.</p>
+  <p><a class="btn btn--primary" href="/needs-you">Open Needs you</a></p>
+<% }else if(l.status==='expired'){ %>
+  <p>This link expired. Open Needs you to see what is waiting now.</p>
+  <p><a class="btn btn--primary" href="/needs-you">Open Needs you</a></p>
+<% }else{ %>
+  <% if(l.changed){ %><p class="notice notice--warn" data-approval-changed>This changed since the link was sent. Check it again before you approve.</p><% } %>
+  <% if(e.happened&&e.happened!==e.title){ %><p><%= e.happened %></p><% } %>
+  <% if(e.money){ %><p><strong><%= e.money %></strong></p><% } %>
+  <% if(l.detail){ %><p><%= l.detail %></p><% } %>
+  <% if(e.why){ %><p class="hint"><%= e.why %></p><% } %>
+  <% if(l.block){ %><p class="notice notice--warn" data-approval-block><%= l.block %></p><% } %>
+  <% if(l.canApprove){ %>
+    <form method="post" action="<%= l.action %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= l.revision %>">
+      <button class="btn btn--primary"><%= l.label %></button></form>
+    <p class="hint">Nothing happens until you tap <%= l.label %>.</p>
+    <p><a href="<%= l.href %>">See every detail first</a></p>
+  <% }else{ %>
+    <p class="hint">You decide this on its own page.</p>
+    <p><a class="btn btn--primary" href="<%= l.href %>"><%= e.actionLabel %></a></p>
+  <% } %>
+<% } %>
+</section>
