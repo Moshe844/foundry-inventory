@@ -36,7 +36,8 @@ function discover(catalogue,query){
 function evidence(result){const rows=(result.rows||[]).slice(0,12);return {status:result.status,answer:result.answer,
  rows,columns:result.columns,totalReturned:result.rows?.length||0,truncated:(result.rows?.length||0)>rows.length,
  proposal:result.proposal,reason:result.reason,choices:result.choices,awaitingField:result.awaitingField,
- navigation:result.navigation,verifiedStatusFacts:result.verifiedStatusFacts,workId:result.workId};}
+ navigation:result.navigation,verifiedStatusFacts:result.verifiedStatusFacts,workId:result.workId,
+ sources:(Array.isArray(result.sources)?result.sources:[]).slice(0,12),handoff:result.handoff};}
 async function catalogueFor(db,ctx){const actor=(await db.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
  [ctx.workspaceId,ctx.actorId])).rows[0];if(!actor)throw new ValidationError('This user no longer belongs to the business.');
  return {actor,catalogue:await control.planningCatalogue(db,ctx,actor)};}
@@ -159,6 +160,11 @@ async function run(db,ctx,id,options={}){
      await store.save(db,ctx,goal,'verification_rejected',verified.data);continue;}
     await assertCurrentActor(db,ctx,actor);
     goal.status='COMPLETED';goal.answer=data.answer;cp.verifiedEvidence=data.evidence;
+    const {localPath}=require('./agent-navigation-path');
+    const {transferable}=require('../../scripts/environment-agent-demo/browser-link-evidence');
+    cp.answerSources=[...new Set(selected.filter(o=>catalogue.get(o.capability)?.kind==='read').flatMap(({result})=>
+      [...result.rows.map(row=>row?.href),...result.sources.map(source=>source?.href),result.handoff?.href]
+        .map(localPath).filter(path=>path&&transferable(path))))].slice(0,12);
     let recorded=data.answer;
     if(opened){
      // The same hand-off the native agent uses: the browser follows it and

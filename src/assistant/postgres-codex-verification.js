@@ -29,7 +29,13 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   const journal=Array.isArray(evidence.entries)?evidence.entries:Object.values(evidence.entries||{});
   return [...entries,...journal].find(e=>e?.id===id||e?.evidenceId===id)||observed.find(e=>e?._stockchiefEvidence?.evidenceId===id);
  }
- const verified=[],fresh=new Map(),sourceCache=new Map(),sourceMetadataCache=new Map();
+ const verified=[],answerSources=new Set(),fresh=new Map(),sourceCache=new Map(),sourceMetadataCache=new Map();
+ const {localPath}=require('./agent-navigation-path');
+ const {transferable}=require('../../scripts/environment-agent-demo/browser-link-evidence');
+ function source(value){
+  const href=localPath(value);
+  if(answerSources.size<12&&href&&transferable(href))answerSources.add(href);
+ }
  async function currentEvidence(entry,path){
   const match=entry.name==='business_operations'&&/^\/outcomes\/(0|[1-9]\d*)(?:\/|$)/.exec(path);
   const outcomeIndex=match?Number(match[1]):null,key=JSON.stringify([entry.id,outcomeIndex]);
@@ -110,6 +116,24 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
     if(!moved.matched||!equal(moved.value,claim.value))return unavailable('The business records changed during this request. The earlier figures are no longer verified as current. Your request and recorded work are saved.','CURRENT_RECORDS_CHANGED',{evidenceId:claim.evidenceId,path:claim.path});
    }
   }
+  if(claim.historical!==true&&entry.name==='business_operations'){
+   const match=/^(\/outcomes\/\d+\/result)(?:\/(rows|inactiveStockWarnings|pending)(?:\/(\d+))?)?/.exec(claim.path);
+   const currentResult=match&&presentation.locate(await currentEvidence(entry,claim.path),match[1]).value;
+   if(currentResult){
+    const before=match[2]?presentation.locate(original,match[0]).value:null;
+    const requested=Array.isArray(before)?before:[before],currentRows=Array.isArray(currentResult[match[2]])?currentResult[match[2]]:[];
+    const ids=new Set(requested.filter(row=>row?.id!=null).map(row=>row.id));
+    for(const row of currentRows)if(ids.has(row?.id))source(row.href);
+    if(!ids.size&&match[3]!==undefined&&before?.href===currentRows[Number(match[3])]?.href)source(before?.href);
+    if(Array.isArray(currentResult.sources))for(const item of currentResult.sources)source(item?.href);
+    source(currentResult.handoff?.href);
+   }
+  }else if(claim.historical!==true&&entry.name==='environment_browser'){
+   const current=await currentEvidence(entry,claim.path),screen=current.screen||current;
+   if(screen.applicationPage===true&&screen.httpStatus===200){
+    try{const url=new URL(screen.url);if(url.hostname==='127.0.0.1'&&!url.username&&!url.password&&transferable(screen.url))source(url.pathname+url.search);}catch{}
+   }
+  }
   verified.push({evidenceId:claim.evidenceId,path:claim.path,sha256:createHash('sha256').update(JSON.stringify(value)).digest('hex'),
    ...(claimIndex>=report.claims.length&&Array.isArray(inputClaim.tableColumns)?{columns:inputClaim.tableColumns}:{} )});
  }
@@ -151,7 +175,8 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   navigation={href,label:String(label||'the requested page').replace(/\s+·\s+StockChief$/,'').slice(0,120),
    evidenceId:entry.id,evidenceHash:entry.sha256};
  }
- return {verified:true,answer:report.answer,receipt,claims:verified,verificationScope:'referenced_claims_and_canonical_effects',navigation,delivery:require('./agent-delivery').create(report)};
+ return {verified:true,answer:report.answer,receipt,claims:verified,verificationScope:'referenced_claims_and_canonical_effects',navigation,
+  answerSources:[...answerSources],delivery:require('./agent-delivery').create(report)};
 }
 const instructions=`\nFor a completed result, use the native final-output schema with outcome "answer" or "navigation", the usable answer, and its supporting claims. The host alone verifies completion.
 The browser tool controls a private inspection browser, NOT the user's website. When the user asks to open a page, use outcome "navigation" and navigation: {evidenceId,path:"/url"} referencing an actual successful applicationPage observation (use /screen/url if wrapped). The host will deliver that page to the user's browser and verify its arrival without another model call. Do not claim it has already opened for the user. Do not return outcome "answer" to fulfill a navigation request. For questions or completed business changes that do not request moving the user's browser, use outcome "answer".

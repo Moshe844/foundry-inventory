@@ -102,6 +102,16 @@
      const message=conversation?.message||'';
      if(window.StockChiefAnswer)answer.innerHTML=window.StockChiefAnswer.render(message);else answer.textContent=message;
      answer.hidden=!message;
+     const sources=panel.querySelector('[data-goal-sources]');
+     if(sources){
+      const paths=(goal.answerSources||[]).filter(href=>typeof href==='string'&&href.startsWith('/')&&!href.startsWith('//'));
+      sources.hidden=!paths.length;
+      const list=sources.querySelector('ol');
+      list.replaceChildren(...paths.map((href,index)=>{
+       const item=document.createElement('li'),link=document.createElement('a');
+       link.href=href;link.textContent='Open source '+(index+1);item.append(link);return item;
+      }));
+     }
      const deliveryPanel=panel.querySelector('[data-goal-delivery]');
      if(deliveryPanel&&deliveryPanel.dataset.revision!==(goal.delivery?.id||'')){
       deliveryPanel.dataset.revision=goal.delivery?.id||'';deliveryPanel.replaceChildren();
