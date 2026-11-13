@@ -103,7 +103,7 @@ test('alerts go by text and push as well as email, chosen per alert, on every pl
   await browser.post('/autopilot/alerts/166').type('form').send({_csrf:f.csrf(html),revision:'0',mailbox:'',phoneChannels:'1',sms:'1',push:'1'}).expect(303);
   let panel=await alerts.panel(db,ctx,166);assert.equal(panel.sms,true);assert.equal(panel.push,true);
   assert.deepEqual((await alerts.kinds(db,ws,await policy.accountState(db,ws))).map(k=>[k.job,k.email,k.sms,k.push]),
-    [[166,false,true,true],[167,false,false,false],[168,false,false,false],[175,false,false,false]],'Starter has no cost, unusual-activity or pass-on alerts');
+    [[166,false,true,true],[167,false,false,false],[168,false,false,false],[169,false,false,false],[175,false,false,false]],'Starter has no cost, unusual-activity or pass-on alerts');
   assert.match(await page(phones.path),/What reaches you/);
 
   // In the first 14 days the alert shows, but nothing is texted or pushed.

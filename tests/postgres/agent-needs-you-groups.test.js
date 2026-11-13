@@ -97,7 +97,9 @@ test('similar approvals are decided in one tap on every plan, each checked on it
    const tab=await chrome.newPage({viewport:{width,height},isMobile:phone,hasTouch:phone});
    await tab.goto(base+'/login');await tab.getByLabel('Work email').fill(f.email);await tab.locator('[name=password]').fill(f.password);await Promise.all([tab.waitForNavigation(),tab.getByRole('button',{name:'Sign in',exact:true}).click()]);
    await tab.goto(base+'/needs-you');assert(await tab.locator('[data-approval-groups]').isVisible());await tab.waitForTimeout(1500);
-   assert.equal(await tab.locator('[data-approval-group]').count(),1);assert.equal(await tab.locator('article.ny-card[id^=decision-]').count(),4,'Every approval is still listed on its own.');
+   // The account is past its first 14 days, so job 198's "watching is over" choice is listed too; count the approvals only.
+   const shadowPath=require('../../src/autopilot/shadow-mode').path;
+   assert.equal(await tab.locator('[data-approval-group]').count(),1);assert.equal(await tab.locator('article.ny-card[id^=decision-]').evaluateAll((cards,p)=>cards.filter(c=>!c.querySelector('a[href="'+p+'"]')).length,shadowPath),4,'Every approval is still listed on its own.');
    assert(await tab.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No sideways scrolling at '+width);
    const path=require('node:path'),folder=path.join(process.cwd(),'output','agent-plan-review');require('node:fs').mkdirSync(folder,{recursive:true});await tab.screenshot({path:path.join(folder,'needs-you-groups-'+width+'.png'),fullPage:true});
    if(phone)await Promise.all([tab.waitForNavigation(),tab.getByRole('button',{name:'Approve all 2'}).first().click()]);
