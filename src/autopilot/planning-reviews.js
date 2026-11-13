@@ -1,6 +1,5 @@
 'use strict';
 
-const {ValidationError}=require('../domain/errors');
 const planning=require('../forecasting/postgres-planning-service');
 const {requiredUnits}=require('../purchasing/replenishment-decision');
 
@@ -45,37 +44,11 @@ async function reorder(db,ctx,options){
   return {rows,more,reorderForm:true,summary:'Planning shows exact usable stock after commitments, dated incoming, recorded sales speed, supplier lead time and the saved target. Unknown delivery facts or existing unsent drafts hold a new order. Supplier packs, minimums and competitive choice are reviewed separately before native drafts are created.'};
 }
 
-async function demandScenario(db,ctx,options){
-  const raw=String(options.change??'').trim();
-  if(!raw)return {rows:[],more:false,summary:'Enter the percentage change in sales to compare the next 30 days with recent shipments.'};
-  if(!/^[+-]?\d{1,4}(?:\.\d{1,2})?$/.test(raw)||Number(raw)<-100||Number(raw)>1000)throw new ValidationError('Enter a sales change between -100% and 1,000%.');
-  const change=Number(raw),{items,ids,more}=await positions(db,ctx,options);
-  const shipments=await db.query(`SELECT l.sku_id,l.location_id,sum(l.quantity) AS units
-    FROM sales_shipment_lines l JOIN sales_shipments h ON h.workspace_id=l.workspace_id AND h.id=l.shipment_id
-    WHERE l.workspace_id=$1 AND l.sku_id=ANY($2) AND h.status IN ('SHIPPED','DELIVERED') AND h.customer_return_id IS NULL
-      AND h.shipped_at::timestamptz BETWEEN now()-interval '90 days' AND now() GROUP BY l.sku_id,l.location_id`,[ctx.workspaceId,ids]);
-  const byLocation=new Map();
-  for(const s of shipments.rows){
-    if(!byLocation.has(s.sku_id))byLocation.set(s.sku_id,new Map());
-    byLocation.get(s.sku_id).set(s.location_id,Number(s.units));
-  }
-  const rows=items.filter(r=>r.location_id).map(r=>{
-    const units=byLocation.get(r.sku_id)?.get(r.location_id)||0;
-    const base=units/3,scenario=base*(1+change/100);
-    const rounded=n=>Math.round(n*100)/100;
-    return {SKU:r.code,Warehouse:r.location_name,'Shipped in 90 days':units,'Available now':r.available,
-      'Expected incoming':r.incoming,'Baseline 30-day sales':rounded(base),'Scenario 30-day sales':rounded(scenario),
-      'Additional units needed from today’s stock':rounded(Math.max(0,scenario-Math.max(0,r.available))),
-      Evidence:units?'Recorded shipments':'No shipments in the window',link:'/inventory/'+r.item_id};
-  });
-  return {rows,more,summary:'With a '+change+'% change in demand, estimated sales use the last 90 days of customer shipments. Expected incoming is shown separately because its arrival date can change.'};
-}
-
 module.exports=[
   {id:144,key:'seasonal-demand',label:'Forecast sales by SKU',readPage:require('../forecasting/agent-demand-forecast').review},
   {id:146,key:'new-product-forecast',label:'Forecast a new product from similar items',readPage:require('../forecasting/agent-launch-forecast').review},
   {id:151,key:'stockout-cost',label:'Estimate stockout dates and margin at risk',readPage:(db,ctx,options)=>require('../forecasting/agent-runout').review(db,ctx,options)},
   {id:19,key:'reorder-drafts',label:'Draft reorders grouped by supplier',readPage:async(c,ctx,o)=>({...await reorder(c,ctx,o),reorderForm:true})},
   {id:18,key:'reorder-explanation',label:'Explain what to order and why',readPage:reorder},
-  {id:149,key:'demand-scenario',label:'Compare a change in sales demand',readPage:demandScenario,requiresChange:true}
+  ...require('../forecasting/agent-what-if').definitions
 ];
