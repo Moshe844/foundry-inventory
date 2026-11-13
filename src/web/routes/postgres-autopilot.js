@@ -1889,8 +1889,13 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   // Job 176: who approves what, by role and amount.
   const approvalDesk=require('../../autopilot/approval-desk');
-  router.get(approvalDesk.path,requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/approval-routing',
-    {title:'Who approves what',nav:'autopilot'},async()=>({model:await approvalDesk.screen(database,req.ctx)}),402)));
+  // An account still on its older terms sees the shared plan card; Agent terms
+  // below Pro keep the lock and its 402.
+  router.get(approvalDesk.path,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const locals={title:'Who approves what',nav:'autopilot'},state=await policy.accountState(database,req.ctx.workspaceId);
+    if(!policy.usesAgentTerms(state))return res.page('autopilot/agent-plan-locked',{...locals,backTo:{href:'/autopilot/reviews',label:'Agent reviews'},tier:'Pro',reviewTerms:policy.permits(state.plan,176,'suggest')});
+    return agentPage(req,res,'autopilot/approval-routing',locals,async()=>({model:await approvalDesk.screen(database,req.ctx)}),402);
+  }));
   router.post(approvalDesk.path+'/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
     const saved=await approvalDesk.saveRule(database,req.ctx,req.body);
     req.flash('success',saved.removed!==undefined?(saved.removed?'Rule removed.':'That rule was already removed.'):saved.unchanged?'Nothing changed.':'Rule saved: '+saved.rule+'.');

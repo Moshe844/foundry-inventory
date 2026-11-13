@@ -40,6 +40,8 @@ test('approvals of every kind go to the person whose role, access and limit cove
  const keys={small:'purchase:'+small.purchaseOrderId,large:'purchase:'+large.purchaseOrderId,move:'transfer:'+move.id,rtv:'supplier_return:'+rtv.supplierReturnId,
   shelf:'proposal:'+shelf,big:'proposal:'+big,cost:'proposal:'+cost};
  const page=desk.path,review='/autopilot/reviews/purchase-review-routing';
+ // An account still on its older terms sees the plan card.
+ assert.match((await browser.get(page).expect(200)).text,/data-agent-plan-locked/);
  // Starter and Growth: excluded. Nothing is routed and the plan lock shows.
  for(const tier of ['starter','growth']){
   await subscribe(tier);
