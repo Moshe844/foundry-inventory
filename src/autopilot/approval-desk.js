@@ -184,9 +184,11 @@ function byAuthority(request,limits){
   return (a,b)=>{const x=authority(a,request.kind,limits),y=authority(b,request.kind,limits);
     return (x?0:1)-(y?0:1)||(x&&y?x.amountMinor-y.amountMinor:0)||String(a.name).localeCompare(String(b.name))||String(a.id).localeCompare(String(b.id));};
 }
-function route(request,{people:team,limits,rules,held}){
+function route(request,{people:team,limits,rules,held,deputy}){
   const owner=team.find(p=>p.role==='owner');
-  if(request.signed?.length)return second(request,{people:team,limits,rules});
+  if(request.signed?.length)return second(request,{people:team,limits,rules,deputy});
+  if(deputy&&(!KINDS[request.kind].money||request.amountMinor!=null)&&eligible(deputy,request,limits))
+    return {person:deputy,reason:deputy.name+' is covering approvals during your vacation.',vacation:true};
   if(!held){
     const rule=ruleFor(request,rules),named=rule&&team.find(p=>p.id===rule.user_id);
     if(named&&eligible(named,request,limits))return {person:named,reason:'Your rule: '+describeRule(rule,named.name)+'.',rule:rule.id};
@@ -198,11 +200,12 @@ function route(request,{people:team,limits,rules,held}){
 }
 // Job 205: after one approval, the next person who can approve it and has not.
 // A second approval is required, so it is sent even while routing is held.
-function second(request,{people:team,limits,rules}){
+function second(request,{people:team,limits,rules,deputy}){
   const twoPerson=require('./two-person-approval'),done=new Set(request.signed.map(p=>p.account_id)),names=request.signed.map(p=>p.name).join(' and ');
   const owner=team.find(p=>p.role==='owner');
   if(request.signed.length>=2)return owner?{person:owner,reason:names+' approved it. Approve it to post it.'}:{person:null,reason:names+' approved it.'};
   const free=p=>!done.has(p.account_id)&&twoPerson.canSign(p,request,limits),lead='Needs a second approval: '+names+' approved it. ';
+  if(deputy&&free(deputy))return {person:deputy,reason:lead+deputy.name+' is covering approvals during your vacation.',vacation:true};
   const rule=ruleFor(request,rules),named=rule&&team.find(p=>p.id===rule.user_id);
   if(named&&free(named))return {person:named,reason:lead+'Your rule: '+describeRule(rule,named.name)+'.'};
   const staff=team.filter(p=>p.role!=='owner'&&free(p)).sort(byAuthority(request,limits));
@@ -217,8 +220,9 @@ async function holdReason(db,workspaceId,state){
 }
 async function desk(db,workspaceId,{state=null}={}){
   state=state||await policy.accountState(db,workspaceId);
-  const [list,team,saved,held]=await Promise.all([requests(db,workspaceId),people(db,workspaceId),settings(db,workspaceId),holdReason(db,workspaceId,state)]);
-  const context={people:team,limits:saved.limits,rules:saved.rules,held};
+  const [list,team,saved,held,deputy]=await Promise.all([requests(db,workspaceId),people(db,workspaceId),settings(db,workspaceId),holdReason(db,workspaceId,state),
+    require('./vacation-deputy').activeDeputy(db,workspaceId,state)]);
+  const context={people:team,limits:saved.limits,rules:saved.rules,held,deputy};
   const approved=await require('./two-person-approval').approvals(db,workspaceId,list),threshold=await require('../purchasing/dual-approval').setting(db,workspaceId);
   for(const r of list)if(r.source==='purchase'&&threshold.amount_minor!=null&&(r.amountMinor==null||r.currency!==threshold.currency||r.amountMinor>Number(threshold.amount_minor)))r.twoPeople=true;
   for(const r of list)if(approved.has(r.key)){r.twoPeople=true;r.signed=approved.get(r.key).people;}
@@ -233,7 +237,7 @@ async function inbox(db,workspaceId,actorId){
   if(!policy.usesAgentTerms(state))return [];
   const groups=require('./approval-groups');
   const [{rows,held},grouping]=await Promise.all([desk(db,workspaceId,{state}),groups.held(db,workspaceId,state)]);
-  return rows.filter(r=>r.person?.id===actorId).map(r=>item(r,{held:Boolean(held)&&!r.signed?.length,group:grouping?null:groups.groupFor(r)}));
+  return rows.filter(r=>r.person?.id===actorId).map(r=>item(r,{held:Boolean(held)&&!r.vacation&&!r.signed?.length,group:grouping?null:groups.groupFor(r)}));
 }
 function item(r,{held=false,group=null}={}){
   const amount=format(r);
