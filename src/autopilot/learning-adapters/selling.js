@@ -23,7 +23,7 @@ const carrierClaims={kind:'job:63',jobs:[63],label:'Carrier claims',tables:[T('a
   const f=example.data.facts,limit=Math.min(Number(f.amountMinor),Number(f.coverageMinor));
   if(!whole(limit))return null;
   const input={revision:0,confirmed:'yes',maximum:money.fromMinor(limit,'USD')};
-  return {label:'EasyPost '+f.type+' claims like '+f.number,limit:'up to '+amount(limit,'USD')+' a claim',runMaximum:amount(maximum(run.rows,r=>r.value)||0,'USD'),
+  return {limitValue:limit,label:'EasyPost '+f.type+' claims like '+f.number,limit:'up to '+amount(limit,'USD')+' a claim',runMaximum:amount(maximum(run.rows,r=>r.value)||0,'USD'),
    capped:limit<maximum(run.rows,r=>r.value)?'the largest claim the carrier has confirmed':null,href:'/shipping/carrier-claims/'+example.id,token:token({id:example.id,input}),teach:{id:example.id,input}};
  },
  async teach(s,ctx,offer){await require('../../shipping/agent-carrier-claims').saveRule(s,ctx,offer.teach.id,offer.teach.input);}
@@ -46,7 +46,7 @@ const vanRoutes={kind:'job:71',jobs:[71],label:'Van routes',tables:[T('agent_van
   const example=largest(run.rows,r=>r.value),stops=Number(example?.value);
   if(!whole(stops))return null;
   const input={ruleRevision:0,confirmed:'yes',maximumStops:String(stops)};
-  return {label:'Publish van routes from '+(d.depot||'this depot')+' with the same vans',limit:'up to '+stops+' stops a route run',href:'/shipping/van-routes/'+example.id,
+  return {limitValue:stops,label:'Publish van routes from '+(d.depot||'this depot')+' with the same vans',limit:'up to '+stops+' stops a route run',href:'/shipping/van-routes/'+example.id,
    token:token({id:example.id,input}),teach:{id:example.id,input}};
  },
  async teach(s,ctx,offer){await require('../../shipping/agent-van-routes').configure(s,ctx,offer.teach.id,offer.teach.input);}
@@ -132,7 +132,7 @@ const customerInvoices={kind:'job:101',jobs:[101],label:'Customer invoice paperw
   const most=maximum(run.rows,r=>r.value);if(!whole(most))return null;
   const customer=(await db.query('SELECT name FROM customers WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,d.customer_id])).rows[0];
   const input={revision:0,customerId:d.customer_id,currency:d.currency,maximum:money.fromMinor(most,d.currency),confirmed:'yes'};
-  return {label:'Invoice paperwork for '+(customer?.name||'this customer')+' ('+d.currency+')',limit:'invoices up to '+amount(most,d.currency),href:'/autopilot/customer-invoices',
+  return {limitValue:most,label:'Invoice paperwork for '+(customer?.name||'this customer')+' ('+d.currency+')',limit:'invoices up to '+amount(most,d.currency),href:'/autopilot/customer-invoices',
    token:token(input),teach:input};
  },
  async teach(s,ctx,offer){await require('../../accounting/agent-customer-invoices').configure(s,ctx,offer.teach);}
@@ -160,7 +160,7 @@ const returnEmails={kind:'job:111',jobs:[111],label:'Returns from customer email
   const most=maximum(run.rows,r=>r.value);if(!whole(most))return null;
   const units=Math.min(most,Number(settings.maximum_units)),p=run.latest.data.snap;
   const input={revision:0,confirmed:'yes',maximumUnits:String(units)};
-  return {label:'Returns from '+(p.customerName||'this customer')+' for '+(p.lines||[]).map(l=>l.code).join(', '),limit:'up to '+units+' units a return',runMaximum:most+' units',
+  return {limitValue:units,label:'Returns from '+(p.customerName||'this customer')+' for '+(p.lines||[]).map(l=>l.code).join(', '),limit:'up to '+units+' units a return',runMaximum:most+' units',
    capped:units<most?'your routine return limit':null,href:'/sales/return-emails/'+encodeURIComponent(run.latest.id),token:token({id:run.latest.id,input}),teach:{id:run.latest.id,input}};
  },
  async teach(s,ctx,offer){await require('../../sales/agent-customer-return-emails').teach(s,ctx,offer.teach.id,offer.teach.input);}
@@ -190,7 +190,7 @@ const returnDecisions={kind:'job:113',jobs:[113],label:'Return restock or repair
   if(!whole(units))return null;
   const place=line.destinationId?(await db.query('SELECT name FROM locations WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,line.destinationId])).rows[0]?.name:null;
   const rule={skuId:o.skuId,conditionCode:o.conditionCode,conditionLabel:o.conditionCode,outcome:line.outcome,destinationId:line.destinationId||'',maximumUnits:String(units),confirmed:'yes'};
-  return {label:(line.outcome==='RESTOCK'?'Restock ':'Repair ')+o.sku+' returned '+o.conditionCode+(place?' to '+place:''),limit:'up to '+units+' units a return',
+  return {limitValue:units,label:(line.outcome==='RESTOCK'?'Restock ':'Repair ')+o.sku+' returned '+o.conditionCode+(place?' to '+place:''),limit:'up to '+units+' units a return',
    href:'/operations/return-dispositions',token:token({rule,example:example.data.assessmentId}),teach:{rule,example:example.data.assessmentId}};
  },
  async teach(s,ctx,offer){

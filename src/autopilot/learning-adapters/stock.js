@@ -25,7 +25,7 @@ const countSheets={kind:'job:5',jobs:[5],label:'Count sheets into stock differen
   if(!example||!whole(rows))return null;
   const label=('Count sheets for '+(await locationNames(db,ctx.workspaceId,ids))).slice(0,120);
   const input={format:d.format,locationIds:ids,maximumRows:rows,label,exampleId:example.id,confirmed:'yes'};
-  return {label,limit:'up to '+rows+' rows a sheet, same layout and places',runMaximum:rows+' rows',href:'/imports/count-sources/'+example.id,token:token(input),teach:input};
+  return {label,limitValue:rows,limit:'up to '+rows+' rows a sheet, same layout and places',runMaximum:rows+' rows',href:'/imports/count-sources/'+example.id,token:token(input),teach:input};
  },
  async teach(s,ctx,offer){await require('../../imports/physical-count-sources').configure(s,ctx,offer.teach);}
 };
@@ -88,7 +88,7 @@ const binCorrections={kind:'job:11',jobs:[11],label:'Bin corrections',tables:[T(
   const most=maximum(run.rows,r=>r.value);if(!whole(most))return null;
   const units=Math.min(most,Number(setting.maximum_units)),p=run.latest.data.source;
   const input={confirmed:'yes',revision:0,maximumUnits:String(units)};
-  return {label:'Move '+p.sku+' from '+p.from.name+' to '+p.to.name,limit:'up to '+units+' units a correction',runMaximum:most+' units',
+  return {limitValue:units,label:'Move '+p.sku+' from '+p.from.name+' to '+p.to.name,limit:'up to '+units+' units a correction',runMaximum:most+' units',
    capped:units<most?'your routine bin correction limit':null,href:'/warehouse/bin-corrections/'+run.latest.id,token:token({id:run.latest.id,input}),teach:{id:run.latest.id,input}};
  },
  async teach(s,ctx,offer){await require('../../warehouse/agent-bin-corrections').teach(s,ctx,offer.teach.id,offer.teach.input);}
@@ -110,7 +110,7 @@ const putaway={kind:'job:47',jobs:[47],label:'Put-away bins',tables:[T('agent_pu
   const example=largest(run.rows,r=>r.value),units=num(example?.value);
   if(!whole(units))return null;
   const input={revision:0,maximum:String(units)};
-  return {label:'Put '+p.sku+' from '+p.from.name+' away in '+p.to.name,limit:'up to '+units+' units a receipt',href:'/warehouse/putaway/'+example.id,
+  return {limitValue:units,label:'Put '+p.sku+' from '+p.from.name+' away in '+p.to.name,limit:'up to '+units+' units a receipt',href:'/warehouse/putaway/'+example.id,
    token:token({id:example.id,input}),teach:{id:example.id,input}};
  },
  async teach(s,ctx,offer){await require('../../warehouse/agent-putaway').teach(s,ctx,offer.teach.id,offer.teach.input);}
@@ -173,7 +173,7 @@ const transfers={kind:'job:118',jobs:[118],label:'Balancing transfers',tables:[T
   const example=largest(run.rows,r=>r.value);if(!example)return null;
   const p=example.data.payload;
   const input={sku:p.skuId,fromLocation:p.sourceId,toLocation:p.destinationId,maximumBalanceQuantity:String(p.quantity),exampleId:example.id,revision:0,confirmed:'yes'};
-  return {label:'Balance '+(p.balanceSummary?.title||'stock between locations'),limit:'up to '+p.quantity+' stocking units a request',href:'/actions/'+example.id,token:token(input),teach:input};
+  return {limitValue:Number(p.quantity),label:'Balance '+(p.balanceSummary?.title||'stock between locations'),limit:'up to '+p.quantity+' stocking units a request',href:'/actions/'+example.id,token:token(input),teach:input};
  },
  async teach(s,ctx,offer){await require('../../transfers/agent-transfer-balancing').configure(s,ctx,offer.teach);}
 };
@@ -191,7 +191,7 @@ const locationReorder={kind:'job:120',jobs:[120],label:'Reorder points per locat
   if((await db.query(`SELECT 1 FROM ${T('location_reorder_rules')} WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,[ctx.workspaceId,d.sku_id,d.ev.locationId])).rowCount)return null;
   const example=largest(run.rows,r=>r.value);if(!example)return null;
   const input={skuId:d.sku_id,locationId:d.ev.locationId,revision:0,ceiling:String(example.data.ev.maximum),exampleId:example.id,confirmed:'yes'};
-  return {label:'Reorder points for '+(d.headline||d.ev.code),limit:'targets up to '+example.data.ev.maximum,href:'/planning/location-reorder?skuId='+encodeURIComponent(d.sku_id)+'&locationId='+encodeURIComponent(d.ev.locationId),
+  return {limitValue:Number(example.data.ev.maximum),label:'Reorder points for '+(d.headline||d.ev.code),limit:'targets up to '+example.data.ev.maximum,href:'/planning/location-reorder?skuId='+encodeURIComponent(d.sku_id)+'&locationId='+encodeURIComponent(d.ev.locationId),
    token:token(input),teach:input};
  },
  async teach(s,ctx,offer){await require('../../forecasting/location-reorder-rules').configure(s,ctx,offer.teach);}
@@ -234,7 +234,7 @@ const retirementNotices={kind:'job:132:supplier',jobs:[132],label:'Discontinued 
   const most=maximum(run.rows,r=>r.value);
   if(!supplier||!whole(most)||most>100)return null;
   const input={revision:0,confirmed:'yes',maximumProducts:String(most),supplierFingerprint:hash(supplier),exampleId:run.latest.id};
-  return {label:'Retire products '+supplier.name+' discontinues',limit:'up to '+most+' products a checked notice',href:'/catalog/discontinued',token:token({id:supplier.id,input}),teach:{id:supplier.id,input}};
+  return {limitValue:most,label:'Retire products '+supplier.name+' discontinues',limit:'up to '+most+' products a checked notice',href:'/catalog/discontinued',token:token({id:supplier.id,input}),teach:{id:supplier.id,input}};
  },
  async teach(s,ctx,offer){await require('../../catalog/agent-product-retirements').configure(s,ctx,offer.teach.id,offer.teach.input);}
 };

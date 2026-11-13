@@ -33,7 +33,7 @@ const shipPromises={kind:'job:29',jobs:[29],label:'Supplier ship-date confirmati
   // the owner did each time by hand.
   const input={supplierId:d.supplier_id,confirmed:'yes',maximumMessages:'1',intervalHours:String(interval),maximumShipDays:String(shipDays),
    connectorId:d.connector,expectedRecipient:delivery.supplier.email,exampleId:run.latest.id};
-  return {label:'Ask '+d.supplier+' to confirm each order and save the ship date',limit:'one request an order, ship dates up to '+shipDays+' days after the reply',
+  return {limitValue:shipDays,label:'Ask '+d.supplier+' to confirm each order and save the ship date',limit:'one request an order, ship dates up to '+shipDays+' days after the reply',
    href:'/purchasing/supplier-confirmations',token:token(input),teach:input};
  },
  async teach(s,ctx,offer){await require('../../purchasing/agent-supplier-ship-promises').configure(s,ctx,offer.teach);}
@@ -150,7 +150,7 @@ const supplierClaims={kind:'job:45',jobs:[45],label:'Supplier claims',tables:[T(
   const value=money.fromMinor(Number(e.totalMinor),e.currency);
   const input={confirmed:'yes',exampleId:example.id,maxUnits:String(source.units(e)),...(e.missingWeight!=null?{maxWeight:String(e.missingWeight)}:{}),
    maxValue:value,maxWeekly:value,maxAgeDays:String(Math.ceil(age)),...(e.photos?.length?{includePhotos:'yes'}:{})};
-  return {label:'Claims to '+p.supplierName+' for '+p.sku+' at '+p.location,
+  return {limitValue:Number(e.totalMinor),label:'Claims to '+p.supplierName+' for '+p.sku+' at '+p.location,
    limit:'up to '+source.units(e)+' units and '+amount(e.totalMinor,e.currency)+' a claim and a week, deliveries up to '+Math.ceil(age)+' days old',
    href:'/purchasing/supplier-claims/'+example.id,token:token(input),teach:input};
  },
@@ -194,7 +194,7 @@ const backupSuppliers={kind:'job:95',jobs:[95],label:'Backup supplier switches',
   // Later switches must stay at or under the example's amount, so it is the largest.
   const example=largest(run.rows.filter(fits),r=>r.value);if(!example)return null;
   const t=example.data.facts.terms,input={confirmed:'yes',revision:rule.revision,runId:example.id};
-  return {label:'Switch '+(t.sku||'this product')+' to '+(t.backupName||'the backup supplier'),
+  return {limitValue:Number(t.amount),label:'Switch '+(t.sku||'this product')+' to '+(t.backupName||'the backup supplier'),
    limit:'orders up to '+(t.currency?amount(t.amount,t.currency):t.amount)+', inside your saved maximum',href:'/purchasing/backup-suppliers',token:token({rule:rule.id,input}),teach:{rule:rule.id,input}};
  },
  async teach(s,ctx,offer){await require('../../purchasing/agent-backup-suppliers').teach(s,ctx,offer.teach.rule,offer.teach.input);}
@@ -259,7 +259,7 @@ const supplierReturns={kind:'job:115',jobs:[115],label:'Faulty goods back to the
   if(!example)return null;
   const most=maximum(run.rows,r=>r.value),input={revision:0,locationId:d.place,maximum:money.fromMinor(most,d.evidence.currency),confirmed:'yes'};
   const place=d.evidence.lines.find(l=>l.locationId===d.place)?.location;
-  return {label:'Return faulty goods to '+(d.evidence.supplier||'the supplier')+(place?' from '+place:''),limit:'up to '+amount(most,d.evidence.currency)+' expected credit a return',
+  return {limitValue:most,label:'Return faulty goods to '+(d.evidence.supplier||'the supplier')+(place?' from '+place:''),limit:'up to '+amount(most,d.evidence.currency)+' expected credit a return',
    href:'/purchasing/supplier-returns/'+example.data.caseId,token:token({id:example.data.caseId,input}),teach:{id:example.data.caseId,input}};
  },
  async teach(s,ctx,offer){await require('../../purchasing/agent-supplier-returns').configure(s,ctx,offer.teach.id,offer.teach.input);}
