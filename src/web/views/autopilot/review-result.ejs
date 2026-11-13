@@ -160,6 +160,7 @@
 <% if(result.filterable){ %><form method="get"><label><%= result.filterLabel||"Filter by exact code, name or reference" %> <input name="filter" value="<%= filter %>" maxlength="150"></label>
   <% if(result.requiresChange){ %><label><%= result.changeLabel||'Change in sales (%)' %> <input type="number" name="change" step="0.01" min="<%= result.minChange??-100 %>" max="<%= result.maxChange??1000 %>" value="<%= result.change??'' %>" <%= result.scenarioOptions?'':'required' %>></label><% } %>
   <% if(result.scenarioOptions){ %><label>Change in supplier lead time (days) <input type="number" name="supplierDelayDays" step="1" min="-365" max="365" value="<%= result.scenarioOptions.supplierDelayDays %>"></label><% } %>
+  <% if(result.reportQuarter){ %><label>Completed quarter <input name="quarter" value="<%= result.reportQuarter %>" placeholder="2026-Q1" pattern="[0-9]{4}-Q[1-4]" maxlength="7"></label><% } %>
   <button class="btn">Look up</button></form><% } %>
 <% if(result.paymentRun?.digest){ const paymentRun=result.paymentRun; %>
   <section class="card card-body stack">
@@ -178,7 +179,7 @@
 <% if(result.rows.length){const fields=Object.keys(result.rows[0]).filter(f=>!['link','linkLabel'].includes(f)); %><div class="card<%= result.paymentRun?' table-wrap':'' %>"><table><thead><tr><% fields.forEach(f=>{ %><th><%= f %></th><% }); %><% if(result.rows[0].link){ %><th>Record</th><% } %></tr></thead><tbody>
 <% result.rows.forEach(r=>{ %><tr><% fields.forEach(f=>{ %><td><%= r[f]??'Unknown' %><% if(result.reviewPrices&&f==='Suggested selling price'){ %><form method="post" action="/autopilot/reviews/margin-prices/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="sku" value="<%= r.SKU %>"><button class="btn">Prepare price change</button></form><% } %></td><% }); %><% if(r.link){ %><td><a href="<%= r.link %>"><%= r.linkLabel||'Open' %></a></td><% } %></tr><% }); %>
 </tbody></table></div><% }else if(!result.requiresChange||result.change||result.scenarioOptions?.supplierDelayDays){ %><p><%= result.bankMatchForm?'No completed matches in this view.':'No matching records.' %></p><% } %>
-<% const reviewPageQuery=new URLSearchParams({filter}); if(result.requiresChange)reviewPageQuery.set('change',result.change||''); if(result.scenarioOptions?.supplierDelayDays)reviewPageQuery.set('supplierDelayDays',result.scenarioOptions.supplierDelayDays); %>
+<% const reviewPageQuery=new URLSearchParams({filter}); if(result.requiresChange)reviewPageQuery.set('change',result.change||''); if(result.scenarioOptions?.supplierDelayDays)reviewPageQuery.set('supplierDelayDays',result.scenarioOptions.supplierDelayDays); if(result.reportQuarter)reviewPageQuery.set('quarter',result.reportQuarter); %>
 <% if(result.page>1){ %><a href="?page=<%= result.page-1 %>&amp;<%= reviewPageQuery %>">Previous page</a><% } %>
 <% if(result.more){ %><a href="?page=<%= result.page+1 %>&amp;<%= reviewPageQuery %>">Next page</a><% } %>
 <% if(result.escalations){ %><%- include('escalations',{escalations:result.escalations,csrfToken}) %><% } %>

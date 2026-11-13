@@ -216,13 +216,15 @@ async function run(db,ctx,key,options={}){
   const today=await require('../lib/business-time').today(db,ctx.workspaceId);
   let rows,summary=def.summary,more=false,paymentRun;
   if(def.readPage){
-    const result=await def.readPage(db,ctx,{filter,page,today,change:options.change,supplierDelayDays:options.supplierDelayDays,adviceOnly:mode==='suggest'});
+    const result=await def.readPage(db,ctx,{filter,page,today,change:options.change,supplierDelayDays:options.supplierDelayDays,
+      quarter:options.quarter,adviceOnly:mode==='suggest'});
     const inputs={requiresChange:def.requiresChange,change:options.change,changeLabel:def.changeLabel,minChange:def.minChange,maxChange:def.maxChange,filterLabel:def.filterLabel,
       ...(def.id===91?{supplierPriceListLink:true}:{})};
     if(mode==='suggest')return {label:def.label,summary:result.summary,...(def.id===97?{supplierBenefitLink:true}:{}),
       rows:firstSuggestion(def,result.rows),mode,more:false,page:1,filterable:true,...inputs};
     return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
       ...(result.scenarioOptions?{scenarioOptions:result.scenarioOptions}:{}),
+      ...(result.reportQuarter?{reportQuarter:result.reportQuarter}:{}),
       ...(result.cyclePlan?{cyclePlan:true}:{}),
       ...(result.partnerStockForm?{partnerStockForm:result.partnerStockForm}:{}),
       ...(result.pickReleaseLink?{pickReleaseLink:true}:{}),

@@ -4,17 +4,24 @@ const time=require('../lib/business-time');
 const {addDays}=require('../accounting/customer-money');
 const money=require('../domain/currency');
 
-async function report(db,ctx,{today,filter,page=1,download=false}){
+async function report(db,ctx,{today,filter,page=1,download=false,quarter=null}){
   const month=Number(today.slice(5,7))-1;
-  const finish=new Date(Date.UTC(Number(today.slice(0,4)),month-month%3,1)).toISOString().slice(0,10);
+  const latestFinish=new Date(Date.UTC(Number(today.slice(0,4)),month-month%3,1)).toISOString().slice(0,10);
+  let finish=latestFinish;
+  if(quarter){
+    const match=/^(\d{4})-Q([1-4])$/.exec(String(quarter));
+    if(!match||Number(match[1])<1901)throw new ValidationError('Enter a completed quarter such as 2026-Q1.');
+    finish=new Date(Date.UTC(Number(match[1]),Number(match[2])*3,1)).toISOString().slice(0,10);
+    if(finish>latestFinish)throw new ValidationError('Choose a completed quarter.');
+  }
   const start=new Date(Date.UTC(Number(finish.slice(0,4)),Number(finish.slice(5,7))-4,1)).toISOString().slice(0,10);
   const end=addDays(finish,-1),zone=(await time.forWorkspace(db,ctx.workspaceId)).timeZone;
-  const span={start,end,closing:end.slice(0,7)};
-  if(!filter)return {span,rows:[],more:false,summary:'Enter the exact supplier name to prepare their pack for '+start+' through '+end+'.'};
+  const span={start,end,closing:end.slice(0,7)},reportQuarter=end.slice(0,4)+'-Q'+Math.ceil(Number(end.slice(5,7))/3);
+  if(!filter)return {span,reportQuarter,rows:[],more:false,summary:'Enter the exact supplier name to prepare their pack for '+start+' through '+end+'.'};
   const suppliers=(await db.query('SELECT id,name FROM suppliers WHERE workspace_id=$1 AND (id=$2 OR lower(name)=lower($2)) ORDER BY id LIMIT 2',[ctx.workspaceId,filter])).rows;
   if(suppliers.length!==1){
     if(download)throw new ValidationError('Choose one matching supplier in this inventory.');
-    return {span,rows:[],more:false,summary:suppliers.length?'Several suppliers have this name. Use the supplier record ID.':'No supplier matched this name.'};
+    return {span,reportQuarter,rows:[],more:false,summary:suppliers.length?'Several suppliers have this name. Use the supplier record ID.':'No supplier matched this name.'};
   }
   const [supplier]=suppliers;
   const {rows}=await db.query(`SELECT p.id,p.po_number,p.currency,p.expected_date,l.line_number,s.code,l.quantity_units AS ordered,
@@ -27,7 +34,7 @@ async function report(db,ctx,{today,filter,page=1,download=false}){
     WHERE p.workspace_id=$1 AND p.supplier_id=$2 AND p.status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED')
       AND p.ordered_at::timestamptz >= $3::timestamptz AND p.ordered_at::timestamptz < $4::timestamptz
     ORDER BY p.ordered_at,p.id,l.line_number LIMIT $5 OFFSET $6`,[ctx.workspaceId,supplier.id,time.dayBoundary(start,zone),time.dayBoundary(finish,zone),download?null:101,download?0:(page-1)*100]);
-  return {supplier:supplier.name,span,more:!download&&rows.length>100,
+  return {supplier:supplier.name,span,reportQuarter,more:!download&&rows.length>100,
     summary:'Orders placed with '+supplier.name+' from '+start+' through '+end+'. Received units use receipts dated through the quarter close.',
     rows:(download?rows:rows.slice(0,100)).map(r=>({Order:r.po_number,SKU:r.code,Ordered:r.ordered,'Received by close':r.received,
       'Promised date':r.expected_date,'Unit cost':r.unit_cost==null?'Unknown':money.format(money.toMinor(String(r.unit_cost),r.currency),r.currency),
@@ -36,7 +43,7 @@ async function report(db,ctx,{today,filter,page=1,download=false}){
 
 async function pdf(report){
   if(!report.supplier)throw new ValidationError('Choose the supplier before downloading a shareable pack.');
-  if(!report.rows.length)throw new ValidationError('This supplier has no placed orders in the last completed quarter.');
+  if(!report.rows.length)throw new ValidationError('This supplier has no placed orders in the selected quarter.');
   return require('../reports/exports').pdf({config:{title:'Quarterly supplier review · '+report.supplier},sourceLabel:report.summary,
     columns:['Order','SKU','Ordered','Received by close','Promised date','Unit cost','Currency'],rows:report.rows});
 }

@@ -28,21 +28,34 @@ async function yearEnd(db,ctx,{today,filter,page=1,download=false}){
   const zone=(await time.forWorkspace(db,ctx.workspaceId)).timeZone;
   const bounds=[ctx.workspaceId,time.dayBoundary(span.start,zone),time.dayBoundary(span.end,zone,{nextDay:true})];
   const during="r.workspace_id=$1 AND r.status='COMPLETED' AND r.approved_at >= $2::timestamptz AND r.approved_at < $3::timestamptz";
-  const total=await db.query('SELECT coalesce(sum(jsonb_array_length(r.payload->\'lines\')),0) AS n FROM physical_count_reviews r WHERE '+during,bounds);
+  const worksheets="w.workspace_id=$1 AND w.status='COMPLETED' AND w.completed_at >= $2::timestamptz AND w.completed_at < $3::timestamptz";
+  const total=await db.query(`SELECT (SELECT coalesce(sum(jsonb_array_length(r.payload->'lines')),0) FROM physical_count_reviews r WHERE ${during})
+    +(SELECT count(*) FROM warehouse_count_campaigns w JOIN warehouse_count_campaign_lines l ON l.workspace_id=w.workspace_id AND l.campaign_id=w.id
+      WHERE ${worksheets} AND l.applied_at IS NOT NULL) AS n`,bounds);
   const counts=download?(await db.query(`SELECT (r.approved_at AT TIME ZONE $4)::date::text AS day,r.payload->'location'->>'name' AS location,
     r.payload->>'reference' AS reference,l->>'code' AS sku,l->'before'->>'physical' AS before,l->>'quantity' AS counted,
     l->>'delta' AS difference,r.payload->>'currency' AS currency,l->>'costDeltaMinor' AS value,u.name AS approver
     FROM physical_count_reviews r CROSS JOIN LATERAL jsonb_array_elements(r.payload->'lines') AS l
     LEFT JOIN users u ON u.workspace_id=r.workspace_id AND u.id=r.approved_by_user_id
-    WHERE ${during} ORDER BY r.approved_at,r.id,l->>'code'`,[...bounds,zone])).rows:[];
+    WHERE ${during}
+    UNION ALL
+    SELECT (w.completed_at AT TIME ZONE $4)::date::text,loc.name,w.title,s.code,l.before_quantity::text,l.counted_quantity::text,
+      (l.counted_quantity-l.before_quantity)::text,settings.base_currency,l.cost_delta_minor::text,u.name
+    FROM warehouse_count_campaigns w JOIN warehouse_count_campaign_lines l ON l.workspace_id=w.workspace_id AND l.campaign_id=w.id
+    JOIN locations loc ON loc.workspace_id=l.workspace_id AND loc.id=l.location_id
+    JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id
+    LEFT JOIN accounting_settings settings ON settings.workspace_id=w.workspace_id
+    LEFT JOIN users u ON u.workspace_id=w.workspace_id AND u.id=w.approved_by_user_id
+    WHERE ${worksheets} AND l.applied_at IS NOT NULL
+    ORDER BY day,location,reference,sku`,[...bounds,zone])).rows:[];
   const listed=download?balances:balances.slice(0,100);
   const rows=listed.map(b=>({Currency:b.currency,Account:b.system_key==='INVENTORY_ASSET'?'Stock on books':'Stock in transit',
     SKU:b.code||'Unassigned ledger entries','Closing value':money.format(b.value,b.currency),
     link:'/accounting/reports/general-ledger?'+new URLSearchParams({to:span.end})}));
   const details=counts.map(c=>({Date:c.day,Location:c.location,Reference:c.reference||'',SKU:c.sku,Before:c.before,Counted:c.counted,
-    Difference:c.difference,Currency:c.currency,'Change in value':money.format(c.value,c.currency),'Approved by':c.approver||'Former team member'}));
+    Difference:c.difference,Currency:c.currency||'','Change in value':c.currency&&c.value!=null?money.format(c.value,c.currency):'','Approved by':c.approver||'Former team member'}));
   const amount=(minor,currency)=>Number(money.fromMinor(money.integer(minor,'Stock valuation',{signed:true}),currency));
-  return {span,rows,counts:details,values:listed.map(b=>amount(b.value,b.currency)),countValues:counts.map(c=>amount(c.value,c.currency)),
+  return {span,rows,counts:details,values:listed.map(b=>amount(b.value,b.currency)),countValues:counts.map(c=>c.currency&&c.value!=null?amount(c.value,c.currency):null),
     more:!download&&balances.length>100,summary:'Posted stock valuation at '+span.end+' and '+total.rows[0].n+' approved count lines from '+span.start+' through '+span.end+'. The workbook includes the supporting count lines.'};
 }
 const definitions=[

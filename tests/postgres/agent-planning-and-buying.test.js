@@ -278,6 +278,15 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
   const physical=Number((await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND location_id=$2 AND sku_id=$3',[ctx.workspaceId,f.location.id,sku])).rows[0].on_hand);
   const count=await counts.prepare(db,ctx,{locationId:f.location.id,reference:'Year close count',lines:[{skuId:sku,quantity:physical}]});
   await counts.approve(db,ctx,count.id,(await counts.get(db,ctx,count.id)).integrity_hash);
+  const worksheets=require('../../src/operations/postgres-count-campaigns');
+  const worksheet=await worksheets.create(db,ctx,{locationId:f.location.id,title:'Year close worksheet'},{exactLocation:true});
+  const updated=await worksheets.save(db,ctx,worksheet.id,{revision:1,lines:[{locationId:f.location.id,skuId:sku,quantity:physical}]});
+  await worksheets.approve(db,ctx,worksheet.id,updated.revision);
+  const apply={workspaceId:ctx.workspaceId,payload:{actorId:ctx.actorId,campaignId:worksheet.id}};
+  assert.equal((await worksheets.run(apply,db)).status,'APPLYING');
+  assert.equal((await worksheets.run(apply,db)).status,'COMPLETED');
+  await db.query('UPDATE warehouse_count_campaigns SET completed_at=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,worksheet.id,end+'T12:00:00Z']);
+  await worksheets.create(db,ctx,{locationId:f.location.id,title:'Unfinished worksheet'},{exactLocation:true});
   await db.query("UPDATE physical_count_reviews SET approved_at=($2::date+time '12:00') AT TIME ZONE 'UTC' WHERE id=$1",[count.id,end]);
   await counts.prepare(db,ctx,{locationId:f.location.id,reference:'Pending count',lines:[{skuId:sku,quantity:physical}]});
   const download=(job)=>browser.get('/autopilot/reviews/'+job+'/download').query({filter:end.slice(0,7)});
@@ -303,7 +312,11 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
       const xlsx=require('xlsx'),workbook=xlsx.read(pack.body,{type:'buffer'});
       assert.equal(xlsx.utils.sheet_to_json(workbook.Sheets['Closing valuation']).find(r=>r.SKU==='Unassigned ledger entries')['Closing value'],15);
       const lines=xlsx.utils.sheet_to_json(workbook.Sheets['Approved count lines']);
-      assert.equal(lines.length,1);assert.equal(lines[0].SKU,code);assert.equal(lines[0].Reference,'Year close count');assert.equal(lines[0].Counted,physical);
+      assert.equal(lines.length,2);
+      for(const reference of ['Year close count','Year close worksheet']){
+        const line=lines.find(r=>r.Reference===reference);
+        assert.equal(line.SKU,code);assert.equal(line.Counted,physical);
+      }
     }
     if(tier==='starter'){
       for(const key of ['month-end-stock','margin-change'])await assert.rejects(review(key,{filter:end.slice(0,7)}),e=>e.code==='entitlement_required');continue;
@@ -332,6 +345,11 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
     const doc=await loading.promise,content=(await (await doc.getPage(1)).getTextContent()).items.map(i=>i.str).join(' ');
     assert.ok(content.includes(line.Order));assert.ok(content.includes('Alternative'));assert.ok(content.includes('$1.25'));
     assert.doesNotMatch(content,/Fixture parts/);await loading.destroy();
+    const quarter=priorQuarter.end.slice(0,4)+'-Q'+Math.ceil(Number(priorQuarter.end.slice(5,7))/3);
+    const chosen=await browser.get('/autopilot/reviews/quarterly-supplier-pack').query({filter:supplier.id,quarter}).expect(200);
+    assert.match(chosen.text,new RegExp('quarter='+quarter));
+    await binary(browser.get('/autopilot/reviews/quarterly-supplier-pack/download').query({filter:supplier.id,quarter})).expect(200);
+    await browser.get('/autopilot/reviews/quarterly-supplier-pack/download').query({filter:supplier.id,quarter:'9999-Q1'}).expect(400);
     await browser.get('/autopilot/reviews/quarterly-supplier-pack/download').expect(400);
   }
 });
