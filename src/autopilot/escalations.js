@@ -14,7 +14,9 @@
 // amount, a purchase approval limit that covers it, lowest limit and staff
 // before people who manage settings (job 176's order), and the owner last.
 // Each holder gets the same window. The person it is passed to sees it in
-// Needs you and gets an email from the mailbox the owner chose.
+// Needs you and gets an email from the mailbox the owner chose, and a text or
+// push to their own confirmed number and devices when the owner chose those
+// (job 173).
 //
 // Answering stops it: "I'm on it" from the holder, anyone it was passed to or
 // the owner, or the alert clearing or the approval being decided. Passing on
@@ -122,19 +124,77 @@ async function pass(c,ctx,row,people,{manual=false}={}){
   if(!next)return null;
   const before=people.find(p=>p.id===row.holder_user_id);
   await c.query(`UPDATE ${table} SET holder_user_id=$3,step=step+1,passed_to=passed_to||to_jsonb($3::text),passed_at=clock_timestamp(),
-    email_batch=NULL,email_communication_id=NULL,updated_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,row.id,next.id]);
+    email_batch=NULL,email_communication_id=NULL${await phoneColumns(c)?",sms_batch=NULL,push_batch=NULL":""},updated_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,row.id,next.id]);
   await audit.record(c,ctx,{action:row.source==='ALERT'?'Unanswered alert passed on':'Unanswered approval passed on',reference:row.title,
     before:{with:before?before.name:'Owner',step:row.step},after:{with:next.name,step:row.step+1,...(manual?{passedByOwner:true}:{})}});
   return next;
 }
 
-// Emails each person the items passed to them that were not emailed yet.
+// Sends each person the items passed to them: by email from the chosen
+// mailbox, and by text and push to their own number and devices (job 173).
 async function deliver(c,workspaceId,account,setting,{manual=false}={}){
+  const out={emailed:0,note:null,texted:0,pushed:0,phoneNote:null};
+  if(setting.email_connector_id)Object.assign(out,await deliverEmail(c,workspaceId,account,setting,{manual}));
+  if(setting.sms||setting.push)Object.assign(out,await deliverPhone(c,workspaceId,account,setting,{manual}));
+  return out;
+}
+const phoneColumns=db=>installed.has(db,table,'sms_batch');
+async function deliverPhone(c,workspaceId,account,setting,{manual}){
+  const out={texted:0,pushed:0,phoneNote:null};
+  if(!await phoneColumns(c))return out;
+  const phones=require('./alert-phones'),want=['sms','push'].filter(ch=>setting[ch]);
+  const notePhone=async text=>{
+    await c.query(`UPDATE ${channels} SET phone_note=$2 WHERE workspace_id=$1 AND job_id=${JOB} AND phone_note IS DISTINCT FROM $2`,[workspaceId,text?text.slice(0,500):null]);
+    out.phoneNote=text||null;return out;
+  };
+  const rows=(await c.query(`SELECT * FROM ${table} WHERE workspace_id=$1 AND status='WAITING' AND step>0 AND holder_user_id IS NOT NULL
+    AND (${want.map(ch=>ch+'_batch IS NULL').join(' OR ')}) ORDER BY holder_user_id,passed_at,id LIMIT 200`,[workspaceId])).rows;
+  if(!rows.length)return notePhone(null);
+  const stop=await phones.held(c,workspaceId,account,ACTION,manual);
+  if(stop)return notePhone('Nothing was texted or pushed. '+stop);
+  const people=await team(c,workspaceId),problems=[];
+  for(const holder of [...new Set(rows.map(r=>r.holder_user_id))]){
+    const person=people.find(p=>p.id===holder);if(!person)continue;
+    for(const ch of want){
+      const list=rows.filter(r=>r.holder_user_id===holder&&!r[ch+'_batch']);if(!list.length)continue;
+      const title=list.length===1?(person.is_owner?'Nobody answered: ':'Passed to you: ')+list[0].title.split('. ')[0]:list.length+' unanswered alerts and approvals passed to you';
+      const body=list.length===1?list[0].title:title+'. '+list.slice(0,2).map(r=>r.title.split('. ')[0]+'.').join(' ')+(list.length>2?' And '+(list.length-2)+' more.':'');
+      const batch=newId('escalation-'+ch);
+      const queued=await phones.queue(c,workspaceId,{purpose:'ALERT',job:JOB,batch,userId:person.id,sms:ch==='sms',push:ch==='push',
+        title,body,url:phones.link(list.length===1?list[0].href:'/needs-you'),manual});
+      if(!queued[ch]){problems.push(person.name+': '+queued.problems.join(' '));continue;}
+      await c.query(`UPDATE ${table} SET ${ch}_batch=$3 WHERE workspace_id=$1 AND id=ANY($2::text[])`,[workspaceId,list.map(r=>r.id),batch]);
+      await audit.record(c,{workspaceId,actorId:people.find(p=>p.is_owner)?.id||person.id},{action:ch==='sms'?'Alert text queued':'Alert push queued',reference:batch,
+        after:{job:JOB,alerts:list.length,to:person.name,...(manual?{sentByOwner:true}:{})}});
+      out[ch==='sms'?'texted':'pushed']+=list.length;
+    }
+  }
+  return notePhone(problems.length?problems.join(' ').slice(0,500):null);
+}
+// Checked again just before a text or push goes out: the items are still
+// waiting with the same person.
+async function phoneAuthority(db,workspaceId,m){
+  const column=m.channel==='SMS'?'sms_batch':'push_batch';
+  const open=(await db.query(`SELECT 1 FROM ${table} WHERE workspace_id=$1 AND ${column}=$2 AND status='WAITING' AND holder_user_id=$3 LIMIT 1`,
+    [workspaceId,String(m.batch||''),String(m.user_id||'')])).rowCount;
+  if(!open)throw new ValidationError('These items were answered or moved on before the message was sent, so it was not sent.');
+}
+// Items passed on and not sent yet on a channel the owner chose.
+async function waiting(db,workspaceId,setting){
+  const phones=setting&&await phoneColumns(db);
+  const unsent=[setting?.email_connector_id?'email_batch IS NULL':null,phones&&setting.sms?'sms_batch IS NULL':null,phones&&setting.push?'push_batch IS NULL':null].filter(Boolean);
+  if(!unsent.length)unsent.push('email_batch IS NULL');
+  return Number((await db.query(`SELECT count(*) AS n FROM ${table} WHERE workspace_id=$1 AND status='WAITING' AND step>0 AND holder_user_id IS NOT NULL
+    AND (${unsent.join(' OR ')})`,[workspaceId])).rows[0].n);
+}
+
+// Emails each person the items passed to them that were not emailed yet.
+async function deliverEmail(c,workspaceId,account,setting,{manual=false}={}){
   const waiting=(await c.query(`SELECT * FROM ${table} WHERE workspace_id=$1 AND status='WAITING' AND step>0 AND email_batch IS NULL
     AND holder_user_id IS NOT NULL ORDER BY holder_user_id,passed_at,id LIMIT 200`,[workspaceId])).rows;
   const alerts=require('./agent-alerts');
   if(!waiting.length){await note(c,workspaceId,null);return {emailed:0,note:null};}
-  const stop=await policy.stopped(c,workspaceId,account,ACTION,!manual);
+  const stop=await require('./alert-phones').held(c,workspaceId,account,ACTION,manual);
   if(stop){const text='No email was sent. '+stop;await note(c,workspaceId,text);return {emailed:0,note:text};}
   const box=(await alerts.mailboxes(c,workspaceId)).find(b=>b.id===setting.email_connector_id);
   if(!box){const text='The chosen mailbox is disconnected, paused or cannot send. Reconnect it, or choose another. No email was sent.';await note(c,workspaceId,text);return {emailed:0,note:text};}
@@ -173,7 +233,7 @@ async function run(database,workspaceId){
   const owner=await currentOwner(database,workspaceId);if(!owner)return {skipped:'owner_unavailable'};
   const items=await currentItems(database,workspaceId,owner,state);
   return tx(database,async c=>{
-    const ctx={workspaceId,actorId:owner.id};
+    const ctx={workspaceId,actorId:owner.id},resetPhones=await phoneColumns(c)?',sms_batch=NULL,push_batch=NULL':'';
     const rows=new Map((await c.query(`SELECT * FROM ${table} WHERE workspace_id=$1 FOR UPDATE`,[workspaceId])).rows.map(r=>[r.item_key,r]));
     const seen=new Set(items.map(i=>i.key));let opened=0,closed=0;
     for(const item of items){
@@ -185,7 +245,7 @@ async function run(database,workspaceId){
       opened++;
       const fields=[item.source,item.job_id,item.title,item.href,item.permission,item.amount_minor,item.currency,item.opened_at];
       if(row)await c.query(`UPDATE ${table} SET source=$3,job_id=$4,title=$5,href=$6,permission=$7,amount_minor=$8,currency=$9,opened_at=coalesce($10::timestamptz,clock_timestamp()),
-          step=0,holder_user_id=NULL,passed_to='[]',passed_at=NULL,status='WAITING',answered_by=NULL,answered_at=NULL,closed_at=NULL,email_batch=NULL,email_communication_id=NULL,
+          step=0,holder_user_id=NULL,passed_to='[]',passed_at=NULL,status='WAITING',answered_by=NULL,answered_at=NULL,closed_at=NULL,email_batch=NULL,email_communication_id=NULL${resetPhones},
           updated_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2`,[workspaceId,row.id,...fields]);
       else await c.query(`INSERT INTO ${table}(workspace_id,id,item_key,source,job_id,title,href,permission,amount_minor,currency,opened_at)
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,coalesce($11::timestamptz,clock_timestamp())) ON CONFLICT DO NOTHING`,[workspaceId,newId('escalation'),item.key,...fields]);
@@ -202,7 +262,7 @@ async function run(database,workspaceId){
     if(!stop)for(const row of passing)if(await pass(c,ctx,row,people))passed++;
     const setting=(await c.query(`SELECT * FROM ${channels} WHERE workspace_id=$1 AND job_id=${JOB}`,[workspaceId])).rows[0];
     // Emails that waited (pause, Ask me first, the first 14 days) go out once StockChief may act again.
-    const email=setting?.email_connector_id?await deliver(c,workspaceId,state,setting):null;
+    const email=setting&&(setting.email_connector_id||setting.sms||setting.push)?await deliver(c,workspaceId,state,setting):null;
     return {opened,closed,passed,held:stop?passing.length:0,email};
   });
 }
@@ -258,7 +318,7 @@ async function passNow(database,ctx,id){
     const next=await pass(c,ctx,row,await team(c,ctx.workspaceId),{manual:true});
     if(!next)throw new ValidationError('Everyone who can take this has had it.');
     const setting=(await c.query(`SELECT * FROM ${channels} WHERE workspace_id=$1 AND job_id=${JOB}`,[ctx.workspaceId])).rows[0];
-    if(setting?.email_connector_id)await deliver(c,ctx.workspaceId,state,setting,{manual:true});
+    if(setting&&(setting.email_connector_id||setting.sms||setting.push))await deliver(c,ctx.workspaceId,state,setting,{manual:true});
     return {to:next.name};
   });
 }
@@ -317,4 +377,4 @@ async function actions(db,ctx){
 }
 
 const definition={id:JOB,key,label,readPage:review};
-module.exports={JOB,ACTION,key,path,label,definition,ready,enabled,windowHours,chain,run,deliver,emailAuthority,answer,answerJob,passNow,inbox,answerable,actions,review};
+module.exports={JOB,ACTION,key,path,label,definition,ready,enabled,windowHours,chain,run,deliver,emailAuthority,phoneAuthority,waiting,answer,answerJob,passNow,inbox,answerable,actions,review};

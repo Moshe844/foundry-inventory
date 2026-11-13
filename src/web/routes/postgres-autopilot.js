@@ -1946,7 +1946,7 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   router.post('/autopilot/alerts/:job/send',requireAuth,owner,asyncRoute(async(req,res)=>{
     const alerts=require('../../autopilot/agent-alerts'),sent=await alerts.sendNow(database,req.ctx,req.params.job);
-    req.flash('success',sent.emailed===1?'1 alert is on its way to you.':sent.emailed+' alerts are on their way to you.');
+    req.flash('success',Number(req.params.job)===175?(sent.sent===1?'1 approval link is on its way.':sent.sent+' approval links are on their way.'):sent.sent===1?'1 alert is on its way to you.':sent.sent+' alerts are on their way to you.');
     res.redirect(303,alerts.pathFor(Number(req.params.job)));
   }));
   // Job 172: answer an item passed on, answer every alert of a kind, or pass one on now.
@@ -1974,6 +1974,48 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/reviews/channel-sync-fixes/undo',requireAuth,owner,asyncRoute(async(req,res)=>{
     const fixes=require('../../connections/agent-channel-sync-fixes');await fixes.undo(database,req.ctx,req.body.entry);
     req.flash('success','Match removed. Orders already taken in stay.');res.redirect(303,fixes.path);
+  }));
+  // Job 173: each person's own mobile number and push devices.
+  const alertPhones=require('../../autopilot/alert-phones');
+  const flashed=(to,work)=>asyncRoute(async(req,res)=>{
+    try{const message=await work(req);if(message)req.flash('success',message);}
+    catch(error){if(!(error instanceof ValidationError)&&error.status!==404)throw error;req.flash('error',error.message);}
+    res.redirect(303,alertPhones.path+to);
+  });
+  router.get(alertPhones.path,requireAuth,asyncRoute(async(req,res)=>reportPage(req,res,alertPhones.JOB,'autopilot/alert-devices',
+    {title:'Your phone and devices',nav:'autopilot',backTo:{href:'/needs-you',label:'Needs you'}},async()=>({devices:await alertPhones.page(database,req.ctx)}),402)));
+  router.post(alertPhones.path+'/phone',requireAuth,flashed('#phone',async req=>{
+    const done=await alertPhones.setPhone(database,req.ctx,req.body.phone);
+    return done.unchanged?'That number is already confirmed.':'A code is on its way to the number ending '+done.ending+'. Type it below.';
+  }));
+  router.post(alertPhones.path+'/phone/code',requireAuth,flashed('#phone',async req=>'A new code is on its way to the number ending '+(await alertPhones.resendCode(database,req.ctx)).ending+'.'));
+  router.post(alertPhones.path+'/phone/confirm',requireAuth,flashed('#phone',async req=>{
+    const done=await alertPhones.confirmPhone(database,req.ctx,req.body.code);
+    if(done.wrong)throw new ValidationError(done.wrong);
+    return done.replayed?'Your number is already confirmed.':'Your number is confirmed. Alerts you choose can now come by text.';
+  }));
+  router.post(alertPhones.path+'/phone/remove',requireAuth,flashed('#phone',async req=>(await alertPhones.removePhone(database,req.ctx)).removed?'Your number is removed. No more texts will be sent to it.':null));
+  router.post(alertPhones.path+'/push',requireAuth,flashed('#push',async req=>'Push is on for '+(await alertPhones.addDevice(database,req.ctx,req.body,req.get('user-agent'))).label+'.'));
+  router.post(alertPhones.path+'/push/:id/remove',requireAuth,flashed('#push',async req=>{await alertPhones.removeDevice(database,req.ctx,req.params.id);return 'Push is off for that device.';}));
+  // Job 175: an approval link from an email, text or push. Opening it shows
+  // the approval as it is now and approves nothing; the button does.
+  router.get('/approve/:id',require('../middleware').requireAccount,asyncRoute(async(req,res)=>{
+    const links=require('../../autopilot/approval-links'),row=await links.locate(database,req.account.id,req.params.id);
+    res.set('Cache-Control','private, no-store');res.set('Referrer-Policy','no-referrer');
+    if(req.ctx?.workspaceId!==row.workspace_id){
+      const workspace=res.locals.workspaces.find(w=>w.workspaceId===row.workspace_id);
+      if(!workspace)throw new (require('../../domain/errors').NotFoundError)();
+      return res.page('autopilot/approval-inventory',{title:'Open approvals',heading:'Review an approval in '+workspace.name,workspace,workspaceId:row.workspace_id,destination:'/approve/'+row.id});
+    }
+    return res.page('autopilot/approval-link',{title:'Review and approve',backTo:{href:'/needs-you',label:'Needs you'},link:await links.view(database,req.ctx,req.params.id)});
+  }));
+  router.post('/approve/:id',requireAuth,asyncRoute(async(req,res)=>{
+    const links=require('../../autopilot/approval-links');
+    try{
+      const done=await links.approve(database,req.ctx,req.user,req.params.id,{revision:req.body.revision});
+      if(done.replayed)req.flash('success','This was already approved. Nothing more was done.');
+    }catch(error){if(!(error instanceof ValidationError)&&error.status!==403)throw error;req.flash('error',error.message);}
+    return res.redirect(303,'/approve/'+encodeURIComponent(req.params.id));
   }));
   router.post('/autopilot/alert-settings/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
     const watch=require('../../autopilot/activity-watches'),id=Number(req.params.id);
@@ -2243,14 +2285,9 @@ function createPostgresAutopilotRouter(database,options={}){
     if(req.ctx?.workspaceId===workspaceId)return res.redirect(destination);
     return res.page('autopilot/approval-inventory',{title:'Open purchase approvals',workspace,workspaceId,destination});
   }));
-  router.get('/autopilot/work/:id',requireAuth,asyncRoute(async(req,res)=>{const item=await autonomy.getWork(database,req.ctx.workspaceId,req.params.id),access=require('../../actions/permissions'),required=item.recommendedAction.type==='customer_order'?access.VIEW_SALES:item.recommendedAction.type==='supplier_invoice'?access.VIEW_ACCOUNTING:item.recommendedAction.type==='transfer'?access.VIEW_TRANSFERS:access.VIEW_PURCHASING;access.assertCan(req.user,required,'review this business workflow');let approvalBlock=null;const action=item.recommendedAction;
-    // Say what is in the way before the person presses Approve, not after.
-    if(item.execution_status==='WAITING_FOR_APPROVAL'&&action.type==='purchase'&&action.supplierId&&(action.unitCost==null||action.value==null)){
-      approvalBlock={reason:'Record the supplier’s unit price before sending this purchase order.',href:'/suppliers/'+encodeURIComponent(action.supplierId),label:'Review supplier prices'};
-    }else if(item.execution_status==='WAITING_FOR_APPROVAL'&&item.evidenceQuality?.level==='low'){
-      approvalBlock={reason:item.evidenceQuality.reason,href:'/autopilot',label:'Review inventory and purchasing'};
-    }else if(item.execution_status==='WAITING_FOR_APPROVAL'&&action.type!=='transfer'&&action.supplierId){const ready=await autonomy.supplierDeliveryReadiness(database,req.ctx.workspaceId,action.supplierId);
-      if(!ready.ready)approvalBlock=/email address/.test(ready.reason||'')?{reason:(action.supplierName||'This supplier')+' has no order email address yet, so the order can’t be sent.',href:'/suppliers/'+encodeURIComponent(action.supplierId)+'?edit=1',label:'Add the supplier’s email'}:{reason:ready.reason,href:'/settings/connections',label:'Fix the connection'};}
+  router.get('/autopilot/work/:id',requireAuth,asyncRoute(async(req,res)=>{const item=await autonomy.getWork(database,req.ctx.workspaceId,req.params.id),access=require('../../actions/permissions'),required=item.recommendedAction.type==='customer_order'?access.VIEW_SALES:item.recommendedAction.type==='supplier_invoice'?access.VIEW_ACCOUNTING:item.recommendedAction.type==='transfer'?access.VIEW_TRANSFERS:access.VIEW_PURCHASING;access.assertCan(req.user,required,'review this business workflow');
+    // Say what is in the way before the person presses Approve, not after (shared with job 175's approval links).
+    const approvalBlock=await require('../../autopilot/approval-links').workBlock(database,req.ctx.workspaceId,item);
     return res.page('autopilot/postgres-work',{
     title:'Review StockChief’s decision',nav:'autopilot',backTo:{href:'/needs-you',label:'Needs you'},
     item,approvalBlock});}));
