@@ -21,6 +21,15 @@ async function pdf(p,{draft=true,reviewer=''}={}){
    for(const [i,b]of p.boxes.entries()){room(36);doc.fontSize(10).text('Parcel '+(i+1)+' · '+(b.weightGrams/1000).toFixed(3)+' kg'+(b.lengthMm&&b.widthMm&&b.heightMm?' · '+b.lengthMm+' × '+b.widthMm+' × '+b.heightMm+' mm':''));}
    doc.moveDown();for(const l of p.lines){room(45);doc.fontSize(10).text(l.sku+' · '+l.quantity+' '+l.unit+' · '+l.description,{width});}
    room(55);doc.moveDown().fontSize(9).text('Products above cover the shipment as a whole. Individual contents per parcel are not assigned by this list. Physical packing, carrier handoff and customs clearance are separate records.');
+   // The customs form: the same confirmed facts, laid out as the carrier's or
+   // post's customs declaration (CN 23 fields). A person signs and submits it.
+   doc.addPage();heading('CUSTOMS DECLARATION');doc.fontSize(9).text('Prepared from the confirmed facts in this packet for the carrier or postal customs form (CN 23 fields). A person checks, signs and submits it. StockChief does not file it.');doc.moveDown(.6);
+   doc.fontSize(10).text('Sender: '+p.exporter.name);doc.fontSize(9).text(p.exporter.address).text('Dispatch country: '+p.from.country);doc.moveDown(.4);
+   doc.fontSize(10).text('Addressee: '+p.to.name);doc.fontSize(9).text(p.to.address).text('Destination country: '+p.to.country);if(p.to.phone)doc.text('Phone: '+p.to.phone);if(p.to.email)doc.text('Email: '+p.to.email);doc.moveDown(.4);
+   doc.fontSize(10).text('Category of item: sale of goods').text('Commercial invoice: CI-'+p.shipmentNumber+'-'+p.sourceHash.slice(0,8)).text('Agreed delivery terms: '+p.deliveryTerms);doc.moveDown();
+   for(const [i,l]of p.lines.entries()){room(42);doc.fillColor('#171824').fontSize(9).text((i+1)+'. '+l.description,{width});doc.text(l.quantity+' '+l.unit+' · Net weight '+(l.netWeightGrams/1000).toFixed(3)+' kg · Value '+amount(l.goodsNetMinor)+' · HS tariff number '+l.hsCode+' · Country of origin '+l.originCountry);doc.moveDown(.3);}
+   room(110);doc.moveDown(.3).fontSize(10).text('Parcels: '+p.boxes.length+' · Total gross weight: '+(p.grossWeightGrams/1000).toFixed(3)+' kg').text('Total value: '+amount(p.totals.goodsNetMinor)+' ('+p.currency+')');
+   doc.moveDown().fontSize(9).text(draft?'Private draft — not for signature.':'Facts reviewed in StockChief by '+reviewer+'.').moveDown().text('Sender’s signature and date: ______________________________');
    const pages=doc.bufferedPageRange();for(let i=0;i<pages.count;i++){doc.switchToPage(i);doc.page.margins.bottom=0;doc.fontSize(8).fillColor('#666666').text((draft?'DRAFT · ':'')+p.shipmentNumber+' · '+(i+1)+' / '+pages.count,42,doc.page.height-38,{width,align:'center',lineBreak:false});}
    doc.end();
   }catch(error){doc.destroy();reject(error);}
