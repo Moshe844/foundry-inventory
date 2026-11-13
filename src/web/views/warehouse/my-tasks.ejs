@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>My tasks · StockChief</title><link rel="stylesheet" href="/app-system.css"><link rel="stylesheet" href="/app.css"></head><body><main class="rm-canvas rm rm-legacy">
+<p><a href="/warehouse/stock" data-dest="/warehouse/stock">Warehouse stock</a> · <a href="/guide" data-dest="/guide">Staff guide</a></p>
+<div class="page-head"><div class="titles"><h1>My tasks</h1>
+<p><%= locked?'Staff tasks are not part of this inventory’s plan.':'Each task is checked off when its own record shows the work is done.' %></p></div></div>
+<% if(!locked){ const open=tasks.filter(t=>t.status==='ASSIGNED'),done=tasks.filter(t=>t.status==='DONE'); %>
+<section class="card section"><h2>To do</h2>
+<% if(!open.length){ %><p class="cell-sub">You have no tasks right now.</p><% }else{ %><ul class="rm-list"><% for(const t of open){ %><li class="list-row"><span><a href="<%= t.href %>" data-dest="<%= t.href %>"><%= t.title %></a>
+<small><%= t.label %> · due <%= helpers.dateTime(t.due_at) %></small></span><% if(t.late){ %><span class="badge badge--danger">Late</span><% } %></li><% } %></ul><% } %></section>
+<% if(done.length){ %><section class="card section"><h2>Done in the last day</h2><ul class="rm-list"><% for(const t of done){ %><li class="list-row"><span><%= t.title %><small><%= t.done %> · <%= helpers.dateTime(t.done_at) %></small></span></li><% } %></ul></section><% } %>
+<% } %>
+</main></body></html>

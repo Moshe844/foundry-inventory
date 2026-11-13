@@ -29,6 +29,7 @@ function createRouter(db){
    AND ($4='' OR s.code ILIKE '%'||$4||'%' OR s.barcode=$4 OR i.name ILIKE '%'||$4||'%' OR s.variant_label ILIKE '%'||$4||'%') ORDER BY s.id LIMIT 101`,[req.ctx.workspaceId,locationId,after,q])).rows:[];
   res.locals.flash=req.session.flash||[];req.session.flash=[];
   res.locals.countTasks=permissions.can(req.user,permissions.COUNT_STOCK)?await tasks.inbox(db,req.ctx.workspaceId,req.ctx.actorId):[];
+  res.locals.staffTasks=req.user.role==='owner'?[]:(await require('../../operations/agent-staff-tasks').mine(db,req.ctx)).tasks.filter(t=>t.status==='ASSIGNED'&&t.kind!=='count');
   const putawayPolicy=require('../../commercial/agent-plan'),putawayState=await putawayPolicy.accountState(db,req.ctx.workspaceId);
   const arrivals=require('../../transfers/agent-transfer-arrivals');
   res.locals.transferArrivals=roots!==null&&permissions.can(req.user,permissions.VIEW_TRANSFERS)&&permissions.can(req.user,permissions.RECEIVE_TRANSFER)
@@ -83,6 +84,8 @@ function protection(db){const router=createRouter(db);return async(req,res,next)
   if(req.method==='GET'&&(req.path==='/transfers/arrival-follow-up'||transferDetail.test(req.path)) ||
      req.method==='POST'&&(transferReceipt.test(req.path)||transferCheck.test(req.path)))return next();
   if(['GET','POST'].includes(req.method)&&/^\/warehouse\/bin-corrections(?:\/[A-Za-z0-9_-]+(?:\/scan)?)?$/.test(req.path))return next();
+  if(req.method==='GET'&&req.path==='/warehouse/staff-tasks')return next();
+  if(req.method==='GET'&&/^\/team-procedures(?:\/[A-Za-z0-9_-]+(?:\/document\.txt)?)?$/.test(req.path))return next();
   if(req.method==='GET'&&/^\/warehouse\/putaway\/[A-Za-z0-9_-]+$/.test(req.path)||req.method==='POST'&&/^\/warehouse\/putaway\/[A-Za-z0-9_-]+\/confirm$/.test(req.path))return next();
   if(req.path==='/warehouse/stock'||req.path==='/warehouse/stock/receive'||req.path==='/warehouse/stock/count')return router(req,res,next);
   if(req.method==='GET'&&!req.path.startsWith('/api/'))return res.redirect(302,'/warehouse/stock');

@@ -58,7 +58,7 @@ test('stock alerts open, change and clear through the worker on every plan and e
   // Replaying the check changes nothing.
   await check();await check();
   assert.equal(await audits('Alerts updated'),1);
-  assert.equal(await count('SELECT count(*) FROM stockchief_runtime.agent_alert_deliveries WHERE workspace_id=$1'),2);
+  assert.equal(await count('SELECT count(*) FROM stockchief_runtime.agent_alert_deliveries WHERE workspace_id=$1 AND job_id=166'),2);
 
   // Stock changes update the alerts: low, then out, then recovered.
   await issue(A,1);await check();

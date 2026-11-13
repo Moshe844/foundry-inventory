@@ -1,0 +1,5 @@
+<div class="page-head"><div class="titles"><h1>Team procedures</h1>
+<p>Step-by-step instructions for your warehouse, written from how the team really works.</p></div></div>
+<% if(locked){ %><p class="notice notice--info">Team procedures are not part of this inventory’s plan.</p>
+<% }else if(!rows.length){ %><p class="cell-sub">No procedure has been published for your warehouses yet.</p>
+<% }else{ %><section class="card section"><ul class="rm-list"><% for(const r of rows){ %><li class="list-row"><span><a href="/team-procedures/<%= r.id %>"><%= r.title %></a><small>Updated <%= helpers.dateTime(r.approved_at) %></small></span></li><% } %></ul></section><% } %>
