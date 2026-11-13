@@ -674,7 +674,8 @@ function createPostgresAskRouter(database,options={}){
     const trainingService=require('../../autopilot/draft-authority');
     const draftTraining=req.user?.role==='owner'&&trainingService.jobs.has(proposal.action_type)?await trainingService.settings(database,req.ctx,proposal.id,req.query.draftMaximum):null;
     const approvalAccess=await require('../../commercial/agent-proposal-access').review(database,req.ctx,proposal,{mission:Boolean(mission)});
-    return res.page('attention/postgres-proposal',{draftTraining,approvalAccess,title:mission?'Review operating mission':'Review prepared change',nav:'ask',editProposal:req.query.edit==='1',proposal,presentation:require('../proposal-presentation').present(proposal),mission,nativeApproval:nativeCard?{goalId:native.id,...nativeCard}:null,
+    const twoPeople=await require('../../autopilot/two-person-approval').view(database,req.ctx,proposal);
+    return res.page('attention/postgres-proposal',{draftTraining,approvalAccess,twoPeople,title:mission?'Review operating mission':'Review prepared change',nav:'ask',editProposal:req.query.edit==='1',proposal,presentation:require('../proposal-presentation').present(proposal),mission,nativeApproval:nativeCard?{goalId:native.id,...nativeCard}:null,
       nativeResume:approvedDelivery?{goalId:native.id,id:approvedDelivery.id,sha256:approvedDelivery.sha256}:null,
       missionSteps:(mission?.approved_steps||[]).map((step,index)=>{const contract=capabilities.get(step.capability);return {label:(contract?.legacyAction||step.capability).replace(/[._]/g,' ').replace(/^./,s=>s.toUpperCase()),args:step.args,fields:require('../proposal-presentation').fields(step.args),index:index+1,state:mission.steps[index]?.state||'BLOCKED'};}),
       resumeAvailable:proposal.status==='EXECUTED'&&resuming&&!native});
@@ -694,7 +695,12 @@ function createPostgresAskRouter(database,options={}){
   router.post('/actions/:id/approve',asyncRoute(async(req,res)=>{
     if(await pilotProposalGuard(req,res))return;
     await entitlements.assertCapability(database,commercialScope(req),'ask.prepare_actions');
-    const result=await assistant.executeProposal(database,req.ctx,req.params.id,{provider:options.provider});
+    // Job 205: over the owner's amount this records one of two approvals.
+    const result=await require('../../autopilot/two-person-approval').approve(database,req.ctx,req.params.id,{provider:options.provider});
+    if(result.status==='WAITING_FOR_SECOND_PERSON'||result.status==='WAITING_FOR_OWNER'){
+      req.flash('success',result.status==='WAITING_FOR_OWNER'?'Your approval is saved. Two people approved it; the owner posts it.':'Your approval is saved. A second person must approve it before anything changes.');
+      return res.redirect(303,`/actions/${req.params.id}`);
+    }
     if(result.continuationError)req.flash('error',
       'The approved change completed, but StockChief could not continue the remaining steps. Nothing further was approved.');
     else req.flash('success',result.replayed?'That change had already been completed.':
@@ -703,6 +709,12 @@ function createPostgresAskRouter(database,options={}){
     const opened=result.continued?.findLast((part)=>part.navigation?.href)?.navigation;
     if(opened?.href?.startsWith('/')&&!opened.href.startsWith('//'))return res.redirect(303,opened.href);
     if(result.continued?.length)return res.redirect(303,'/ask#latest');
+    return res.redirect(303,`/actions/${req.params.id}`);
+  }));
+  // Job 205: approving a change from an Ask conversation as one of two people.
+  router.post('/actions/:id/sign',asyncRoute(async(req,res)=>{
+    const signed=await require('../../autopilot/two-person-approval').sign(database,req.ctx,req.params.id);
+    req.flash('success',!signed.required?'This does not need two people. Approve it in Ask.':signed.status==='WAITING_FOR_SECOND_PERSON'?'Your approval is saved. A second person must approve it.':'Two people approved it. Approve it in Ask to post it.');
     return res.redirect(303,`/actions/${req.params.id}`);
   }));
   router.post('/actions/:id/cancel',asyncRoute(async(req,res)=>{
