@@ -28,7 +28,22 @@ async function owner(db,ctx){
   if(!current)throw new AuthorizationError('Only the current owner can authorize this channel recovery.');
 }
 
+// The owner's routine authority for this job: an explicit "Handle routine
+// work", or the inventory's own setting (job 182 is alone on Growth and above).
+// Watch only and Ask me first are refused by policy.stopped.
 async function grant(db,workspaceId,{lock=false}={}){
+  const explicit=await routineGrant(db,workspaceId,{lock});
+  if(explicit)return explicit;
+  return (await db.query(`SELECT u.id AS actor_id,coalesce(m.revision,0) AS revision FROM workspaces w
+    JOIN users u ON u.workspace_id=w.id AND u.account_id=w.owner_account_id AND u.role='owner'
+    JOIN workspace_autopilot a ON a.workspace_id=w.id
+    JOIN account_subscriptions s ON s.account_id=w.owner_account_id
+    LEFT JOIN stockchief_runtime.agent_job_modes m ON m.workspace_id=w.id AND m.job_id=$2
+    WHERE w.id=$1 AND w.deletion_requested_at IS NULL AND coalesce(m.mode,'inherit')='inherit'
+      AND NOT EXISTS(SELECT 1 FROM platform_account_access p WHERE p.account_id=w.owner_account_id AND p.disabled_at IS NOT NULL)
+    ORDER BY u.id LIMIT 1 ${lock?'FOR SHARE OF u,w,a,s':''}`,[workspaceId,jobId])).rows[0];
+}
+async function routineGrant(db,workspaceId,{lock=false}={}){
   return (await db.query(`SELECT m.updated_by AS actor_id,m.revision FROM stockchief_runtime.agent_job_modes m
     JOIN users u ON u.workspace_id=m.workspace_id AND u.id=m.updated_by AND u.role='owner'
     JOIN workspaces w ON w.id=m.workspace_id AND w.owner_account_id=u.account_id AND w.deletion_requested_at IS NULL
@@ -126,7 +141,7 @@ async function readPage(db,ctx,{filter='',page=1}={}){
     WHERE e.workspace_id=$1 AND e.kind='commerce.position.publish' AND c.provider_type IN ('shopify','woocommerce')
       AND (e.status='AMBIGUOUS' OR r.effect_id IS NOT NULL) AND ($2='' OR lower(c.display_name)=lower($2))
     ORDER BY e.updated_at DESC,e.id LIMIT 101 OFFSET $3`,[ctx.workspaceId,filter,(page-1)*100])).rows;
-  return {rows:rows.slice(0,100),more:rows.length>100,summary:'Shows retained Shopify and WooCommerce stock and price updates. Growth and above can check the exact provider value after you enable routine work for this job. A verification never repeats the earlier publish.'};
+  return {rows:rows.slice(0,100),more:rows.length>100,summary:'Shows retained Shopify and WooCommerce stock and price updates. Growth and above check the exact provider value on their own while routine work is on. A verification never repeats the earlier publish.'};
 }
 
 module.exports={action,kind,schedule,run,definition:{id:jobId,key:'channel-sync-recovery',label:'Review and recover channel sync',filterLabel:'Channel name',readPage}};

@@ -1790,6 +1790,13 @@ function createPostgresAutopilotRouter(database,options={}){
   // Brand watches became watch rules (job 167).
   router.get('/autopilot/reviews/brand-watches',requireAuth,(req,res)=>res.redirect(301,'/autopilot/reviews/watch-rules'));
   router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
+    // Jobs 169 and 182: an account still on its older terms sees the plan card.
+    const card={'channel-alerts':[169,'Sales channel problems'],'channel-sync-fixes':[182,'Watch channel sync and fix common errors']}[req.params.job];
+    if(card){
+      const state=await policy.accountState(database,req.ctx.workspaceId);
+      if(!policy.usesAgentTerms(state))return res.page('autopilot/agent-plan-locked',{title:card[1],nav:'autopilot',tier:'Starter',
+        reviewTerms:policy.permits(state.plan,card[0],'suggest'),backTo:{href:'/autopilot/reviews',label:'Agent reviews'}});
+    }
     return agentPage(req,res,'autopilot/review-result',{title:'Agent review',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>{
       const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,change:req.query.change});
       const packs=require('../../accounting/agent-report-packs');
@@ -1852,6 +1859,15 @@ function createPostgresAutopilotRouter(database,options={}){
     const alerts=require('../../autopilot/agent-alerts'),sent=await alerts.sendNow(database,req.ctx,req.params.job);
     req.flash('success',sent.emailed===1?'1 alert is on its way to you.':sent.emailed+' alerts are on their way to you.');
     res.redirect(303,alerts.pathFor(Number(req.params.job)));
+  }));
+  // Job 182: the owner approves a channel sync fix, or undoes a product match StockChief made.
+  router.post('/autopilot/reviews/channel-sync-fixes/fix',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const fixes=require('../../connections/agent-channel-sync-fixes');await fixes.fixNow(database,req.ctx,req.body.problem);
+    req.flash('success','Fixed. StockChief logged the fix.');res.redirect(303,fixes.path);
+  }));
+  router.post('/autopilot/reviews/channel-sync-fixes/undo',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const fixes=require('../../connections/agent-channel-sync-fixes');await fixes.undo(database,req.ctx,req.body.entry);
+    req.flash('success','Match removed. Orders already taken in stay.');res.redirect(303,fixes.path);
   }));
   router.post('/autopilot/alert-settings/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
     const watch=require('../../autopilot/activity-watches'),id=Number(req.params.id);

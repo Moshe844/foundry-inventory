@@ -182,10 +182,12 @@ async function queue(db,c,p,l,expected,options={}){
   return {held:true,reason};
  }
  let channelBuffer=null;try{channelBuffer=await require('./agent-channel-buffers').queueAuthority(db,p,l,{...options,expected});}catch(error){if(![400,402,403,404,422].includes(error.status))throw error;await issue(db,p,error.message);return {held:true,reason:error.message};}
- const key=hash({id:p.id,revision:p.revision,local:l.value,localVersion:l.version,expected,...(channelBuffer?{channelBuffer}:{})});
+ // Job 182: a stock update sent again after a failure is a new delivery with its own key.
+ const resend=options.resend?{of:String(options.resend.of),attempt:Number(options.resend.attempt)}:null;
+ const key=hash({id:p.id,revision:p.revision,local:l.value,localVersion:l.version,expected,...(channelBuffer?{channelBuffer}:{}),...(resend?{resend}:{})});
  const queued=await effects.enqueueInTransaction(db,{workspaceId:p.workspace_id,kind:'commerce.position.publish',provider:c.provider_type,aggregateType:'connection_commerce_position',aggregateId:p.id,
   idempotencyKey:key,requestedByUserId:p.authorized_by_user_id,payload:{connectorId:c.id,positionId:p.id,revision:p.revision,value:l.value,localVersion:l.version,expected,
-   externalId:p.external_id,parentExternalId:p.parent_external_id,externalLocationId:p.external_location_id,providerAccountId:p.provider_account_id,field:p.field,...(channelBuffer?{channelBuffer}:{})},maxAttempts:5});
+   externalId:p.external_id,parentExternalId:p.parent_external_id,externalLocationId:p.external_location_id,providerAccountId:p.provider_account_id,field:p.field,...(channelBuffer?{channelBuffer}:{}),...(resend?{resend}:{})},maxAttempts:5});
  await db.query('UPDATE connection_commerce_positions SET pending_effect_id=$3,updated_at=now() WHERE workspace_id=$1 AND id=$2',[p.workspace_id,p.id,queued.effect.id]);
  return queued;
 }
@@ -385,5 +387,21 @@ async function acceptCountInTransaction(db,ctx,payload){
  await audit(db,p,'connection.commerce_sync.count_confirmed',{before:l.physical,after:payload.countedQuantity,adjustmentId:physical.adjustmentId,journalEntryId:journal?.entry.id||null});
  return {...physical,positionId:p.id,journalEntryId:journal?.entry.id||null,verified:true};
 }
+// Job 182: send the current stock again after a delivery failed for certain
+// (nothing reached the channel). The channel must still show the count
+// StockChief last verified; otherwise a person decides which is right.
+async function resendFailedInTransaction(db,c,failedId,observed,attempt){
+ const e=await effects.get(db,c.workspace_id,failedId);
+ const p=(await db.query('SELECT * FROM connection_commerce_positions WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[c.workspace_id,e.payload.positionId])).rows[0];
+ if(e.status!=='FAILED'||e.kind!=='commerce.position.publish'||!p||p.pending_effect_id!==e.id||p.revision!==e.payload.revision||p.field!=='quantity'||!['outbound','two_way'].includes(p.mode))
+  throw new ValidationError('This stock update changed since it failed. Review the channel product before sending stock again.');
+ if(p.connector_id!==c.id||p.provider_account_id!==c.provider_account_id||!await mapped(db,p))throw new ValidationError('The channel account or product match changed. Review it before sending stock again.');
+ if(!same(observed,p.baseline_provider))throw new ValidationError('The channel count changed since StockChief last checked it. Confirm which count is right before stock is sent again.');
+ await db.query('UPDATE connection_commerce_positions SET pending_effect_id=NULL WHERE workspace_id=$1 AND id=$2',[p.workspace_id,p.id]);
+ const fresh={...p,pending_effect_id:null},l=await local(db,fresh);
+ if(same(l.value,observed)){await advance(db,fresh,l.value,observed);return {matched:true,value:l.value};}
+ const queued=await queue(db,c,fresh,l,observed,{resend:{of:e.id,attempt}});
+ return queued.held?{held:true,reason:queued.reason}:{effectId:queued.effect.id,value:l.value,replayed:!queued.created};
+}
 async function readForReview(db,ctx,p,adapter){const c=await connection(db,ctx,p.connector_id);return providerRead(db,c,p,adapter,'buffer-review:'+newId('read'));}
-module.exports={prepare,configureInTransaction,reconcile,execute,verifyDelivery,list,local,sellableMany,same,prepareCount,acceptCountInTransaction,publishPriceChangesInTransaction,publishStockInTransaction,queue,readForReview};
+module.exports={prepare,configureInTransaction,reconcile,execute,verifyDelivery,list,local,sellableMany,same,mapped,resendFailedInTransaction,prepareCount,acceptCountInTransaction,publishPriceChangesInTransaction,publishStockInTransaction,queue,readForReview};

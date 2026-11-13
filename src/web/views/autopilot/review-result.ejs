@@ -174,6 +174,7 @@
 <% if(result.alerts){ %><%- include('alert-delivery',{alerts:result.alerts,csrfToken}) %><% } %>
 <% if(result.recurringForm){ %><%- include('recurring-orders',{result,csrfToken}) %><% } %>
 <% if(result.mapForm){ %><%- include('map-terms',{result,csrfToken}) %><% } %>
+<% if(result.syncFixForm){ %><%- include('channel-sync-fixes',{result,csrfToken}) %><% } %>
 <% if(result.undoForm){ %><%- include('daily-work',{result,csrfToken}) %><% } %>
 <% if(result.bankMatchForm){ %><%- include('bank-payment-matches',{result,csrfToken}) %><% } %>
 <% if(result.reminderForm){ %><%- include('invoice-reminders',{result,csrfToken}) %><% } %>
