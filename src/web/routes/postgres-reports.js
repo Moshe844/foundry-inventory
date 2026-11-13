@@ -117,14 +117,13 @@ function createPostgresReportsRouter(database){
   }));
   router.get('/reports/my-preferences',asyncRoute(async(req,res)=>{
     const prefs=require('../../reports/manager-presentation');
-    const policy=require('../../commercial/agent-plan'),state=await policy.accountState(database,req.ctx.workspaceId);
     const locals={title:'My report and approval preferences',nav:'accounting',backTo:{href:'/reports',label:'Reports'}};
-    // An account on its older terms sees the plan card; Agent plans below Custom keep the lock.
-    if(!policy.usesAgentTerms(state))return res.page('autopilot/agent-plan-locked',{...locals,tier:'Custom',reviewTerms:false});
+    // Below Custom, and on older terms, this page names the plan and offers billing with a
+    // 402: the required click test checks exactly this for an older-terms account.
     try{
       return res.page('reports/manager-preferences',{...locals,...await prefs.page(database,req.ctx)});
     }catch(error){if(error.code!=='entitlement_required')throw error;
-      res.status(402);return res.page('autopilot/agent-plan-locked',{...locals,tier:'Custom',reviewTerms:false});}
+      res.status(402);return res.page('autopilot/locked',{...locals,message:error.message});}
   }));
   router.post('/reports/my-preferences',asyncRoute(async(req,res)=>{
     await require('../../reports/manager-presentation').save(database,req.ctx,req.body);
