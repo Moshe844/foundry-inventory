@@ -32,7 +32,8 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
     throw new ValidationError('An internal model call needs its original funded request.');
   const creditPolicy=await require('./ai-credit-policy').policy(database,scope);
   if(internal&&operation==='import_mapping'&&!(await database.query("SELECT 1 FROM commercial_usage_events WHERE account_id=$1 AND workspace_id=$2 AND meter='ai_work_credits' AND idempotency_key=$3 AND status IN('RESERVED','COMMITTED') AND detail->>'operation'='import_mapping' AND units>=$4",[scope.accountId,ctx.workspaceId,ctx.workspaceId+':'+options.fundingKey,Number(configured.units)*creditPolicy.scale])).rowCount)throw new ValidationError('Additional document pages need the original funded document reading. No model call was made.');
-  const includedReport=options.includedReport===true && creditPolicy.fixedAgentCredits && /^stockchief_governed_report(?:_|$)/.test(request.schemaName);
+  // Reports use no credits on every Agent plan, Custom included (job 154).
+  const includedReport=options.includedReport===true && creditPolicy.agentTerms && /^stockchief_governed_report(?:_|$)/.test(request.schemaName);
   if(!internal && !includedReport){const reserved=await usage.reserveUsage(database,scope,{meter:'ai_work_credits',units:Number(configured.units)*creditPolicy.scale,idempotencyKey,
     detail:{operation,model:provider.model,provisional:true,creditPolicy}});
     if(!reserved.created)throw new ValidationError('This model operation is already recorded or in progress.');}

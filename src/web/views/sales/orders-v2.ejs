@@ -10,7 +10,7 @@
   var L = list;
   var m = function (minor) { return helpers.money(minor, L.currency); };
   var qs = function (over) {
-    var p = { status: L.tab === 'all' ? '' : L.tab, q: L.q, page: '' };
+    var p = { status: L.tab === 'all' ? '' : L.tab, q: L.q, from: L.placed ? L.placed.from : '', to: L.placed ? L.placed.to : '', page: '' };
     Object.keys(over || {}).forEach(function (k) { p[k] = over[k]; });
     var parts = Object.keys(p).filter(function (k) { return p[k]; }).map(function (k) { return k + '=' + encodeURIComponent(p[k]); });
     return '/orders' + (parts.length ? '?' + parts.join('&') : '');
@@ -45,6 +45,7 @@
   </section>
 
   <section class="ox-card ox-list" aria-label="Order list">
+    <% if (L.placed) { %><p class="ox-filter-note" data-placed-filter><strong>Placed <%= L.placed.from ? helpers.shortDate(L.placed.from) : 'any time' %> to <%= L.placed.to ? helpers.shortDate(L.placed.to) : 'today' %> · <%= L.matching %></strong> Drafts and cancelled orders are not counted. <a href="/orders">Show all orders</a></p><% } %>
     <% if (L.tab === 'open') { %><p class="ox-filter-note" data-open-filter><strong>Open orders · <%= L.matching %></strong> Confirmed, waiting for stock or partly shipped. <a href="/orders">Show all orders</a></p><% } %>
     <div class="ox-toolbar">
       <nav class="ox-tabs" aria-label="Filter by status">

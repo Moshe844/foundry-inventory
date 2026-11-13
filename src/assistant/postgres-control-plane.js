@@ -371,6 +371,7 @@ async function synthesizeReads(provider,message,executed,{completedActions=[],ca
       status:'ANSWERED',answer:ordered.map((entry)=>String(entry.result.answer||'').trim())
         .filter(Boolean).join(' '),
       rows,columns:['source','record'],handoff:{href:'/ask/capabilities',label:'See every available ability'},
+      sources:require('./answer-sources').merge(...ordered.map((entry)=>require('./answer-sources').collect(entry.result))),
       researchViews:ordered.map((entry)=>entry.step.contract.view),
       additionalReads:[],reason:null}}];
   }
@@ -425,6 +426,9 @@ async function synthesizeReads(provider,message,executed,{completedActions=[],ca
       status:answer.supported?'ANSWERED':'CLARIFY',
       answer:answer.supported?answer.answer.trim():partialAnswer,rows,
       columns:original?original.columns:['source','record'],handoff:original?.handoff||null,
+      // Job 153: the records behind each read the answer used stay linked,
+      // even when several reads are joined into one written answer.
+      sources:require('./answer-sources').merge(...evidenceSteps.map((index)=>require('./answer-sources').collect(executed[index].result))),
       researchViews:evidenceSteps.map((index)=>executed[index].step.contract.view),
       additionalReads:answer.supported?[]:additionalReads,
       reason:answer.supported?null:fallbackSummaries.length?'partial_evidence':'unverified'}}];

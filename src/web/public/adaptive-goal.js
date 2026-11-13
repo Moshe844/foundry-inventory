@@ -108,13 +108,18 @@
       if(saved){
        const root=document.createElement('div');root.className='rm-agent__delivery';root.dataset.deliveryId=saved.id;
        for(const work of saved.workProducts){
-        const card=document.createElement('article'),header=document.createElement('div'),title=document.createElement('h3'),stamp=document.createElement('span'),content=document.createElement('div'),save=document.createElement('a');
+        const card=document.createElement('article'),header=document.createElement('div'),title=document.createElement('h3'),stamp=document.createElement('span'),content=document.createElement('div');
         card.className='rm-agent__work';card.setAttribute('aria-label',work.title);header.className='rm-agent__work-header';title.textContent=work.title;
         stamp.className='rm-agent__saved';stamp.textContent='';header.append(title,stamp);
         content.className='rm-agent__work-content rm-agent__answer';
         if(window.StockChiefAnswer)content.innerHTML=window.StockChiefAnswer.render(work.content);else content.textContent=work.content;
-        save.className='rm-btn rm-btn--ghost rm-btn--sm';save.textContent='Download';save.href=`/ask/goals/${encodeURIComponent(goal.id)}/work/${encodeURIComponent(work.id)}`;save.download='';
-        card.append(header,content,save);root.append(card);
+        // Job 160: the work product downloads as a PDF, Excel or CSV, like any answer.
+        const menu=document.createElement('details'),label=document.createElement('summary'),formats=document.createElement('div');
+        menu.className='ask-download';label.textContent='Download';formats.className='ask-download__menu';
+        for(const [name,extension] of [['PDF','pdf'],['Excel','xlsx'],['CSV','csv']]){const link=document.createElement('a');link.textContent=name;link.download='';
+         link.href=`/ask/goals/${encodeURIComponent(goal.id)}/work/${encodeURIComponent(work.id)}.${extension}`;formats.append(link);}
+        menu.append(label,formats);
+        card.append(header,content,menu);root.append(card);
        }
        if(saved.workProducts.length){const continueButton=document.createElement('button');continueButton.type='button';continueButton.className='rm-btn rm-btn--ghost rm-btn--sm';continueButton.textContent='Ask a follow-up';continueButton.onclick=()=>selectWork(goal.id,saved.id);root.append(continueButton);}
        if(saved.nextActions.length){
@@ -133,6 +138,24 @@
         next.append(heading,buttons,note);root.append(next);
        }
        deliveryPanel.append(root);
+      }
+     }
+     // The records behind a finished answer, as the server listed them for this person.
+     const sourcePanel=panel.querySelector('[data-goal-sources]'),sources=Array.isArray(goal.sources)?goal.sources:[];
+     if(sourcePanel&&sourcePanel.querySelectorAll('[data-answer-sources] .rm-chat-evidence__row').length!==sources.length){
+      sourcePanel.replaceChildren();
+      if(sources.length){
+       const box=document.createElement('details'),summary=document.createElement('summary'),title=document.createElement('span'),count=document.createElement('small'),list=document.createElement('div');
+       const records=sources.filter(link=>link.kind==='record').length;
+       box.className='rm-chat-evidence';box.dataset.answerSources='';title.textContent='Records behind this answer';
+       count.textContent=records?records+(records===1?' record':' records'):sources.length+(sources.length===1?' list':' lists');
+       summary.append(title,count);list.className='rm-chat-evidence__rows';
+       for(const link of sources){
+        const row=document.createElement('div'),name=document.createElement('span'),anchor=document.createElement('a'),kind=document.createElement('small');
+        row.className='rm-chat-evidence__row';anchor.href=link.href;anchor.textContent=link.label;kind.textContent=link.kind==='record'?'Record':'The matching records';
+        name.append(anchor);row.append(name,kind);list.append(row);
+       }
+       box.append(summary,list);sourcePanel.append(box);
       }
      }
      const reply=panel.querySelector('[data-goal-reply]');

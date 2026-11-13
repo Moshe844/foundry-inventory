@@ -7,12 +7,13 @@
     <button class="btn" type="submit" form="report-builder-form" formaction="/reports/save">Save report</button>
     <button class="btn btn--primary" type="submit" form="report-builder-form">Run report</button>
   </div></div>
+<%- include('sentence-preview',{sentence:locals.draftSentence}) %>
 <section class="report-start <%= editing?'is-compact':'' %>" data-report-start aria-label="Start a custom report">
   <% const canDescribe=locals.reportBuildAvailability?.available!==false; %><% if(!canDescribe&&!selection){ %><p class="rm-note" role="status"><%= reportBuildAvailability.message %> Standard reports remain available.</p><% } %>
   <% if(selection){ %><details class="report-change-prompt" <%= canDescribe?'':'hidden' %>><summary>Ask StockChief to change this report</summary><% } %><form action="/reports/describe" method="post" data-report-describe class="report-describe"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label for="report-description"><%= selection?'Describe a change to this report':'Describe the report you want' %></label>
     <div class="report-describe__box"><textarea id="report-description" name="q" rows="<%= editing?1:2 %>" maxlength="1800" required placeholder="For example, profit by customer by month this year"><%= locals.reportDescription||'' %></textarea>
     <button class="btn btn--primary" type="submit"><%= selection?'Update this report':'Build it for me' %></button></div><p data-report-build-status role="status" hidden></p>
-    <% if(!selection){ %><div class="report-examples" data-report-landing-part <%= editing?'hidden':'' %>><% for(const example of ['Best selling products in the last 30 days','Profit by customer by month this year','Stock value by location','Unpaid invoices by customer']){ %><button type="button" data-report-example><%= example %></button><% } %></div><% } %></form><% if(selection){ %></details><% } %>
+    <% if(!selection){ %><div class="report-examples" data-report-landing-part <%= editing?'hidden':'' %>><% for(const example of builderEntry.examplesFor(datasets,locals.unavailableSources||[])){ %><button type="button" data-report-example><%= example %></button><% } %></div><% } %></form><% if(selection){ %></details><% } %>
   <% if(!selection){ %><div class="report-landing" data-report-landing <%= editing?'hidden':'' %>>
     <h2>Start from a template</h2>
     <div class="report-template-grid"><% for(const item of builderEntry.templates){if(unavailable.has(item.definition.dataset)){ %>

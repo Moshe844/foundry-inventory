@@ -28,6 +28,18 @@ function fieldsFor(dataset){const groups=new Map();for(const [key,type] of Objec
 // What the builder page needs to offer only choices this source can answer.
 function schema(dataset,{currency=null,periods={}}={}){return {fields:Object.fromEntries(Object.entries(dataset.fields).map(([key,type])=>[key,{label:friendlyField(key),type}])),metrics:Object.fromEntries(Object.entries(dataset.metrics||{}).map(([key,metric])=>[key,{label:metric.label,currencySensitive:Boolean(metric.currencySensitive)}])),filterValues:dataset.filterValues||{},moneyCompleteness:dataset.moneyCompleteness||{},currency,periods};}
 function template(key){return templates.find(row=>row.key===key)||null;}
+// Sentences a report can be built from (job 154), each with the source it reads.
+// Only sentences this person's role and plan can answer are offered.
+const examples=Object.freeze([
+  ['Best selling products in the last 30 days','posted_sales_activity'],['Profit by customer by month this year','posted_sales_activity'],
+  ['Stock value by location','inventory_valuation'],['Unpaid invoices by customer','customer_invoices'],
+  ['Stock on hand by location','stock'],['Units received by month','movements'],['Open purchase orders by supplier','purchase_orders'],
+  ['Customer returns by reason','customer_returns'],['Sales orders by status','sales_orders'],['Products by category','catalogue'],
+]);
+function examplesFor(datasets,unavailable=[],limit=4){
+  const open=new Set((datasets||[]).map(entry=>entry.key).filter(key=>!unavailable.includes(key)));
+  return examples.filter(([,dataset])=>open.has(dataset)).map(([sentence])=>sentence).slice(0,limit);
+}
 // Exact standard requests use a governed definition without a model round trip.
 // Additional filters, dates or follow-up instructions stay with the full planner.
 function standardDefinition(message,currency){
@@ -36,4 +48,4 @@ function standardDefinition(message,currency){
  const money=(match[1]||currency).toUpperCase();
  return {dataset:'composed',title:'Sales, cost and profit by product',dimension:'sku',metrics:[['sales','revenue_minor'],['cost','cogs_minor'],['profit','gross_profit_minor']].map(([alias,measure])=>({alias,dataset:'posted_sales_activity',aggregate:'sum',measure,filters:[{field:'currency',operator:'equals',value:money}]})),columns:[],groups:[],aggregate:'sum',measure:'',filters:[],chart:'table',sort:'profit',direction:'desc'};
 }
-module.exports={templates,sourceNames,groupedSources,friendlyField,fieldsFor,schema,template,standardDefinition};
+module.exports={templates,examples,examplesFor,sourceNames,groupedSources,friendlyField,fieldsFor,schema,template,standardDefinition};

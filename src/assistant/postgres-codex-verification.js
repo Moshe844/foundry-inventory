@@ -151,7 +151,22 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   navigation={href,label:String(label||'the requested page').replace(/\s+·\s+StockChief$/,'').slice(0,120),
    evidenceId:entry.id,evidenceHash:entry.sha256};
  }
- return {verified:true,answer:report.answer,receipt,claims:verified,verificationScope:'referenced_claims_and_canonical_effects',navigation,delivery:require('./agent-delivery').create(report)};
+ return {verified:true,answer:report.answer,receipt,claims:verified,verificationScope:'referenced_claims_and_canonical_effects',navigation,delivery:require('./agent-delivery').create(report),
+  sources:citedSources(verified.map(claim=>({claim,entry:find(claim.evidenceId)})),catalogue)};
+}
+// Job 153: the records behind a verified answer are the pages and records of
+// the business reads its claims cite, and only those reads.
+function citedSources(cited,catalogue){
+ const lists=[];
+ for(const {claim,entry} of cited){
+  if(entry?.name!=='business_operations'||typeof entry.text!=='string')continue;
+  let observation;try{observation=JSON.parse(entry.text);}catch{continue;}
+  const index=/^\/outcomes\/(0|[1-9]\d*)(?:\/|$)/.exec(claim.path||'');
+  const outcomes=Array.isArray(observation?.outcomes)?index?[observation.outcomes[Number(index[1])]]:observation.outcomes:[];
+  for(const outcome of outcomes)if(outcome?.result?.status==='ANSWERED'&&catalogue?.get?.(outcome.capability)?.kind==='read')
+   lists.push(require('./answer-sources').collect(outcome.result));
+ }
+ return require('./answer-sources').merge(...lists);
 }
 const instructions=`\nFor a completed result, use the native final-output schema with outcome "answer" or "navigation", the usable answer, and its supporting claims. The host alone verifies completion.
 The browser tool controls a private inspection browser, NOT the user's website. When the user asks to open a page, use outcome "navigation" and navigation: {evidenceId,path:"/url"} referencing an actual successful applicationPage observation (use /screen/url if wrapped). The host will deliver that page to the user's browser and verify its arrival without another model call. Do not claim it has already opened for the user. Do not return outcome "answer" to fulfill a navigation request. For questions or completed business changes that do not request moving the user's browser, use outcome "answer".
@@ -201,4 +216,4 @@ async function verifyFinal(database,ctx,goal,raw,catalogue,options={}){
  if(scope.required&&!scope.verified)return {...unavailable('I could not verify that these findings answer the complete request. Your goal and collected evidence are saved.',scope.code,{reason:scope.reason}),receipt:result.receipt};
  return {...result,answerScopeReview:scope.required?'governed_semantic_review':'canonical_or_navigation_lifecycle'};
 }
-module.exports={verify,verifyFinal,instructions,needsBrowser};
+module.exports={verify,verifyFinal,instructions,needsBrowser,citedSources};
