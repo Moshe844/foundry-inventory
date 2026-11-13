@@ -37,9 +37,19 @@ function inputs(body={}){
   const filter=String(body.filter??'').trim(),page=Number(body.page??1);
   if(filter.length>150||!Number.isSafeInteger(page)||page<1||page>1000000)throw new ValidationError('Choose a valid review filter and page.');
   if(review.requiresFilter&&!filter)throw new ValidationError('This review requires an exact SKU or record reference.');
-  if(review.requiresChange&&(body.change==null||String(body.change).trim()===''||!Number.isFinite(Number(body.change))||
-    Number(body.change)<(review.minChange??-100)||Number(body.change)>(review.maxChange??1000)))throw new ValidationError('Supply the percentage required by this review.');
-  return {review:review.key,page,filter,...(review.requiresChange?{change:String(body.change)}:{})};
+  const demandScenario=review.key==='demand-scenario';
+  const hasChange=body.change!=null&&String(body.change).trim()!=='';
+  if(review.requiresChange&&(!hasChange&&!(demandScenario&&body.supplierDelayDays!=null)||hasChange&&(!Number.isFinite(Number(body.change))||
+    Number(body.change)<(review.minChange??-100)||Number(body.change)>(review.maxChange??1000))))throw new ValidationError('Supply the percentage required by this review.');
+  const supplierDelayDays=body.supplierDelayDays==null?null:Number(body.supplierDelayDays);
+  if(supplierDelayDays!==null&&(review.key!=='demand-scenario'||String(body.supplierDelayDays).trim()===''||
+    !Number.isSafeInteger(supplierDelayDays)||supplierDelayDays<-365||supplierDelayDays>365))
+    throw new ValidationError('Choose a whole-number supplier lead-time change between -365 and 365 days for the demand scenario.');
+  const quarter=body.quarter==null?null:String(body.quarter);
+  if(quarter!==null&&(review.key!=='quarterly-supplier-pack'||!/^\d{4}-Q[1-4]$/.test(quarter)))
+    throw new ValidationError('Choose a finished quarter as YYYY-Q1 through YYYY-Q4 for the supplier report.');
+  return {review:review.key,page,filter,...(review.requiresChange&&hasChange?{change:String(body.change)}:{}),
+    ...(supplierDelayDays!==null?{supplierDelayDays}:{}),...(quarter!==null?{quarter}:{})};
 }
 
 async function start(db,auth,body,key){
@@ -67,7 +77,7 @@ async function status(db,auth,id){
 async function execute(job,db){
   const actorId=await authorize(db,job.workspaceId,job.payload.clientId);
   const input=inputs(job.payload),result=await reviews.run(db,{workspaceId:job.workspaceId,actorId},input.review,
-    {filter:input.filter,page:input.page,change:input.change,scheduled:true});
+    {filter:input.filter,page:input.page,change:input.change,supplierDelayDays:input.supplierDelayDays,quarter:input.quarter,scheduled:true});
   const completed={review:input.review,summary:result.summary,rows:result.rows,page:input.page,more:result.more===true};
   await db.query('SELECT stockchief_capture_webhook_events($1::jsonb)',[JSON.stringify([{id:'agent-review:'+job.id,workspace_id:job.workspaceId,
     event_type:eventType,created_at:new Date().toISOString(),payload:{jobId:job.id,review:input.review,status:'completed'}}])]);

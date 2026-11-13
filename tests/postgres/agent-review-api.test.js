@@ -68,7 +68,7 @@ test('only Custom can start an agent review by API and receive the signed comple
   await subscribe('enterprise');
   const client=await mint(['agent:run']),other=await mint(['agent:run']),ordinary=await mint(['inventory:read']),hook=await endpoint();
   const base='/api/v1/public/agent/jobs',auth=token=>'Bearer '+token;
-  const submit=(token,key,review='catalog-health')=>browser.post(base).set('Authorization',auth(token)).set('Idempotency-Key',key).send({review});
+  const submit=(token,key,review='catalog-health',inputs={})=>browser.post(base).set('Authorization',auth(token)).set('Idempotency-Key',key).send({review,...inputs});
   await submit(ordinary.token,'denied').expect(403);
   const {body:job}=await submit(client.token,'one-review').expect(202);
   assert.equal((await submit(client.token,'one-review').expect(200)).body.jobId,job.jobId);
@@ -102,6 +102,14 @@ test('only Custom can start an agent review by API and receive the signed comple
   assert.equal(sent,1);
   await clients.revoke(db,ctx.workspaceId,client.id,ctx.actorId);
   await browser.get(base+'/'+pending.body.jobId).set('Authorization',auth(client.token)).expect(401);
+  await submit(other.token,'invalid-delay','demand-scenario',{supplierDelayDays:366}).expect(400);
+  await submit(other.token,'invalid-quarter','quarterly-supplier-pack',{quarter:'2026-Q9'}).expect(400);
+  const {body:scenario}=await submit(other.token,'lead-time','demand-scenario',{supplierDelayDays:6}).expect(202);
+  await submit(other.token,'lead-time','demand-scenario',{supplierDelayDays:8}).expect(409);
+  const scenarioJob=await queue.processOne(db,handlers,{owner:'agent-review-test',kinds:['agent.api_review']});
+  assert.equal(scenarioJob.status,'COMPLETED');
+  const scenarioResult=(await browser.get(base+'/'+scenario.jobId).set('Authorization',auth(other.token)).expect(200)).body;
+  assert.match(scenarioResult.result.summary,/supplier lead time by 6 days/);
 });
 test('Custom managers keep their own report period, download format and decision order in each inventory',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,browser,subscribe}=f;

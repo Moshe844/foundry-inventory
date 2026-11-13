@@ -31,7 +31,11 @@ function template(key){return templates.find(row=>row.key===key)||null;}
 // Exact standard requests use a governed definition without a model round trip.
 // Additional filters, dates or follow-up instructions stay with the full planner.
 function standardDefinition(message,currency){
- const match=String(message||'').trim().match(/^(?:show\s+)?sales,?\s+cost(?:s)?\s+(?:and|&)\s+(?:gross\s+)?profit\s+by\s+(?:product|item|sku)(?:\s+in\s+([A-Z]{3}))?[.!?]?$/i);
+ const sentence=String(message||'').trim();
+ const stock=/^(?:show(?: me)?|list|build a report of)\s+(?:my\s+)?(?:current\s+)?(?:stock on hand|stock levels|on-hand stock)\s+by\s+(?:product|item|sku)\s+and\s+(?:location|warehouse)[.!?]?$/i;
+ if(stock.test(sentence))return {dataset:'stock',title:'Stock on hand by product and location',
+  columns:['product','sku','location','on_hand'],groups:[],filters:[],chart:'table',sort:'product',direction:'asc'};
+ const match=sentence.match(/^(?:show\s+)?sales,?\s+cost(?:s)?\s+(?:and|&)\s+(?:gross\s+)?profit\s+by\s+(?:product|item|sku)(?:\s+in\s+([A-Z]{3}))?[.!?]?$/i);
  if(!match)return null;
  const money=(match[1]||currency).toUpperCase();
  return {dataset:'composed',title:'Sales, cost and profit by product',dimension:'sku',metrics:[['sales','revenue_minor'],['cost','cogs_minor'],['profit','gross_profit_minor']].map(([alias,measure])=>({alias,dataset:'posted_sales_activity',aggregate:'sum',measure,filters:[{field:'currency',operator:'equals',value:money}]})),columns:[],groups:[],aggregate:'sum',measure:'',filters:[],chart:'table',sort:'profit',direction:'desc'};
