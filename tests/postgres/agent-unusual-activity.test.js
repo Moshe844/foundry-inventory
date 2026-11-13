@@ -2,6 +2,26 @@
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 
+test('unusual price history stays bounded when thousands of SKUs change together',{timeout:240000},async t=>{
+  const {db,ctx,subscribe}=await require('../helpers/agent-workflow-fixture').fixture(t);
+  await subscribe('pro');
+  const ws=ctx.workspaceId,day=await require('../../src/lib/business-time').today(db,ws);
+  await db.query(`INSERT INTO items(id,workspace_id,name,base_code,tracking_mode,created_at,updated_at)
+    SELECT 'history-product-'||n,$1,'History '||n,'HISTORY-'||n,'quantity',now()::text,now()::text
+    FROM generate_series(1,2500) n`,[ws]);
+  await db.query(`INSERT INTO skus(id,workspace_id,item_id,code,variant_label,created_at)
+    SELECT 'history-sku-'||n,$1,'history-product-'||n,'HISTORY-'||n,'',now()::text
+    FROM generate_series(1,2500) n`,[ws]);
+  await db.query(`INSERT INTO sku_prices(id,workspace_id,sku_id,amount_minor,currency,source,created_by_user_id,created_at)
+    SELECT 'history-price-'||n||'-'||step,$1,'history-sku-'||n,
+      CASE WHEN step=5 THEN 1500 WHEN step%2=0 THEN 1050 ELSE 1000 END,'USD','owner',$2,
+      ($3::date::timestamp AT TIME ZONE 'UTC' - make_interval(days=>(5-step)*50) + interval '1 hour')::text
+    FROM generate_series(1,2500) n CROSS JOIN generate_series(1,5) step`,[ws,ctx.actorId,day]);
+  const sql=require('../../src/autopilot/unusual-activity').sql;
+  const result=await db.transaction(c=>c.query(sql,[ws,'',day]),{statementTimeoutMs:6000,readOnly:true});
+  assert.equal(result.rows.filter(row=>row.Alert==='Unusual price change').length,2500);
+});
+
 // Job 171 is excluded on Starter and Growth and alone on Pro and Custom. The
 // worker's routine check raises an alert for a big stock correction or price
 // change (the owner's number, or three times what is usual for the product),

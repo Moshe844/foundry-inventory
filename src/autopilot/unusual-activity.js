@@ -66,11 +66,14 @@ const sql=`WITH zone AS MATERIALIZED (
 ), price_moves AS (
   SELECT *,abs(amount_minor-previous)*100.0/previous AS pct FROM price_steps
   WHERE previous_currency=currency AND previous>0 AND amount_minor IS NOT NULL AND amount_minor<>previous
+), price_history AS MATERIALIZED (
+  SELECT m.*,count(*) OVER previous_year AS earlier,avg(m.pct) OVER previous_year AS usual
+  FROM price_moves m CROSS JOIN bounds b WHERE m.at>=b.since-interval '365 days' AND m.at<b.until
+  WINDOW previous_year AS (PARTITION BY m.sku_id ORDER BY m.at
+    RANGE BETWEEN interval '365 days' PRECEDING AND interval '1 microsecond' PRECEDING)
 ), prices AS (
-  SELECT m.*,s.code,s.item_id,h.n AS earlier,h.usual FROM price_moves m CROSS JOIN bounds b
+  SELECT m.*,s.code,s.item_id FROM price_history m CROSS JOIN bounds b
   JOIN skus s ON s.workspace_id=$1 AND s.id=m.sku_id
-  LEFT JOIN LATERAL (SELECT count(*) AS n,avg(x.pct) AS usual FROM price_moves x
-    WHERE x.sku_id=m.sku_id AND x.at<m.at AND x.at>=m.at-interval '365 days') h ON true
   WHERE m.at>=b.since AND m.at<b.until
 ), changes AS (
   SELECT m.id,'Stock correction' AS what,m.actor_user_id AS actor,m.occurred_at::timestamptz AS at,false AS deleted,NULL::text AS subject,NULL::text AS link
