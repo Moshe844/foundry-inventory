@@ -9,7 +9,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID
 // the owner's limits. Pause, Watch only and the first 14 days hand out
 // nothing new; Ask me first drafts. Late tasks are flagged once.
 test('staff tasks follow each plan, reach the right phone and are checked off against the real records',{timeout:900000},async t=>{
- const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:20}),{db,ctx,browser,subscribe}=f,ws=ctx.workspaceId;
+ const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:20,timeZone:'America/New_York'}),{db,ctx,browser,subscribe}=f,ws=ctx.workspaceId;
  const tasks=require('../../src/operations/agent-staff-tasks'),autopilot=require('../../src/autopilot/postgres-service'),modes=require('../../src/autopilot/job-modes');
  const putaway=require('../../src/warehouse/agent-putaway'),waves=require('../../src/operations/postgres-fulfillment-waves'),counts=require('../../src/operations/agent-count-tasks');
  const corrections=require('../../src/warehouse/agent-bin-corrections'),quality=require('../../src/operations/agent-quality-holds');
@@ -81,11 +81,19 @@ test('staff tasks follow each plan, reach the right phone and are checked off ag
  // Checked off only when the wave is scanned and the put-away confirmed.
  await check();assert.equal((await task('pick',first.id)).status,'ASSIGNED');
  await pick(ana,first.id);await shelve(ben,shelfA);
+ const time=require('../../src/lib/business-time'),{addDays}=require('../../src/accounting/customer-money');
+ const policy=require('../../src/commercial/agent-plan'),brief=require('../../src/autopilot/daily-briefs');
+ const {calendarDate:day,timeZone}=await time.forWorkspace(db,ws);
+ const close=new Date(time.dayBoundary(addDays(day,1),timeZone));
+ const scan=(await db.query("SELECT max(scanned_at)::timestamptz AS at FROM fulfillment_wave_scans WHERE workspace_id=$1 AND wave_id=$2 AND status='ACCEPTED'",[ws,first.id])).rows[0];
+ const confirmation=(await db.query("SELECT max(created_at) AS at FROM stockchief_runtime.agent_putaway_confirmations WHERE workspace_id=$1 AND instruction_id=$2",[ws,shelfA])).rows[0];
  result=await check();
  assert.equal(result.done,2);
  const picked=await task('pick',first.id),shelved=await task('putaway',shelfA);
  assert.deepEqual([picked.status,picked.done_by,picked.evidence.picked,picked.evidence.lines,picked.evidence.checked],['DONE',ana.actorId,1,1,'every line scanned']);
  assert.deepEqual([shelved.status,shelved.done_by,shelved.evidence.putAway,shelved.evidence.checked],['DONE',ben.actorId,'2','put-away confirmed']);
+ assert.equal(picked.done_at.toISOString(),scan.at.toISOString());
+ assert.equal(shelved.done_at.toISOString(),confirmation.at.toISOString());
  assert.equal((await task('putaway',shelfB)).name,'Ana floor','Free again, Ana gets the waiting put-away as a draft.');
  assert.equal(await audits('Staff task done'),2);
 
@@ -105,6 +113,28 @@ test('staff tasks follow each plan, reach the right phone and are checked off ag
 
  // Late work is flagged once, to the owner and on the person's phone.
  await db.query("UPDATE stockchief_runtime.agent_staff_tasks SET due_at=now()-interval '1 hour' WHERE id=$1",[manual.id]);
+ const summaryPath='/autopilot/reviews/daily-team-summary?filter='+day;
+ const digests=async()=>await brief.deliver(db,ws,await policy.accountState(db,ws),close);
+ const summary=async()=> (await db.query('SELECT summary::jsonb FROM workspace_daily_digests WHERE workspace_id=$1 AND report_date=$2',[ws,day])).rows[0].summary;
+ await subscribe('starter');await digests();
+ assert.equal((await summary()).staffTasks,undefined);
+ await browser.get(summaryPath).expect(402);
+ for(const plan of ['growth','pro','enterprise']){
+  await subscribe(plan);await digests();
+  const delivered=await summary(),report=await browser.get(summaryPath).expect(200);
+  assert.deepEqual(delivered.staffTasks,[
+   {person:'Ben dock',kind:'putaway',state:'late',n:1},
+   {person:'Ana floor',kind:'pick',state:'completed',n:1},
+   {person:'Ben dock',kind:'putaway',state:'completed',n:1}
+  ]);
+  assert.match(report.text,/Ben dock<\/td><td>Put-aways overdue/);
+  assert.match(report.text,/Ana floor<\/td><td>Picks completed/);
+  assert.match((await browser.get('/needs-you').expect(200)).text,/Daily team summary/);
+ }
+ await subscribe('starter');
+ await browser.get(summaryPath).expect(402);
+ assert.doesNotMatch((await browser.get('/needs-you').expect(200)).text,/Daily team summary/);
+ await subscribe('growth');
  await check();await check();
  assert.equal(await audits('Staff task late'),1);
  assert.equal((await inbox(ctx)).find(n=>n.sourceId==='staff-tasks-late').happened,'1 task is past the time it was due.');

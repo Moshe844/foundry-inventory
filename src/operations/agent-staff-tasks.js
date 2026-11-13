@@ -67,7 +67,7 @@ const OPEN_WORK=`SELECT * FROM (
 const STATE=`WITH open AS (SELECT id,kind,source_id FROM ${table} WHERE workspace_id=$1 AND status IN ('DRAFT','ASSIGNED'))
   SELECT o.id,CASE WHEN c.observed_at IS NOT NULL THEN 'done' WHEN s.id IS NULL OR s.status<>'DRAFT' THEN 'gone' ELSE 'open' END AS state,c.counter_id AS done_by,
     jsonb_build_object('counted',(SELECT count(counter_quantity) FROM warehouse_count_campaign_lines x WHERE x.workspace_id=$1 AND x.campaign_id=o.source_id),
-      'positions',(SELECT count(*) FROM warehouse_count_campaign_lines x WHERE x.workspace_id=$1 AND x.campaign_id=o.source_id)) AS evidence,NULL::text AS exception
+      'positions',(SELECT count(*) FROM warehouse_count_campaign_lines x WHERE x.workspace_id=$1 AND x.campaign_id=o.source_id)) AS evidence,NULL::text AS exception,c.observed_at AS finished_at
   FROM open o LEFT JOIN stockchief_runtime.agent_count_tasks c ON c.workspace_id=$1 AND c.campaign_id=o.source_id
   LEFT JOIN warehouse_count_campaigns s ON s.workspace_id=$1 AND s.id=o.source_id WHERE o.kind='count'
   UNION ALL
@@ -77,22 +77,24 @@ const STATE=`WITH open AS (SELECT id,kind,source_id FROM ${table} WHERE workspac
     jsonb_build_object('picked',(SELECT count(*) FROM fulfillment_wave_lines l WHERE l.workspace_id=$1 AND l.wave_id=o.source_id AND l.status='PICKED'),
       'lines',(SELECT count(*) FROM fulfillment_wave_lines l WHERE l.workspace_id=$1 AND l.wave_id=o.source_id),
       'scans',(SELECT count(*) FROM fulfillment_wave_scans x WHERE x.workspace_id=$1 AND x.wave_id=o.source_id AND x.status='ACCEPTED')),
-    CASE WHEN EXISTS(SELECT 1 FROM fulfillment_wave_lines l WHERE l.workspace_id=$1 AND l.wave_id=o.source_id AND l.status='SHORT') THEN 'A picker reported a shortage.' END
+    CASE WHEN EXISTS(SELECT 1 FROM fulfillment_wave_lines l WHERE l.workspace_id=$1 AND l.wave_id=o.source_id AND l.status='SHORT') THEN 'A picker reported a shortage.' END,
+    (SELECT max(x.scanned_at)::timestamptz FROM fulfillment_wave_scans x WHERE x.workspace_id=$1 AND x.wave_id=o.source_id AND x.status='ACCEPTED')
   FROM open o LEFT JOIN fulfillment_waves w ON w.workspace_id=$1 AND w.id=o.source_id WHERE o.kind='pick'
   UNION ALL
   SELECT o.id,CASE WHEN p.id IS NULL THEN 'gone' WHEN p.status='PUT_AWAY' THEN 'done' ELSE 'open' END,
     (SELECT x.confirmed_by FROM stockchief_runtime.agent_putaway_confirmations x WHERE x.workspace_id=$1 AND x.instruction_id=o.source_id ORDER BY x.created_at DESC,x.id DESC LIMIT 1),
     jsonb_build_object('putAway',trim_scale(p.put_away_quantity)::text,'quantity',p.source->>'quantity',
-      'wrongBin',EXISTS(SELECT 1 FROM stockchief_runtime.agent_putaway_confirmations x WHERE x.workspace_id=$1 AND x.instruction_id=o.source_id AND x.location_id<>x.planned_location_id)),NULL
+      'wrongBin',EXISTS(SELECT 1 FROM stockchief_runtime.agent_putaway_confirmations x WHERE x.workspace_id=$1 AND x.instruction_id=o.source_id AND x.location_id<>x.planned_location_id)),NULL,
+    (SELECT max(x.created_at) FROM stockchief_runtime.agent_putaway_confirmations x WHERE x.workspace_id=$1 AND x.instruction_id=o.source_id)
   FROM open o LEFT JOIN stockchief_runtime.agent_putaway_instructions p ON p.workspace_id=$1 AND p.id=o.source_id WHERE o.kind='putaway'
   UNION ALL
   SELECT o.id,CASE WHEN h.id IS NULL OR h.status IN ('PROPOSED','NOT_HELD') THEN 'gone' WHEN h.status IN ('PASSED','FAILED') THEN 'done'
       WHEN h.quantity<=h.returned_quantity+h.written_off_quantity THEN 'gone' ELSE 'open' END,
-    h.inspected_by,jsonb_build_object('result',h.status),NULL
+    h.inspected_by,jsonb_build_object('result',h.status),NULL,h.inspected_at
   FROM open o LEFT JOIN stockchief_runtime.agent_quality_holds h ON h.workspace_id=$1 AND h.id=o.source_id WHERE o.kind='inspect'
   UNION ALL
   SELECT o.id,CASE WHEN b.id IS NULL OR b.status IN ('CANCELLED','UNDONE','PROPOSED') THEN 'gone' WHEN b.status IN ('SCANNED','COMPLETED') THEN 'done' ELSE 'open' END,
-    b.scanned_by,jsonb_build_object('result',b.status),NULL
+    b.scanned_by,jsonb_build_object('result',b.status),NULL,b.scanned_at
   FROM open o LEFT JOIN stockchief_runtime.agent_bin_corrections b ON b.workspace_id=$1 AND b.id=o.source_id WHERE o.kind='move'`;
 
 async function owner(c,ctx,lock=false){
@@ -174,8 +176,8 @@ async function followUp(c,workspaceId){
     const task=(await c.query(`SELECT * FROM ${table} WHERE workspace_id=$1 AND id=$2 AND status IN ('DRAFT','ASSIGNED') FOR UPDATE`,[workspaceId,r.id])).rows[0];
     if(!task)continue;
     if(r.state==='done'&&task.status==='ASSIGNED'){
-      await c.query(`UPDATE ${table} SET status='DONE',done_at=clock_timestamp(),done_by=$3,evidence=$4,revision=revision+1 WHERE workspace_id=$1 AND id=$2`,
-        [workspaceId,task.id,r.done_by,{...r.evidence,checked:specs[task.kind].check}]);
+      await c.query(`UPDATE ${table} SET status='DONE',done_at=coalesce($5,clock_timestamp()),done_by=$3,evidence=$4,revision=revision+1 WHERE workspace_id=$1 AND id=$2`,
+        [workspaceId,task.id,r.done_by,{...r.evidence,checked:specs[task.kind].check},r.finished_at]);
       await audit.record(c,ctx,{action:'Staff task done',reference:task.id,
         after:{kind:task.kind,source:task.source_id,assignee:task.assignee_id,doneBy:r.done_by,late:Boolean(task.overdue_at),evidence:r.evidence}});
       out.done++;continue;

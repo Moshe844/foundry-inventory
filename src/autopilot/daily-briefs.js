@@ -3,14 +3,37 @@
 const time=require('../lib/business-time');
 const {addDays}=require('../accounting/customer-money');
 const policy=require('../commercial/agent-plan');
+const installed=require('../db/schema-installed');
+const staffTasks=require('../operations/agent-staff-tasks');
 const {ValidationError}=require('../domain/errors');
 const verbs={receive:'Stock receipts',issue:'Stock issues',transfer:'Transfers',adjust:'Count adjustments'};
-async function deliver(db,workspaceId,account){
+
+async function staffActivity(db,bounds,asOf){
+  const {rows}=await db.query(`WITH events AS (
+    SELECT coalesce(done_by,assignee_id) AS actor,done_by IS NOT NULL AS known,kind,'completed' AS state
+    FROM ${staffTasks.table} WHERE workspace_id=$1 AND status='DONE' AND done_at>=$2 AND done_at<$3
+    UNION ALL
+    SELECT assignee_id,true,kind,'late'
+    FROM ${staffTasks.table} WHERE workspace_id=$1 AND status='ASSIGNED' AND due_at<$4
+  )
+  SELECT CASE WHEN e.known THEN coalesce(u.name,'Former team member') ELSE 'Team member not recorded' END AS person,
+    e.kind,e.state,count(*)::int AS n
+  FROM events e LEFT JOIN users u ON u.workspace_id=$1 AND u.id=e.actor
+  GROUP BY e.actor,e.known,u.name,e.kind,e.state ORDER BY e.state DESC,person,e.kind,e.actor`,[...bounds,asOf]);
+  return rows;
+}
+
+async function deliver(db,workspaceId,account,now=new Date()){
   if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,156,'automatic'))return;
-  const {calendarDate,timeZone}=await time.forWorkspace(db,workspaceId),day=addDays(calendarDate,-1);
+  const {calendarDate,timeZone}=await time.forWorkspace(db,workspaceId,now),day=addDays(calendarDate,-1);
   const team=policy.permits(account.plan,180,'automatic');
   const existing=(await db.query('SELECT summary::jsonb AS data FROM workspace_daily_digests WHERE workspace_id=$1 AND report_date=$2',[workspaceId,day])).rows[0]?.data;
-  if(existing?.format==='agent-brief'&&(!team||existing.team))return;
+  const tasks=team&&await installed.has(db,staffTasks.table);
+  if(existing?.format==='agent-brief'&&(!team||existing.team&&(!tasks||existing.staffTasks)))return;
+  // Reconcile physical work first so a task finished just before midnight
+  // appears on that day's summary even if its regular check has yet to run.
+  if(tasks)await staffTasks.followUp(db,workspaceId);
+  const asOf=now.toISOString();
   const bounds=[workspaceId,time.dayBoundary(day,timeZone),time.dayBoundary(calendarDate,timeZone)];
   const {rows:activity}=await db.query(`SELECT m.actor_user_id AS actor,coalesce(u.name,'Former team member') AS person,m.operation,count(DISTINCT m.group_id)::int AS n
     FROM movements m LEFT JOIN users u ON u.workspace_id=m.workspace_id AND u.id=m.actor_user_id
@@ -35,18 +58,25 @@ async function deliver(db,workspaceId,account){
     (SELECT count(*)::int FROM stockchief_runtime.agent_operational_notices WHERE workspace_id=$1 AND job_id=168 AND NOT resolved) AS overdue,
     (SELECT count(*)::int FROM work_items WHERE workspace_id=$1 AND execution_status='COMPLETED' AND verification_status='VERIFIED' AND completed_at::timestamptz>=$2 AND completed_at::timestamptz<$3) AS verified`,bounds)).rows[0];
   const totals={};for(const row of activity)totals[row.operation]=(totals[row.operation]||0)+row.n;
-  const data={format:'agent-brief',day,deliveredOn:calendarDate,asOf:new Date().toISOString(),totals,...sources,...(team?{team:activity}:{})};
+  const data={format:'agent-brief',day,deliveredOn:calendarDate,asOf,totals,...sources,...(team?{team:activity}:{}),
+    ...(tasks?{staffTasks:await staffActivity(db,bounds,asOf)}:{})};
   await db.query(`INSERT INTO workspace_daily_digests AS d(workspace_id,report_date,generated_at,summary) VALUES($1,$2,$3,$4)
     ON CONFLICT(workspace_id,report_date) DO UPDATE SET summary=CASE WHEN d.summary::jsonb->>'format'='agent-brief' THEN
-      (d.summary::jsonb||jsonb_build_object('team',excluded.summary::jsonb->'team'))::text ELSE excluded.summary END
-    WHERE d.summary::jsonb->>'format' IS DISTINCT FROM 'agent-brief' OR (NOT (d.summary::jsonb ? 'team') AND excluded.summary::jsonb ? 'team')`,
+      (d.summary::jsonb
+        ||CASE WHEN excluded.summary::jsonb ? 'team' THEN jsonb_build_object('team',excluded.summary::jsonb->'team') ELSE '{}'::jsonb END
+        ||CASE WHEN excluded.summary::jsonb ? 'staffTasks' THEN jsonb_build_object('staffTasks',excluded.summary::jsonb->'staffTasks') ELSE '{}'::jsonb END)::text
+      ELSE excluded.summary END
+    WHERE d.summary::jsonb->>'format' IS DISTINCT FROM 'agent-brief'
+      OR (NOT (d.summary::jsonb ? 'team') AND excluded.summary::jsonb ? 'team')
+      OR (NOT (d.summary::jsonb ? 'staffTasks') AND excluded.summary::jsonb ? 'staffTasks')`,
     [workspaceId,day,data.asOf,JSON.stringify(data)]);
 }
 async function latest(db,ctx){
   const {rows:[r]}=await db.query("SELECT report_date FROM workspace_daily_digests WHERE workspace_id=$1 AND summary::jsonb->>'format'='agent-brief' ORDER BY report_date DESC LIMIT 1",[ctx.workspaceId]);
   if(!r)return null;
   const state=await policy.accountState(db,ctx.workspaceId);
-  return policy.usesAgentTerms(state)&&policy.permits(state.plan,156,'automatic')?r.report_date:null;
+  return policy.usesAgentTerms(state)&&policy.permits(state.plan,156,'automatic')
+    ?{date:r.report_date,team:policy.permits(state.plan,180,'automatic')}:null;
 }
 async function report(db,ctx,{filter,team,page}){
   if(filter&&(!/^\d{4}-\d{2}-\d{2}$/.test(filter)||!Number.isFinite(Date.parse(filter))||new Date(filter).toISOString().slice(0,10)!==filter))throw new ValidationError('Choose a date in YYYY-MM-DD format.');
@@ -57,9 +87,14 @@ async function report(db,ctx,{filter,team,page}){
   const pending=[{Activity:'Owner approvals waiting',Count:data.approvals,link:'/needs-you'},{Activity:'Overdue orders, shipments and invoices',Count:data.overdue,link:'/autopilot/reviews/overdue-work'}];
   const summary='Stock activity for '+data.day+'. Approvals and overdue records were counted when this briefing arrived on '+data.deliveredOn+'.';
   if(team){
-    const rows=(data.team||[]).map(r=>({'Team member':r.person,Activity:verbs[r.operation],Count:r.n,link:'/activity?'+dates+'&user='+encodeURIComponent(r.actor)+'&operation='+r.operation}));
+    const rows=(data.staffTasks||[]).map(r=>({'Team member':r.person,
+      Activity:staffTasks.specs[r.kind].plural+(r.state==='late'?' overdue':' completed'),Count:r.n,
+      link:staffTasks.path+(r.state==='late'?'#open':'#done')}));
+    for(const r of data.team||[])rows.push({'Team member':r.person,Activity:verbs[r.operation],Count:r.n,link:'/activity?'+dates+'&user='+encodeURIComponent(r.actor)+'&operation='+r.operation});
     rows.push({'Team member':'Inventory',...pending[1]});
-    return {rows:rows.slice((page-1)*100,page*100),more:rows.length>page*100,summary:summary+(data.team?'':' A team breakdown was unavailable on the plan that received this briefing.')};
+    const teamSummary=data.staffTasks?' Completed warehouse tasks are listed by who did them. Overdue tasks are listed by who they were assigned to when the summary ran.':
+      ' This briefing was recorded before staff tasks were included.';
+    return {rows:rows.slice((page-1)*100,page*100),more:rows.length>page*100,summary:summary+teamSummary};
   }
   const rows=Object.entries(data.totals).map(([k,n])=>({Activity:verbs[k],Count:n,link:'/activity?'+dates+'&operation='+k}));
   rows.push({Activity:'Completed agent actions',Count:data.actions,link:'/activity'},{Activity:'Verified work items',Count:data.verified,link:'/autopilot'},...pending);
