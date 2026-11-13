@@ -1,0 +1,50 @@
+<% const s=screen,r=s.reading; %>
+<div class="page-head"><div class="titles"><h1>Rules in plain words</h1>
+<p class="page-sub">Write a rule the way you would say it. StockChief reads it word by word, shows exactly what it will do, and saves it only when you confirm. It never guesses.</p></div></div>
+
+<p class="cell-sub" data-rule-allowance>You use <%= s.used %> of <%= s.limit==null?'unlimited':s.limit %> rules<%= s.plan?' on '+s.plan:'' %>. Every saved rule counts, wherever you wrote it.</p>
+
+<section class="card section" id="write-rule"><div class="card-head"><h2>Write a rule</h2></div>
+<form class="card-body form-stack" method="get" action="<%= s.path %>#reading">
+  <label class="field"><span class="field-label">Your rule</span>
+    <textarea class="input" name="rule" rows="2" maxlength="320" required placeholder="Always order SKU-1 from Acme"><%= s.rule %></textarea></label>
+  <div class="form-actions"><button class="btn btn--primary">Read my rule</button></div>
+</form></section>
+
+<% if(s.error){ %><section class="card section" id="reading"><div class="card-body">
+  <p class="notice notice--warn" data-rule-refused><%= s.error %></p>
+  <p class="cell-sub">Nothing was saved. Change the words and read it again.</p>
+</div></section><% } %>
+
+<% if(r){ %><section class="card section" id="reading" data-rule-kind="<%= r.kind %>"><div class="card-head"><h2><%= r.builtIn?'Already how StockChief works':'What this rule will do' %></h2></div>
+<div class="card-body stack">
+  <p class="cell-sub">“<%= r.sentence %>”<% if(!r.builtIn){ %> · <%= r.label %><% } %></p>
+  <div class="stack" data-rule-meaning><% r.meaning.forEach(function(line,i){ %><p><% if(!i){ %><strong><%= line %></strong><% }else{ %><%= line %><% } %></p><% }) %></div>
+  <% if(r.builtIn){ %>
+  <% }else if(!r.plan.allowed){ %>
+    <p class="notice notice--info" data-rule-locked>This rule needs <%= r.plan.lowest %><%= r.plan.current?'. You are on '+r.plan.current:'' %>. <a href="/billing">Review plans</a></p>
+  <% }else{ %>
+    <% if(r.trainedNote){ %><p class="notice notice--info"><%= r.trainedNote %></p><% } %>
+    <form method="post" action="<%= s.path %>/confirm" class="form-actions">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="rule" value="<%= r.sentence %>"><input type="hidden" name="key" value="<%= r.key %>">
+      <button class="btn btn--primary"><%= r.kind==='reorder'?'That’s right, prepare it':'That’s right, save it' %></button>
+      <a class="btn btn--ghost" href="<%= s.path %>">Start over</a>
+    </form>
+    <p class="cell-sub">Saved rules live in <a href="<%= r.lives.href %>"><%= r.lives.label %></a>, where you can change or remove them any time.</p>
+  <% } %>
+</div></section><% } %>
+
+<section class="card section" id="supplier-rules"><div class="card-head"><h2>Supplier rules</h2></div>
+<% if(!s.supplierRules.length){ %><div class="card-body"><p class="cell-sub">No supplier rules yet. For example: “Always order SKU-1 from Acme”.</p></div><% }else{ %>
+<div class="list-rows"><% s.supplierRules.forEach(function(rule){ %>
+  <div class="list-row" data-supplier-rule="<%= rule.id %>"><span><strong><%= rule.instruction %></strong><small><%= rule.meaning %></small></span>
+    <form method="post" action="<%= s.path %>/supplier-rules/remove"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="id" value="<%= rule.id %>">
+      <button class="btn">Remove</button></form></div>
+<% }) %></div><% } %></section>
+
+<section class="card section" id="rule-examples"><div class="card-head"><h2>Rules StockChief can read</h2></div>
+<div class="list-rows"><% s.examples.forEach(function(e){ %>
+  <a class="list-row" href="<%= s.path %>?<%= new URLSearchParams({rule:e.text}) %>#reading"><span><strong>“<%= e.text %>”</strong><small><%= e.kind %> · <%= e.plan %> and up<%= e.allowed?'':' · not on your plan' %></small></span></a>
+<% }) %></div>
+<div class="card-body"><p class="cell-sub">Your other rules: <% s.places.forEach(function(p,i){ %><%= i?' · ':'' %><% if(p.allowed){ %><a href="<%= p.href %>"><%= p.label %></a><% }else{ %><%= p.label %> (<%= p.lowest %>)<% } %><% }) %>.</p></div>
+</section>

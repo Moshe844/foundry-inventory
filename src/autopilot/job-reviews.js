@@ -99,6 +99,7 @@ const definitions=[
   require('./vacation-deputy').definition,
   require('./circuit-breaker').definition,
   ...require('./partner-habits').definitions,
+  require('./plain-rules').definition,
   ...require('../operations/agent-count-tasks').definitions,
   require('../operations/agent-staff-tasks').definition,
   ...require('../accounting/agent-report-packs').definitions,
