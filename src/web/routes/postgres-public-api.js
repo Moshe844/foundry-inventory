@@ -94,12 +94,15 @@ function createPostgresPublicApi(database){
       location:row.location,reference:row.reference,before:row.before,after:row.after}));
     return res.json({data,nextCursor:result.hasMore?result.next:null});
   }));
-  const agent=require('../../connections/agent-review-api');
+  const agent=require('../../connections/agent-review-api'),agentJobs=require('../../connections/agent-api-jobs');
+  // A body naming a review runs that read-only review; a body naming a job
+  // starts that agent job through its own service (job 189).
   router.post('/agent/jobs',route('agent:run',async(auth,req,res)=>{
-    const job=await agent.start(database,auth,req.body,req.get('idempotency-key'));
+    const start=req.body&&typeof req.body==='object'&&Object.hasOwn(req.body,'job')?agentJobs.start:agent.start;
+    const job=await start(database,auth,req.body,req.get('idempotency-key'));
     return res.status(job.replayed?200:202).json(job);
   }));
-  router.get('/agent/jobs/:id',route('agent:run',async(auth,req,res)=>res.json(await agent.status(database,auth,req.params.id))));
+  router.get('/agent/jobs/:id',route('agent:run',async(auth,req,res)=>res.json(await agentJobs.status(database,auth,req.params.id))));
   return router;
 }
 

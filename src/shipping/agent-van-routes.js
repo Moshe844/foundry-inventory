@@ -11,14 +11,20 @@ const solver=require('./van-route-plan');
 const addresses=require('./address');
 const shipping=require('./postgres-service');
 const roadService=require('./van-road-times');
+const {has}=require('../db/schema-installed');
 
 const path='/autopilot/van-routes',action='shipping.plan_van_routes';
 const runs='stockchief_runtime.agent_van_routes',rules='stockchief_runtime.agent_van_route_rules';
 const scoped=client=>({query:(...args)=>client.query(...args),transaction:fn=>fn(client)});
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const depotKey=value=>[value.id,value.name,value.address];
-const audit=(db,ctx,action,run)=>require('../operations/postgres-security-audit').record(db,ctx,{
-  action,reference:run.id,after:{depotId:run.depot_id,date:run.delivery_date,automatic:run.automatic}
+// Road legs and map pins are remembered by place, so a later run to the same
+// addresses can reuse what the owner confirmed: the depot as saved, and each
+// delivery address with case and spacing ignored.
+const depotPlace=location=>'depot:'+hash(depotKey(location));
+const place=address=>'address:'+hash(String(address||'').trim().toLowerCase().replace(/\s+/g,' '));
+const audit=(db,ctx,action,run,extra={})=>require('../operations/postgres-security-audit').record(db,ctx,{
+  action,reference:run.id,after:{depotId:run.depot_id,date:run.delivery_date,automatic:run.automatic,...extra}
 });
 
 async function owner(db,ctx,lock=false){
@@ -99,7 +105,7 @@ async function shipmentFacts(db,ctx,id,depotId,forUpdate=false){
     throw new ValidationError(row.shipment_number+' needs a measured weight for every package before it can be routed.');
   const weightGrams=Math.ceil(measure.sum(boxes.map(box=>box.weightGrams),'Shipment weight',100000000));
   return {id,number:row.shipment_number,order:row.order_number,customer:row.customer_name,address:row.ship_to_address,
-    weightGrams,signature:hash([row.ship_to_address,row.ship_to_address_fields,row.sales_order_id,row.updated_at,boxes])};
+    place:place(row.ship_to_address),weightGrams,signature:hash([row.ship_to_address,row.ship_to_address_fields,row.sales_order_id,row.updated_at,boxes])};
 }
 
 function roadMatrix(raw,stops){
@@ -138,7 +144,8 @@ async function routedMatrix(db,ctx,input){
   const {location,stops}=await runFacts(db,ctx,input);
   const points=[roadService.point(input.depotPin,'the depot'),
     ...stops.map(stop=>roadService.point(input.pins?.[stop.id],stop.number))];
-  return {location,signatures:stops.map(stop=>stop.signature),seconds:await roadService.lookup(db,ctx,points)};
+  return {location,signatures:stops.map(stop=>stop.signature),seconds:await roadService.lookup(db,ctx,points),
+    pins:Object.fromEntries([[depotPlace(location),points[0]],...stops.map((stop,index)=>[stop.place,points[index+1]])])};
 }
 
 async function get(db,ctx,id,forUpdate=false){
@@ -170,6 +177,7 @@ async function current(db,ctx,run){
 
 async function publish(db,ctx,run,{automatic=false,trained=false}={}){
   if(run.manifest.unassigned.length)throw new ValidationError('Resolve the unassigned stops before publishing this route.');
+  if(!run.facts.stops.length)throw new ValidationError('No delivery on this route could be planned. Plan the waiting deliveries yourself.');
   await authorize(scoped(db),ctx,automatic?'automatic':'draft',trained);
   await current(db,ctx,run);
   await db.query(`UPDATE ${runs} SET status='READY',automatic=$3,revision=revision+1 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,run.id,automatic]);
@@ -187,7 +195,8 @@ async function prepare(db,ctx,input){
     const seconds=routed?routed.seconds:roadMatrix(input.roadTimes,stops),manifest=solver.plan(stops,vans,seconds);
     const run={id:newId('vanroute'),depot_id:location.id,delivery_date:deliveryDate,
       fleet_key:hash([depotKey(location),vans]),facts:{depot:location,vans,stops,roadSource:routed?'router':'export',
-        roadTimeFingerprint:hash(seconds)},manifest,status:'DRAFT',automatic:false};
+        roadTimeFingerprint:hash(seconds),points:[depotPlace(location),...stops.map(stop=>stop.place)],seconds,...(routed?{pins:routed.pins}:{})},
+      manifest,status:'DRAFT',automatic:false};
     const tx=scoped(client);
     await require('../commercial/storage-capacity').reserve(tx,ctx.workspaceId,'van-route:'+run.id,Buffer.byteLength(JSON.stringify(run))+8192,{finished:true});
     await client.query(`INSERT INTO ${runs}(workspace_id,id,depot_id,delivery_date,fleet_key,facts,manifest,status)
@@ -215,7 +224,24 @@ async function approve(db,ctx,id,input){
     if(input.confirmed!=='yes'||Number(input.revision)!==run.revision||run.status!=='DRAFT')
       throw new ValidationError('Review the current manifest before publishing.');
     await publish(client,ctx,run);
+    // On Pro, a route the owner publishes is the completed example that
+    // teaches a matching fleet rule. After it, the routine publishes alone.
+    const taught=await client.query(`UPDATE ${rules} SET example_id=$4,revision=revision+1 WHERE workspace_id=$1 AND depot_id=$2
+      AND fleet_key=$3 AND enabled AND example_id IS NULL RETURNING 1`,[ctx.workspaceId,run.depot_id,run.fleet_key,run.id]);
+    if(taught.rowCount)await audit(client,ctx,'Van route routine taught',run);
   },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+
+const weekdays=[[1,'Mon'],[2,'Tue'],[3,'Wed'],[4,'Thu'],[5,'Fri'],[6,'Sat'],[7,'Sun']];
+// When the routine plans and for which days. Left out, it plans at 15:00
+// for weekday deliveries.
+function routineTiming(input){
+  const planAt=input.planAt===undefined?900:solver.minute(input.planAt,'the time StockChief plans each day');
+  const raw=input.days===undefined?[1,2,3,4,5]:[].concat(input.days);
+  const days=[...new Set(raw.map(Number))].sort((a,b)=>a-b);
+  if(!days.length||days.length!==raw.length||days.some(day=>!Number.isSafeInteger(day)||day<1||day>7))
+    throw new ValidationError('Choose the days your vans deliver.');
+  return {planAt,days};
 }
 
 async function configure(db,ctx,id,input){
@@ -230,17 +256,29 @@ async function configure(db,ctx,id,input){
       await audit(client,ctx,'Van route routine stopped',run);
       return;
     }
-    const trained=run.status==='READY'&&!run.automatic;
-    await authorize(scoped(client),ctx,'automatic',trained);
-    if(run.manifest.unassigned.length||run.status==='STOPPED')throw new ValidationError('Resolve all stops on the fleet example before saving this rule.');
+    // A route the owner published, or a rule already taught by one, is the
+    // completed example. On Pro a rule without one only prepares routes for
+    // review until the owner publishes one of this fleet's routes.
+    const example=run.status==='READY'&&!run.automatic,trained=example||Boolean(existing?.example_id);
+    const account=await policy.accountState(client,ctx.workspaceId);
+    const draftOnly=policy.usesAgentTerms(account)&&policy.allowance(account.plan,71)==='trained'&&!trained;
+    await authorize(scoped(client),ctx,draftOnly?'draft':'automatic',trained);
+    if(run.manifest.unassigned.length||run.status==='STOPPED'||!run.facts.stops.length||run.facts.held?.length)
+      throw new ValidationError('Resolve all stops on the fleet example before saving this rule.');
     const maximum=number(input.maximumStops,'maximum stops per route run',solver.maximumStops);
     if(maximum<run.facts.stops.length)throw new ValidationError('The rule must cover the example’s stop count.');
     await require('../manager/postgres-operating-instructions').checkRuleLimit(client,ctx,[],existing?.enabled?0:1);
-    await client.query(`INSERT INTO ${rules} AS prior(workspace_id,depot_id,fleet_key,authorized_by,example_id,maximum_stops,enabled)
+    const routine=await has(client,rules,'vans')?routineTiming(input):null;
+    const values=[ctx.workspaceId,run.depot_id,run.fleet_key,ctx.actorId,example?run.id:null,maximum];
+    if(routine)await client.query(`INSERT INTO ${rules} AS prior(workspace_id,depot_id,fleet_key,authorized_by,example_id,maximum_stops,enabled,vans,plan_at,delivery_days)
+      VALUES($1,$2,$3,$4,$5,$6,true,$7,$8,$9) ON CONFLICT(workspace_id,depot_id,fleet_key) DO UPDATE SET
+      authorized_by=EXCLUDED.authorized_by,example_id=coalesce(EXCLUDED.example_id,prior.example_id),maximum_stops=EXCLUDED.maximum_stops,
+      enabled=true,vans=EXCLUDED.vans,plan_at=EXCLUDED.plan_at,delivery_days=EXCLUDED.delivery_days,revision=prior.revision+1`,
+    [...values,JSON.stringify(run.facts.vans),routine.planAt,routine.days]);
+    else await client.query(`INSERT INTO ${rules} AS prior(workspace_id,depot_id,fleet_key,authorized_by,example_id,maximum_stops,enabled)
       VALUES($1,$2,$3,$4,$5,$6,true) ON CONFLICT(workspace_id,depot_id,fleet_key) DO UPDATE SET
-      authorized_by=EXCLUDED.authorized_by,example_id=EXCLUDED.example_id,maximum_stops=EXCLUDED.maximum_stops,enabled=true,revision=prior.revision+1`,
-    [ctx.workspaceId,run.depot_id,run.fleet_key,ctx.actorId,trained?run.id:null,maximum]);
-    await audit(client,ctx,'Van route routine authorized',run);
+      authorized_by=EXCLUDED.authorized_by,example_id=coalesce(EXCLUDED.example_id,prior.example_id),maximum_stops=EXCLUDED.maximum_stops,enabled=true,revision=prior.revision+1`,values);
+    await audit(client,ctx,'Van route routine authorized',run,{trained,maximumStops:maximum,...(routine?{planAt:solver.clock(routine.planAt),days:routine.days}:{})});
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
@@ -256,17 +294,59 @@ async function stop(db,ctx,id,input){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
+// Undo from the activity log: a route StockChief published on its own is
+// stopped while every delivery on it is still packed at the depot.
+async function undo(db,ctx,id){
+  return db.transaction(async client=>{
+    await lock(client,ctx);
+    await authorize(scoped(client),ctx);
+    const run=await get(client,ctx,id,true);
+    if(run.status==='STOPPED')return {replayed:true};
+    if(run.status!=='READY'||!run.automatic)throw new ValidationError('Only a route StockChief published on its own can be undone here.');
+    const left=await client.query(`SELECT 1 FROM sales_shipments WHERE workspace_id=$1 AND id=ANY($2::text[]) AND status<>'PACKED' LIMIT 1`,
+      [ctx.workspaceId,run.facts.stops.map(stop=>stop.id)]);
+    if(left.rowCount)throw new ValidationError('A delivery on this route has already left the depot. Change the route with your drivers.');
+    await client.query(`UPDATE ${runs} SET status='STOPPED',revision=revision+1 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id]);
+    await audit(client,ctx,'Van manifest stopped',run,{undo:true});
+    return {stopped:id};
+  },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+
+async function fleetRules(db,ctx){
+  const routine=await has(db,rules,'vans');
+  return (await db.query(`SELECT r.depot_id,r.fleet_key,r.example_id,r.maximum_stops,r.enabled,r.revision,l.name AS depot,
+      ${routine?'r.vans,r.plan_at,r.delivery_days,r.planned_for::text AS planned_for':'NULL::jsonb AS vans,NULL::int AS plan_at,NULL::int[] AS delivery_days,NULL::text AS planned_for'}
+    FROM ${rules} r JOIN users u ON u.id=r.authorized_by AND u.workspace_id=r.workspace_id AND u.role='owner'
+    LEFT JOIN locations l ON l.workspace_id=r.workspace_id AND l.id=r.depot_id
+    WHERE r.workspace_id=$1 ORDER BY l.name,r.depot_id,r.fleet_key LIMIT 50`,[ctx.workspaceId])).rows;
+}
+// How a fleet rule acts on this plan, in words for the page.
+function ruleState(plan,control){
+  if(!control?.enabled)return 'Stopped. StockChief does not plan for this fleet.';
+  if(!control.vans)return 'Save this rule again to let StockChief plan each day.';
+  const chosen=weekdays.filter(([day])=>control.delivery_days.map(Number).includes(day)).map(([,name])=>name);
+  const when='Plans at '+solver.clock(Number(control.plan_at))+' for the next delivery day ('+(chosen.length===7?'every day':chosen.join(', '))+').';
+  if(policy.allowance(plan,71)==='trained'&&!control.example_id)
+    return when+' Until you publish one of its routes yourself, it prepares each route for your review.';
+  return when+' Publishes routes that fully fit on its own, up to '+control.maximum_stops+' stops.';
+}
+
 async function page(db,ctx,{id,depotId}={}){
   await owner(db,ctx);
-  const account=await policy.accountState(db,ctx.workspaceId);
-  const allowed=policy.usesAgentTerms(account)&&policy.permits(account.plan,71,'draft');
-  if(!allowed)return {allowed};
-  const rows=(await db.query(`SELECT r.id,r.delivery_date::text,r.status,r.automatic,l.name AS depot
+  const account=await policy.requireWorkspaceJob(db,ctx.workspaceId,71,'draft'),allowed=true;
+  const routine=await has(db,runs,'prepared_by_routine');
+  const rows=(await db.query(`SELECT r.id,r.delivery_date::text,r.status,r.automatic,l.name AS depot,
+      ${routine?'r.prepared_by_routine,r.waiting_reason':'false AS prepared_by_routine,NULL::text AS waiting_reason'}
     FROM ${runs} r LEFT JOIN locations l ON l.workspace_id=r.workspace_id AND l.id=r.depot_id
     WHERE r.workspace_id=$1 ORDER BY r.delivery_date DESC,r.id DESC LIMIT 100`,[ctx.workspaceId])).rows;
+  const fleets=(await fleetRules(db,ctx)).map(control=>({...control,state:ruleState(account.plan,control)}));
   if(id){
-    const run=await get(db,ctx,id),control=await rule(db,ctx,run);
-    return {allowed,rows,run,control,clock:solver.clock,canTeach:account.plan==='enterprise'||run.status==='READY'&&!run.automatic};
+    const run=await get(db,ctx,id),control=fleets.find(r=>r.depot_id===run.depot_id&&r.fleet_key===run.fleet_key)||null;
+    const waiting=routine?(await db.query(`SELECT prepared_by_routine,waiting_reason FROM ${runs} WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,run.id])).rows[0]:null;
+    return {allowed,rows,fleets,run,control,clock:solver.clock,weekdays,waitingReason:waiting?.waiting_reason||null,
+      preparedByRoutine:Boolean(waiting?.prepared_by_routine),
+      canTeach:run.status!=='STOPPED'&&!run.manifest.unassigned.length&&run.facts.stops.length>0&&!run.facts.held?.length,
+      teachLater:policy.allowance(account.plan,71)==='trained'&&!(run.status==='READY'&&!run.automatic)&&!control?.example_id};
   }
   const depots=(await db.query(`SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1
     AND custody_agreement_id IS NULL AND nullif(btrim(address),'') IS NOT NULL ORDER BY name,id`,[ctx.workspaceId])).rows;
@@ -277,7 +357,7 @@ async function page(db,ctx,{id,depotId}={}){
     WHERE s.workspace_id=$1 AND s.ship_from_location_id=$2 AND s.status='PACKED' AND s.customer_return_id IS NULL
       AND coalesce(s.label_status,'NONE')='NONE' AND s.provider_shipment_id IS NULL
     ORDER BY s.created_at,s.id LIMIT 40`,[ctx.workspaceId,depot.id])).rows:[];
-  return {allowed,rows,run:null,depots,depot,shipments,roadServiceAvailable:Boolean(roadService.endpoint()),today:await time.today(db,ctx.workspaceId)};
+  return {allowed,rows,fleets,run:null,depots,depot,shipments,roadServiceAvailable:Boolean(roadService.endpoint()),today:await time.today(db,ctx.workspaceId)};
 }
 
 async function review(db,ctx){
@@ -287,4 +367,6 @@ async function review(db,ctx){
   action:{label:'Open van routes',href:path},summary:'Assign packed local deliveries to vans using road times, measured loads, delivery windows and driver shifts.'};
 }
 
-module.exports={path,prepare,approve,configure,stop,page,definition:{id:71,key:'van-routes',label:'Plan delivery routes for your own vans',readPage:review}};
+// What the daily routine (agent-van-route-routine.js) shares with the owner's own planning.
+const internal={runs,rules,scoped,hash,depotKey,depotPlace,place,audit,owner,lock,authorize,depot,shipmentFacts,get,publish};
+module.exports={path,action,prepare,approve,configure,stop,undo,page,internal,weekdays,definition:{id:71,key:'van-routes',label:'Plan delivery routes for your own vans',readPage:review}};

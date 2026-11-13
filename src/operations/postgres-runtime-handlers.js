@@ -454,6 +454,8 @@ async function autopilotEvaluate(job,client){
     // Jobs 66 and 70: repeat pallet pickups and international paperwork for packed shipments.
     await require('../shipping/agent-freight-routine').schedule(client,job.workspaceId,cycleId);
     await require('../shipping/agent-export-paper-routine').schedule(client,job.workspaceId,cycleId);
+    // Job 71: plan the next delivery day for each fleet rule at its planning time.
+    await require('../shipping/agent-van-route-routine').schedule(client,job.workspaceId,cycleId);
     await require('../transfers/agent-transfer-balancing').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-freight-combine').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-rfq-competition').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
@@ -876,6 +878,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.shipping.freight-pickup.v1':external((job,database)=>require('../shipping/agent-freight-pickups').dispatch(database,job)),
   'agent.shipping.freight-routine.v1':external((job,database)=>require('../shipping/agent-freight-routine').run(database,job)),
   'agent.shipping.export-papers.v1':external((job,database)=>require('../shipping/agent-export-paper-routine').run(database,job)),
+  'agent.shipping.van-route-routine.v1':external((job,database)=>require('../shipping/agent-van-route-routine').run(database,job)),
   'provider.commerce-verify':external((job,database)=>require('../connections/postgres-commerce-sync').verifyDelivery(database,job.workspaceId,job.payload.effectId,{providers})),
   'agent.mail.supplier_benefit_claim.v1':external(async(job,database)=>{
     const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);require('./agent-mail-protocol').assertJob(effect,job.kind);
@@ -916,6 +919,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   // Keep its transactional handler while reserving routine sync's execution lane.
   'workflow.follow-through':(job,client)=>require('./postgres-workflow-ownership').refreshInTransaction(client,job.workspaceId,job.payload.workId),
   'agent.api_review':(job,client)=>require('../connections/agent-review-api').execute(job,client),
+  // Job 189: an agent job another system started through the API.
+  'agent.api_job':external((job,database)=>require('../connections/agent-api-jobs').execute(job,database)),
   'agent.supplier-negotiation':(job,client)=>require('../purchasing/negotiation-drafts').processJob(client,job),
   'agent.reorder-signal':(job,client)=>autonomy.handleReorderSignal(client,job),
   'agent.shipment-notice':(job,client)=>require('../shipping/agent-shipping-notices').processJob(client,job),

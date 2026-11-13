@@ -47,6 +47,7 @@ async function start(db,auth,body,key){
   await authorize(db,auth.workspaceId,auth.clientId);
   const result=await require('./postgres-public-api').executeCommand(db,auth,{idempotencyKey:key,commandType:kind,body:input},async(c,operationKey)=>{
     await authorize(c,auth.workspaceId,auth.clientId);
+    await require('./agent-api-jobs').limit(c,auth);
     const transaction={query:c.query.bind(c),transaction:fn=>fn(c)};
     const {job}=await jobs.enqueue(transaction,{workspaceId:auth.workspaceId,kind,idempotencyKey:operationKey,
       payload:{...input,clientId:auth.clientId},maxAttempts:3});
@@ -74,4 +75,4 @@ async function execute(job,db){
   return completed;
 }
 
-module.exports={start,status,execute,check,available,issuer,eventType,kind};
+module.exports={start,status,execute,check,available,issuer,authorize,eventType,kind};
