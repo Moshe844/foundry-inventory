@@ -1,7 +1,8 @@
 <h1>Playbooks</h1>
 <% if(enabled){ %><form class="card" method="post" action="/autopilot/playbooks"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
 <label>Name <input name="name" maxlength="100" required></label><fieldset><legend>Steps</legend>
-<% choices.forEach(c=>{ %><label><input type="checkbox" name="steps" value="<%= c.key %>"> <%= c.label %></label><% }); %></fieldset>
+<% choices.forEach(c=>{ %><div><label><input type="checkbox" name="steps" value="<%= c.key %>"> <%= c.label %></label>
+  <% if(c.filterLabel){ %><label><%= c.filterLabel %> (optional) <input name="filters[<%= c.key %>]" maxlength="150"></label><% } %></div><% }); %></fieldset>
 <label>Schedule <select name="cadence"><option value="manual">Run manually</option><option value="daily">Every day</option><option value="weekly">Every week</option></select></label>
 <button class="btn btn--primary">Save playbook</button></form><% } else { %><p>Scheduled playbooks are available on Growth, Pro and Custom. <a href="/billing">Review your plan</a></p><% } %>
 <% books.forEach(b=>{ %><section class="card"><h2><%= b.name %></h2>

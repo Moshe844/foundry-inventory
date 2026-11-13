@@ -16,10 +16,22 @@ const reviews=require('./job-reviews');
 for(const d of reviews.definitions.filter(d=>!d.requiresFilter&&!d.requiresChange)){
   steps.set(d.key,{job:d.id,label:d.label,review:true});
 }
+for(const [key,filterLabel] of [['partner-habits','Exact customer or supplier name'],['reorder-explanation','Exact SKU'],['quarterly-supplier-pack','Exact supplier name']]){
+  steps.get(key).filterLabel=filterLabel;
+}
 const limits={growth:10,pro:100,enterprise:Infinity};
 // Selecting a read-only review in a saved owner playbook supplies its schedule and scope.
 const canRunStep=(plan,s)=>Boolean(s)&&agent.permits(plan,s.job,'automatic',{trained:s.review===true});
-const choices=plan=>[...steps].filter(([,s])=>canRunStep(plan,s)).map(([key,s])=>({key,label:s.label}));
+const choices=plan=>[...steps].filter(([,s])=>canRunStep(plan,s)).map(([key,s])=>({key,label:s.label,filterLabel:s.filterLabel}));
+
+// Older playbooks stored step keys as strings.
+const stepKey=step=>typeof step==='string'?step:step.key;
+function stepInput(key,filters){
+  const filter=String(filters?.[key]??'').trim();
+  if(!filter)return key;
+  if(!steps.get(key)?.filterLabel||filter.length>150)throw new ValidationError('Use a supported step filter up to 150 characters.');
+  return {key,filter};
+}
 
 async function owner(db,ctx){
   const actor=(await db.query(`SELECT u.* FROM users u JOIN workspaces w ON w.id=u.workspace_id AND w.owner_account_id=u.account_id
@@ -43,6 +55,7 @@ async function create(db,ctx,input){
     throw new ValidationError('Enter a name, choose at least two different steps, and select a schedule.');
   return db.transaction(async client=>{
     const {state}=await authorize(client,ctx,keys);
+    const selected=keys.map(key=>stepInput(key,input.filters));
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('playbooks:'||$1,0))",[state.accountId]);
     const count=await client.query(`SELECT count(*) AS n FROM stockchief_runtime.agent_playbooks b JOIN workspaces w ON w.id=b.workspace_id
       WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL`,[state.accountId]);
@@ -50,16 +63,18 @@ async function create(db,ctx,input){
     const id=newId('playbook');
     await client.query(`INSERT INTO stockchief_runtime.agent_playbooks(id,workspace_id,created_by,name,steps,cadence,next_at)
       VALUES($1,$2,$3,$4,$5::jsonb,$6,CASE $6 WHEN 'daily' THEN now()+interval '1 day' WHEN 'weekly' THEN now()+interval '7 days' END)`,
-      [id,ctx.workspaceId,ctx.actorId,name,JSON.stringify(keys),cadence]);
+      [id,ctx.workspaceId,ctx.actorId,name,JSON.stringify(selected),cadence]);
     return id;
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
-async function runStep(db,ctx,actor,key){
+async function runStep(db,ctx,actor,step){
+  const key=stepKey(step),filter=typeof step==='string'?'':step.filter;
   const def=steps.get(key);
   if(def.review){
-    const {summary,rows,more}=await reviews.run(db,ctx,key,{scheduled:true,trained:true});
-    return {label:def.label,summary:summary+(more?' View the full review for additional records.':''),rows,link:'/autopilot/reviews/'+key};
+    const {summary,rows,more}=await reviews.run(db,ctx,key,{filter,scheduled:true,trained:true});
+    const query=filter?'?'+new URLSearchParams({filter}):'';
+    return {label:def.label,summary:summary+(more?' View the full review for additional records.':''),rows,link:'/autopilot/reviews/'+key+query};
   }
   if(def.report){
     const output=await reports.run(db,ctx,actor,def.report,{});
@@ -86,13 +101,13 @@ async function run(db,ctx,id,requestKey){
   return db.transaction(async client=>{
     const b=(await client.query('SELECT * FROM stockchief_runtime.agent_playbooks WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];
     if(!b) throw new NotFoundError('This playbook is no longer available.');
-    const {actor}=await authorize(client,ctx,b.steps);
+    const {actor}=await authorize(client,ctx,b.steps.map(stepKey));
     const current=await require('./postgres-service').getState(client,ctx.workspaceId);
     if(current.paused||current.suspended) throw new ValidationError('StockChief is paused.');
     const prior=(await client.query('SELECT result FROM stockchief_runtime.agent_playbook_runs WHERE workspace_id=$1 AND playbook_id=$2 AND request_key=$3',[ctx.workspaceId,id,requestKey])).rows[0];
     if(prior) return prior.result;
     const results=[],scoped={query:client.query.bind(client),transaction:fn=>fn(client)};
-    for(const key of b.steps) results.push(await runStep(scoped,ctx,actor,key));
+    for(const step of b.steps) results.push(await runStep(scoped,ctx,actor,step));
     await client.query('INSERT INTO stockchief_runtime.agent_playbook_runs(id,workspace_id,playbook_id,request_key,result) VALUES($1,$2,$3,$4,$5::jsonb)',
       [newId('playrun'),ctx.workspaceId,id,requestKey,JSON.stringify(results)]);
     return results;
@@ -116,7 +131,7 @@ async function list(db,ctx){
     LEFT JOIN LATERAL (SELECT * FROM stockchief_runtime.agent_playbook_runs WHERE workspace_id=b.workspace_id AND playbook_id=b.id ORDER BY created_at DESC LIMIT 1) r ON true
     WHERE b.workspace_id=$1 ORDER BY b.created_at,b.id`,[ctx.workspaceId]);
   return {choices:choices(tier),enabled:agent.permits(tier,213,'automatic',{trained:true}),books:records.rows.map(b=>({...b,
-    result:b.steps.every(key=>canRunStep(tier,steps.get(key)))&&agent.permits(tier,213,'automatic',{trained:true})?b.result:null}))};
+    result:b.steps.every(step=>canRunStep(tier,steps.get(stepKey(step))))&&agent.permits(tier,213,'automatic',{trained:true})?b.result:null}))};
 }
 async function remove(db,ctx,id){
   await owner(db,ctx);
