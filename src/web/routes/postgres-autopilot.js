@@ -1944,7 +1944,7 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   // Job 176: who approves what, by role and amount.
   const approvalDesk=require('../../autopilot/approval-desk');
-  router.get(approvalDesk.path,requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/approval-routing',
+  router.get(approvalDesk.path,requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,approvalDesk.JOB,'autopilot/approval-routing',
     {title:'Who approves what',nav:'autopilot'},async()=>({model:await approvalDesk.screen(database,req.ctx)}),402)));
   router.post(approvalDesk.path+'/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
     const saved=await approvalDesk.saveRule(database,req.ctx,req.body);
