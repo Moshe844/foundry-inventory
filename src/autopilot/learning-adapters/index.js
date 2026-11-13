@@ -128,7 +128,7 @@ const cannot={
  58:'One approved shipping rate already teaches it to choose rates up to that price, and the only saved rule has no price limit, so learning it from approvals would raise a limit.',
  67:'A standing order has no draft per order to approve: the owner’s saved schedule is the approval, and it needs a cadence and dates no approval carries.',
  72:'The first answer you approve and the mailbox sends already teaches that customer and those topics, so five approvals in a row never build up.',
- 89:'This job has no taught rule: each one-off supplier email always waits for its own approval, so there is nothing to teach.',
+ 89:'On Growth, approve and send one prepared date request, then select it on the supplier date request rule. Approve other one-off supplier emails individually.',
  94:'Before a rule exists every approval is a negotiation email you start yourself; the routine it can learn is a different lead-time note whose rule needs no example and a cadence you choose.',
  102:'The first reminder you approve and the mailbox sends already teaches that customer and mailbox, so five approvals in a row never build up, and a reminder schedule needs wording and days approvals do not carry.',
  140:'A shelf photo teaches only while a person confirms it on its page; a photo confirmed earlier cannot be turned into a rule through the job’s own path.',

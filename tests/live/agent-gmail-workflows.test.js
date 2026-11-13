@@ -119,6 +119,32 @@ async function setup(t, approved, plan = 'pro') {
   return { ...fixture, connectorId, recipient, provider, sent, verify, deliver, run, date, order, status, refresh };
 }
 
+test('Gmail accepts supplier date requests using the approved self-addressed test mailbox',
+  { skip: !confirmedLogin || !process.env.STOCKCHIEF_GMAIL_FIXTURE_CONFIG, timeout: 240000 }, async t => {
+    const f = await setup(t, await verifiedGrant(), 'pro');
+    const { db, ctx } = f;
+    const dates = require('../../src/purchasing/agent-supplier-date-requests');
+    const purchase = await f.order({ expectedDate: null, placed: true });
+    await db.transaction(client => outbound.queueInTransaction(client, ctx, {
+      recipientKind: 'supplier', recipientId: supplierId, recipientEmail: f.recipient, connectorId: f.connectorId,
+      purchaseOrderId: purchase.purchaseOrderId, subject: 'Purchase order ' + purchase.poNumber, body: 'Synthetic purchase order.'
+    }, randomUUID()));
+    assert.equal((await f.run('provider.effect'))?.status, 'COMPLETED');
+    await f.verify(f.sent[0]);
+    const token = /\/supplier\/order\/([A-Za-z0-9_-]{43})/.exec(f.sent[0].originalBody)[1];
+    await links.submit(db, token, 'confirm', null);
+    await dates.configure(db, ctx, { supplierId, expectedRecipient: f.recipient, connectorId: f.connectorId, confirmed: 'yes' });
+    await Promise.all([f.refresh(purchase), f.refresh(purchase)]);
+    const kind = 'agent.mail.supplier_date_request.v1';
+    const delivered = await f.run(kind);
+    assert.equal(delivered?.status, 'COMPLETED', JSON.stringify(delivered?.lastError));
+    assert.match(f.sent[1].originalBody, /expected delivery date for purchase order/);
+    await f.verify(f.sent[1]);
+    await f.refresh(purchase);
+    assert.equal(await f.run(kind), null);
+    assert.equal(f.sent.length, 2);
+  });
+
 test('Gmail accepts StockChief purchasing workflows using isolated records and a self-addressed test mailbox',
   { skip: !confirmedLogin || !process.env.STOCKCHIEF_GMAIL_FIXTURE_CONFIG, timeout: 300000 }, async t => {
     const approved = await verifiedGrant();

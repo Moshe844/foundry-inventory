@@ -39,8 +39,25 @@ function client({apiKey,channelId},fetchImpl=fetch){
   }
   return {
     async verify(){
-      const channels=await call('channel');
-      if(!Array.isArray(channels)||!channels.some(c=>String(c.id)===channel))throw new ValidationError('This sandbox token cannot see that channel.');
+      const visited=new Set();
+      let path='channel';
+      while(path&&!visited.has(path)&&visited.size<100){
+        visited.add(path);
+        const page=await call(path),channels=Array.isArray(page)?page:page?.items;
+        if(!Array.isArray(channels))throw new ValidationError('ShipBob returned an unexpected channel list.');
+        const match=channels.find(c=>String(c.id)===channel);
+        if(match){
+          if(Array.isArray(match.scopes)&&!['orders_read','orders_write','inventory_read'].every(scope=>match.scopes.includes(scope)))
+            throw new ValidationError('Choose a ShipBob channel with permission to read and send orders and read inventory.');
+          return;
+        }
+        if(!page.next)break;
+        const next=new URL(page.next,base),cursor=next.searchParams.get('cursor')||next.searchParams.get('Cursor');
+        if(next.origin!==new URL(base).origin||next.pathname!=='/2026-07/channel'||!cursor||cursor.length>1024)
+          throw new ValidationError('ShipBob returned an invalid channel page.');
+        path='channel?'+new URLSearchParams({Cursor:cursor});
+      }
+      throw new ValidationError('This sandbox token cannot see that channel.');
     },
     async send(payload,beforeCreate){
       const existing=await find(payload.reference_id);

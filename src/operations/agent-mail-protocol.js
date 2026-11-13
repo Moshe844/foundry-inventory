@@ -1,10 +1,12 @@
 'use strict';
 const {ValidationError}=require('../domain/errors');
 const versions=Object.freeze({stock_threshold:1,purchase_followup:1,shipment_notice:1,quote_followup:1,quote_share:1,customer_statement:1,invoice_reminder:1,stock_ready_notice:1,invoice_dispute:1,supplier_forecast:1,supplier_rfq:1,supplier_claim:1,return_label:1,supplier_direct_purchase:1,expiry_warning:1,fx_alert:1,supplier_benefit_claim:1,supplier_negotiation:1,order_split_notice:1,parcel_delay_notice:1,agent_alert:1,customer_answer:1,supplier_review_pack:1,accountant_pack:1,scheduled_report:1,agent_briefing:1});
-const kinds=Object.freeze(Object.entries(versions).map(([name,version])=>'agent.mail.'+name+'.v'+version));
+const dateRequestKind='agent.mail.supplier_date_request.v1';
+const kinds=Object.freeze([...Object.entries(versions).map(([name,version])=>'agent.mail.'+name+'.v'+version),dateRequestKind]);
 function jobKind(effect){
  if(effect.kind!=='mail.outbound.send'||!effect.payload?.standingAuthority)return 'provider.effect';
  const name=effect.payload.standingAuthority.kind;
+ if(name==='purchase_followup'&&effect.payload.standingAuthority.phase==='supplier_delivery_date_missing')return dateRequestKind;
  if(!Object.hasOwn(versions,name))throw Object.assign(new ValidationError('This message requires a supported StockChief mail worker. Review its saved progress before retrying.'),{code:'unsupported_agent_mail_authority',retryable:false});
  return 'agent.mail.'+name+'.v'+versions[name];
 }

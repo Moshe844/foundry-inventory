@@ -1,0 +1,71 @@
+<% const { allowed, supplier, rules, current, samples, mailboxes, plan, path, missing } = settings; %>
+<div class="page-head"><div class="titles">
+  <h1>Supplier date requests</h1>
+  <p>Ask for the expected delivery date when a supplier accepts a warehouse purchase without one.</p>
+</div></div>
+<% if (!allowed) { %>
+  <section class="notice"><span class="badge">Growth</span> Supplier date requests require Growth, Pro or Custom. <a class="btn" href="/billing">Upgrade</a></section>
+<% } %>
+<% if (allowed) { %>
+  <% if (missing) { %><p class="notice">Choose a unique, active supplier by its exact name.</p><% } %>
+  <section class="card section">
+    <form method="get" action="<%= path %>" class="form-stack">
+      <label>Exact supplier name <input name="supplierName" value="<%= supplier?.name || '' %>" maxlength="240" required></label>
+      <button class="btn" type="submit">Find supplier</button>
+    </form>
+  </section>
+  <% if (supplier) { %>
+    <section class="card section">
+      <h2><%= supplier.name %></h2>
+      <% if (!supplier.email) { %>
+        <p>Add a purchase email to this supplier’s contact record.</p>
+      <% } else if (!mailboxes.length) { %>
+        <p>Connect a Gmail or Microsoft 365 sending mailbox first.</p><a class="btn" href="/settings/connections">Open connections</a>
+      <% } else if (plan === 'growth' && !samples.length) { %>
+        <p>Enable prepared communications on the supplier’s record. Approve and send a prepared date request from a purchase the supplier has accepted. Then return here to use that email as the example.</p>
+      <% } else { %>
+        <p>Send up to one request per purchase to <strong><%= supplier.email %></strong> after a verified message about the purchase was sent from the same mailbox.</p>
+        <form method="post" action="<%= path %>" class="form-stack">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="supplierId" value="<%= supplier.id %>">
+          <input type="hidden" name="expectedRecipient" value="<%= supplier.email %>">
+          <% if (current) { %><input type="hidden" name="revision" value="<%= current.revision %>"><% } %>
+          <label>Sending mailbox <select name="connectorId" required>
+            <option value="">Choose the mailbox</option>
+            <% for (const box of mailboxes) { %>
+              <option value="<%= box.id %>" <%= current?.connector_id === box.id ? 'selected' : '' %>><%= [box.display_name, box.provider_account_name].filter(Boolean).join(' · ') %></option>
+            <% } %>
+          </select></label>
+          <% if (plan === 'growth') { %>
+            <label>Approved example from this mailbox <select name="exampleId" required>
+              <option value="">Choose a sent date request</option>
+              <% for (const sample of samples) { %>
+                <option value="<%= sample.id %>" <%= current?.example_id === sample.id ? 'selected' : '' %>><%= sample.po_number %> · <%= sample.display_name %></option>
+              <% } %>
+            </select></label>
+          <% } %>
+          <label><input type="checkbox" name="confirmed" value="yes" required> I authorize one date request per eligible purchase from this mailbox.</label>
+          <button class="btn btn--primary" type="submit">Authorize date requests</button>
+        </form>
+      <% } %>
+    </section>
+  <% } %>
+<% } %>
+<% if (rules?.length) { %>
+  <section class="card section"><h2>Saved rules</h2>
+    <% for (const rule of rules) { %>
+      <article class="section">
+        <h3><a href="<%= path %>?supplierId=<%= encodeURIComponent(rule.supplier_id) %>"><%= rule.name %></a></h3>
+        <p><%= rule.enabled ? 'Authorized' : 'Stopped' %> · <%= rule.recipient %></p>
+        <% if (rule.enabled) { %>
+          <form method="post" action="<%= path %>">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="supplierId" value="<%= rule.supplier_id %>">
+            <input type="hidden" name="revision" value="<%= rule.revision %>">
+            <button class="btn" type="submit" name="stop" value="yes">Stop future date requests</button>
+          </form>
+        <% } %>
+      </article>
+    <% } %>
+  </section>
+<% } %>

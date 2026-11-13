@@ -37,6 +37,17 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   const chases=require('../../purchasing/agent-supplier-delivery-chases');
   const confirmations=require('../../purchasing/agent-supplier-ship-promises');
+  const dates=require('../../purchasing/agent-supplier-date-requests');
+  router.get(dates.path,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const settings=await dates.page(database,req.ctx,req.query);
+    res.set('Cache-Control','private, no-store').page('autopilot/supplier-date-requests',{
+      title:'Supplier date requests',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},settings});
+  }));
+  router.post(dates.path,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await dates.configure(database,req.ctx,req.body);
+    req.flash('success',result.stopped?'Automatic date requests stopped.':'The supplier date request rule was saved.');
+    res.redirect(303,dates.path+'?'+new URLSearchParams({supplierId:req.body.supplierId}));
+  }));
   const confirmationPage=async(req,res)=>res.set('Cache-Control','private, no-store').page('autopilot/supplier-confirmations',{
     title:'Supplier confirmations',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},
     ...await confirmations.page(database,req.ctx,{...req.query,id:req.params.id})});

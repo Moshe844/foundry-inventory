@@ -17,11 +17,13 @@ test('ShipBob sandbox order approval, network recovery, split tracking and match
     assert.ok(url.startsWith('https://sandbox-api.shipbob.com/2026-07/'));
     assert.equal(opts.headers.Authorization,'Bearer fake-sandbox-token');assert.equal(opts.headers.shipbob_channel_id,'581');
     const u=new URL(url),response=v=>new Response(JSON.stringify(v),{status:200});
-    if(u.pathname.endsWith('/channel'))return response([{id:581}]);
+    if(u.pathname.endsWith('/channel'))return response(u.searchParams.has('Cursor')?
+      {items:[{id:581,scopes:['orders_read','orders_write','inventory_read']}],next:null}:
+      {items:[{id:572,scopes:['orders_read']}],next:'/2026-07/channel?cursor=next-page'});
     if(u.pathname.endsWith('/inventory-level/7'))return response({inventory_id:7,sku:code,total_on_hand_quantity:15,total_fulfillable_quantity:12});
     if(u.pathname.endsWith('/inventory-level/8'))return response({inventory_id:8,sku:'WRONG',total_on_hand_quantity:8,total_fulfillable_quantity:8});
     if(u.pathname.endsWith('/order/20'))return response({...remote,status:'Partially Fulfilled',shipments:[
-      {id:60,status:'Completed',tracking:{number:'TEST-A',carrier:'UPS'}},{id:61,status:'Processing',tracking:null}]});
+      {id:60,status:'Completed',tracking:{tracking_number:'TEST-A',carrier:'UPS'}},{id:61,status:'Processing',tracking:null}]});
     if(opts.method==='POST'){
       posts++;assert.equal(remote,null);
       const payload=JSON.parse(opts.body);assert.equal(payload.products[0].quantity,2);assert.equal(payload.products[0].reference_id,code);
@@ -34,7 +36,10 @@ test('ShipBob sandbox order approval, network recovery, split tracking and match
   };
   await plan('starter');
   await assert.rejects(provider.connect(db,ctx,credentials,transport),e=>e.code==='entitlement_required');assert.equal(calls.length,0);
-  await plan('growth');await provider.connect(db,ctx,credentials,transport);
+  await plan('growth');
+  await assert.rejects(provider.connect(db,ctx,{...credentials,channelId:'572'},async()=>new Response(
+    JSON.stringify({items:[{id:572,scopes:['orders_read']}]}),{status:200})),/permission to read and send orders/);
+  await provider.connect(db,ctx,credentials,transport);
   const order=await workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'SHIP',fulfillmentLocationId:f.location.id,
     idempotencyKey:'sandbox-order',lines:[{skuId:f.item.skuIds[0],quantity:2,unitPriceMinor:100}]});
   await assert.rejects(provider.draft(db,ctx,order.salesOrderId),/confirmed/);

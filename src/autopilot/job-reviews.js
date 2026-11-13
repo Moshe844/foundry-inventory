@@ -136,6 +136,7 @@ const definitions=[
   ...require('../sales/agent-order-checks').definitions,
   require('../purchasing/agent-supplier-delivery-chases').definition,
   require('../purchasing/agent-supplier-ship-promises').definition,
+  require('../purchasing/agent-supplier-date-requests').definition,
   require('../purchasing/agent-supplier-returns').definition,
   require('../sales/agent-stock-protections').definition,
   ...require('./exception-reviews'),

@@ -62,7 +62,7 @@ async function draft(db,ctx,orderId){
   return {payload,channelId:con.channelId,hash:fingerprint([con.id,con.channelId,payload])};
 }
 function snapshot(order){
-  const shipments=(order.shipments||[]).map(s=>({id:api.positiveId(s.id,'shipment ID'),status:String(s.status||'Unknown'),carrier:s.tracking?.carrier||null,tracking:s.tracking?.number||null}));
+  const shipments=(order.shipments||[]).map(s=>({id:api.positiveId(s.id,'shipment ID'),status:String(s.status||'Unknown'),carrier:s.tracking?.carrier||null,tracking:s.tracking?.tracking_number||s.tracking?.number||null}));
   return [api.positiveId(order.id,'order ID'),String(order.status||'Unknown'),JSON.stringify(shipments)];
 }
 async function save(db,ctx,orderId,hash,order){

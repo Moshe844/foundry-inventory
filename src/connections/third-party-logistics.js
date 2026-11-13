@@ -62,7 +62,7 @@ const whole=(n,label)=>{const v=Number(n);if(!Number.isSafeInteger(v)||v<0||v>21
 // ShipBob: a shipment counts as shipped once ShipBob marks it completed.
 function placedShipBob(order){
   const shipments=(order.shipments||[]).map(s=>({id:String(s.id),status:String(s.status||'Unknown'),shipped:/^(completed|shipped|delivered)$/i.test(String(s.status||'')),
-    carrier:s.tracking?.carrier||null,tracking:s.tracking?.number||s.tracking?.tracking_number||null,shippedAt:s.actual_fulfillment_date||null,
+    carrier:s.tracking?.carrier||null,tracking:s.tracking?.tracking_number||s.tracking?.number||null,shippedAt:s.actual_fulfillment_date||s.tracking?.shipping_date||null,
     lines:(s.products||[]).map(p=>({sku:String(p.reference_id||p.sku||''),quantity:p.quantity!=null?Number(p.quantity):
       (p.inventory_items||[]).reduce((n,i)=>n+Number(i.quantity||0),0)}))}));
   return {id:String(order.id),status:String(order.status||'Unknown'),shipments,raw:order};

@@ -113,4 +113,4 @@ const definition={id:30,key:'late-supplier-deliveries',label:'Follow up on late 
   summary:'Authorize reminders for an exact supplier and sending mailbox. StockChief checks the current promised date, actual receipts and supplier replies before sending.',
   rows:[{Action:'Review supplier reminder rules',link:path}],more:false})};
 
-module.exports={path,phase,configure,activeRule,authority,contact,page,definition};
+module.exports={path,phase,configure,activeRule,authority,contact,owner,page,definition};

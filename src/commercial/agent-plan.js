@@ -253,6 +253,7 @@ function actionJob(name,operation,payload) {
     const phase=payload.followUpPhase||(/^supplier-follow-up:[^:]+:(supplier_confirmation_due|supplier_delivery_late):\d+$/.exec(payload.idempotencyKey||'')||[])[1];
     if(phase==='supplier_confirmation_due')return 29;
     if(phase==='supplier_delivery_late')return 30;
+    if(phase==='supplier_delivery_date_missing')return 89;
     if(payload.recipientKind==='supplier'&&payload.purchaseOrderId)return 28;
     return payload.recipientKind==='supplier'?89:187;
   }
