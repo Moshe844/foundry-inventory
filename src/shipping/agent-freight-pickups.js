@@ -116,7 +116,11 @@ function safeToRequote(effect,pickup){
   return !effect||pickup.receipt?.status==='cancelled'||effect.status==='FAILED'&&effect.errorCode==='freight_pickup_before_dispatch';
 }
 
-async function prepare(db,ctx,input){
+// A person's request, or the Custom routine (agent-freight-routine.js) for a
+// packed shipment that repeats an authorized lane and pallet profile. Only a
+// person can confirm oversized freight; the routine never books it.
+async function prepare(db,ctx,input,{routine=false}={}){
+  if(routine)input={...input,oversizeConfirmed:''};
   await authorize(db,ctx);
   const current=await source(db,ctx,input.shipmentId);
   if(input.sourceFingerprint!==current.fingerprint)throw new ValidationError('The packed shipment changed. Reload its current addresses and details.');
@@ -151,8 +155,8 @@ async function prepare(db,ctx,input){
     else await c.query(`INSERT INTO stockchief_runtime.agent_freight_pickups
       (workspace_id,id,shipment_id,connector_id,account_fingerprint,source_fingerprint,facts,offers,opened_by)
       VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9)`,values);
-    await audit(c,ctx,'Freight quotes ready for review',{id,shipment_id:current.id});
-    if(input.useRoutine==='yes'&&!await policy.stopped(tx,ctx.workspaceId,state,action,true)&&
+    await audit(c,ctx,routine?'Freight quotes requested on its own':'Freight quotes ready for review',{id,shipment_id:current.id});
+    if(input.useRoutine==='yes'&&!facts.oversize&&!await policy.stopped(tx,ctx.workspaceId,state,action,true)&&
       (await require('../autopilot/postgres-service').getState(tx,ctx.workspaceId)).canAutomate){
       const pickup=await get(c,ctx,id);
       for(const offer of [...offers].sort((a,b)=>a.amountMinor-b.amountMinor||a.id.localeCompare(b.id))){
@@ -193,6 +197,8 @@ async function saveRule(db,ctx,id,input){
     const prior=await rule(c,ctx,pickup,offer,true),key=scope(pickup,offer);
     if(input.confirmed!=='yes'||Number(input.ruleRevision)!==(prior?.revision||0))
       throw new ValidationError('Confirm this exact route, pallet profile, carrier and maximum quote before saving.');
+    if(pickup.facts.oversize&&input.remove!=='yes')
+      throw new ValidationError('Oversized freight is booked one pickup at a time, after you check with the carrier.');
     if(input.remove==='yes'){
       await c.query('DELETE FROM stockchief_runtime.agent_draft_rules WHERE workspace_id=$1 AND action_type=$2 AND scope_key=$3',
         [ctx.workspaceId,action,key]);
@@ -221,7 +227,7 @@ async function book(db,ctx,id,input){
     const {pickup,offer}=await exactOffer(c,ctx,id,input);
     if(pickup.effect_id)return {id,replayed:true};
     if(current.fingerprint!==pickup.source_fingerprint)throw new ValidationError('The packed shipment changed. Request fresh freight quotes.');
-    const standing=automatic?await rule(c,ctx,pickup,offer,true):null;
+    const standing=automatic&&!pickup.facts.oversize?await rule(c,ctx,pickup,offer,true):null;
     if(automatic&&(!standing||Number(standing.maximum_minor)<offer.amountMinor)||!automatic&&input.confirmed!=='yes')
       throw new ValidationError('Approve this exact quote or choose one covered by a saved routine.');
     return queue(c,ctx,pickup,offer,standing);
@@ -353,13 +359,23 @@ async function page(db,ctx,{id,shipmentId,connectorId}={}){
   }
   const live=allowed&&!blocked;
   const shipments=live?(await db.query(`SELECT id,shipment_number FROM sales_shipments WHERE workspace_id=$1 AND status='PACKED'
-    AND customer_return_id IS NULL AND nullif(tracking_number,'') IS NULL AND (label_status IS NULL OR label_status IN('FAILED','VOIDED'))
+    AND customer_return_id IS NULL AND nullif(tracking_number,'') IS NULL AND coalesce(label_status,'NONE') NOT IN('PURCHASED','PENDING','REVIEW','VOID_PENDING')
     ORDER BY updated_at DESC,id LIMIT 100`,[ctx.workspaceId])).rows:[];
   const exact=live&&shipmentId?await source(db,ctx,shipmentId):null;
   const connectors=live?await accounts.connectorsFor(db,ctx.workspaceId,{provider:'shipengine'}):[];
   const freightAccounts=live&&exact&&connectorId?await listAccounts(db,ctx,connectorId):[];
-  return {allowed,blocked,rows,selected:null,shipments,exact,connectors,connectorId,freightAccounts,
-    locationTypes:[...adapter.locations],freightClasses:[...adapter.freightClasses],accessorials:adapter.accessorials};
+  const boxes=exact?await shipping.packagesFor(db,ctx.workspaceId,exact.id):[];
+  return {allowed,blocked,rows,selected:null,shipments,exact,connectors,connectorId,freightAccounts,limits:adapter.limits,
+    pallets:measuredPallets(boxes),locationTypes:[...adapter.locations],freightClasses:[...adapter.freightClasses],accessorials:adapter.accessorials};
+}
+
+// The packed shipment's own measured packages, offered as pallet rows in
+// inches and pounds so a person starts from what was recorded at packing.
+function measuredPallets(boxes){
+  if(!boxes.length||boxes.length>40||boxes.some(b=>b.estimated||!(b.weightGrams>0)||!(b.lengthMm>0)||!(b.widthMm>0)||!(b.heightMm>0)))return [];
+  const tenth=value=>String(Math.round(value*10)/10);
+  return boxes.map((b,index)=>({group:String(index+1),length:tenth(b.lengthMm/25.4),width:tenth(b.widthMm/25.4),height:tenth(b.heightMm/25.4),
+    weight:tenth(b.weightGrams/453.59237)}));
 }
 
 async function review(db,ctx){
@@ -368,5 +384,5 @@ async function review(db,ctx){
     action:{label:'Open freight pickups',href:path},summary:'Quote measured pallets and book a carrier pickup through the inventory’s connected freight account.'};
 }
 
-module.exports={action,kind,path,prepare,book,saveRule,dispatch,verify,assertNoFreight,currentFreight,page,definition:{
+module.exports={action,kind,path,prepare,book,saveRule,dispatch,verify,assertNoFreight,currentFreight,page,source,scope,definition:{
   id:66,key:'freight-pickups',label:'Book pallet freight pickups',readPage:review}};

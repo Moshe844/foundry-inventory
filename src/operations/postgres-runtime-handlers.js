@@ -446,6 +446,9 @@ async function autopilotEvaluate(job,client){
     await require('../shipping/agent-return-labels').schedule(client,job.workspaceId,cycleId);
     await require('../shipping/agent-parcel-watch').schedule(client,job.workspaceId,cycleId);
     await require('../shipping/agent-carrier-claims').schedule(client,job.workspaceId,cycleId);
+    // Jobs 66 and 70: repeat pallet pickups and international paperwork for packed shipments.
+    await require('../shipping/agent-freight-routine').schedule(client,job.workspaceId,cycleId);
+    await require('../shipping/agent-export-paper-routine').schedule(client,job.workspaceId,cycleId);
     await require('../transfers/agent-transfer-balancing').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-freight-combine').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-rfq-competition').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
@@ -859,6 +862,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'channel.sync-fixes.v1':external((job,database)=>require('../connections/agent-channel-sync-fixes').run(database,job.workspaceId,{providers,...(options.publicOrigin?{publicOrigin:options.publicOrigin}:{})})),
   'agent.shipping.carrier-claim.v1':external((job,database)=>require('../shipping/agent-carrier-claims').submit(database,job,options.carrierClaimProvider)),
   'agent.shipping.freight-pickup.v1':external((job,database)=>require('../shipping/agent-freight-pickups').dispatch(database,job)),
+  'agent.shipping.freight-routine.v1':external((job,database)=>require('../shipping/agent-freight-routine').run(database,job)),
+  'agent.shipping.export-papers.v1':external((job,database)=>require('../shipping/agent-export-paper-routine').run(database,job)),
   'provider.commerce-verify':external((job,database)=>require('../connections/postgres-commerce-sync').verifyDelivery(database,job.workspaceId,job.payload.effectId,{providers})),
   'agent.mail.supplier_benefit_claim.v1':external(async(job,database)=>{
     const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);require('./agent-mail-protocol').assertJob(effect,job.kind);

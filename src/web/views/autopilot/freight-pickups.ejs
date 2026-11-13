@@ -1,5 +1,5 @@
 <h1>Pallet freight pickups</h1>
-<p>Compare freight quotes for a packed shipment. Book a pickup with your connected ShipStation API freight account and keep the carrier’s bill of lading with the shipment.</p>
+<p>Compare freight quotes for a packed shipment. Book a pickup with your connected ShipStation API freight account and keep the carrier’s bill of lading with the shipment. With a saved booking rule, StockChief books repeat pallet shipments on its own, within your maximum.</p>
 <% const statusLabels={PENDING:'Queued',RUNNING:'Booking',FAILED:'Held for review',AMBIGUOUS:'Awaiting carrier confirmation',
   SUCCEEDED:'Booked',CANCELLED:'Stopped',booked:'Booked',in_transit:'In transit',delivered:'Delivered',cancelled:'Cancelled'}; %>
 <% if(!allowed){ %>
@@ -43,7 +43,9 @@
           <label><input type="checkbox" name="confirmed" value="yes" required> Book this pickup at the displayed quote. The carrier can adjust the final invoice after reweighing or reclassification.</label>
           <button class="btn btn--primary">Book pickup</button>
         </form>
+        <% if(selected.facts.oversize){ %><p>Oversized freight is booked one pickup at a time.</p><% }else{ %>
         <details><summary>Authorize this exact route and pallet profile for routine booking</summary>
+          <p>When a later shipment to this customer is packed with the same pallets, StockChief gets quotes and books the lowest one from this carrier and service, up to your maximum. Pickup is the next business day in the same window.</p>
           <form method="post" action="/autopilot/freight-pickups/<%= selected.id %>/rule" class="form-stack">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <input type="hidden" name="revision" value="<%= selected.revision %>">
@@ -53,7 +55,7 @@
             <label><input name="confirmed" type="checkbox" value="yes" required> Authorize this carrier, service, route and exact pallet profile up to this amount.</label>
             <button class="btn">Save booking rule</button>
           </form>
-        </details>
+        </details><% } %>
         <% if(rule&&Number(rule.maximum_minor)>=offer.amountMinor){ %>
           <form method="post" action="/autopilot/freight-pickups/<%= selected.id %>/book">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -115,31 +117,33 @@
           <label>Dock closes (local time)<input type="time" name="closeTime" required></label>
           <fieldset>
             <legend>Pickup and delivery services</legend>
-            <% for(const service of accessorials){ %><label><input type="checkbox" name="accessorials" value="<%= service %>"> <%= service.replaceAll('_',' ') %></label><% } %>
+            <% for(const service of accessorials){ %><label class="checkbox"><input type="checkbox" name="accessorials" value="<%= service %>"><span class="checkbox-text"><%= service.replaceAll('_',' ') %></span></label><% } %>
           </fieldset>
           <section data-production-repeat>
             <h3>Measured pallets and goods</h3>
             <p>Use the same group number for different goods on the same type of pallet. Enter dimensions and commodity weights for one pallet.</p>
-            <div data-production-rows><fieldset data-production-row>
+            <p>Standard LTL pallets are up to <%= limits.sideInches %> inches a side and <%= limits.palletPounds.toLocaleString('en-US') %> pounds, and up to <%= limits.shipmentPounds.toLocaleString('en-US') %> pounds a shipment.<% if(pallets.length){ %> The rows below start from the packages measured at packing.<% } %></p>
+            <div data-production-rows><% for(const pallet of (pallets.length?pallets:[{group:'1',length:'',width:'',height:'',weight:''}])){ %><fieldset data-production-row>
               <legend>Pallet group and commodity</legend>
-              <% for(const [field,label,value] of [['palletGroup','Group number','1'],['palletCount','Number of identical pallets','1'],
-                ['palletLength','Length (inches)',''],['palletWidth','Width (inches)',''],['palletHeight','Height (inches)','']]){ %>
+              <% for(const [field,label,value] of [['palletGroup','Group number',pallet.group],['palletCount','Number of identical pallets','1'],
+                ['palletLength','Length (inches)',pallet.length],['palletWidth','Width (inches)',pallet.width],['palletHeight','Height (inches)',pallet.height]]){ %>
                 <label><%= label %><input inputmode="decimal" name="<%= field %>" value="<%= value %>" required></label>
               <% } %>
               <label>Stackable<select name="palletStackable" required><option value="no">No</option><option value="yes">Yes</option></select></label>
               <label>Commodity description<input name="commodityName" maxlength="180" required></label>
               <label>Packages of this commodity<input name="commodityCount" inputmode="numeric" required></label>
-              <label>Weight of this commodity (pounds)<input name="commodityWeight" inputmode="decimal" required></label>
+              <label>Weight of this commodity (pounds)<input name="commodityWeight" inputmode="decimal" value="<%= pallet.weight %>" required></label>
               <label>Confirmed freight class<select name="commodityClass" required><option value="">Choose class</option>
                 <% for(const code of freightClasses){ %><option value="<%= code %>"><%= code %></option><% } %>
               </select></label>
               <label>NMFC code (optional)<input name="commodityNmfc" maxlength="24"></label>
-            </fieldset></div>
+            </fieldset><% } %></div>
             <button class="btn" type="button" data-add-row>Add pallet group or commodity</button>
           </section>
-          <label><input type="checkbox" name="confirmed" value="yes" required> I checked these addresses, measurements, weights and freight classes.</label>
-          <label><input type="checkbox" name="nonHazardous" value="yes" required> This shipment contains non-hazardous freight.</label>
-          <label><input type="checkbox" name="useRoutine" value="yes"> Book the lowest quote covered by an existing booking rule.</label>
+          <label class="checkbox"><input type="checkbox" name="confirmed" value="yes" required><span class="checkbox-text">I checked these addresses, measurements, weights and freight classes.</span></label>
+          <label class="checkbox"><input type="checkbox" name="nonHazardous" value="yes" required><span class="checkbox-text">This shipment contains non-hazardous freight. Hazardous freight is booked with the carrier directly.</span></label>
+          <label class="checkbox"><input type="checkbox" name="oversizeConfirmed" value="yes"><span class="checkbox-text">Only for freight over the standard limits: the carrier confirmed it takes this freight.</span></label>
+          <label class="checkbox"><input type="checkbox" name="useRoutine" value="yes"><span class="checkbox-text">Book the lowest quote covered by an existing booking rule.</span></label>
           <button class="btn btn--primary">Get freight quotes</button>
         </form>
         <script src="/manufacturing.js" defer></script>
