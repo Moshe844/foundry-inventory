@@ -579,6 +579,12 @@ async function systemEmail(job,database,options={}){
     !await require('../reports/postgres-scheduling').emailStillWanted(database,job.workspaceId,job.id,message.to,job.payload.reportRevision)){
     return {skipped:'This scheduled report delivery was cancelled.'};
   }
+  if(job.payload.messageType==='scheduled_report'&&job.idempotencyKey?.startsWith('roi-report-email:')&&job.payload.includesCosts!==false){
+    const allowed=await require('../reports/agent-roi-report').costRecipients(database,job.workspaceId);
+    if(!recipientAddresses.length||recipientAddresses.some(address=>!allowed.has(address.toLowerCase()))){
+      return {skipped:'The recipient no longer has access to the financial figures in this report.'};
+    }
+  }
   if(!receipt.retry_safe){
     await database.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
       VALUES($1,$2,$3,'EMAIL_DELIVERY_RECONCILIATION_REQUIRED',$4::jsonb)
