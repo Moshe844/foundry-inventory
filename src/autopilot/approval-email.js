@@ -21,7 +21,13 @@ async function recipient(database,workspaceId,ids){
       AND (n.minimum_severity<>'critical' OR i.urgency='immediate'))`,[workspaceId,ids])).rows[0];
   if(!row)return null;
   const state=await policy.accountState(database,workspaceId);
-  return !state.shadow&&policy.usesAgentTerms(state)&&policy.permits(state.plan,175,'draft')?row:null;
+  if(state.shadow||!policy.usesAgentTerms(state)||!policy.permits(state.plan,175,'draft'))return null;
+  // Once the owner chooses how approvals reach people (approval-links.js),
+  // that choice sends the link instead of this older email.
+  if(await require('../db/schema-installed').has(database,'stockchief_runtime.agent_alert_channels','sms')&&
+    (await database.query(`SELECT 1 FROM stockchief_runtime.agent_alert_channels WHERE workspace_id=$1 AND job_id=175
+      AND (email_connector_id IS NOT NULL OR sms OR push)`,[workspaceId])).rowCount)return null;
+  return row;
 }
 
 async function enqueue(database,workspaceId,created){

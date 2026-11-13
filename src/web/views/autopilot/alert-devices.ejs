@@ -1,0 +1,51 @@
+<% const d=devices,base='/autopilot/alert-devices'; %>
+<h1>Your phone and devices</h1>
+<p>Get alerts and approvals by text message and push as well as email. Which alerts use them is chosen on each alert page.</p>
+<% if(d.upgrading){ %><p class="notice notice--warn">Text and push alerts are being upgraded. Check back shortly.</p><% }else{ %>
+<section class="card card-body stack" id="phone" data-alert-phone>
+  <h2>Text messages</h2>
+  <% if(!d.available.sms){ %><p class="hint">Text messages are not set up on this StockChief server yet.</p>
+  <% }else if(d.phone.verified){ %>
+    <p>Texts go to your number ending <strong><%= d.phone.ending %></strong>.</p>
+    <form method="post" action="<%= base %>/phone/remove"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm">Remove this number</button></form>
+  <% }else if(d.phone.pending){ %>
+    <p>A code was texted to the number ending <strong><%= d.phone.ending %></strong>. Type it here to confirm the number.</p>
+    <form method="post" action="<%= base %>/phone/confirm" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label>
+      <p><button class="btn btn--primary">Confirm number</button></p></form>
+    <div class="btn-row">
+      <form method="post" action="<%= base %>/phone/code"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm">Send a new code</button></form>
+      <form method="post" action="<%= base %>/phone/remove"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm">Use another number</button></form>
+    </div>
+  <% }else{ %>
+    <form method="post" action="<%= base %>/phone" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label>Mobile number<input name="phone" type="tel" autocomplete="tel" placeholder="+1 555 555 0123" maxlength="24" required></label>
+      <p class="hint">Include the country code. StockChief texts a code to confirm it.</p>
+      <p><button class="btn btn--primary">Send a code</button></p></form>
+  <% } %>
+</section>
+<section class="card card-body stack" id="push" data-alert-push>
+  <h2>Push notifications</h2>
+  <% if(!d.available.push){ %><p class="hint">Push is not set up on this StockChief server yet.</p><% }else{ %>
+    <% if(d.devices.length){ %>
+      <% for(const device of d.devices){ %><div class="btn-row" data-push-device>
+        <span><%= device.label %> · on since <%= helpers.dateTime(device.created_at) %></span>
+        <form method="post" action="<%= base %>/push/<%= encodeURIComponent(device.id) %>/remove"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm">Turn off</button></form>
+      </div><% } %>
+    <% }else{ %><p>Push is not on for any device yet.</p><% } %>
+    <form method="post" action="<%= base %>/push" data-push-subscribe data-key="<%= d.publicKey %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="endpoint"><input type="hidden" name="p256dh"><input type="hidden" name="auth">
+      <button class="btn btn--primary" type="submit">Turn on push on this device</button></form>
+    <p class="hint" data-push-status>Your browser asks whether to allow notifications. On an iPhone, push works only once StockChief is added to the Home Screen, so use text messages there.</p>
+  <% } %>
+</section>
+<% if(d.isOwner&&d.kinds.length){ %>
+<section class="stack" data-alert-kinds>
+  <h2>What reaches you</h2>
+  <div class="card table-wrap"><table><thead><tr><th>Alert</th><th>Email</th><th>Text</th><th>Push</th><th></th></tr></thead><tbody>
+  <% for(const k of d.kinds){ %><tr><td><%= k.name %></td><td><%= k.email?'Yes':'No' %></td><td><%= k.sms?'Yes':'No' %></td><td><%= k.push?'Yes':'No' %></td><td><a href="<%= k.href %>">Change</a></td></tr><% } %>
+  </tbody></table></div>
+</section>
+<% } %>
+<% } %>
+<script src="/alert-devices.js" defer></script>
