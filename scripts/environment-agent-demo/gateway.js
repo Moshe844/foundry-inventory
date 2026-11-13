@@ -92,10 +92,10 @@ function initialContractsSnapshot(catalogue,actor,{clock=null}={}){
       const datasets=require('../../src/reports/postgres-registry').list(actor);
       const datasetIndex=datasets.map(({key:name,label})=>({name,label,detailsByName:true}));
       const packet=()=>({operations,operationIndex,navigationSignatures,recordCollections,readSignatures,readArgumentsComplete:true,readDescriptionsComplete:true,
-        readAccess:'Read inputs/authority: readSignatures. Purposes: operations. Use known reads. Metadata proves no facts and grants no authority.',
-        navigationAccess:'Signatures cover listed names. Collections are list paths, not record IDs. Arrival/authority rechecked.',datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),datasetFilterValuesComplete:datasetIndex.every((d,i)=>!datasets[i].filterValues||Object.hasOwn(d,'filterValues')),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,...(clock?{clock}:{}),
-        datasetAccess:'Scoped typed projections. Discover fields/filters. Extent: rows/groups and complete source totals. Permissions rechecked.',
-        coverage:'All names. Discover missing details via environment_interfaces or browser. Canonical checks remain.'});
+        readAccess:'Read signatures define inputs. Operations define purposes. No authority is granted.',
+        navigationAccess:'Collections are list paths. Authority is rechecked.',datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),datasetFilterValuesComplete:datasetIndex.every((d,i)=>!datasets[i].filterValues||Object.hasOwn(d,'filterValues')),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,...(clock?{clock}:{}),
+        datasetAccess:'Discover typed fields and filters by name. Extent includes full source totals.',
+        coverage:'Discover missing details via environment_interfaces or browser.'});
       const size=()=>Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())));
       const details=datasets.map((dataset,index)=>({index,fields:dataset.fields,bytes:Buffer.byteLength(JSON.stringify(dataset.fields))})).sort((a,b)=>a.bytes-b.bytes);
       // Reserve a small part of the SAME packet budget for compact typed
