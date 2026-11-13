@@ -88,7 +88,7 @@ async function queueInTransaction(client,ctx,payload,idempotencyKey,options={}){
   if(options.agentRequested){
     const policy=require('../commercial/agent-plan'),state=await policy.accountState(client,ctx.workspaceId);
     if(policy.usesAgentTerms(state)){
-      const requestedJob=new Map([['supplier_direct_purchase',37],['quote_followup',74],['customer_statement',81],['invoice_reminder',102],['stock_ready_notice',50],['invoice_dispute',100],['supplier_forecast',36],['supplier_rfq',93],['supplier_claim',45],['return_label',112],['fx_alert',40],['supplier_benefit_claim',97],['supplier_negotiation',94],['order_split_notice',61]]).get(payload.standingAuthority?.kind);
+      const requestedJob=new Map([['supplier_direct_purchase',37],['quote_followup',74],['customer_statement',81],['invoice_reminder',102],['stock_ready_notice',50],['invoice_dispute',100],['supplier_forecast',36],['supplier_rfq',93],['supplier_claim',45],['return_label',112],['fx_alert',40],['supplier_benefit_claim',97],['supplier_negotiation',94],['order_split_notice',61],['customer_answer',72],['quote_share',73]]).get(payload.standingAuthority?.kind);
       agentJob=requestedJob!==undefined&&requestedJob===options.agentJob?requestedJob:policy.actionJob('communication.send_email','draft',{...payload,idempotencyKey});
       policy.requireJob(state.plan,agentJob,'draft');
     }
@@ -216,6 +216,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       if(input.standingAuthority?.kind==='supplier_claim')await require('../purchasing/agent-supplier-claims').deliveryAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='supplier_benefit_claim')await require('../purchasing/agent-supplier-benefit-claims').deliveryAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='customer_statement')await require('../accounting/agent-customer-statements').authority(client,workspaceId,input.standingAuthority);
+      if(input.standingAuthority?.kind==='customer_answer')await require('../sales/agent-customer-questions').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='invoice_reminder')await require('../accounting/agent-invoice-reminders').sendAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='stock_ready_notice')await require('../sales/agent-stock-ready').authority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='order_split_notice')await require('../sales/agent-order-splits').noticeAuthority(client,workspaceId,input.standingAuthority);
@@ -247,6 +248,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
         const attachments=input.standingAuthority?.kind==='supplier_claim'?await require('../purchasing/agent-supplier-claims').attachments(database,workspaceId,input.standingAuthority)
           :input.standingAuthority?.kind==='customer_statement'?await require('../accounting/agent-customer-statements').attachments(database,workspaceId,input.standingAuthority):undefined;
         if(input.standingAuthority?.kind==='customer_statement')await require('../accounting/agent-customer-statements').authority(database,workspaceId,input.standingAuthority);
+        if(input.standingAuthority?.kind==='customer_answer')await require('../sales/agent-customer-questions').authority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='invoice_reminder')await require('../accounting/agent-invoice-reminders').sendAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='stock_ready_notice')await require('../sales/agent-stock-ready').authority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='order_split_notice')await require('../sales/agent-order-splits').noticeAuthority(database,workspaceId,input.standingAuthority);
@@ -262,7 +264,9 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
           {externalId:loaded.message.id,lookupFrom:verifySentFrom});
         const send=async()=>{providerCalled=true;return provider.send({credentials:providerCredentials,message:{id:loaded.message.id,
           recipient:loaded.message.recipient,subject:loaded.message.subject,body:loaded.message.body,
-          ...(verifySentFrom?{verifySentFrom}:{}),...(attachments?.length?{attachments}:{})},idempotencyKey:effect.idempotencyKey});};
+          ...(verifySentFrom?{verifySentFrom}:{}),...(attachments?.length?{attachments}:{}),
+          // Job 72: an answer from the mailbox that received the question stays in its thread.
+          ...(input.standingAuthority?.kind==='customer_answer'&&input.standingAuthority.threadId&&input.standingAuthority.connectorId===input.connectorId?{externalThreadId:input.standingAuthority.threadId}:{})},idempotencyKey:effect.idempotencyKey});};
         const accepted=input.standingAuthority?.kind==='supplier_direct_purchase'?await database.transaction(async c=>{
           await require('../purchasing/direct-shipment-mail').authority(c,workspaceId,input.standingAuthority,{lock:true});
           return send();
@@ -282,6 +286,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
           input.standingAuthority?.kind==='invoice_dispute'&&result.sentAt?result.sentAt:at]);
         if(input.standingAuthority?.kind==='supplier_direct_purchase')await require('../purchasing/direct-shipment-mail').accepted(client,workspaceId,input.standingAuthority,input.communicationId,at);
         if(input.standingAuthority?.kind==='quote_share')await require('../sales/quotation-mail').accepted(client,workspaceId,input.standingAuthority,input.communicationId,at);
+        if(input.standingAuthority?.kind==='customer_answer')await require('../sales/agent-customer-questions').accepted(client,workspaceId,input.standingAuthority,input.communicationId,at,result.externalMessageId);
       }});
     return {message:await get(database,workspaceId,kind,input.communicationId),replayed:false};
   }catch(error){

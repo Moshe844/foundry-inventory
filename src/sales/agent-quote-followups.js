@@ -2,7 +2,7 @@
 const {ValidationError}=require('../domain/errors'),{hash}=require('../pricing/postgres-promotions');
 const policy=require('../commercial/agent-plan'),money=require('../domain/currency'),P=require('../actions/permissions');
 const action='sales_quote.followup',kind='quote_followup',relation='stockchief_runtime.agent_quote_followups';
-const quotationSource=require('./quote-message-source'),owner=quotationSource.owner;
+const quotationSource=require('./quote-message-source'),owner=quotationSource.owner,{has}=require('../db/schema-installed');
 async function quote(db,ctx,id){return quotationSource.facts(db,ctx,id,{jobId:74});}
 async function record(db,ctx,id,input){
  if(input.confirmed!=='yes')throw new ValidationError('Confirm that the customer actually received this exact quotation.');
@@ -38,7 +38,7 @@ async function facts(db,ctx,id,connectorId){
 }
 async function sentEvidence(db,workspaceId,source){
  const m=(await db.query(`SELECT m.*,e.payload FROM customer_communications m JOIN stockchief_runtime.provider_effects e ON e.workspace_id=m.workspace_id AND e.aggregate_id=m.id AND e.kind='mail.outbound.send' AND e.status='SUCCEEDED' WHERE m.workspace_id=$1 AND m.id=$2 AND m.customer_id=$3 AND m.status='SENT' AND m.external_message_id IS NOT NULL`,[workspaceId,source.presentation_email_id,source.customer_id])).rows[0],p=m?.payload?.standingAuthority;
- if(!m||m.recipient!==source.recipient||m.idempotency_key!=='quotation-email:'+source.quote_id||m.approved_by_user_id!==source.confirmed_by||p?.kind!=='quote_share'||p.recordId!==source.quote_id||p.quoteHash!==source.quote_hash||p.actorId!==source.confirmed_by||p.connectorId!==m.connector_id||p.manualApproval!==true||p.automatic!==false||p.mailContentHash!==hash({subject:m.subject,body:m.body}))throw new ValidationError('The original quotation email has no matching confirmed mailbox receipt. Review its delivery before preparing a follow-up.');
+ if(!m||m.recipient!==source.recipient||m.idempotency_key!=='quotation-email:'+source.quote_id||m.approved_by_user_id!==source.confirmed_by||p?.kind!=='quote_share'||p.recordId!==source.quote_id||p.quoteHash!==source.quote_hash||p.actorId!==source.confirmed_by||p.connectorId!==m.connector_id||!(p.manualApproval===true&&p.automatic===false||p.manualApproval===false&&p.automatic===true&&p.agentJob===73&&Boolean(p.requestMessageId))||p.mailContentHash!==hash({subject:m.subject,body:m.body}))throw new ValidationError('The original quotation email has no matching confirmed mailbox receipt. Review its delivery before preparing a follow-up.');
  if(!m.sent_at||!p.businessTimeZone||require('../lib/business-time').context(p.businessTimeZone,new Date(m.sent_at)).calendarDate!==source.presented_date)throw new ValidationError('The quotation follow-up date no longer matches the confirmed original send. Review its delivery date.');
 }
 function compose(p){return {subject:'Following up on quotation '+p.quoteNumber,body:'Hello '+p.customerName+',\n\nI’m following up on quotation '+p.quoteNumber+(p.presentationBasis==='mailbox_accepted'?', which we emailed on ':', which our records show you received on ')+p.presentedOn+'. Its recorded total is '+money.format(p.totalMinor,p.currency)+', valid through '+p.validUntil+'.\n\nPlease let us know whether you would like to proceed or have any questions. This message does not change the quotation, reserve goods, create an order or invoice, or change your payment terms.\n\nThank you.'};}
@@ -75,7 +75,8 @@ async function configure(db,ctx,id,input){
  const revision=Number(input.revision);if(!Number.isSafeInteger(revision)||revision<1)throw new ValidationError('Record and reload the customer’s actual quote receipt before scheduling a follow-up.');
  return db.transaction(async c=>{
   await owner(c,ctx);const row=(await c.query('SELECT * FROM '+relation+' WHERE workspace_id=$1 AND quote_id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];if(!row||row.revision!==revision)throw new ValidationError('This confirmation or schedule changed. Reload before saving.');
-  if(input.remove==='1'){await c.query('UPDATE '+relation+' SET schedule_enabled=0,revision=revision+1,problem=NULL,retry_after=NULL,updated_at=now() WHERE workspace_id=$1 AND quote_id=$2',[ctx.workspaceId,id]);await require('../operations/postgres-security-audit').record(c,ctx,{action:'Scheduled quote follow-up stopped',reference:id});return;}
+  // A follow-up the owner stops is not scheduled again by the default delay (job 74).
+  if(input.remove==='1'){await c.query('UPDATE '+relation+' SET schedule_enabled=0,revision=revision+1,problem=NULL,retry_after=NULL,updated_at=now()'+(await has(c,relation,'default_off')?',default_off=true':'')+' WHERE workspace_id=$1 AND quote_id=$2',[ctx.workspaceId,id]);await require('../operations/postgres-security-audit').record(c,ctx,{action:'Scheduled quote follow-up stopped',reference:id});return;}
   const days=Number(input.days);if(!/^\d{1,3}$/.test(String(input.days))||days<1||days>365)throw new ValidationError('Choose one to 365 days after the quotation was shared.');
   const p=await facts(c,ctx,id,input.connectorId),state=await policy.requireWorkspaceJob(c,ctx.workspaceId,74,'draft'),stop=await policy.stopped(c,ctx.workspaceId,state,action,true,p);if(stop)throw new ValidationError(stop);
   if(!(await require('../autopilot/postgres-service').getState(c,ctx.workspaceId)).canAutomate)throw new ValidationError('Enable routine work before scheduling this follow-up.');
@@ -87,8 +88,43 @@ async function configure(db,ctx,id,input){
   await require('../operations/postgres-security-audit').record(c,ctx,{action:'One quote follow-up scheduled',reference:p.quoteNumber,after:{days,due,recipient:p.recipient}});
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
+// Job 74: the owner's default delay. Every quote emailed through a connected
+// mailbox gets one follow-up that many days after the mailbox confirmed it,
+// from the same mailbox, under the same checks as a follow-up the owner
+// schedules by hand. One the plan, mode or taught scope does not allow waits
+// in Needs you with the reason; the owner can still send it from its page.
+async function defaults(db,workspaceId){
+ const result={scheduled:0,waiting:0};
+ if(!await has(db,'stockchief_runtime.agent_quote_settings')||!await has(db,relation,'default_off'))return result;
+ const s=(await db.query('SELECT followup_days,authorized_by FROM stockchief_runtime.agent_quote_settings WHERE workspace_id=$1 AND followup_days IS NOT NULL',[workspaceId])).rows[0];if(!s)return result;
+ const state=await policy.accountState(db,workspaceId);if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,74,'draft'))return result;
+ const today=await require('../lib/business-time').today(db,workspaceId);
+ const rows=(await db.query(`SELECT r.quote_id,r.revision FROM ${relation} r JOIN sales_quotations q ON q.workspace_id=r.workspace_id AND q.id=r.quote_id
+  WHERE r.workspace_id=$1 AND r.schedule_enabled=0 AND r.presentation_basis='mailbox_accepted' AND NOT r.default_off AND r.presented_on+$3::integer<=$2::date
+   AND q.status='OPEN' AND q.valid_until>=$2::date AND (r.retry_after IS NULL OR r.retry_after<=now())
+   AND NOT EXISTS(SELECT 1 FROM customer_communications m WHERE m.workspace_id=r.workspace_id AND m.idempotency_key='quote-followup:'||r.quote_id)
+  ORDER BY r.presented_on,r.quote_id LIMIT 20`,[workspaceId,today,s.followup_days])).rows;
+ for(const selected of rows){const status=await db.transaction(async c=>{
+  const r=(await c.query('SELECT * FROM '+relation+' WHERE workspace_id=$1 AND quote_id=$2 FOR UPDATE SKIP LOCKED',[workspaceId,selected.quote_id])).rows[0];if(!r||r.revision!==selected.revision||r.schedule_enabled||r.default_off)return null;
+  await c.query('SAVEPOINT quote_followup_default');try{
+   const ctx={workspaceId,actorId:s.authorized_by},email=(await c.query('SELECT connector_id FROM customer_communications WHERE workspace_id=$1 AND id=$2',[workspaceId,r.presentation_email_id])).rows[0];
+   const p=await facts(c,ctx,r.quote_id,email?.connector_id),account=await policy.requireWorkspaceJob(c,workspaceId,74,'draft'),stop=await policy.stopped(c,workspaceId,account,action,true,p);if(stop)throw new ValidationError(stop);
+   if(!(await require('../autopilot/postgres-service').getState(c,workspaceId)).canAutomate)throw new ValidationError('StockChief is set to ask you first. Send this follow-up from its page.');
+   const trained=account.plan!=='growth'||await require('../autopilot/draft-authority').trained(c,workspaceId,action,p);policy.requireJob(account.plan,74,'automatic',{trained});
+   const rule=(await c.query('SELECT maximum_minor FROM stockchief_runtime.agent_draft_rules WHERE workspace_id=$1 AND action_type=$2 AND scope_key=$3 AND currency=$4',[workspaceId,action,p.training.key,p.currency])).rows[0];if(rule&&Number(rule.maximum_minor)<p.totalMinor)throw new ValidationError('This quotation is over your taught follow-up limit. Send this follow-up from its page.');
+   const due=require('../accounting/customer-money').addDays(p.presentedOn,s.followup_days);if(due>p.validUntil)throw new ValidationError('The quote expires before your follow-up delay ends.');
+   await c.query(`UPDATE ${relation} SET schedule_enabled=1,connector_id=$3,mailbox_account=$4,provider_type=$5,followup_days=$6,due_on=$7,scheduled_by=$8,revision=revision+1,problem=NULL,retry_after=NULL,updated_at=now() WHERE workspace_id=$1 AND quote_id=$2`,
+    [workspaceId,r.quote_id,p.connectorId,p.mailboxAccount,p.providerType,s.followup_days,due,s.authorized_by]);
+   await require('../operations/postgres-security-audit').record(c,ctx,{action:'Quote follow-up scheduled from your default delay',reference:p.quoteNumber,after:{days:s.followup_days,due,recipient:p.recipient}});
+   await c.query('RELEASE SAVEPOINT quote_followup_default');return 'scheduled';
+  }catch(error){if(!['validation_error','forbidden','entitlement_required'].includes(error.code))throw error;await c.query('ROLLBACK TO SAVEPOINT quote_followup_default');await c.query('RELEASE SAVEPOINT quote_followup_default');
+   await c.query('UPDATE '+relation+" SET problem=$3,retry_after=now()+interval '15 minutes',updated_at=now() WHERE workspace_id=$1 AND quote_id=$2",[workspaceId,r.quote_id,error.message]);return 'waiting';}
+ },{isolation:'SERIALIZABLE',retrySafe:true});if(status)result[status]++;}
+ return result;
+}
 async function run(db,workspaceId){
- const result={queued:0,held:0};if(!(await db.query('SELECT 1 FROM '+relation+' WHERE workspace_id=$1 AND schedule_enabled=1 LIMIT 1',[workspaceId])).rowCount)return result;
+ const result={queued:0,held:0},defaulted=await defaults(db,workspaceId);if(defaulted.scheduled)result.scheduled=defaulted.scheduled;if(defaulted.waiting)result.waiting=defaulted.waiting;
+ if(!(await db.query('SELECT 1 FROM '+relation+' WHERE workspace_id=$1 AND schedule_enabled=1 LIMIT 1',[workspaceId])).rowCount)return result;
  const state=await policy.accountState(db,workspaceId);if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,74,'automatic',{trained:true})||!(await require('../autopilot/postgres-service').getState(db,workspaceId)).canAutomate||await require('../autopilot/job-modes').restriction(db,workspaceId,74,true))return result;
  const today=await require('../lib/business-time').today(db,workspaceId),rows=(await db.query(`SELECT quote_id,revision FROM ${relation} r WHERE workspace_id=$1 AND schedule_enabled=1 AND due_on<=$2 AND (retry_after IS NULL OR retry_after<=now()) AND NOT EXISTS(SELECT 1 FROM customer_communications m WHERE m.workspace_id=r.workspace_id AND m.idempotency_key='quote-followup:'||r.quote_id) ORDER BY due_on,quote_id LIMIT 20`,[workspaceId,today])).rows;
  for(const selected of rows){const status=await db.transaction(async c=>{
@@ -109,6 +145,19 @@ async function page(db,ctx,id){
 }
 async function review(db,ctx,{page=1,filter=''}){
  const rows=(await db.query(`SELECT q.quote_number "Quote",c.name "Customer",q.valid_until::text "Valid through",q.pricing->>'currency' currency,q.pricing->>'totalMinor' total_minor,r.presented_on::text "Quotation shared on",r.due_on::text "Follow-up due",coalesce(m.status,CASE WHEN r.schedule_enabled=1 THEN 'Scheduled' WHEN r.presentation_basis='mailbox_accepted' THEN 'Quotation email sent' WHEN r.quote_id IS NOT NULL THEN 'Customer receipt recorded' ELSE 'Email quote or confirm customer receipt' END) "Follow-up",r.problem "Needs review",'/autopilot/quote-followups/'||q.id link FROM sales_quotations q JOIN customers c ON c.workspace_id=q.workspace_id AND c.id=q.customer_id LEFT JOIN ${relation} r ON r.workspace_id=q.workspace_id AND r.quote_id=q.id LEFT JOIN customer_communications m ON m.workspace_id=q.workspace_id AND m.idempotency_key='quote-followup:'||q.id WHERE q.workspace_id=$1 AND q.status='OPEN' AND ($2='' OR lower(q.quote_number)=lower($2) OR lower(c.name)=lower($2)) ORDER BY q.created_at DESC,q.id LIMIT 101 OFFSET $3`,[ctx.workspaceId,filter,(page-1)*100])).rows;
- return {summary:'Email a saved quotation through your connected mailbox, or record when the customer actually received it through another channel. Then prepare one follow-up or choose its delay. A mailbox-confirmed send does not establish that the customer read it. StockChief sends only within the current quote, plan and owner authority; acceptance, a newer revision, expiry or changed contact stops the message. Scheduling applies only to that quote and does not enable follow-ups for other customers.',rows:rows.slice(0,100).map(({currency,total_minor,...r})=>({...r,Total:money.format(total_minor,currency)})),more:rows.length>100};
+ const settings=await require('./agent-quote-requests').settings(db,ctx.workspaceId),state=await policy.accountState(db,ctx.workspaceId);
+ return {summary:'Email a saved quotation through your connected mailbox, or record when the customer actually received it through another channel. Then prepare one follow-up or choose its delay. Choose a number of days below and every quote emailed through your mailbox is followed up that many days after it was sent. A mailbox-confirmed send does not establish that the customer read it. StockChief sends only within the current quote, plan and owner authority; acceptance, a newer revision, expiry or changed contact stops the message.',rows:rows.slice(0,100).map(({currency,total_minor,...r})=>({...r,Total:money.format(total_minor,currency)})),more:rows.length>100,
+  quoteFollowupDefaults:{days:settings?.followup_days??'',revision:settings?.revision||0,growth:state.plan==='growth',available:await has(db,'stockchief_runtime.agent_quote_settings')}};
 }
-module.exports={record,configure,page,run,facts,compose,authority,confirmedExample,definition:{id:74,key:'quote-followups',label:'Follow up on customer quotations',filterLabel:'Quote number or exact customer',readPage:review},spec:{name:action,agentJob:74,record:'sales_quotation',fields:['recordReference','mailbox'],permission:P.MANAGE_SALES,ownerOnly:true,capability:'connection.email',completionGate:'provider_effect_succeeded',resultingRecords:['customer_communications','stockchief_runtime.provider_effects'],description:'Follow up once on an exact open, unexpired quotation after the owner records that the customer received its saved terms. Use an exact quote and connected mailbox. Does not change terms, accept the quotation, create an order, reserve goods or collect money.',build,execute,verify:async(db,ctx,r,p)=>Boolean((await db.query("SELECT 1 FROM customer_communications WHERE workspace_id=$1 AND id=$2 AND customer_id=$3 AND idempotency_key=$4 AND status IN ('QUEUED','SENDING','SENT')",[ctx.workspaceId,r.communicationId,p.customerId,'quote-followup:'+p.recordId])).rowCount)}};
+// Needs you: follow-ups StockChief could not send on its own, with the reason.
+async function inbox(db,workspaceId){
+ const rows=(await db.query(`SELECT r.quote_id,r.problem,r.updated_at,q.quote_number,c.name customer_name FROM ${relation} r JOIN sales_quotations q ON q.workspace_id=r.workspace_id AND q.id=r.quote_id
+  JOIN customers c ON c.workspace_id=q.workspace_id AND c.id=q.customer_id WHERE r.workspace_id=$1 AND r.problem IS NOT NULL AND q.status='OPEN'
+  AND NOT EXISTS(SELECT 1 FROM customer_communications m WHERE m.workspace_id=r.workspace_id AND m.idempotency_key='quote-followup:'||r.quote_id)
+  ORDER BY r.updated_at DESC,r.quote_id LIMIT 20`,[workspaceId])).rows;
+ return rows.map(r=>({kind:'sales',importance:'Needs You',priority:72,title:'Follow-up for '+r.quote_number+' needs you',
+  happened:'StockChief did not follow up with '+r.customer_name+' about '+r.quote_number+' on its own. Nothing was sent.',why:r.problem,
+  recommendation:'Open the quote follow-up and send it yourself, or stop it.',href:'/autopilot/quote-followups/'+encodeURIComponent(r.quote_id),actionLabel:'Review follow-up',
+  sourceId:'quote-followup:'+r.quote_id,createdAt:r.updated_at,timeLabel:'Due',at:r.updated_at}));
+}
+module.exports={record,configure,page,run,defaults,inbox,facts,compose,authority,confirmedExample,definition:{id:74,key:'quote-followups',label:'Follow up on customer quotations',filterLabel:'Quote number or exact customer',readPage:review},spec:{name:action,agentJob:74,record:'sales_quotation',fields:['recordReference','mailbox'],permission:P.MANAGE_SALES,ownerOnly:true,capability:'connection.email',completionGate:'provider_effect_succeeded',resultingRecords:['customer_communications','stockchief_runtime.provider_effects'],description:'Follow up once on an exact open, unexpired quotation after the owner records that the customer received its saved terms. Use an exact quote and connected mailbox. Does not change terms, accept the quotation, create an order, reserve goods or collect money.',build,execute,verify:async(db,ctx,r,p)=>Boolean((await db.query("SELECT 1 FROM customer_communications WHERE workspace_id=$1 AND id=$2 AND customer_id=$3 AND idempotency_key=$4 AND status IN ('QUEUED','SENDING','SENT')",[ctx.workspaceId,r.communicationId,p.customerId,'quote-followup:'+p.recordId])).rowCount)}};
