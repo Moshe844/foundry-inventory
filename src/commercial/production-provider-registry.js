@@ -11,6 +11,7 @@ const classification=Object.freeze({
  // The speech transport consumes the one-use, database-funded duration hold.
  'ai/providers/openai-transcription.js':'METERED',
  'documents/agent-voice-receiving.js':'METERED',
+ 'documents/agent-voice-paperwork.js':'METERED',
  // The data-only Ask interpreter rejects providers that are not host-branded
  // by the native relay, which owns reservations and exact cost settlement.
  'assistant/ask-language.js':'METERED',
@@ -53,6 +54,9 @@ const classification=Object.freeze({
  'manager/operating-instructions.js':'NOT_PG_ENABLED',
  'manager/postgres-operating-instructions.js':'METERED',
  'operations/email.js':'METERED_INTERNAL_COST',
+ // StockChief's own Twilio account carries alert texts (job 173) and the
+ // answers to customer text orders (job 83); neither is billed per business.
+ 'notifications/alert-providers.js':'METERED_INTERNAL_COST',
  'operations/monitoring.js':'NOT_PG_ENABLED',
  'operations/postgres-monitoring.js':'METERED_INTERNAL_COST',
  'payments/connect.js':'METERED',

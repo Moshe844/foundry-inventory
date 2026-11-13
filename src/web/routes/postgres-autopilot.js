@@ -206,6 +206,43 @@ function createPostgresAutopilotRouter(database,options={}){
     const result=await voice.confirm(database,req.ctx,req.params.id,req.body);
     res.redirect(303,'/purchasing/orders/'+result.purchaseOrderId);
   }));
+  // Job 141: any voice note becomes its receipt, count, transfer or stock correction.
+  const paperwork=require('../../documents/agent-voice-paperwork');
+  const paperworkPage=asyncRoute(async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    return reportPage(req,res,paperwork.JOB,'autopilot/voice-paperwork',{title:'Voice note paperwork',nav:'autopilot',providerAvailable:voiceAvailable,
+      backTo:req.params.id?{href:paperwork.path,label:'Voice note paperwork'}:{href:'/autopilot/reviews',label:'Agent reviews'}},
+    async()=>({screen:await paperwork.page(database,req.ctx,req.params.id||null)}),402);
+  });
+  router.get(paperwork.path,requireAuth,owner,paperworkPage);
+  router.get(paperwork.path+'/:id',requireAuth,owner,paperworkPage);
+  router.get(paperwork.path+'/:id/audio',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await paperwork.authorize(database,req.ctx);
+    const note=await paperwork.load(database,req.ctx,req.params.id,{content:true});
+    res.set({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}).type('audio/wav').send(note.content);
+  }));
+  router.post(paperwork.path,requireAuth,owner,asyncRoute(async(req,res)=>{
+    await paperwork.authorize(database,req.ctx);
+    if(!voiceAvailable)throw new ValidationError('Voice note reading is currently unavailable.');
+    if(req.files?.length!==1||req.files[0].field!=='recording')throw new ValidationError('Choose one recording.');
+    const {id}=await paperwork.enqueue(database,req.ctx,{...req.files[0],confirmed:req.body.confirmed});
+    res.redirect(303,paperwork.path+'/'+id);
+  }));
+  router.post(paperwork.path+'/limits',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await paperwork.configure(database,req.ctx,req.body);
+    req.flash('success',result.enabled?'Your limits were saved.':'Every voice note will wait for you.');
+    res.redirect(303,paperwork.path+'#limits');
+  }));
+  router.post(paperwork.path+'/:id/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await paperwork.confirm(database,req.ctx,req.params.id,req.body);
+    req.flash('success','The paperwork was posted.');
+    res.redirect(303,paperwork.path+'/'+encodeURIComponent(req.params.id));
+  }));
+  router.post(paperwork.path+'/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await paperwork.dismiss(database,req.ctx,req.params.id);
+    req.flash('success','The voice note was dismissed. Nothing was posted.');
+    res.redirect(303,paperwork.path);
+  }));
   function starterAgentPage(job,mode,title,render,tier='Starter'){
     return asyncRoute(async(req,res)=>{
       const state=await policy.accountState(database,req.ctx.workspaceId);
@@ -1850,6 +1887,46 @@ function createPostgresAutopilotRouter(database,options={}){
     const result=await customerOrders.undo(database,req.ctx,req.params.kind==='repeat'?'repeat':'email',req.params.id);
     req.flash('success',result.replayed?'This order was already undone.':'The order was cancelled and its stock released.');
     res.redirect(303,customerOrders.path);
+  }));
+  // Job 83: customer orders by text message and WhatsApp.
+  const textOrders=require('../../sales/agent-text-orders');
+  const textOrdersPage=asyncRoute(async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    return reportPage(req,res,textOrders.JOB,'autopilot/text-orders',{title:'Orders by text and WhatsApp',nav:'autopilot',
+      backTo:req.params.id?{href:textOrders.path,label:'Orders by text and WhatsApp'}:{href:'/autopilot/reviews',label:'Agent reviews'}},
+    async()=>({screen:await textOrders.page(database,req.ctx,{id:req.params.id||null,base:res.locals.origin})}),402);
+  });
+  router.get(textOrders.path,requireAuth,owner,textOrdersPage);
+  router.get(textOrders.path+'/:id',requireAuth,owner,textOrdersPage);
+  router.post(textOrders.path+'/lines',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await textOrders.saveLine(database,req.ctx,req.body);
+    req.flash('success',result.enabled?'The number was saved.':'StockChief stopped reading messages to this number.');
+    res.redirect(303,textOrders.path+'#numbers');
+  }));
+  router.post(textOrders.path+'/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await textOrders.saveRule(database,req.ctx,req.body);
+    req.flash('success',result.enabled?'StockChief will take this customer’s text orders on its own, within your limits.':'Every text order from this customer will wait for you.');
+    res.redirect(303,textOrders.path+'#customers');
+  }));
+  router.post(textOrders.path+'/:id/retry',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await textOrders.retry(database,req.ctx,req.params.id);
+    req.flash('success',result.held?'StockChief read the message again. It still needs you.':'StockChief read the message again and made the order.');
+    res.redirect(303,textOrders.path+'/'+encodeURIComponent(req.params.id));
+  }));
+  router.post(textOrders.path+'/:id/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await textOrders.prepare(database,req.ctx,req.params.id,req.body);
+    req.flash('success','The draft order is ready for you to check and confirm.');
+    res.redirect(303,'/orders/'+result.salesOrderId);
+  }));
+  router.post(textOrders.path+'/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await textOrders.dismiss(database,req.ctx,req.params.id);
+    req.flash('success','The message was dismissed. No order was made.');
+    res.redirect(303,textOrders.path);
+  }));
+  router.post(textOrders.path+'/:id/undo',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await customerOrders.undo(database,req.ctx,'text',req.params.id);
+    req.flash('success',result.replayed?'This order was already undone.':'The order was cancelled and its stock released.');
+    res.redirect(303,textOrders.path);
   }));
   router.post('/autopilot/putaway/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const made=await require('../../warehouse/agent-putaway').prepare(database,req.ctx,req.body.receiptLine,req.body.destination);

@@ -54,18 +54,39 @@ async function post(url,options){
   return response;
 }
 
-// Twilio's Messages API. Returns {reference}.
-async function sendSms({to,body},settings=smsSettings()){
+// Twilio's Messages API. Returns {reference}. `from` sends from one of the
+// account's own numbers (job 83 replies from the business's number, with
+// `whatsapp:` addresses for WhatsApp); otherwise the server's sender is used.
+const ADDRESS=/^(?:whatsapp:)?\+[1-9]\d{7,14}$/;
+async function sendMessage({to,body,from=null},settings=smsSettings()){
   refuseInTests();
   if(!settings)throw Object.assign(new Error('Text messages are not set up on this server.'),{status:400});
-  if(!PHONE.test(String(to||'')))throw Object.assign(new Error('That is not a mobile number StockChief can text.'),{status:400});
+  if(!ADDRESS.test(String(to||''))||from!==null&&!ADDRESS.test(String(from)))throw Object.assign(new Error('That is not a mobile number StockChief can text.'),{status:400});
   const form=new URLSearchParams({To:to,Body:String(body).slice(0,1500)});
-  if(settings.service)form.set('MessagingServiceSid',settings.service);else form.set('From',settings.from);
+  if(from)form.set('From',from);else if(settings.service)form.set('MessagingServiceSid',settings.service);else form.set('From',settings.from);
   const response=await post('https://api.twilio.com/2010-04-01/Accounts/'+encodeURIComponent(settings.sid)+'/Messages.json',{method:'POST',
     headers:{authorization:'Basic '+Buffer.from(settings.sid+':'+settings.token).toString('base64'),'content-type':'application/x-www-form-urlencoded'},body:form});
   const answer=await response.json().catch(()=>({}));
   if(!response.ok)throw Object.assign(new Error(String(answer.message||'The text message provider refused the message.').slice(0,300)),{status:response.status});
   return {reference:String(answer.sid||'')};
+}
+async function sendSms({to,body},settings=smsSettings()){
+  refuseInTests();
+  if(!settings)throw Object.assign(new Error('Text messages are not set up on this server.'),{status:400});
+  if(!PHONE.test(String(to||'')))throw Object.assign(new Error('That is not a mobile number StockChief can text.'),{status:400});
+  return sendMessage({to,body},settings);
+}
+
+// Twilio signs every message it sends to a StockChief link with the account's
+// auth token: HMAC-SHA1 over the exact link and each posted field in name order.
+function twilioSignature(url,params,token){
+  const data=Object.keys(params).sort().reduce((text,key)=>text+key+[].concat(params[key]).join(''),String(url));
+  return crypto.createHmac('sha1',token).update(Buffer.from(data,'utf8')).digest('base64');
+}
+function validTwilioSignature(url,params,signature,token){
+  if(typeof signature!=='string'||!signature||!token)return false;
+  const expected=Buffer.from(twilioSignature(url,params,token)),given=Buffer.from(signature);
+  return expected.length===given.length&&crypto.timingSafeEqual(expected,given);
 }
 
 // RFC 8291: the message is encrypted for the browser's own keys. `fixed`
@@ -109,4 +130,5 @@ async function sendPush({device,message},settings=pushSettings()){
   return {reference:String(response.headers.get('location')||'').slice(0,300)};
 }
 
-module.exports={PHONE,available,publicKey,validEndpoint,sendSms,sendPush,encrypt,vapid,smsSettings,pushSettings};
+module.exports={PHONE,available,publicKey,validEndpoint,sendSms,sendMessage,sendPush,encrypt,vapid,smsSettings,pushSettings,
+  twilioSignature,validTwilioSignature};

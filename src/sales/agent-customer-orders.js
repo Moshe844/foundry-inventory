@@ -116,7 +116,7 @@ async function identify(db,workspaceId,customerId,codes){
 
 // May StockChief do this alone now, only prepare a draft, or only watch?
 // trained: the Growth job 53 rule or completed example for this order.
-async function decide(db,workspaceId,job,{trained=false}={}){
+async function decide(db,workspaceId,job,{trained=false,untaught=null}={}){
   const state=await policy.accountState(db,workspaceId);
   const plan=policy.usesAgentTerms(state)?state.plan:null;
   if(!plan||!policy.permits(plan,job,'draft'))return {mode:'skip',state};
@@ -128,7 +128,7 @@ async function decide(db,workspaceId,job,{trained=false}={}){
   const watch=await modes.restriction(db,workspaceId,job,false);
   if(watch)return {mode:'watch',state,reason:watch};
   if(!policy.permits(plan,job,'automatic',{trained}))return {mode:'draft',state,reason:policy.allowance(plan,job)==='trained'
-    ?'You have not taught StockChief this customer’s repeat order yet, so it waits for your approval.':'On your plan StockChief prepares customer orders for your approval.'};
+    ?untaught||'You have not taught StockChief this customer’s repeat order yet, so it waits for your approval.':'On your plan StockChief prepares customer orders for your approval.'};
   if(!autopilot.canAutomate)return {mode:'draft',state,reason:'StockChief is set to ask you first.'};
   const ask=await modes.restriction(db,workspaceId,job,true);
   if(ask)return {mode:'draft',state,reason:ask};
@@ -203,8 +203,8 @@ async function confirm(c,ctx,orderId,key){
 async function undo(db,ctx,kind,id){
   return db.transaction(async c=>{
     await requireOwner(c,ctx);
-    const table=kind==='repeat'?'stockchief_runtime.agent_repeat_orders':'stockchief_runtime.agent_customer_email_orders';
-    const key=kind==='repeat'?'id':'message_id';
+    const table=kind==='repeat'?'stockchief_runtime.agent_repeat_orders':kind==='text'?'stockchief_runtime.agent_customer_text_orders':'stockchief_runtime.agent_customer_email_orders';
+    const key=kind==='email'?'message_id':'id';
     if(!await has(c,table))throw new ValidationError('This order was not created by StockChief.');
     const row=(await c.query(`SELECT * FROM ${table} WHERE workspace_id=$1 AND ${key}=$2 FOR UPDATE`,[ctx.workspaceId,id])).rows[0];
     if(!row?.automatic||!row.sales_order_id)throw new ValidationError('Only orders StockChief created on its own can be undone here.');
@@ -222,10 +222,11 @@ async function undo(db,ctx,kind,id){
 
 // Everything StockChief did or is waiting on, newest first.
 // show: 'all', 'waiting' (a person must act) or 'done' (everything else).
-async function work(db,workspaceId,{show='all',limit=100,offset=0}={}){
-  const email=await has(db,'stockchief_runtime.agent_customer_email_orders');
-  const repeat=await has(db,'stockchief_runtime.agent_repeat_orders');
-  if(!email&&!repeat)return [];
+async function work(db,workspaceId,{show='all',limit=100,offset=0,jobs=null}={}){
+  const email=(!jobs||jobs.includes(52))&&await has(db,'stockchief_runtime.agent_customer_email_orders');
+  const repeat=(!jobs||jobs.includes(53))&&await has(db,'stockchief_runtime.agent_repeat_orders');
+  const text=(!jobs||jobs.includes(83))&&await has(db,'stockchief_runtime.agent_customer_text_orders');
+  if(!email&&!repeat&&!text)return [];
   const parts=[];
   if(email)parts.push(`SELECT 52 AS job,w.message_id AS id,w.message_id,w.customer_id,w.status,w.reason,w.sales_order_id,w.automatic,w.total_minor,w.currency,
       NULL::text AS reading,w.updated_at,m.sender,m.subject FROM stockchief_runtime.agent_customer_email_orders w
@@ -233,6 +234,11 @@ async function work(db,workspaceId,{show='all',limit=100,offset=0}={}){
   if(repeat)parts.push(`SELECT 53,r.id,r.message_id,r.customer_id,r.status,r.reason,r.sales_order_id,r.automatic,r.total_minor,r.currency,
       r.reading,r.updated_at,m.sender,m.subject FROM stockchief_runtime.agent_repeat_orders r
       LEFT JOIN connection_email_messages m ON m.workspace_id=r.workspace_id AND m.id=r.message_id WHERE r.workspace_id=$1`);
+  // Job 83: orders sent by text message or WhatsApp. A message still being
+  // read, or dismissed by a person, is not shown.
+  if(text)parts.push(`SELECT 83,t.id,NULL::text,t.customer_id,t.status,t.reason,t.sales_order_id,t.automatic,t.total_minor,t.currency,
+      NULL::text,t.updated_at,t.sender,NULL::text FROM stockchief_runtime.agent_customer_text_orders t
+      WHERE t.workspace_id=$1 AND t.status NOT IN ('RECEIVED','STOPPED')`);
   const rows=(await db.query(`SELECT w.*,c.name AS customer,o.order_number,o.status AS order_status FROM (${parts.join(' UNION ALL ')}) w
     LEFT JOIN customers c ON c.workspace_id=$1 AND c.id=w.customer_id
     LEFT JOIN sales_orders o ON o.workspace_id=$1 AND o.id=w.sales_order_id
@@ -244,15 +250,15 @@ async function work(db,workspaceId,{show='all',limit=100,offset=0}={}){
 }
 function describe(r){
   const who=r.customer||r.sender||'A customer';
-  const what=r.job===53?'repeat order':'order';
-  const href=r.sales_order_id?'/orders/'+r.sales_order_id:r.message_id?'/mail/'+r.message_id:path;
+  const what=r.job===53?'repeat order':r.job===83?'text order':'order';
+  const href=r.sales_order_id?'/orders/'+r.sales_order_id:r.job===83?'/autopilot/text-orders/'+r.id:r.message_id?'/mail/'+r.message_id:path;
   const label=r.status==='CONFIRMED'?(r.order_status==='BACKORDERED'?'Confirmed, waiting for stock':'Confirmed on its own'):
     r.status==='UNDONE'?'Undone':r.status==='DRAFTED'?(r.order_status==='DRAFT'?'Draft waiting for you':'Approved'):
     r.status==='WATCHED'?'Watched only':'Needs you';
   return {job:r.job,id:r.id,who,what,href,label,reason:r.reason,order:r.order_number,
     amount:r.total_minor!=null&&r.currency?money.format(Number(r.total_minor),r.currency):null,reading:r.reading,
     canUndo:r.automatic&&r.status==='CONFIRMED'&&!['CANCELLED','FULFILLED','PARTIALLY_FULFILLED'].includes(r.order_status),
-    kind:r.job===53?'repeat':'email',subject:r.subject};
+    kind:r.job===53?'repeat':r.job===83?'text':'email',subject:r.subject};
 }
 
 async function inbox(db,workspaceId){
@@ -262,10 +268,10 @@ async function inbox(db,workspaceId){
     return {kind:'order',importance:'Needs You',priority:86,
       title:draft?`Approve ${r.order_number} for ${d.who}`:`Customer ${d.what} from ${d.who} needs you`,
       happened:draft?`StockChief prepared this ${d.what}${r.subject?` from “${r.subject}”`:''}. Nothing is confirmed yet.`
-        :`${d.who} asked for an ${d.what}${r.subject?` in “${r.subject}”`:''}. StockChief stopped before creating it.`,
+        :`${d.who} asked for ${r.job===83?'an order by text':'an '+d.what}${r.subject?` in “${r.subject}”`:''}. StockChief stopped before creating it.`,
       why:r.reason||'A person approves this order.',
       recommendation:draft?'Open the order, check the lines and prices, then confirm it or throw it away.':'Read the request and enter or approve the order yourself.',
-      href:draft?'/orders/'+r.sales_order_id:r.message_id?'/mail/'+r.message_id+'/order':path,
+      href:draft?'/orders/'+r.sales_order_id:r.job===83?d.href:r.message_id?'/mail/'+r.message_id+'/order':path,
       actionLabel:draft?'Approve this order':'Review the request',sourceId:'customer-order:'+r.job+':'+r.id,
       createdAt:r.updated_at,timeLabel:'Received',at:r.updated_at};
   });
@@ -275,8 +281,8 @@ async function page(db,ctx,{page:number=1}={}){
   const state=await requireOwner(db,ctx);
   const plan=policy.usesAgentTerms(state)?state.plan:null,p=Math.max(1,Math.min(1000,Number(number)||1));
   const [waiting,recent,limit,codes,customers]=await Promise.all([
-    work(db,ctx.workspaceId,{show:'waiting',limit:50}),
-    work(db,ctx.workspaceId,{show:'done',limit:51,offset:(p-1)*50}),
+    work(db,ctx.workspaceId,{show:'waiting',limit:50,jobs:[52,53]}),
+    work(db,ctx.workspaceId,{show:'done',limit:51,offset:(p-1)*50,jobs:[52,53]}),
     limits(db,ctx.workspaceId),
     has(db,'stockchief_runtime.agent_customer_item_codes').then(ok=>ok?db.query(`SELECT k.customer_id,k.code,c.name AS customer,s.code AS sku,i.name AS product
       FROM stockchief_runtime.agent_customer_item_codes k JOIN customers c ON c.workspace_id=k.workspace_id AND c.id=k.customer_id

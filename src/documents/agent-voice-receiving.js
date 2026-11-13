@@ -349,4 +349,5 @@ async function readPage(db,ctx,{filter='',page=1}={}){
 }
 
 module.exports={kind,authorize,enqueue,load,run,recover,confirm,readDraft,page,resolveOrder,
-  definition:{id:141,key:'receiving-voice-notes',label:'Prepare receiving paperwork from a voice note',filterLabel:'Purchase order number',readPage}};
+  definition:{id:141,key:'receiving-voice-notes',label:'Prepare receiving paperwork from a voice note',filterLabel:'Purchase order number',
+    readPage:(db,ctx,options)=>require('./agent-voice-paperwork').withReceivingNotes(db,ctx,options,readPage)}};
