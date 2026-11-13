@@ -117,7 +117,7 @@
         // Job 160: the work product downloads as a PDF, Excel or CSV, like any answer.
         const menu=document.createElement('details'),label=document.createElement('summary'),formats=document.createElement('div');
         menu.className='ask-download';label.textContent='Download';formats.className='ask-download__menu';
-        for(const [name,extension] of [['PDF','pdf'],['Excel','xlsx'],['CSV','csv']]){const link=document.createElement('a');link.textContent=name;link.download='';
+        for(const [name,extension] of [['PDF','pdf'],['Excel','xlsx'],['CSV','csv']]){const link=document.createElement('a');link.textContent=name;if(extension!=='pdf')link.download='';
          link.href=`/ask/goals/${encodeURIComponent(goal.id)}/work/${encodeURIComponent(work.id)}.${extension}`;formats.append(link);}
         menu.append(label,formats);
         card.append(header,content,menu);root.append(card);

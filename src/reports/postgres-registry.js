@@ -272,11 +272,12 @@ const datasets=Object.freeze({
     commercialCapability:'accounting.reports',
     source:`SELECT v.id AS record_id,v.invoice_number,c.name AS customer,v.status,v.currency,
       v.issue_date,v.due_date,v.total_minor::bigint AS total_minor,
-      v.balance_minor::bigint AS balance_minor
+      v.balance_minor::bigint AS balance_minor,
+      CASE WHEN v.status IN ('OPEN','PARTIALLY_PAID') AND v.balance_minor>0 THEN 'yes' ELSE 'no' END AS is_open
       FROM accounting_customer_invoices v JOIN customers c ON c.id=v.customer_id AND c.workspace_id=v.workspace_id
       WHERE v.workspace_id=$1`,recordHref:r=>'/money/invoices/'+r.record_id,
     fields:{invoice_number:'text',customer:'text',status:'text',currency:'text',issue_date:'date',due_date:'date',
-      total_minor:'money_minor',balance_minor:'money_minor'}},
+      total_minor:'money_minor',balance_minor:'money_minor',is_open:'text'}},
   supplier_bills:{label:'Supplier bills',permission:permissions.VIEW_ACCOUNTING,
     commercialCapability:'accounting.reports',
     source:`SELECT v.id AS record_id,v.bill_number,s.name AS supplier,v.status,v.currency,CASE WHEN v.journal_entry_id IS NOT NULL AND v.status IN ('OPEN','PARTIALLY_PAID','PAID') THEN 'yes' ELSE 'no' END AS is_posted,

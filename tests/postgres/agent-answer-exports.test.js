@@ -22,13 +22,15 @@ test('every kind of Ask answer exports to Excel and PDF on every plan, only for 
  const actor=(await db.query('SELECT role,permissions FROM users WHERE id=$1',[ctx.actorId])).rows[0],reports=require('../../src/reports/postgres-service');
  const flags={flag:process.env.STOCKCHIEF_ADAPTIVE_ASK,workspaces:process.env.STOCKCHIEF_ADAPTIVE_ASK_WORKSPACES};
  t.after(()=>{for(const [key,value] of [['STOCKCHIEF_ADAPTIVE_ASK',flags.flag],['STOCKCHIEF_ADAPTIVE_ASK_WORKSPACES',flags.workspaces]])if(value===undefined)delete process.env[key];else process.env[key]=value;});
- const kept=[];
+ const kept=[],multilingual='מלאי 12 | مخزون 12 | 在庫 12 | 库存 12 | स्टॉक 12 📦 <script>bad()</script>';
  for(const tier of ['starter','growth','pro','enterprise']){
   await subscribe(tier);if(tier==='enterprise')await db.query("INSERT INTO commercial_entitlement_overrides(id,account_id,meter,limit_units,reason) VALUES($1,$2,'ai_work_credits',1000,'Funded Custom contract allowance') ON CONFLICT DO NOTHING",[randomUUID(),f.owner.accountId]);const chat='chat_export_'+tier;
   // An answer with records, a short written answer, a review, a report and the agent's own answer.
   const owed=await assistant.ask(db,ctx,'Who owes me money?',{requestKey:'owed-'+tier,conversationId:chat,usageKey:'owed-'+tier});
   const short=await assistant.recordCapabilityOutcome(db,{...ctx,conversationId:chat},'Is anything late?',{step:{contract:registry.get('read.sales_orders'),dependsOn:[]},args:{},provenance:{},
    result:{status:'ANSWERED',answer:'Nothing is late.',rows:[],columns:[]}});
+  const translated=await assistant.recordCapabilityOutcome(db,{...ctx,conversationId:chat},'Show the stock in several languages.',{step:{contract:registry.get('read.sales_orders'),dependsOn:[]},args:{},provenance:{},
+   result:{status:'ANSWERED',answer:multilingual,rows:[],columns:[]}});
   const reviewArgs={agentJob:'stock-by-location',search:code},review=registry.get('read.agent_review');
   const reviewed=await assistant.recordCapabilityOutcome(db,{...ctx,conversationId:chat},'Where is '+code+'?',{step:{contract:review,dependsOn:[]},args:reviewArgs,provenance:{},
    result:{status:'ANSWERED',answer:'Recorded at Dispatch.',...await review.prepare(null,db,ctx,'Where is it?',reviewArgs)}});
@@ -39,6 +41,14 @@ test('every kind of Ask answer exports to Excel and PDF on every plan, only for 
    await download(browser,'/ask/answers/'+id+'/export.'+format+'?content=answer',format);
    if(id!==short.interactionId)await download(browser,'/ask/answers/'+id+'/export.'+format,format);
   }
+  const translatedUrl='/ask/answers/'+translated.interactionId+'/export.';
+  const print=await browser.get(translatedUrl+'pdf?content=answer').expect(200);
+  assert.match(print.headers['content-type'],/text\/html/);
+  assert.equal(print.headers['cache-control'],'private, no-store');
+  assert.match(print.text,/Print or save as PDF/);
+  assert.ok(print.text.includes(multilingual.replace('<script>','&lt;script&gt;').replace('</script>','&lt;/script&gt;')));
+  assert.doesNotMatch(print.text,/<script>/);
+  await download(browser,translatedUrl+'xlsx?content=answer','xlsx');
   const sheet=await browser.get('/ask/answers/'+reviewed.interactionId+'/export.csv').expect(200);
   assert.match(sheet.text,new RegExp(code),tier+' a review answer exports its rows');
   process.env.STOCKCHIEF_ADAPTIVE_ASK='1';process.env.STOCKCHIEF_ADAPTIVE_ASK_WORKSPACES=ws;
@@ -54,21 +64,23 @@ test('every kind of Ask answer exports to Excel and PDF on every plan, only for 
   const goalSheet=await browser.get('/ask/goals/'+goal.goalId+'/export.csv?content=answer').expect(200);
   assert.match(goalSheet.text,/"Product","On hand"/);assert.match(goalSheet.text,/"Parcel item","17"/,tier+' the agent answer table keeps its columns');
   // The whole conversation downloads too, in every format, and still as text.
-  for(const format of ['pdf','xlsx'])await download(browser,'/ask/chats/'+chat+'/download.'+format,format);
+  const chatPrint=await browser.get('/ask/chats/'+chat+'/download.pdf').expect(200);
+  assert.match(chatPrint.text,/מלאי 12/);
+  await download(browser,'/ask/chats/'+chat+'/download.xlsx','xlsx');
   const transcript=await browser.get('/ask/chats/'+chat+'/download.csv').expect(200);
   assert.match(transcript.text,/"You","Who owes me money\?"/);assert.match(transcript.text,/"StockChief","/);
   assert.match((await browser.get('/ask/chats/'+chat+'/download').expect(200)).text,/You: Who owes me money\?/);
   const page=await browser.get('/ask?chat='+chat).expect(200);
   for(const format of ['pdf','xlsx','csv'])assert.ok(page.text.includes('href="/ask/chats/'+chat+'/download.'+format+'"'),tier+' the conversation menu offers '+format);
   assert.match(page.text,new RegExp('href="/ask/chats/'+chat+'/download"[^>]*>Text</a>'),tier+' and still as text');
-  kept.push({chat,interaction:owed.interactionId,goal:goal.goalId});
+  kept.push({chat,interaction:owed.interactionId,goal:goal.goalId,translated:translated.interactionId});
  }
 
  // Only the person who asked can download: another business gets nothing.
  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()});t.after(()=>app.locals.sessionStore.close());
  const auth=require('../../src/domain/postgres-auth-service'),email=randomUUID()+'@example.test';await auth.createBusiness(db,{name:'Other',businessName:'Other business',email,password:f.password});
  const outsider=request.agent(app),login=await outsider.get('/login');await outsider.post('/login').type('form').send({_csrf:f.csrf(login.text),email,password:f.password}).expect(302);
- for(const url of ['/ask/answers/'+kept[0].interaction+'/export.pdf','/ask/goals/'+kept[0].goal+'/export.xlsx?content=answer','/ask/chats/'+kept[0].chat+'/download.pdf'])
+ for(const url of ['/ask/answers/'+kept[0].interaction+'/export.pdf','/ask/answers/'+kept[0].translated+'/export.pdf?content=answer','/ask/goals/'+kept[0].goal+'/export.xlsx?content=answer','/ask/chats/'+kept[0].chat+'/download.pdf'])
   assert.ok((await outsider.get(url)).status>=400,url);
  assert.ok((await browser.get('/ask/answers/'+kept[0].interaction+'/export.exe')).status>=400,'Only offered formats');
 
@@ -114,6 +126,10 @@ test('every kind of Ask answer exports to Excel and PDF on every plan, only for 
   const orders=await page.goto(origin+'/orders?from=2000-01-01&to=2999-12-31');assert.equal(orders.status(),200);
   assert.ok(await page.locator('[data-placed-filter]').isVisible(),width+': the placed-date filter is shown');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),width+': orders have no sideways scroll');
+  await page.goto(origin+'/ask/answers/'+kept[3].translated+'/export.pdf?content=answer');
+  assert.equal(await page.getByRole('cell').last().innerText(),multilingual);
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),width+': translated print view fits');
+  if(width===1280)assert.equal((await page.pdf()).subarray(0,4).toString(),'%PDF');
   await page.context().close();
  }
 });

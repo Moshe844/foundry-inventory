@@ -211,8 +211,7 @@ function createPostgresReportsRouter(database){
     // Job 154: a sentence StockChief cannot turn into a report is refused with
     // sentences this person can build instead; nothing is saved or charged.
     const refuse=async(message,status=422)=>{const building=require('../../reports/build-availability');
-      // Sentences are suggested only while sentences can be built; otherwise templates remain.
-      const examples=(await building.state(database,{provider:req.app.locals.aiProvider})).available?await building.examples(database,req.ctx,await actorFor(database,req.ctx)):[];
+      const examples=await building.examples(database,req.ctx,await actorFor(database,req.ctx));
       return res.status(status).json({ok:false,creditsUsed:0,examples,message:String(message).replace(/\s*No AI credits will be used\.?\s*$/,'')+(examples.length?' For example: '+examples.map(example=>'“'+example+'”').join(', ')+'.':'')+' No AI credits were used. Nothing was saved.'});};
     let result;
     try{result=await require('../../assistant/postgres-service').buildReportDefinition(database,req.ctx,description,{provider:req.app.locals.aiProvider,priorReport:previous,acceptReport:async reportConfig=>{

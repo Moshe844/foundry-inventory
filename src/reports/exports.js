@@ -123,8 +123,11 @@ async function pdf(result){
     const code=character.codePointAt(0);
     if(code<32&&character!=='\n'&&character!=='\r'&&character!=='\t')
       throw new Error('PDF export contains an unsupported control character. Use Excel or CSV.');
-    if(code>=32&&!font.hasGlyphForCodePoint(code))
-      throw new Error('PDF export cannot safely represent every character in this report. Use Excel or CSV; no text was silently replaced.');
+    if(code>=32&&!font.hasGlyphForCodePoint(code)){
+      const error=new Error('PDF export cannot safely represent every character in this report. Use Excel or CSV; no text was silently replaced.');
+      error.code='report_pdf_missing_glyph';
+      throw error;
+    }
   }
   const widest=Math.max(...sections.map((section)=>section.columns.length));
   return new Promise((resolve,reject)=>{

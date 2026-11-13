@@ -34,7 +34,14 @@ async function send(res,format,result){
  if(!result.rows.length)throw new NotFoundError('That answer has no table to download.');
  let output;
  try{output=await reportExports[format](result);}
- catch(error){if(/PDF export/.test(String(error.message)))throw new ValidationError(error.message);throw error;}
+ catch(error){
+  if(error.code==='report_pdf_missing_glyph'){
+   res.set('Cache-Control','private, no-store');
+   return res.render('attention/ask-print',{result});
+  }
+  if(/PDF export/.test(String(error.message)))throw new ValidationError(error.message);
+  throw error;
+ }
  res.set('Content-Type',TYPES[format]);
  res.set('Content-Disposition',`attachment; filename="${fileName(result.config.title)}.${format}"`);
  res.set('Cache-Control','private, no-store');

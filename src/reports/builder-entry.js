@@ -31,7 +31,7 @@ function template(key){return templates.find(row=>row.key===key)||null;}
 // Sentences a report can be built from (job 154), each with the source it reads.
 // Only sentences this person's role and plan can answer are offered.
 const examples=Object.freeze([
-  ['Best selling products in the last 30 days','posted_sales_activity'],['Profit by customer by month this year','posted_sales_activity'],
+  ['Products by sales revenue in the last 30 days','posted_sales_activity'],['Profit by customer by month this year','posted_sales_activity'],
   ['Stock value by location','inventory_valuation'],['Unpaid invoices by customer','customer_invoices'],
   ['Stock on hand by location','stock'],['Units received by month','movements'],['Open purchase orders by supplier','purchase_orders'],
   ['Customer returns by reason','customer_returns'],['Sales orders by status','sales_orders'],['Products by category','catalogue'],
@@ -40,10 +40,31 @@ function examplesFor(datasets,unavailable=[],limit=4){
   const open=new Set((datasets||[]).map(entry=>entry.key).filter(key=>!unavailable.includes(key)));
   return examples.filter(([,dataset])=>open.has(dataset)).map(([sentence])=>sentence).slice(0,limit);
 }
+const standardReports={
+ 'products by sales revenue in the last 30 days':{dataset:'posted_sales_activity',groups:['sku','product','currency'],aggregate:'sum',measure:'revenue_minor',sort:'total',direction:'desc',filters:[{field:'posting_date',operator:'relative',value:'last_30_days'}]},
+ 'profit by customer by month this year':{dataset:'posted_sales_activity',groups:['customer','posting_date','currency'],aggregate:'sum',measure:'gross_profit_minor',dateGrain:'month',sort:'posting_date',direction:'asc',filters:[{field:'posting_date',operator:'relative',value:'year_to_date'}]},
+ 'stock value by location':template('stock-by-location').definition,
+ 'unpaid invoices by customer':{dataset:'customer_invoices',columns:['customer','invoice_number','due_date','balance_minor','currency'],sort:'customer',direction:'asc',filters:[{field:'is_open',operator:'equals',value:'yes'}]},
+ 'stock on hand by location':{dataset:'stock',columns:['location','product','sku','on_hand','stock_unit'],sort:'location',direction:'asc'},
+ 'units received by month':{dataset:'movements',groups:['occurred_on'],aggregate:'sum',measure:'quantity_delta',dateGrain:'month',sort:'occurred_on',direction:'asc',chart:'line',filters:[{field:'operation',operator:'equals',value:'receive'}]},
+ 'open purchase orders by supplier':{dataset:'purchase_orders',columns:['supplier','po_number','expected_date','outstanding_units'],sort:'supplier',direction:'asc',filters:[{field:'is_open',operator:'equals',value:'yes'}]},
+ 'customer returns by reason':template('returns-by-reason').definition,
+ 'sales orders by status':{dataset:'sales_orders',groups:['status'],aggregate:'count',sort:'count',direction:'desc',chart:'bar'},
+ 'products by category':{dataset:'catalogue',columns:['category','product','sku'],sort:'category',direction:'asc'}
+};
 // Exact standard requests use a governed definition without a model round trip.
 // Additional filters, dates or follow-up instructions stay with the full planner.
 function standardDefinition(message,currency){
  const sentence=String(message||'').trim();
+ const key=sentence.toLowerCase().replace(/[.!?]$/,'').replace(/^show(?: me)?\s+/,'').replace(/\s+/g,' ');
+ const chart=key.match(/ as a (bar|line) chart$/);
+ const example=chart?key.slice(0,chart.index):key;
+ if(Object.hasOwn(standardReports,example)){
+  const definition=standardReports[example];
+  const supportsChart=chart?.[1]==='line'?definition.chart==='line':definition.groups?.length===1;
+  if(!chart||supportsChart)return {chart:'table',...definition,
+   ...(chart?{chart:chart[1]}:{}),title:example.replace(/^./,first=>first.toUpperCase())};
+ }
  const stock=/^(?:show(?: me)?|list|build a report of)\s+(?:my\s+)?(?:current\s+)?(?:stock on hand|stock levels|on-hand stock)\s+by\s+(?:product|item|sku)\s+and\s+(?:location|warehouse)[.!?]?$/i;
  if(stock.test(sentence))return {dataset:'stock',title:'Stock on hand by product and location',
   columns:['product','sku','location','on_hand'],groups:[],filters:[],chart:'table',sort:'product',direction:'asc'};

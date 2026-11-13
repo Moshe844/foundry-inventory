@@ -132,19 +132,41 @@ async function composeForSave(database,ctx,message,{provider,priorReport=null}){
   return {definition,schedule,actor};
 }
 
+function presentReport(spec,result,interpretation=''){
+  const visible=result.displayRows.slice(0,50).map((row,index)=>({...row,
+    ...(result.rows[index]?.href?{href:result.rows[index].href}:{})}));
+  const chartColumn=result.chartColumn||result.columns.at(-1);
+  const chartRows=result.rows.slice(0,50);
+  const chartAmounts=spec.groups.length===1&&spec.chart!=='table'
+    ?chartRows.map(row=>Number(row[chartColumn])):null;
+  const safeChartAmounts=chartAmounts?.every(value=>Number.isFinite(value)&&Math.abs(value)<=Number.MAX_SAFE_INTEGER)
+    &&chartRows.every(row=>row[chartColumn]!==null)?chartAmounts:null;
+  const truncated=result.hasMore||result.rows.length>50;
+  const recordType=spec.groups.length?'group':'record';
+  const label=visible.length===1?recordType:recordType+'s';
+  const context=interpretation?' '+interpretation:'';
+  const finding=result.insights?.[0]?.text;
+  let answer=`No recorded rows matched ${spec.title}. Try changing the filters.`;
+  if(visible.length&&spec.summary)answer=`${spec.title}: ${visible[0][result.columns.at(-1)]??'not calculable'} from your records.${context}`;
+  else if(visible.length)answer=`${spec.title}: ${visible.length}${truncated?' or more':''} matching ${label} from your records.${context}${finding?' '+finding:''}`;
+  return {status:'ANSWERED',answer,rows:visible,columns:result.columns,columnLabels:result.columnLabels,
+    handoff:{href:spec.dataset==='composed'?'/reports/compose':`/reports/builder?dataset=${encodeURIComponent(spec.dataset)}`,label:'Customize this report'},
+    reportConfig:spec,comparisonSafe:result.comparisonSafe,chartAmounts:safeChartAmounts};
+}
+
 async function prepare(database,ctx,message,{provider,priorReport=null}){
-  const standard=require('./builder-entry').standardDefinition(message,'USD');
+  const {standardDefinition}=require('./builder-entry');
+  const standard=standardDefinition(message,'USD');
   if(standard){
     const actor=await actorFor(database,ctx);
     if(!actor)return {status:'CLARIFY',answer:'This inventory membership is unavailable.',rows:[],columns:[]};
-    const currency=(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[ctx.workspaceId])).rows[0]?.base_currency||'USD';
-    const spec=reports.normalize(require('./builder-entry').standardDefinition(message,currency),actor),result=await reports.run(database,ctx,actor,spec,{limit:51});
-    const stock=spec.dataset==='stock';
-    const answer=stock?(result.rows.length?'Stock on hand by product and location.':'No stock positions matched this report yet.')
-      :(result.rows.length?'Sales, cost and profit from posted sales records.':'No posted sales matched this report yet.');
-    return {status:'ANSWERED',answer,rows:result.displayRows.slice(0,50),columns:result.columns,columnLabels:result.columnLabels,
-      reportConfig:spec,comparisonSafe:result.comparisonSafe,chartAmounts:null,
-      handoff:{href:stock?'/reports/builder?dataset=stock':'/reports/compose',label:'Customize this report'}};
+    let definition=standard;
+    if(standard.dataset==='composed'){
+      const currency=(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[ctx.workspaceId])).rows[0]?.base_currency||'USD';
+      definition=standardDefinition(message,currency);
+    }
+    const spec=reports.normalize(definition,actor),result=await reports.run(database,ctx,actor,spec,{limit:51});
+    return presentReport(spec,result);
   }
   if(!provider?.complete)return {status:'CLARIFY',answer:'I cannot interpret a new report request while AI is unavailable. You can still build one under Reports.',
     rows:[],columns:[],handoff:{href:'/reports',label:'Open reports'}};
@@ -227,28 +249,7 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
       if(attempt===0&&!result.rows.length&&(spec.filters||[]).some((filter)=>
         filter.operator==='equals'&&registry.get(spec.dataset)?.fields[filter.field]==='text'))
         throw new Error('The exact text filter returned no records. Reconsider whether the owner gave a partial text/category label; use contains only if that preserves the requested meaning. Never fabricate matching rows.');
-      const visible=result.displayRows.slice(0,50).map((row,index)=>({...row,
-        ...(result.rows[index]?.href?{href:result.rows[index].href}:{})}));
-      const chartColumn=result.chartColumn||result.columns.at(-1);
-      const chartAmounts=spec.groups.length===1&&spec.chart!=='table'
-        ?result.rows.slice(0,50).map((row)=>Number(row[chartColumn])):null;
-      const safeChartAmounts=chartAmounts?.every((value)=>
-        Number.isFinite(value)&&Math.abs(value)<=Number.MAX_SAFE_INTEGER)
-        &&result.rows.slice(0,50).every((row)=>row[chartColumn]!==null)?chartAmounts:null;
-      const truncated=result.hasMore||result.rows.length>50;
-      const label=spec.groups.length?(visible.length===1?'group':'groups'):spec.summary?'summary':
-        (visible.length===1?'record':'records');
-      const findings=result.insights||[];
-      const summaryValue=spec.summary&&visible.length?visible[0][result.columns.at(-1)]:null;
-      const answer=visible.length?(spec.summary
-        ?`${spec.title}: ${summaryValue??'not calculable'} from recorded PostgreSQL data.${interpretation?` ${interpretation}`:''}`
-        :`${spec.title}: ${visible.length}${truncated?' or more':''} matching ${label} from recorded PostgreSQL data.${interpretation?` ${interpretation}`:''}${findings[0]?` ${findings[0].text}`:''}`):
-        `No recorded rows matched ${spec.title}. Try changing the filters.`;
-      return {status:'ANSWERED',answer,rows:visible,columns:result.columns,
-        columnLabels:result.columnLabels,
-        handoff:{href:spec.dataset==='composed'?'/reports/compose':
-          `/reports/builder?dataset=${encodeURIComponent(spec.dataset)}`,label:'Customize this report'},
-        reportConfig:spec,comparisonSafe:result.comparisonSafe,chartAmounts:safeChartAmounts};
+      return presentReport(spec,result,interpretation);
     }catch(error){
       if(error.reportProviderFailure||error.code==='entitlement_required'||error.code==='rate_limited')throw error;
       if(attempt<2){request.prompt=JSON.stringify({...contextPrompt,rejectedPlan:proposed,

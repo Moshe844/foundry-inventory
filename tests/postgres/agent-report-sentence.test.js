@@ -13,10 +13,9 @@ test('a report is built from one sentence on every plan, previewed before saving
  const ent=require('../../src/commercial/entitlements'),reports=require('../../src/reports/postgres-service'),scope={accountId:f.owner.accountId,workspaceId:ws};
  await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
  const actor=(await db.query('SELECT role,permissions FROM users WHERE id=$1',[ctx.actorId])).rows[0];
- // The fake model reads the sentence as a monthly line chart of stock movement; a
- // second model call checks that fit. Either can be told to disagree.
- const monthly={dataset:'movements',title:'Units received by month',dateGrain:'month',columns:[],groups:['occurred_on'],aggregate:'sum',measure:'quantity_delta',filters:[],sort:'occurred_on',direction:'asc',chart:'line'};
- let proposal=monthly,aligned=true;const calls=[];
+ // Standard reports read real records. The model and verifier remain injectable
+ // for requests beyond those standard definitions.
+ let proposal={dataset:'movements',title:'Inventory movement',dateGrain:'month',columns:[],groups:['occurred_on'],aggregate:'sum',measure:'quantity_delta',filters:[],sort:'occurred_on',direction:'asc',chart:'line'},aligned=true;const calls=[];
  const provider={name:'anthropic',model:PRICED_MODEL,async complete(input){calls.push(input.schemaName);
   if(input.schemaName==='stockchief_governed_report_fit')return {usage:pricedUsage(),data:{aligned,reason:aligned?'':'The report does not measure what was asked.'}};
   if(input.schemaName==='stockchief_governed_report_composed_edit')return {usage:pricedUsage(),data:{chart:'table',sort:'profit',direction:'desc',resultFilters:[]}};
@@ -31,10 +30,11 @@ test('a report is built from one sentence on every plan, previewed before saving
  const sentence='Units received by month as a line chart';
 
  for(const tier of ['starter','growth','pro','enterprise']){
-  await subscribe(tier);proposal=monthly;aligned=true;
+  await subscribe(tier);aligned=true;
   const [usedBefore,savedBefore]=[await credits(),await saved()];
   // One sentence builds the report. Reports use no AI credits.
-  const built=await describe(sentence);
+  const callsBefore=calls.length,built=await describe(sentence);
+  assert.equal(calls.length,callsBefore,tier+' standard reports do not call a model');
   assert.equal(built.status,200,tier+' '+JSON.stringify(built.body));assert.equal(built.body.ok,true);
   assert.equal(built.body.creditsUsed,0,tier+' reports use no credits');assert.equal(await credits(),usedBefore,tier);
   // A clear preview before saving: the sentence, the report it became, and nothing saved yet.
@@ -44,6 +44,7 @@ test('a report is built from one sentence on every plan, previewed before saving
   const preview=await owner.get('/reports/run').expect(200);
   const definition=JSON.parse(unescape(/name="definition" value="([^"]+)"/.exec(preview.text)[1]));
   assert.equal(definition.dataset,'movements');assert.equal(definition.dateGrain,'month');assert.equal(definition.chart,'line');
+  assert.deepEqual(definition.filters,[{field:'operation',operator:'equals',value:'receive'}]);
   assert.equal(await saved(),savedBefore,tier+' nothing is saved before Save report');
   // Saving keeps the exact definition, with an emailed schedule, and every run reads it again.
   const save=await owner.post('/reports/save').type('form').send({_csrf:f.csrf(preview.text),definition:JSON.stringify(definition),frequency:'weekly',hour:'8',minute:'0',weekday:'1'});
@@ -65,7 +66,7 @@ test('a report is built from one sentence on every plan, previewed before saving
   // A sentence it cannot turn into a report is refused, with sentences that can be built here.
   aligned=false;const usedRefused=await credits(),savedRefused=await saved();
   const refused=await describe('Show me the vibes of the warehouse');
-  assert.equal(refused.status,422,tier);assert.equal(refused.body.ok,false);assert.equal(refused.body.creditsUsed,0);
+  assert.equal(refused.status,422,tier+' '+JSON.stringify(refused.body));assert.equal(refused.body.ok,false);assert.equal(refused.body.creditsUsed,0);
   assert.ok(refused.body.examples.length>=2,tier+' '+JSON.stringify(refused.body));
   assert.deepEqual(refused.body.examples,await require('../../src/reports/build-availability').examples(db,ctx,actor),tier+' the examples are sentences this plan can build');
   assert.match(refused.body.message,/For example: “[^”]+”/);assert.match(refused.body.message,/No AI credits were used\. Nothing was saved\.$/);
@@ -91,15 +92,21 @@ test('a report is built from one sentence on every plan, previewed before saving
   t.diagnostic(tier+' combined sales report: '+(included?'built':'plan lock shown'));
  }
 
- // With no model available, sentences are not suggested; templates and the builder remain.
+ // Every offered standard sentence builds without a model.
  const offline=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()});
  t.after(()=>offline.locals.sessionStore.close());
  const other=request.agent(offline),otherLogin=await other.get('/login');
  await other.post('/login').type('form').send({_csrf:f.csrf(otherLogin.text),email:f.email,password:f.password}).expect(302);
  if(!require('../../src/config').ai.configured){
-  const page=await other.get('/reports/builder').expect(200);
-  const none=await other.post('/reports/describe').set('Accept','application/json').type('form').send({_csrf:f.csrf(page.text),q:sentence});
-  assert.equal(none.status,422);assert.deepEqual(none.body.examples,[]);assert.match(none.body.message,/unavailable right now/);
+  const describeOffline=async q=>{const page=await other.get('/reports/builder').expect(200);return other.post('/reports/describe').set('Accept','application/json').type('form').send({_csrf:f.csrf(page.text),q});};
+  const none=await describeOffline('Show me the vibes of the warehouse');
+  assert.equal(none.status,422);assert.match(none.body.message,/unavailable right now/);
+  assert.deepEqual(none.body.examples,await require('../../src/reports/build-availability').examples(db,ctx,actor));
+  for(const [q] of require('../../src/reports/builder-entry').examples){
+   const built=await describeOffline(q);
+   assert.equal(built.status,200,q+' '+JSON.stringify(built.body));
+   assert.equal(built.body.creditsUsed,0,q);
+  }
  }
  // The builder's examples are only sentences this person and plan can build.
  const landing=await owner.get('/reports/builder').expect(200),offered=[...landing.text.matchAll(/data-report-example>([^<]+)</g)].map(match=>match[1]);
