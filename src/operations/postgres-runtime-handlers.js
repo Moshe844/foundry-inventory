@@ -443,6 +443,8 @@ async function autopilotEvaluate(job,client){
     await require('../shipping/agent-labels').schedule(client,job.workspaceId,cycleId);
     await require('../shipping/agent-return-labels').schedule(client,job.workspaceId,cycleId);
     await require('../shipping/agent-parcel-watch').schedule(client,job.workspaceId,cycleId);
+    // Job 39: read the carrier's tracking for followed ocean and air shipments.
+    await require('../purchasing/inbound-freight-arrivals').schedule(client,job.workspaceId,cycleId);
     await require('../shipping/agent-carrier-claims').schedule(client,job.workspaceId,cycleId);
     await require('../transfers/agent-transfer-balancing').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-freight-combine').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
@@ -674,6 +676,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.shipping-labels.v1':external((job,database)=>require('../shipping/agent-labels').run(database,job,{providerResolver:options.shippingProviderResolver})),
   'agent.return-labels.v1':external((job,database)=>require('../shipping/agent-return-labels').run(database,job,{providerResolver:options.shippingProviderResolver})),
   'agent.parcel-watch.v1':external((job,database)=>require('../shipping/agent-parcel-watch').run(database,job,{providerResolver:options.shippingProviderResolver})),
+  'agent.inbound-freight-tracking.v1':external((job,database)=>require('../purchasing/inbound-freight-arrivals').run(database,job,{provider:options.freightTrackingProvider})),
   'agent.carrier-claim-follow-up.v1':external((job,database)=>require('../shipping/agent-carrier-claims').followUp(database,job,options.carrierClaimProvider)),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-shelf-photo.v1':external((job,database)=>require('../warehouse/agent-shelf-photos').run(job,database,{provider:options.aiProvider}),'reading'),

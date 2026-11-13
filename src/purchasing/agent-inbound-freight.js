@@ -11,6 +11,7 @@ const path='/autopilot/inbound-freight',publicPath='/freight/update',action='pur
 const table='stockchief_runtime.agent_inbound_freight';
 const updates='stockchief_runtime.agent_inbound_freight_updates';
 const deposits='stockchief_runtime.agent_inbound_freight_deposits';
+const dates='stockchief_runtime.agent_inbound_freight_po_dates';
 const statusLabels={booked:'Booked',in_transit:'In transit',arrived:'At destination port or airport',released:'Released for onward delivery',exception:'Needs attention'};
 const progress=new Map([['booked',0],['in_transit',1],['arrived',2],['released',3]]);
 const hash=value=>createHash('sha256').update(value).digest('hex');
@@ -62,8 +63,12 @@ async function orderFacts(db,ctx,references){
 }
 
 async function get(db,workspaceId,id,lock=false){
+  // Carrier tracking columns came with a later migration than the shipment.
+  const tracked=await require('../db/schema-installed').has(db,table,'tracking');
   const row=(await db.query(`SELECT id,workspace_id,mode,reference_type,reference,forwarder,destination,status,eta::text,original_eta::text,
-    order_ids,authorized_by,routine,maximum_shift_days,revision,link_expires_at FROM ${table} WHERE workspace_id=$1 AND id=$2${lock?' FOR UPDATE':''}`,
+    order_ids,authorized_by,routine,maximum_shift_days,revision,link_expires_at,
+    ${tracked?'carrier_code,tracking,tracking_reference,tracking_checked_at,tracking_issue':'NULL carrier_code,false tracking,NULL tracking_reference,NULL tracking_checked_at,NULL tracking_issue'}
+    FROM ${table} WHERE workspace_id=$1 AND id=$2${lock?' FOR UPDATE':''}`,
   [workspaceId,id])).rows[0];
   if(!row)throw new NotFoundError('That freight shipment is not in this inventory.');
   return row;
@@ -163,6 +168,28 @@ function eligibleDate(current,eta){
     distance(current.original_eta,eta)<=current.maximum_shift_days);
 }
 
+// How far one arrival update may go on its own, from the forwarder link or
+// the carrier's tracking alike:
+//   WATCH   pause, observe, Watch only and the first 14 days: recorded only;
+//   APPLIED routine updates inside the owner's day limit;
+//   REVIEW  everything else, including Ask me first, waits for the owner.
+async function decide(c,ctx,account,row,{status,eta}){
+  const tx=scoped(c);
+  const watch=await policy.stopped(tx,ctx.workspaceId,account,action,false);
+  if(watch)return {disposition:'WATCH',reason:watch};
+  const autopilot=(await c.query('SELECT paused,suspended FROM workspace_autopilot WHERE workspace_id=$1',[ctx.workspaceId])).rows[0];
+  if(Number(autopilot?.paused)||Number(autopilot?.suspended))return {disposition:'WATCH',reason:'Automatic work is paused. The update is recorded and nothing changed.'};
+  if(!row.routine)return {disposition:'REVIEW',reason:'Routine updates are off for this shipment.'};
+  if(status==='exception')return {disposition:'REVIEW',reason:'The update reports a problem with the shipment.'};
+  if(progress.get(status)<progress.get(row.status))return {disposition:'REVIEW',reason:'The status moves backwards.'};
+  if(!eligibleDate(row,eta))return {disposition:'REVIEW',reason:'The arrival date moves more than the '+row.maximum_shift_days+' days you allowed.'};
+  const stop=await policy.stopped(tx,ctx.workspaceId,account,action,true);
+  if(stop)return {disposition:'REVIEW',reason:stop};
+  if(!(await require('../autopilot/postgres-service').getState(tx,ctx.workspaceId)).canAutomate)
+    return {disposition:'REVIEW',reason:'Routine work is off for this inventory.'};
+  return {disposition:'APPLIED'};
+}
+
 async function submit(db,token,input){
   const eta=date(input.eta),status=input.status,note=String(input.note||'').trim();
   if(input.confirmed!=='yes'||!Object.hasOwn(statusLabels,status)||note.length>1000)
@@ -175,15 +202,17 @@ async function submit(db,token,input){
     if(!(await c.query(`SELECT 1 FROM ${table} WHERE workspace_id=$1 AND id=$2 AND token_hash=$3 AND link_expires_at>now()`,
       [ctx.workspaceId,row.id,hash(token)])).rowCount)throw new NotFoundError('This private freight link is inactive.');
     if(Number(input.revision)!==row.revision)throw new ValidationError('This shipment was updated. Reload the current status before sending your update.');
-    const automatic=row.routine&&status!=='exception'&&progress.get(status)>=progress.get(row.status)&&eligibleDate(row,eta)&&
-      !await policy.stopped(tx,ctx.workspaceId,account,action,true)&&(await require('../autopilot/postgres-service').getState(tx,ctx.workspaceId)).canAutomate;
-    const id=newId('freight-update');
+    const decision=await decide(c,ctx,account,row,{status,eta}),automatic=decision.disposition==='APPLIED';
+    const id=newId('freight-update'),extended=await require('../db/schema-installed').has(c,updates,'held_reason');
     await require('../commercial/storage-capacity').reserve(tx,ctx.workspaceId,'inbound-freight-update:'+id,4096,{finished:true});
-    await c.query(`INSERT INTO ${updates}(workspace_id,freight_id,id,revision,status,eta,note,disposition,applied_by)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[ctx.workspaceId,row.id,id,row.revision+1,status,eta,note||null,automatic?'APPLIED':'REVIEW',automatic?ctx.actorId:null]);
+    await c.query(`INSERT INTO ${updates}(workspace_id,freight_id,id,revision,status,eta,note,disposition,applied_by${extended?',held_reason':''})
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9${extended?',$10':''})`,[ctx.workspaceId,row.id,id,row.revision+1,status,eta,note||null,
+      extended?decision.disposition:automatic?'APPLIED':'REVIEW',automatic?ctx.actorId:null,...(extended?[decision.reason||null]:[])]);
     await c.query(`UPDATE ${table} SET revision=revision+1,status=CASE WHEN $3 THEN $4 ELSE status END,
       eta=CASE WHEN $3 THEN coalesce($5,eta) ELSE eta END WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,row.id,automatic,status,eta]);
-    await audit(c,ctx,automatic?'Forwarder freight update applied':'Forwarder freight update needs review',row.id,{updateId:id,status,eta});
+    await require('./inbound-freight-arrivals').settle(c,ctx,row,id,row.eta,eta,{APPLIED:'APPLIED',REVIEW:'HELD',WATCH:'WATCH'}[decision.disposition]);
+    await audit(c,ctx,automatic?'Forwarder freight update applied':decision.disposition==='WATCH'?'Forwarder freight update recorded while watching':'Forwarder freight update needs review',
+      row.id,{updateId:id,status,eta,reason:decision.reason||null});
     return {saved:true};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
@@ -198,10 +227,11 @@ async function reviewUpdate(db,ctx,id,input){
       [ctx.workspaceId,id,input.updateId])).rows[0];
     if(update?.disposition==='APPLIED')return {replayed:true};
     if(input.confirmed!=='yes'||!update||update.revision!==row.revision||Number(input.revision)!==row.revision)
-      throw new ValidationError('Review the latest forwarder update before applying it.');
+      throw new ValidationError('Review the latest arrival update before applying it.');
     await c.query(`UPDATE ${updates} SET disposition='APPLIED',applied_by=$4 WHERE workspace_id=$1 AND freight_id=$2 AND id=$3`,[ctx.workspaceId,id,update.id,ctx.actorId]);
     await c.query(`UPDATE ${table} SET revision=revision+1,status=$3,eta=coalesce($4,eta) WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,update.status,update.eta]);
-    await audit(c,ctx,'Forwarder freight update individually approved',id,{updateId:update.id,status:update.status,eta:update.eta});
+    await require('./inbound-freight-arrivals').settle(c,ctx,row,update.id,row.eta,update.eta,'APPROVED');
+    await audit(c,ctx,'Arrival update individually approved',id,{updateId:update.id,status:update.status,eta:update.eta});
     return {applied:true};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
@@ -213,7 +243,8 @@ async function saveDeposit(db,ctx,id,input){
     const row=await get(c,ctx.workspaceId,id,true);
     if(input.confirmed!=='yes'||!row.order_ids.includes(input.orderId))throw new ValidationError('Confirm the exact linked purchase order and deposit terms.');
     const [po]=await orderFacts(c,ctx,[input.orderId]);
-    const amount=money.userToMinor(input.amount,po.currency,{label:'Expected deposit'}),due=date(input.dueDate,true);
+    const amount=money.userToMinor(input.amount,po.currency,{label:'Expected deposit'}),due=date(input.dueDate,true),balanceDue=date(input.balanceDueDate);
+    if(balanceDue&&balanceDue<due)throw new ValidationError('The balance falls due on or after the deposit.');
     if(amount<=0)throw new ValidationError('Enter a positive deposit.');
     const reference=String(input.billNumber||'').trim();
     const bill=reference?(await c.query(`SELECT b.id FROM accounting_supplier_bills b JOIN accounting_journal_entries j
@@ -227,11 +258,12 @@ async function saveDeposit(db,ctx,id,input){
     if(Number(input.revision)!==(prior?.revision||0))throw new ValidationError('Reload the current deposit before editing.');
     if(bill&&(await c.query(`SELECT 1 FROM ${deposits} WHERE workspace_id=$1 AND bill_id=$2 AND (freight_id<>$3 OR purchase_order_id<>$4)`,
       [ctx.workspaceId,bill.id,id,po.id])).rowCount)throw new ValidationError('This bill already tracks a deposit on another shipment.');
-    await c.query(`INSERT INTO ${deposits}(workspace_id,freight_id,purchase_order_id,bill_id,amount_minor,currency,due_date)
-      VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(workspace_id,freight_id,purchase_order_id) DO UPDATE SET bill_id=EXCLUDED.bill_id,
-      amount_minor=EXCLUDED.amount_minor,currency=EXCLUDED.currency,due_date=EXCLUDED.due_date,revision=agent_inbound_freight_deposits.revision+1`,
-    [ctx.workspaceId,id,po.id,bill?.id||null,amount,po.currency,due]);
-    await audit(c,ctx,'Expected freight deposit recorded',id,{purchaseOrderId:po.id,amount,currency:po.currency,due,billId:bill?.id||null});
+    const balanced=await require('../db/schema-installed').has(c,deposits,'balance_due_date');
+    await c.query(`INSERT INTO ${deposits}(workspace_id,freight_id,purchase_order_id,bill_id,amount_minor,currency,due_date${balanced?',balance_due_date':''})
+      VALUES($1,$2,$3,$4,$5,$6,$7${balanced?',$8':''}) ON CONFLICT(workspace_id,freight_id,purchase_order_id) DO UPDATE SET bill_id=EXCLUDED.bill_id,
+      amount_minor=EXCLUDED.amount_minor,currency=EXCLUDED.currency,due_date=EXCLUDED.due_date,${balanced?'balance_due_date=EXCLUDED.balance_due_date,':''}revision=agent_inbound_freight_deposits.revision+1`,
+    [ctx.workspaceId,id,po.id,bill?.id||null,amount,po.currency,due,...(balanced?[balanceDue]:[])]);
+    await audit(c,ctx,'Expected freight deposit recorded',id,{purchaseOrderId:po.id,amount,currency:po.currency,due,balanceDue,billId:bill?.id||null});
     return {saved:true};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
@@ -242,34 +274,32 @@ async function page(db,ctx,id=null){
   const allowed=policy.usesAgentTerms(state)&&policy.permits(state.plan,39,'draft');
   const rows=(await db.query(`SELECT id,mode,reference,forwarder,destination,status,eta::text FROM ${table}
     WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100`,[ctx.workspaceId])).rows;
-  if(!id)return {allowed,rows,freight:null,statusLabels};
+  const arrivals=require('./inbound-freight-arrivals'),installed=require('../db/schema-installed');
+  const trackingAvailable=Boolean(require('./freight-tracking').configured());
+  if(!id)return {allowed,rows,freight:null,statusLabels,trackingAvailable};
   const freight=await get(db,ctx.workspaceId,id);
-  const [orders,history,expected]=await Promise.all([
-    db.query('SELECT id,po_number,expected_date::text,currency FROM purchase_orders WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY po_number',
+  const extended=await installed.has(db,updates,'source'),datesInstalled=await installed.has(db,dates);
+  const [orders,history,expected,changes,value]=await Promise.all([
+    db.query('SELECT id,po_number,expected_date::text,currency,status FROM purchase_orders WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY po_number',
       [ctx.workspaceId,freight.order_ids]),
-    db.query(`SELECT id,revision,status,eta::text,note,disposition,created_at FROM ${updates} WHERE workspace_id=$1 AND freight_id=$2
-      ORDER BY revision DESC LIMIT 100`,[ctx.workspaceId,id]),
-    db.query(`SELECT d.purchase_order_id,d.revision,d.amount_minor,d.currency,d.due_date::text,b.bill_number,coalesce(sum(paid.amount_minor),0)::text paid
-      FROM ${deposits} d LEFT JOIN accounting_supplier_bills b ON b.workspace_id=d.workspace_id AND b.id=d.bill_id
-        AND b.purchase_order_id=d.purchase_order_id AND b.status IN('OPEN','PARTIALLY_PAID','PAID')
-        AND b.currency=d.currency AND b.total_minor=d.amount_minor AND EXISTS(SELECT 1 FROM accounting_journal_entries j
-          WHERE j.workspace_id=b.workspace_id AND j.id=b.journal_entry_id AND j.status='POSTED')
-      LEFT JOIN LATERAL(SELECT a.amount_minor FROM accounting_payment_allocations a JOIN accounting_payments p
-        ON p.workspace_id=a.workspace_id AND p.id=a.payment_id AND p.status='POSTED' AND p.direction='SUPPLIER_PAYMENT'
-        AND p.currency=b.currency AND p.supplier_id=b.supplier_id JOIN accounting_journal_entries j ON j.workspace_id=p.workspace_id
-        AND j.id=p.journal_entry_id AND j.status='POSTED' WHERE a.workspace_id=b.workspace_id AND a.supplier_bill_id=b.id) paid ON true
-      WHERE d.workspace_id=$1 AND d.freight_id=$2 GROUP BY d.purchase_order_id,d.revision,d.amount_minor,d.currency,d.due_date,b.bill_number`,
-    [ctx.workspaceId,id])
+    db.query(`SELECT id,revision,status,eta::text,note,disposition,created_at,${extended?'source,held_reason':"'forwarder' source,NULL held_reason"} FROM ${updates}
+      WHERE workspace_id=$1 AND freight_id=$2 ORDER BY revision DESC LIMIT 100`,[ctx.workspaceId,id]),
+    arrivals.depositRows(db,ctx.workspaceId,{freightId:id}),
+    datesInstalled?db.query(`SELECT d.id,d.update_id,d.purchase_order_id,po.po_number,d.previous_date::text,d.proposed_date::text,d.status,d.automatic,
+      d.shortage,d.alert_seen_at,d.created_at FROM ${dates} d JOIN purchase_orders po ON po.workspace_id=d.workspace_id AND po.id=d.purchase_order_id
+      WHERE d.workspace_id=$1 AND d.freight_id=$2 AND d.status<>'SUPERSEDED' ORDER BY d.created_at DESC,d.id DESC LIMIT 50`,[ctx.workspaceId,id]):{rows:[]},
+    arrivals.orderMoney(db,ctx.workspaceId,freight.order_ids)
   ]);
-  return {allowed,rows,freight,orders:orders.rows,history:history.rows,deposits:expected.rows,statusLabels};
+  return {allowed,rows,freight,orders:orders.rows,history:history.rows,deposits:expected,dateChanges:changes.rows,orderValues:Object.fromEntries(value),
+    statusLabels,trackingAvailable};
 }
 
 async function review(db,ctx){
   const data=await page(db,ctx);
   return {rows:data.rows.map(row=>({Reference:row.reference,Mode:row.mode,Forwarder:row.forwarder,Status:statusLabels[row.status],
     Arrival:row.eta||'Not supplied',link:path+'/'+row.id})),action:{label:'Open inbound freight',href:path},
-    summary:'Track ocean and air arrival updates from the private forwarder link and show linked purchase orders, expected deposits and posted payments.'};
+    summary:'Track ocean and air arrivals from carrier tracking or the forwarder link. Linked purchase-order dates move with them, and deposits and balances are shown with posted payments.'};
 }
 
-module.exports={path,publicPath,action,create,issueLink,stopLink,configure,publicPage,submit,reviewUpdate,saveDeposit,page,
+module.exports={path,publicPath,action,statusLabels,get,owner,authorize,decide,create,issueLink,stopLink,configure,publicPage,submit,reviewUpdate,saveDeposit,page,
   definition:{id:39,key:'inbound-freight',label:'Track ocean and air shipments and their deposits',readPage:review}};

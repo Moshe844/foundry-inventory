@@ -44,6 +44,14 @@ async function inventoryFacts(db,ctx,scope,{jobId,incomingBy}){
   if(transfer.some(t=>t.sku_id===p.sku_id))warnings.push({skuId:p.sku_id,sku:p.code,reason:'An incoming internal transfer needs separate review. It is not counted as a supplier delivery.'});
   return {skuId:p.sku_id,issued:d?.issued||'0',issueEvents:d?.issue_events||0,onHand:sum('onHand'),committed:exact.add(sum('committed'),sum('reserved')),incoming:timely.reduce((n,l)=>exact.add(n,l.remaining),'0'),unitsPerPurchaseUnit:String(p.units_per_purchase_unit),orderMultiple:String(p.order_multiple),minimumOrderQuantity:String(p.minimum_order_quantity),unitCostMinor:money.toMinor(String(p.last_unit_cost),supplier.currency)};
  });
+ // Job 123: where a 3PL counted fewer units than the records, the plan counts
+ // on the lower number. A partner count above the records is never added.
+ const shortfalls=await require('../autopilot/partner-stock').planningShortfalls(db,ctx.workspaceId,scope.skuIds,locationIds);
+ for(const row of rows){
+  const short=shortfalls.get(row.skuId);if(!short)continue;
+  const lowered=exact.subtract(row.onHand,short.units);row.onHand=lowered.startsWith('-')?'0':lowered;
+  warnings.push({skuId:row.skuId,sku:products.find(p=>p.sku_id===row.skuId).code,reason:short.notes.join('; ')+'. This plan counts on the lower number until the difference is resolved.'});
+ }
  const sourceOrders=incoming.map(({supply_hold,...line})=>supply_hold?{...line,supply_hold}:line);
  return {scope,supplier,location,locationIds,today:clock.calendarDate,historyFrom:from,products,rows,incoming:sourceOrders,transfer,warnings};
 }

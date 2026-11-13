@@ -165,6 +165,13 @@
       <% if(permissions.supplierDeliveryChases&&['ORDERED','PARTIALLY_RECEIVED'].includes(order.status)){ %>
         <a class="ox-btn" href="/autopilot/supplier-delivery-chases?supplierId=<%= encodeURIComponent(order.supplier_id) %>">Authorize reminders for this supplier</a>
       <% } %>
+      <% for(const shipment of (locals.inboundFreight||[])){ const deposit=shipment.deposit; %>
+        <section class="ox-card ox-card__b" data-inbound-freight><h2 class="ox-h2">Import shipment</h2>
+          <p><a href="<%= shipment.href %>"><%= shipment.reference %></a> · <%= shipment.mode==='ocean'?'Ocean':'Air' %> to <%= shipment.destination %></p>
+          <p class="ox-fine"><%= shipment.eta?'Expected at the port or airport '+shipment.eta+'.':'No arrival date yet.' %> This order’s expected date moves with it.</p>
+          <% if(deposit){ %><p class="ox-fine">Deposit <%= helpers.money(Number(deposit.amount_minor),deposit.currency) %> due <%= deposit.due_date %> · paid <%= helpers.money(Number(deposit.paid),deposit.currency) %><%= deposit.balance_due_date?' · balance due '+deposit.balance_due_date:'' %></p><% } %>
+        </section>
+      <% } %>
       <section class="ox-card ox-card__b ox-sum" aria-labelledby="ox-h-money" style="padding-top:18px">
         <h2 id="ox-h-money">Money</h2>
         <div class="ox-sum__row"><span>Order total</span><b class="ox-num"><%= order.hasCosts ? m(V.moneyRows.totalMinor) : '—' %></b></div>

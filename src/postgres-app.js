@@ -123,12 +123,15 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.post('/autopilot/delivery-checks',express.urlencoded({extended:true,limit:'1mb',parameterLimit:5000}));
   app.post('/imports/variants/:id/map',express.urlencoded({extended:true,limit:'1mb',parameterLimit:3000}));
   app.post('/supplier/order/:token/amendment',express.urlencoded({extended:true,limit:'256kb',parameterLimit:1100}));
+  // Job 123: a partner's stock feed can carry a few thousand product counts.
+  app.post('/partner-stock/feed/:token',express.json({limit:'2mb'}),express.text({type:['text/csv','text/plain'],limit:'2mb'}));
   app.use(express.urlencoded({extended:true,limit:'256kb'}));
   app.use(express.json({limit:'256kb'}));
   app.use('/api/v1/feed',createPostgresFeedApi(database));
   app.use('/api/v1',createPostgresConnectionsApi(database,{providers:connectionProviders || undefined}));
   app.use('/api/v1/operations',createPostgresOperationsApi(database));
   app.use('/api/v1/public',createPostgresPublicApi(database));
+  app.use(require('./web/routes/partner-stock-feed').router(database));
   const probes=new Map();
   const probe=(key,ttl,run)=>{
     const prior=probes.get(key);

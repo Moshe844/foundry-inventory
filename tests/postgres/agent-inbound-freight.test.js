@@ -56,7 +56,8 @@ test('ocean and air freight uses private exact status updates and tracks confirm
   assert.equal(pending.history[0].disposition,'REVIEW');
   await freight.reviewUpdate(db,ctx,id,{revision:pending.freight.revision,updateId:pending.history[0].id,confirmed:'yes'});
   assert.equal((await snapshot(id)).freight.eta,later(28));
-  assert.equal((await snapshot(id)).orders[0].expected_date,order.expected_date);
+  // The warehouse date moves by the same days as the port arrival: +2 on its own, then +12 approved.
+  assert.equal((await snapshot(id)).orders[0].expected_date,later(44));
 
   const stockBefore=await f.balance();
   await freight.saveDeposit(db,ctx,id,{orderId:order.id,amount:'125.00',dueDate:later(2),revision:0,confirmed:'yes'});

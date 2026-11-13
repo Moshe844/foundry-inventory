@@ -729,7 +729,9 @@ function createPostgresCommerceRouter(database,options={}){
     const portalInvoiceReviews=can.matchSupplierFiles&&linkResponses.some(reply=>reply.kind==='invoice')?
       await require('../../purchasing/supplier-portal-invoices').reviews(database,req.ctx.workspaceId,req.params.id):null;
     const dualApproval=can.approve&&page.order.hasCosts?await require('../../purchasing/dual-approval').view(database,req.ctx,req.params.id):null;
-    return res.page('buy/order',{title:`${page.order.poNumber} · ${page.order.supplierName}`,nav:'purchasing',room:false,
+    // Job 39: the import shipment carrying this order, its deposit and balance.
+    const inboundFreight=req.user.role==='owner'?await require('../../purchasing/inbound-freight-arrivals').forOrder(database,req.ctx.workspaceId,req.params.id):[];
+    return res.page('buy/order',{inboundFreight,title:`${page.order.poNumber} · ${page.order.supplierName}`,nav:'purchasing',room:false,
       screenGuide:null,story:null,evidenceTrace:null,order:page.order,receipts:page.receipts,events:page.events,
       charges:page.charges,documentTotalMinor:null,view,shortDate:buyView.shortDay,returnBadge:buyView.returnBadge,
       permissions:can,dualApproval,linkResponses,shipDates,portalInvoiceReviews,communications:page.communications,supplierDocuments:page.supplierDocuments,
