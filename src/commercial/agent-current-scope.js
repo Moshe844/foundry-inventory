@@ -340,7 +340,14 @@ const notes={
  163:{common:summaries[163],
   growth:'Keeps the month so far and the month that just ended current on its own each day, without training, and keeps each month’s figures. Pause holds it; Watch only, Ask me first and the first 14 days keep the figures while watching, and Ask me first lets you keep a month by hand.',
   pro:'Keeps the month so far and the month that just ended current on its own each day, without training, and keeps each month’s figures. Pause holds it; Watch only, Ask me first and the first 14 days keep the figures while watching, and Ask me first lets you keep a month by hand.',
-  enterprise:'Keeps the month so far and the month that just ended current on its own each day, without training, and keeps each month’s figures. Pause holds it; Watch only, Ask me first and the first 14 days keep the figures while watching, and Ask me first lets you keep a month by hand.'}
+  enterprise:'Keeps the month so far and the month that just ended current on its own each day, without training, and keeps each month’s figures. Pause holds it; Watch only, Ask me first and the first 14 days keep the figures while watching, and Ask me first lets you keep a month by hand.'},
+ 164:{common:summaries[164],
+  pro:'Prepares, keeps and sends each supplier’s pack on its own, without training, after each quarter. Pause holds it; Watch only and the first 14 days keep the packs and send nothing; Ask me first keeps them ready and you press send.',
+  enterprise:'Prepares, keeps and sends each supplier’s pack on its own, without training, after each quarter. Pause holds it; Watch only and the first 14 days keep the packs and send nothing; Ask me first keeps them ready and you press send.'},
+ 165:{common:summaries[165],
+  growth:'Makes, keeps and sends the pack to your accountant on its own, without training, after each year end you saved. Pause holds it; Watch only and the first 14 days keep the pack and send nothing; Ask me first keeps it ready and you press send.',
+  pro:'Makes, keeps and sends the pack to your accountant on its own, without training, after each year end you saved. Pause holds it; Watch only and the first 14 days keep the pack and send nothing; Ask me first keeps it ready and you press send.',
+  enterprise:'Makes, keeps and sends the pack to your accountant on its own, without training, after each year end you saved. Pause holds it; Watch only and the first 14 days keep the pack and send nothing; Ask me first keeps it ready and you press send.'}
 };
 function current(id,tier){const note=notes[id];return note?(tier&&note[tier]||note.common):summaries[id]||null;}
 module.exports={current};
