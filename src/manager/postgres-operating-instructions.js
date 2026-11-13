@@ -474,6 +474,9 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
   for(const row of history.rows) for(const change of parse(row.resolved_changes,[])) apply(row.workspace_id,change);
   const before=keys.size;
   for(const change of changes) apply(ctx.workspaceId,change);
+  const extraRules=(await require('../commercial/agent-rule-quota').configuredSources(client))
+    .filter(([table])=>table==='agent_approval_routes'||table==='agent_staff_task_rules')
+    .map(([table,predicate])=>`+(SELECT count(*) FROM stockchief_runtime.${table} WHERE workspace_id IN(SELECT id FROM owned) AND ${predicate})`).join('');
   const configured=await client.query(`WITH owned AS MATERIALIZED (SELECT id FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL)
     SELECT (SELECT count(*) FROM stockchief_runtime.agent_draft_rules WHERE workspace_id IN(SELECT id FROM owned))
       +(SELECT count(*) FROM stockchief_runtime.agent_quote_companion_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
@@ -562,8 +565,7 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
       +(SELECT count(*) FROM stockchief_runtime.agent_watch_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_product_classification_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
       +(SELECT count(*) FROM stockchief_runtime.agent_product_retirement_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
-      +(SELECT count(*) FROM stockchief_runtime.agent_approval_routes WHERE workspace_id IN(SELECT id FROM owned) AND enabled)
-      +(SELECT count(*) FROM stockchief_runtime.agent_staff_task_rules WHERE workspace_id IN(SELECT id FROM owned) AND enabled) AS n`,[state.accountId]);
+      ${extraRules} AS n`,[state.accountId]);
   if(keys.size+Number(configured.rows[0].n)+additional>limit && keys.size+additional>before) throw new ValidationError(`Your plan includes ${limit} active rules across your inventories. Remove a rule or upgrade to add another.`);
 }
 
