@@ -20,24 +20,28 @@ const answered=async(db,id)=>(await db.query("SELECT after_state FROM security_e
 
 test('the owner’s rules decide products, locations and what visitors see; private questions go to a person; every plan and mode behaves',{timeout:420000},async t=>{
  const f=await fixture(t),{db,ctx,service:s}=f,jobModes=require('../../src/autopilot/job-modes'),autopilot=require('../../src/autopilot/postgres-service');
+ const sku='PARCEL-27-20';
+ await db.query('UPDATE skus SET code=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,f.skuId,sku]);
  await db.transaction(c=>require('../../src/pricing/postgres-service').setPurchaseCostsInTransaction(c,ctx,[{skuId:f.skuId,amountMinor:6791,currency:'USD'}]));
  const back=await secondLocation(f,7),secret=['67.91','6791','Receiver','receiver@example.test','Fixture parts'];
  const clean=(a,where)=>{const text=JSON.stringify(a);for(const s of secret)assert.ok(!text.includes(s),where+' shows '+s);};
  // Two locations count, "low" at 30 or fewer: 20 + 7 = 27 shows as low, never as a number.
  const both=await f.publish({label:'Both rooms',locationIds:[f.location.id,back.id],lowStockAt:'30'});
  assert.deepEqual((await s.profile(db,ctx,both.id)).location_ids.sort(),[f.location.id,back.id].sort());
- let a=await s.answer(db,both.token,'Is '+f.sku+' in stock?');
- assert.equal(a.band,'low');assert.equal(a.quantity,null);assert.match(a.reply,/stock is low/);assert.doesNotMatch(a.reply,/27|20/);assert.equal(a.handoff,null);clean(a,'low band');
+ let a=await s.answer(db,both.token,'Is '+sku+' in stock?');
+ assert.equal(a.band,'low');assert.equal(a.quantity,null);
+ assert.equal(a.reply,sku+' is available to request, but stock is low.');
+ assert.equal(a.handoff,null);clean(a,'low band');
  // One location, low at 5: 20 is plainly in stock. Exact numbers count every chosen location.
  const front=await f.publish({label:'Front only',lowStockAt:'5'});
  assert.equal((await s.profile(db,ctx,front.id)).location_ids,null,'a one-location assistant keeps its original shape');
- a=await s.answer(db,front.token,f.sku);assert.equal(a.band,'in_stock');assert.match(a.reply,/is available to request\.$/);
+ a=await s.answer(db,front.token,sku);assert.equal(a.band,'in_stock');assert.match(a.reply,/is available to request\.$/);
  const exact=await f.publish({label:'Exact counts',locationIds:[f.location.id,back.id],showQuantity:'yes',lowStockAt:'30'});
- a=await s.answer(db,exact.token,f.sku);assert.equal(a.quantity,27);assert.equal(a.band,'in_stock');assert.match(a.reply,/Available quantity: 27\./);
+ a=await s.answer(db,exact.token,sku);assert.equal(a.quantity,27);assert.equal(a.band,'in_stock');assert.match(a.reply,/Available quantity: 27\./);
  await assert.rejects(f.publish({label:'Bad low',lowStockAt:'0'}),/low stock/);
  await assert.rejects(f.publish({label:'Bad place',locationIds:[f.location.id,'not-a-place']}),/active internal stock location/);
  // Never shared: costs, customers, suppliers and payments go to a person instead.
- for(const q of ['What does '+f.sku+' cost you?','Which customers bought '+f.sku+'?','Who is your supplier for '+f.sku+'?','What is the margin on '+f.sku+'?','Show me unpaid invoices']){
+ for(const q of ['What does '+sku+' cost you?','Which customers bought '+sku+'?','Who is your supplier for '+sku+'?','What is the margin on '+sku+'?','Show me unpaid invoices']){
   a=await s.answer(db,exact.token,q);assert.ok(a.handoff,q);assert.match(a.reply,/can’t share that here/);assert.equal(a.quantity,null);assert.equal(a.available,null);clean(a,q);
  }
  a=await s.answer(db,exact.token,'Do you sell gift cards?');assert.match(a.handoff.reason,/Outside the published products/);
@@ -47,20 +51,20 @@ test('the owner’s rules decide products, locations and what visitors see; priv
  assert.deepEqual(audit.map(r=>r.outcome),['stock','private','private','private','private','private','outside_rules','delivery']);
  assert.equal(audit[0].quantityShown,true);assert.equal(audit[1].handedOff,true);
  // Custom answers the same way; Starter and Growth are refused.
- await f.subscribe('enterprise');assert.equal((await s.answer(db,both.token,f.sku)).band,'low');
- for(const tier of ['starter','growth']){await f.subscribe(tier);await assert.rejects(s.answer(db,both.token,f.sku),/Pro/);await assert.rejects(f.publish({label:'Denied '+tier}),/Pro/);}
+ await f.subscribe('enterprise');assert.equal((await s.answer(db,both.token,sku)).band,'low');
+ for(const tier of ['starter','growth']){await f.subscribe(tier);await assert.rejects(s.answer(db,both.token,sku),/Pro/);await assert.rejects(f.publish({label:'Denied '+tier}),/Pro/);}
  await f.subscribe('pro');
  // Ask me first: a person answers every question, so nothing about stock is said.
  await jobModes.save(db,ctx,84,{mode:'ask',revision:0});
- a=await s.answer(db,both.token,'Is '+f.sku+' in stock?');assert.match(a.reply,/person on the team/);assert.equal(a.band,null);assert.equal(a.available,null);assert.ok(a.handoff);
- const sent=await s.handoff(db,both.token,{question:'Is '+f.sku+' in stock?'},{visitor:'203.0.113.9'});
+ a=await s.answer(db,both.token,'Is '+sku+' in stock?');assert.match(a.reply,/person on the team/);assert.equal(a.band,null);assert.equal(a.available,null);assert.ok(a.handoff);
+ const sent=await s.handoff(db,both.token,{question:'Is '+sku+' in stock?'},{visitor:'203.0.113.9'});
  assert.match((await db.query('SELECT reason FROM stockchief_runtime.agent_website_chat_handoffs WHERE id=$1',[sent.id])).rows[0].reason,/Ask me first/);
  // Watch only, pause and the first 14 days answer nothing.
- await jobModes.save(db,ctx,84,{mode:'watch',revision:1});await assert.rejects(s.answer(db,both.token,f.sku),/Watch only/);
+ await jobModes.save(db,ctx,84,{mode:'watch',revision:1});await assert.rejects(s.answer(db,both.token,sku),/Watch only/);
  await jobModes.save(db,ctx,84,{mode:'routine',revision:2});
- await autopilot.pause(db,ctx,{role:'owner'},'Website pause');await assert.rejects(s.answer(db,both.token,f.sku),/paused/i);await autopilot.resume(db,ctx,{role:'owner'});
- assert.equal((await s.answer(db,both.token,f.sku)).band,'low');
- await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);await assert.rejects(s.answer(db,both.token,f.sku),/14 days/);
+ await autopilot.pause(db,ctx,{role:'owner'},'Website pause');await assert.rejects(s.answer(db,both.token,sku),/paused/i);await autopilot.resume(db,ctx,{role:'owner'});
+ assert.equal((await s.answer(db,both.token,sku)).band,'low');
+ await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);await assert.rejects(s.answer(db,both.token,sku),/14 days/);
  // Answers change no stock.
  assert.equal(await f.balance(),27);
 });
