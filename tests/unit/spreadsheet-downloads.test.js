@@ -50,11 +50,3 @@ test('Download answer as a spreadsheet gives the tables of the answer in columns
   assert.deepEqual(words.columns,['answer'],'an answer with no table downloads as its words');
   assert.ok(words.rows.length>1&&words.rows.every(row=>!/\bwor$|^rd\b/.test(row.answer)),'long lines break between words');
 });
-
-test('a download is offered only for an answer worth keeping',()=>{
-  assert.equal(ask.worthKeeping('Opening Purchasing.',0),false,'a page hand-off is not a document');
-  assert.equal(ask.worthKeeping('You have 12 customers.',0),false);
-  assert.equal(ask.worthKeeping('Best sellers: A 5; B 3.',3),true,'an answer with records');
-  assert.equal(ask.worthKeeping('| Product | Units |\n|---|---|\n| A | 5 |',0),true,'an answer with a table');
-  assert.equal(ask.worthKeeping('word '.repeat(ask.LONG_ANSWER/5+1),0),true,'a written report');
-});

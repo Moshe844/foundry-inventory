@@ -123,7 +123,7 @@
 // Every table in a written answer can be saved, in the format the person needs.
 (function () {
   var enhance = function () {
-    document.querySelectorAll('[data-adaptive-goal][data-goal-status="COMPLETED"]').forEach(function (goal) {
+    document.querySelectorAll('[data-adaptive-goal][data-goal-status="COMPLETED"]:not([data-goal-navigation-only="true"])').forEach(function (goal) {
       var answer = goal.querySelector('[data-goal-answer]');
       if (!answer || !answer.textContent.trim()) return;
       function addDownload(target, query, label) {
@@ -145,9 +145,7 @@
         menu.appendChild(list);
         target.parentNode.insertBefore(menu, target);
       }
-      // Only an answer worth keeping offers a download: a table, or a written
-      // report of 400 characters or more (the same rule as ask-export.js).
-      if (answer.querySelector('table') || answer.textContent.trim().length >= 400) addDownload(answer, '?content=answer', 'Download answer');
+      addDownload(answer, '?content=answer', 'Download answer');
       answer.querySelectorAll('.rm-agent__table').forEach(function (table, index) {
         addDownload(table, '?table=' + index, 'Download');
       });

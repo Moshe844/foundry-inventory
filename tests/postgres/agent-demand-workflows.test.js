@@ -94,16 +94,18 @@ test('dated orders forecast weekly demand and posted stock issues quantify the m
   }
 });
 
-test('a saved prose answer downloads as Excel and PDF on all four plans',{timeout:240000},async t=>{
+test('a short saved prose answer offers Excel and PDF downloads on all four plans',{timeout:240000},async t=>{
   const {db,ctx,subscribe,browser}=await require('../helpers/agent-workflow-fixture').fixture(t);
   const store=require('../../src/assistant/postgres-goal-store');
-  const id=randomUUID(),answer='We received four cases.\nThe fifth case is still due.';
+  const id=randomUUID(),answer='We received four cases.\nThe fifth case is still due.',chatId='chat_'+randomUUID().replaceAll('-','');
   await db.query(`INSERT INTO stockchief_runtime.assistant_interactions(id,workspace_id,actor_user_id,message,intent,answer,status)
-    VALUES($1,$2,$3,'What is still due?','{}',$4,'ANSWERED')`,[id,ctx.workspaceId,ctx.actorId,answer]);
+    VALUES($1,$2,$3,'What is still due?',$5::jsonb,$4,'ANSWERED')`,[id,ctx.workspaceId,ctx.actorId,answer,JSON.stringify({chatId})]);
   const goal=await store.create(db,ctx,'What is still due?');
   await db.query("UPDATE stockchief_runtime.assistant_goals SET status='COMPLETED',answer=$2 WHERE id=$1",[goal.id,answer]);
   for(const tier of ['starter','growth','pro','enterprise']){
     await subscribe(tier);
+    const chat=await browser.get('/ask').query({chat:chatId}).expect(200);
+    for(const fmt of ['pdf','xlsx'])assert(chat.text.includes('/ask/answers/'+id+'/export.'+fmt+'?content=answer'),tier+' download '+fmt);
     for(const base of ['/ask/answers/'+id,'/ask/goals/'+goal.id]){
       const csv=await browser.get(base+'/export.csv?content=answer').expect(200);
       assert.ok(csv.text.includes('The fifth case is still due.'));

@@ -62,6 +62,7 @@
      const changed=goal.status!==status;
      disconnected=false;
      status=goal.status;updated=goal.updatedAt;panel.dataset.goalStatus=status;
+     panel.dataset.goalNavigationOnly=String(goal.navigationOnly===true);
      if(typeof goal.workerAvailable==='boolean')workerAvailable=goal.workerAvailable;
      const resume=panel.querySelector('[data-goal-resume]');if(resume)resume.hidden=status!=='BLOCKED'||goal.continuation?.eligible!==true;
      const recovery=panel.querySelector('[data-goal-recovery-reason]');if(recovery){recovery.hidden=status!=='BLOCKED'||goal.continuation?.eligible!==false;recovery.textContent=goal.continuation?.eligible===false?goal.continuation.reason:'';}

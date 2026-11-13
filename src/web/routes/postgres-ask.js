@@ -301,7 +301,7 @@ function createPostgresAskRouter(database,options={}){
     const safeEvents=events.map(e=>({sequence:e.sequence,kind:e.kind,created_at:e.created_at,
       detail:{kind:e.detail.kind,tool:typeof e.detail.tool==='string'?e.detail.tool:null,status:e.detail.kind==='runtime_starting'?e.detail.status:null}}));
     return {id:goal.id,status:goal.status,answer:state.message,conversation:state,createdAt:goal.created_at,updatedAt:goal.updated_at,runStartedAt:goal.checkpoint.runStartedAt,turns:goal.turns,tools:goal.tool_calls,events:safeEvents,
-      workerAvailable,continuation,approvalIds:(approvalInbox?.approvals||[]).map(card=>card.id),
+      workerAvailable,continuation,navigationOnly:Boolean(goal.checkpoint.navigation&&!goal.checkpoint.navigation.resultAnswer),approvalIds:(approvalInbox?.approvals||[]).map(card=>card.id),
       delivery:delivery.visible(goal),prerequisiteHandoffs:goal.checkpoint.prerequisiteHandoffs||[],navigation:navigation?{...navigation,automatic:req.session.postgresAskNavigationGoal===goal.id}:null};
   }
   router.get('/ask/goals/:id',asyncRoute(async(req,res)=>{
