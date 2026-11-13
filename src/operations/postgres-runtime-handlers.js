@@ -444,7 +444,7 @@ async function autopilotEvaluate(job,client){
     await require('../purchasing/agent-freight-combine').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-rfq-competition').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-purchase-splitting').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
-    await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'agent.supplier-claims',idempotencyKey:'supplier-claims:'+cycleId,payload:{cycleId},priority:65,maxAttempts:3});
+    await require('../purchasing/agent-supplier-claims').schedule(client,job.workspaceId,cycleId);
     const account=await require('../commercial/agent-plan').accountState(client,job.workspaceId);
     await require('../autopilot/daily-briefs').deliver(client,job.workspaceId,account);
     // Job 172: follow unanswered alerts and approvals, once this check has raised them.
@@ -719,7 +719,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'system.alert-delivery':external((job,database)=>alertDelivery(job,database,options)),
   'system.email-send':external((job,database)=>systemEmail(job,database,options)),
   'custody.recurring-invoice':external((job,database)=>require('../custody/postgres-billing').run(database,job.workspaceId,job.payload.agreementId)),
-  'mailbox.poll':external((job,database)=>mailboxPoll(job,database,providers)),
+  'mailbox.poll':external((job,database)=>mailboxPoll(job,database,providers),'reading'),
   // Deletion owns its serializable transaction, just like retention removal.
   // The durable request is its completion receipt if the worker stops afterward.
   'developer.account-delete':external((job,database)=>require('../domain/postgres-developer-accounts').execute(database,job.payload.requestId)),
@@ -810,7 +810,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     return {...result,...(certificate.queued?{certificate}:{}),...(order.skipped?{}:{order}),...(filing.queued||filing.stopped?{filing}:{})};
   }),
   'mail.supplier-review':external((job,database)=>require('../connections/postgres-document-review').prepare(database,job.workspaceId,job.payload.messageId,{allowTextMessage:true})),
-  'mailbox.renew-push':external((job,database)=>mailboxPushRenewal(job,database,providers,options)),
+  'mailbox.renew-push':external((job,database)=>mailboxPushRenewal(job,database,providers,options),'reading'),
   'provider.catalog-sync':external((job,database)=>providerSync.sync(job,database,providers)),
     'provider.webhook-setup':external((job,database)=>require('../connections/postgres-application-authorization').setupJob(job,database,providers)),
   'provider.webhook-process':external((job,database)=>require('../connections/postgres-webhook-inbox').job(job,database,providers)),
