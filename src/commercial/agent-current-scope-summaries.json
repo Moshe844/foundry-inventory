@@ -187,5 +187,5 @@
   "210": "Tests a draft purchase-consolidation rule against recorded completed work before enabling it. Historical simulations for other rule types remain open.",
   "211": "Measures customer ordering intervals and supplier receipt lead times from recorded confirmed orders and final receipts.",
   "213": "Runs saved playbooks containing eligible operational reviews, including supported scheduled runs and Growth's taught-step limit. Parameterized lookups run on demand.",
-  "214": "Remembers each Custom manager's report period, download format and approval-inbox sort. Explicit choices override the saved preference."
+  "214": "Remembers each Custom manager's report period, preferred download format and approval-inbox sort within the inventory. Applies preferences to the reports dashboard, standard reports, saved report downloads and Needs you. Explicit choices take precedence."
 }

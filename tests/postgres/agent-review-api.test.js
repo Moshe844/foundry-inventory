@@ -109,6 +109,7 @@ test('Custom managers keep their own report period, download format and decision
   const choice={revision:0,report_period:'last_month',download_format:'xlsx',inbox_sort:'oldest'};
   for(const tier of ['starter','growth','pro']){
     await subscribe(tier);await browser.get(path).expect(402);
+    await browser.get('/reports/business/sales/export.xlsx').expect(402);
     await assert.rejects(prefs.save(db,ctx,choice),e=>e.code==='entitlement_required');
   }
   await subscribe('enterprise');const page=await browser.get(path).expect(200);
@@ -125,11 +126,19 @@ test('Custom managers keep their own report period, download format and decision
   assert.match((await browser.get('/reports').query({from:'2024-01-02',to:'2024-01-10'}).expect(200)).text,/name="from" value="2024-01-02"/);
   assert.match((await browser.get('/needs-you/all').expect(200)).text,/data-decision-sort="oldest"/);
   assert.match((await browser.get('/needs-you/all?sort=priority').expect(200)).text,/data-decision-sort="priority"/);
+  const standardReport='/reports/business/sales';
+  const standard=await browser.get(standardReport).expect(200);
+  assert.match(standard.text,new RegExp('name="from" value="'+range.from+'"'));
+  assert.match(standard.text,/Download Excel/);
+  assert.match((await browser.get(standardReport).query({from:'2024-01-02',to:'2024-01-10'}).expect(200)).text,/name="from" value="2024-01-02"/);
+  await browser.get(standardReport+'/export.xlsx').expect(200).expect('Content-Type',/spreadsheet/);
+  await browser.get(standardReport+'/export.csv').expect(200).expect('Content-Type',/text\/csv/);
   const saved=await require('../../src/reports/postgres-service').save(db,ctx,{role:'owner',email:f.email},{dataset:'stock',title:'Manager stock',columns:['sku','on_hand'],sort:'sku'});
   const report='/reports/saved/'+saved.id;
   assert.match((await browser.get(report).expect(200)).text,/>Download Excel<\/a>/);
   const file=await browser.get(report+'/export.xlsx').expect(200);assert.match(file.headers['content-type'],/spreadsheet/);
   await subscribe('pro');assert.equal(await prefs.personal(db,ctx),null);
+  assert.doesNotMatch((await browser.get(standardReport).expect(200)).text,/Download Excel/);
   assert.match((await browser.get('/needs-you/all').expect(200)).text,/data-decision-sort="priority"/);
   assert.doesNotMatch((await browser.get(report).expect(200)).text,/>Download Excel<\/a>/);
   await subscribe('enterprise');assert.equal((await prefs.personal(db,ctx)).inbox_sort,'oldest');
