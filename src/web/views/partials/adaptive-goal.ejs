@@ -3,7 +3,7 @@
  const phase=conversation.label;
  const active=['READY','RUNNING'].includes(goal.status);
  const pendingNavigation=goal.status==='WAITING_EVENT'&&['PENDING','DELIVERING'].includes(goal.checkpoint.navigation?.state)?goal.checkpoint.navigation:null;
- const navigationOnly=Boolean(goal.checkpoint.navigation&&!goal.checkpoint.navigation.resultAnswer);
+ const navigationOnly=goal.checkpoint.navigation?.state==='DELIVERED'&&!goal.checkpoint.navigation.resultAnswer;
  const delivered=locals.agentDelivery?locals.agentDelivery(goal):null;
 %>
 <div data-conversation-history-for="<%= goal.id %>" class="rm-agent__conversation">

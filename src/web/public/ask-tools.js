@@ -123,12 +123,13 @@
 // Every table in a written answer can be saved, in the format the person needs.
 (function () {
   var enhance = function () {
-    document.querySelectorAll('[data-adaptive-goal][data-goal-status="COMPLETED"]:not([data-goal-navigation-only="true"])').forEach(function (goal) {
+    document.querySelectorAll('[data-adaptive-goal][data-goal-status="COMPLETED"]').forEach(function (goal) {
       var answer = goal.querySelector('[data-goal-answer]');
       if (!answer || !answer.textContent.trim()) return;
       function addDownload(target, query, label) {
-        if (target.previousElementSibling && target.previousElementSibling.matches('.ask-download')) return;
+        if (target.parentElement.querySelector('[data-download-query="'+query+'"]')) return;
         var menu = document.createElement('details');
+        menu.dataset.downloadQuery = query;
         menu.className = query==='?content=answer'?'ask-download':'ask-download ask-download--inline';
         var summary = document.createElement('summary');
         summary.textContent = label;
@@ -145,8 +146,10 @@
         menu.appendChild(list);
         target.parentNode.insertBefore(menu, target);
       }
-      addDownload(answer, '?content=answer', 'Download answer');
-      answer.querySelectorAll('.rm-agent__table').forEach(function (table, index) {
+      var tables = answer.querySelectorAll('table');
+      if (tables.length || goal.dataset.goalNavigationOnly !== 'true') addDownload(answer, '?content=answer', 'Download answer');
+      tables.forEach(function (element, index) {
+        var table = element.closest('.rm-agent__table') || element;
         addDownload(table, '?table=' + index, 'Download');
       });
     });
