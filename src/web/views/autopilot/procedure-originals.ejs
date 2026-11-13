@@ -1,6 +1,6 @@
 <section class="rm-panel">
   <h2>Read an operating procedure</h2>
-  <p>StockChief reads each page and keeps the original beside the steps it finds. You can review and authorize lasting settings from an exact clause.</p>
+  <p>StockChief reads each page and keeps the original beside the steps it finds. Then it follows the procedure: each clause that matches a rule exactly becomes a rule for you to confirm, and the rest is kept for people.</p>
   <form method="post" action="/autopilot/procedure-originals" enctype="multipart/form-data" class="rm-form" data-busy>
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <label class="rm-field"><span>Procedure original</span><input type="file" name="procedure" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,.gif,.heic,.heif,.tif,.tiff" required></label>
@@ -9,18 +9,55 @@
   </form>
 </section>
 <% if(record){ %>
-<section class="rm-panel">
+<section class="rm-panel" data-procedure="<%= record.id %>">
   <h2><%= record.filename %></h2>
   <a href="/autopilot/procedure-originals/<%= record.id %>/original">Download original</a>
-  <% if(record.state==='READY'){ %>
+  <% if(record.state==='READY'){ const f=locals.follow||{}; %>
   <a href="/ask?from=<%= encodeURIComponent('/autopilot/procedure-originals/'+record.id) %>">Ask StockChief about this procedure</a>
   <p><%= record.reading.steps.length %> steps from <%= record.reading.pages.length %> pages · <%= record.credits_used %> AI credits used</p>
+  <p data-follow-summary><%= f.rules %> <%= f.rules===1?'rule':'rules' %> in force · <%= f.waiting %> waiting for you · <%= f.kept %> kept for people<%= f.open?' · '+f.open+' not followed yet':'' %></p>
+  <% if(f.running){ %><p role="status" data-follow-running>StockChief is going through each clause. Refresh this page to see the rules it prepares.</p><% } %>
+  <% if(f.problem){ %><p class="notice notice--warn" data-follow-problem><%= f.problem %></p><% } %>
+  <% if(f.open&&!f.running){ %>
+    <% if(f.hold){ %><p data-follow-hold>StockChief did not start on its own: <%= f.hold %></p><% } %>
+    <form method="post" action="/autopilot/procedure-originals/<%= record.id %>/follow" class="rm-form" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="sourceHash" value="<%= record.source_hash %>">
+      <label><input type="checkbox" name="confirmed" value="yes" required> I checked these clauses against the original.</label>
+      <button class="rm-button">Follow this procedure</button>
+    </form>
+  <% } %>
+  <% if(f.waiting){ %>
+    <form method="post" action="/autopilot/procedure-originals/<%= record.id %>/confirm" class="rm-form" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes">
+      <p>Each rule counts toward your plan’s rules and applies on its own once confirmed.</p>
+      <button class="rm-button" data-confirm-all>Confirm all <%= f.waiting %> <%= f.waiting===1?'rule':'rules' %></button>
+    </form>
+  <% } %>
   <ol>
-    <% for(const step of record.reading.steps){ %>
-      <li>
+    <% for(const step of (locals.clauses||record.reading.steps)){ %>
+      <li data-clause="<%= step.id %>" data-clause-use="<%= step.use||'open' %>">
         <strong><%= step.label %></strong> · Page <%= step.page %>
         <blockquote><%= step.quote %></blockquote>
-        <% if(step.category==='standing_rule'||step.canConfirmRule){ %>
+        <% if(step.use==='waiting'){ %>
+          <p><%= step.text %> <a href="/operating-instructions/<%= step.proposalId %>"><%= step.summary %></a></p>
+          <div class="rm-actions">
+            <form method="post" action="/autopilot/procedure-originals/<%= record.id %>/confirm">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="confirmed" value="yes"><input type="hidden" name="quoteId" value="<%= step.id %>">
+              <button class="rm-btn">Confirm this rule</button>
+            </form>
+            <form method="post" action="/autopilot/procedure-originals/<%= record.id %>/keep">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="quoteId" value="<%= step.id %>">
+              <button class="rm-btn rm-btn--ghost">Keep for people</button>
+            </form>
+          </div>
+        <% } else if(step.use==='rule'||step.use==='replaced'){ %>
+          <p><%= step.text %> <a href="/operating-instructions/<%= step.proposalId %>"><%= step.summary %></a></p>
+        <% } else if(step.use==='kept'){ %>
+          <p>Kept for people: <%= step.text %><% if(step.category==='team_step'){ %> <a href="/autopilot/team-procedures">Team procedures</a><% } %></p>
+        <% } %>
+        <% if((step.use==='open'||step.use==='kept'&&step.category==='standing_rule')&&(step.category==='standing_rule'||step.canConfirmRule)){ %>
+          <% if(step.use==='kept'){ %><details><summary>Try this clause again</summary><% } %>
           <form method="post" action="/autopilot/procedure-originals/<%= record.id %>/prepare" class="rm-form" data-busy>
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <input type="hidden" name="quoteId" value="<%= step.id %>">
@@ -29,7 +66,8 @@
             <% if(step.canConfirmRule){ %><p>Check the scanned words and numbers against the original before preparing a rule.</p><% } %>
             <button class="rm-button">Prepare settings for review</button>
           </form>
-        <% } else { %><p><%= step.category==='human_review'?'Compare with the original before using this step.':'This step is for your team.' %></p><% } %>
+          <% if(step.use==='kept'){ %></details><% } %>
+        <% } else if(step.use==='open'){ %><p><%= step.category==='human_review'?'Compare with the original before using this step.':'This step is for your team.' %></p><% } %>
       </li>
     <% } %>
   </ol>
