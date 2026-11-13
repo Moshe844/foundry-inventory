@@ -105,6 +105,10 @@ async function facts(c,ctx,args,selection,{collect=false,throughDate=null}={}){
  v.default_lead_time_days,lead.effective_lead,lead.samples FROM supplier_items si JOIN suppliers v ON v.workspace_id=si.workspace_id AND v.id=si.supplier_id
  LEFT JOIN stockchief_runtime.supplier_planning_leads lead ON lead.workspace_id=si.workspace_id AND lead.supplier_item_id=si.id
  WHERE si.workspace_id=$1 AND si.sku_id=ANY($2::text[]) AND si.is_active=1 AND v.status='active' ORDER BY si.sku_id,si.supplier_id,si.id`,[ctx.workspaceId,ids])).rows;
+ // Job 211: a supplier's usual lead time. Job 207: suppliers the owner's rules allow.
+ await require('../autopilot/partner-habits').applyToOffers(c,ctx.workspaceId,offers);
+ const supplierRules=require('./supplier-choice-rules'),choiceRules=await supplierRules.forSkus(c,ctx.workspaceId,ids);
+ for(let i=offers.length-1;i>=0;i--)if(!supplierRules.allows(choiceRules.get(offers[i].sku_id),offers[i].supplier_id))offers.splice(i,1);
  const currencies=[...new Set(offers.map(o=>o.currency))],costEvidence=selection?await comparisonTerms.load(c,ctx,offers.map(o=>o.id),{comparisonCurrency:args.comparisonCurrency||(currencies.length===1?currencies[0]:null),lock:ctx.comparisonFactsLock===true}):null;
  const knownOffers=(await c.query(`SELECT si.id FROM supplier_items si JOIN suppliers v ON v.workspace_id=si.workspace_id AND v.id=si.supplier_id
  JOIN LATERAL(SELECT o.currency,l.unit_cost,l.units_per_purchase_unit FROM purchase_order_lines l JOIN purchase_orders o ON o.workspace_id=l.workspace_id AND o.id=l.purchase_order_id
@@ -158,6 +162,8 @@ async function facts(c,ctx,args,selection,{collect=false,throughDate=null}={}){
   const derived=shortage?exact.subtract(String(p.targetStock??p.effectiveReorder),projected):'0';
   const needed=collect?derived:measure?.quantity||args.quantity||derived;
   if(!positive(needed))continue;
+  const ruled=supplierRules.stop(choiceRules.get(p.sku_id),p.code,offersBySku.get(p.sku_id)||[],p.preferred_supplier_id);
+  if(ruled)throw new ValidationError(ruled);
   if(p.lead_time_assumed&&p.reorderPoint===null)throw new ValidationError('Record a supplier lead time before deriving the reorder target for '+p.code+'.');
   const candidates=[];
   for(const offer of offersBySku.get(p.sku_id)||[]){
@@ -211,8 +217,10 @@ async function review(c,ctx,{filter='',page=1}){
  const products=(await c.query(`SELECT i.*,s.id,s.code,s.item_id FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
  WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND ($2='' OR lower(s.code)=lower($2) OR lower(i.name)=lower($2)) ORDER BY s.code,s.id LIMIT 26 OFFSET $3`,[ctx.workspaceId,filter,(page-1)*25])).rows;
  const selected=products.slice(0,25),ids=selected.map(p=>p.id),positions=await require('../forecasting/postgres-planning-service').position(c,ctx.workspaceId,{onlySkuIds:ids});
- const offers=(await c.query(`SELECT si.*,v.name supplier_name,v.currency,v.minimum_order_amount,v.payment_terms,v.freight_terms_currency,v.free_freight_threshold_minor,v.ordinary_freight_minor,lead.effective_lead FROM supplier_items si JOIN suppliers v ON v.workspace_id=si.workspace_id AND v.id=si.supplier_id
+ const offers=(await c.query(`SELECT si.*,v.name supplier_name,v.currency,v.minimum_order_amount,v.payment_terms,v.freight_terms_currency,v.free_freight_threshold_minor,v.ordinary_freight_minor,lead.effective_lead,lead.samples FROM supplier_items si JOIN suppliers v ON v.workspace_id=si.workspace_id AND v.id=si.supplier_id
  LEFT JOIN stockchief_runtime.supplier_planning_leads lead ON lead.workspace_id=si.workspace_id AND lead.supplier_item_id=si.id WHERE si.workspace_id=$1 AND si.sku_id=ANY($2::text[]) AND si.is_active=1 AND v.status='active' ORDER BY si.sku_id,si.id`,[ctx.workspaceId,ids])).rows;
+ await require('../autopilot/partner-habits').applyToOffers(c,ctx.workspaceId,offers);
+ {const kept=await require('./supplier-choice-rules').filter(c,ctx.workspaceId,offers);offers.splice(0,offers.length,...kept);}
  const evidence=await comparisonTerms.load(c,ctx,offers.map(o=>o.id)),today=await require('../lib/business-time').today(c,ctx.workspaceId),rows=[];
  for(const product of selected){const p=positions.filter(p=>p.sku_id===product.id&&!p.planning_suppressed);for(const position of p.length?p:[null]){
   const need=position?.shortage?require('./replenishment-decision').requiredUnits(position):0,quantity=positive(need)?String(need):'1';
