@@ -106,6 +106,15 @@ test('a role without cost access gets no cost, margin or stock value through pag
  assert.ok(!sent[counter.email.toLowerCase()].includes('$314.16'),'A role without cost access gets the hours only.');
  assert.match(sent[counter.email.toLowerCase()],/saving about 2 hours/);
  for(const address of [buyer.email,f.email])assert.match(sent[address.toLowerCase()],/\$314\.16/,'Purchasing access and the owner see the money caught.');
+ await db.query('UPDATE users SET permissions=$2 WHERE id=$1',[buyer.ctx.actorId,P.encodeGrant([P.VIEW])]);
+ const delivered=[];
+ const handler=require('../../src/operations/postgres-runtime-handlers').create(undefined,{emailSender:async message=>{
+   delivered.push(message.to);return {provider:'test',externalId:'disclosure-'+delivered.length};
+ }})['system.email-send'];
+ const queued=(await db.query("SELECT id,idempotency_key,payload FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND idempotency_key LIKE 'roi-report-email:%'",[ws])).rows;
+ for(const job of queued)await handler({...job,workspaceId:ws,idempotencyKey:job.idempotency_key},db);
+ assert.deepEqual(delivered.sort(),[counter.email.toLowerCase(),f.email.toLowerCase()].sort(),'Revoking access before delivery withholds the financial email.');
+ await db.query('UPDATE users SET permissions=$2 WHERE id=$1',[buyer.ctx.actorId,P.encodeGrant(buyer.grant)]);
  // Alerts passed on to someone else (job 172) need every permission the item needs, including seeing its costs.
  const escalations=require('../../src/autopilot/escalations');
  const people=[{id:'landed',name:'Landed clerk',role:'staff',permissions:P.encodeGrant([P.VIEW,P.ALLOCATE_LANDED_COST]),warehouse_location_ids:null},

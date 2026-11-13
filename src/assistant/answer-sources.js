@@ -69,7 +69,7 @@ function required(path){
 }
 function visible(actor,links){
  if(!actor)return [];
- return (Array.isArray(links)?links:[]).filter(link=>{const path=local(link?.href);if(!path)return false;
+ return (Array.isArray(links)?links:[]).map(link=>typeof link==='string'?{href:link,kind:'record',label:'Source record'}:link).filter(link=>{const path=local(link?.href);if(!path)return false;
   const need=required(path);return need==='owner'?actor.role==='owner':permissions.can(actor,need);});
 }
 module.exports={collect,merge,visible,required,RECORDS};

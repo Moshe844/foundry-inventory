@@ -20,7 +20,7 @@ const {ValidationError}=require('../domain/errors');
 
 const MAX=320;
 // Currency codes are capitals only, so "over $500 for Brooklyn" keeps "for".
-const MONEY='((?:(?-i:[A-Z]{3})\\s?)?[$€£]?\\s?\\d[\\d,]*(?:\\.\\d+)?(?:\\s?(?:k|thousand)\\b)?(?:\\s?(?-i:[A-Z]{3})\\b)?)';
+const MONEY='((?:[A-Z]{3}\\s?)?[$€£]?\\s?\\d[\\d,]*(?:\\.\\d+)?(?:\\s?(?:k|thousand)\\b)?(?:\\s?(?!for\\b)[A-Z]{3}\\b)?)';
 const N='(\\d{1,9})';
 const EXAMPLES=[
   {kind:'Watch',text:'Tell me if any Nike item drops under 20',plan:'Starter'},
@@ -42,7 +42,8 @@ function normal(sentence){
 }
 // "$10,000", "10k", "€500", "1,200.50 EUR" -> {amount:'10000', symbol, code}.
 function money(raw){
-  const m=/^((?-i:[A-Z]{3}))?\s?([$€£])?\s?(\d[\d,]*(?:\.\d+)?)\s?(k|thousand)?\s?((?-i:[A-Z]{3}))?$/i.exec(String(raw||'').trim());
+  const amount=String(raw||'').trim().replace(/(?<=\d\s?)(?:k|thousand)\b/i,word=>word.toLowerCase());
+  const m=/^([A-Z]{3})?\s?([$€£])?\s?(\d[\d,]*(?:\.\d+)?)\s?(k|thousand)?\s?([A-Z]{3})?$/.exec(amount);
   if(!m)refuse('StockChief could not read the amount “'+raw+'”.','$5,000');
   const code=(m[1]||m[5]||'').toUpperCase()||null;
   if(m[1]&&m[5]&&m[1].toUpperCase()!==m[5].toUpperCase())refuse('The amount names two currencies.');

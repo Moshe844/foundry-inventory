@@ -5,18 +5,22 @@ const reviews=require('../../src/autopilot/job-reviews'),assistant=require('../.
 const pricing=require('../../src/pricing/postgres-service');
 
 test('scheduled cost and adjustment watches honor current tier, local night hours and owner thresholds',{timeout:240000},async t=>{
-  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:20}),{db,ctx,browser,subscribe}=f;
+  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:20,timeZone:'America/New_York'}),{db,ctx,browser,subscribe}=f;
   const watches=require('../../src/autopilot/activity-watches'),notices=require('../../src/autopilot/operational-notices');
   const inventory=require('../../src/domain/postgres-inventory-engine'),time=require('../../src/lib/business-time');
   const sku=f.item.skuIds[0],root='/autopilot/reviews/';
   await subscribe('pro');
-  await db.query("UPDATE workspaces SET time_zone='America/New_York' WHERE id=$1",[ctx.workspaceId]);
   const {calendarDate,timeZone}=await time.forWorkspace(db,ctx.workspaceId),date=require('../../src/accounting/customer-money').addDays(calendarDate,-1);
   const stamp=h=>time.wall(date,h,30,timeZone).toISOString();
   await pricing.setPrice(db,ctx,{skuId:sku,currency:'USD',amountMinor:1000});
   for(const amountMinor of [400,600])await pricing.setPurchaseCost(db,ctx,{skuId:sku,currency:'USD',amountMinor});
   await inventory.adjust(db,ctx,{skuId:sku,locationId:f.location.id,countedQuantity:15,reasonCode:'cycle_count',occurredAt:stamp(12),idempotencyKey:randomUUID()});
   await inventory.receive(db,ctx,{skuId:sku,locationId:f.location.id,quantity:1,occurredAt:stamp(23),idempotencyKey:randomUUID()});
+  await db.query('UPDATE purchase_orders SET ordered_at=$2 WHERE workspace_id=$1',[ctx.workspaceId,stamp(11)]);
+  const order=await f.workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'PICKUP',
+    idempotencyKey:randomUUID(),lines:[{skuId:sku,quantity:1,unitPriceMinor:1000}]});
+  await f.workflows.confirmSalesOrder(db,ctx,order.salesOrderId,{idempotencyKey:randomUUID()});
+  await db.query('UPDATE sales_orders SET confirmed_at=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,order.salesOrderId,stamp(13)]);
   const channel=randomUUID();
   await db.query(`INSERT INTO workspace_connectors(id,workspace_id,connector_key,display_name,provider_type,status,capabilities,config,provides,setup_status,authorized_by_user_id,
     provider_account_id,last_synced_at,created_at,updated_at,expected_interval_minutes) VALUES($1,$2,$1,'Test shop','shopify','connected','[]','{}','[]','CONNECTED',$3,
@@ -56,6 +60,9 @@ test('scheduled cost and adjustment watches honor current tier, local night hour
     const briefing=await reviews.run(db,ctx,'daily-briefing',{filter:date});
     assert.equal(briefing.rows.find(r=>r.Activity==='Count adjustments').Count,1);
     assert.equal(briefing.rows.find(r=>r.Activity==='Stock receipts').Count,1);
+    assert.equal(briefing.rows.find(r=>r.Activity==='Purchase orders placed').Count,1);
+    assert.equal(briefing.rows.find(r=>r.Activity==='Customer orders confirmed').Count,1);
+    assert.equal(briefing.rows.find(r=>r.Activity==='Customer shipments sent').Count,0);
     assert.ok(briefing.rows.every(r=>r['Team member']===undefined));
     if(tier==='starter')await browser.get(root+'daily-team-summary').expect(402);
     else{

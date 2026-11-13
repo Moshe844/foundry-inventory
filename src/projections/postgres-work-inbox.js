@@ -36,4 +36,13 @@ async function page(db,workspaceId,input){
  const rows=(await db.query(`WITH candidates AS (${base}) SELECT w.*,c.money,c.currency,count(*) OVER() AS total FROM candidates c JOIN work_items w ON w.id=c.id AND w.workspace_id=$1 WHERE c.kind=$2 AND c.location=$3 AND c.currency=$4 AND ($5::text='' OR w.recommended_action::jsonb->>'displayName' ILIKE '%'||$5||'%' OR w.recommended_action::jsonb->>'code' ILIKE '%'||$5||'%') ORDER BY c.money DESC NULLS LAST,c.priority DESC,c.created_at,c.id LIMIT ${pageSize+1} OFFSET $6`,[workspaceId,kind,location,currency,q,(page-1)*pageSize])).rows;
  return {rows:rows.slice(0,pageSize).map(r=>({...r,action:JSON.parse(r.recommended_action),evidence:typeof r.source_evidence==='string'?JSON.parse(r.source_evidence||'[]'):r.source_evidence||[]})),total:Number(rows[0]?.total||0),hasMore:rows.length>pageSize,kind,location,currency,q,page};
 }
-module.exports={summary,page};
+
+async function selection(db,workspaceId,{kind,location,currency,ids}){
+ const result=await db.query(`WITH candidates AS (${base}) SELECT c.id,w.recommended_action::jsonb AS action
+   FROM candidates c JOIN work_items w ON w.workspace_id=$1 AND w.id=c.id
+   WHERE c.kind=$2 AND c.location=$3 AND c.currency=$4 AND c.id=ANY($5::text[])
+   AND w.execution_status='WAITING_FOR_APPROVAL'`,[workspaceId,kind,location,currency,ids]);
+ return new Map(result.rows.map(row=>[row.id,row.action]));
+}
+
+module.exports={summary,page,selection};

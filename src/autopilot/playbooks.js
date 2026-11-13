@@ -40,6 +40,9 @@ const reviews=require('./job-reviews');
 for(const d of reviews.definitions.filter(d=>!d.requiresFilter&&!d.requiresChange)){
   steps.set(d.key,{job:d.id,label:d.label,review:true});
 }
+for(const [key,filterLabel] of [['partner-habits','Exact customer or supplier name'],['reorder-explanation','Exact SKU'],['quarterly-supplier-pack','Exact supplier name']]){
+  if(steps.has(key))steps.get(key).filterLabel=filterLabel;
+}
 // Work steps. Each names its job's own routine and how to read its result:
 // what it finished on its own and what it left for a person.
 const work=[
@@ -68,7 +71,14 @@ function stepOperation(plan,s){
   return plan==='growth'?['automatic',{trained:true}]:[s.operation||'draft',{}];
 }
 const canRunStep=(plan,s)=>Boolean(s)&&agent.permits(plan,s.job,...stepOperation(plan,s));
-const choices=plan=>[...steps].filter(([,s])=>canRunStep(plan,s)).map(([key,s])=>({key,label:s.label,work:s.work===true}));
+const choices=plan=>[...steps].filter(([,s])=>canRunStep(plan,s)).map(([key,s])=>({key,label:s.label,work:s.work===true,filterLabel:s.filterLabel}));
+const stepKey=step=>typeof step==='string'?step:step.key;
+function stepInput(key,filters){
+  const filter=String(filters?.[key]??'').trim();
+  if(!filter)return key;
+  if(!steps.get(key)?.filterLabel||filter.length>150)throw new ValidationError('Use a supported step filter up to 150 characters.');
+  return {key,filter};
+}
 
 async function owner(db,ctx){
   const actor=(await db.query(`SELECT u.* FROM users u JOIN workspaces w ON w.id=u.workspace_id AND w.owner_account_id=u.account_id
@@ -92,6 +102,7 @@ async function create(db,ctx,input){
     throw new ValidationError('Enter a name, choose at least two different steps, and select a schedule.');
   return db.transaction(async client=>{
     const {state}=await authorize(client,ctx,keys);
+    const selected=keys.map(key=>stepInput(key,input.filters));
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('playbooks:'||$1,0))",[state.accountId]);
     const count=await client.query(`SELECT count(*) AS n FROM ${books} b JOIN workspaces w ON w.id=b.workspace_id
       WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL`,[state.accountId]);
@@ -99,8 +110,8 @@ async function create(db,ctx,input){
     const id=newId('playbook');
     await client.query(`INSERT INTO ${books}(id,workspace_id,created_by,name,steps,cadence,next_at)
       VALUES($1,$2,$3,$4,$5::jsonb,$6,CASE $6 WHEN 'daily' THEN now()+interval '1 day' WHEN 'weekly' THEN now()+interval '7 days' END)`,
-      [id,ctx.workspaceId,ctx.actorId,name,JSON.stringify(keys),cadence]);
-    await audit.record(client,ctx,{action:'Playbook saved',reference:name,after:{id,steps:keys,cadence}});
+      [id,ctx.workspaceId,ctx.actorId,name,JSON.stringify(selected),cadence]);
+    await audit.record(client,ctx,{action:'Playbook saved',reference:name,after:{id,steps:selected,cadence}});
     return id;
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
@@ -117,12 +128,14 @@ async function runWork(db,ctx,key,def){
   return {label:def.label,step:key,outcome:waiting?'waiting':'done',done,waiting,link:routine.path,
     summary:(done?done+' done on its own':'Nothing to do on its own')+(waiting?', '+waiting+' waiting for a person in Needs you.':'.')};
 }
-async function runStep(db,ctx,actor,key){
+async function runStep(db,ctx,actor,step){
+  const key=stepKey(step),filter=typeof step==='string'?'':step.filter;
   const def=steps.get(key);
   if(def.work)return runWork(db,ctx,key,def);
   if(def.review){
-    const {summary,rows,more}=await reviews.run(db,ctx,key,{scheduled:true,trained:true});
-    return {label:def.label,summary:summary+(more?' View the full review for additional records.':''),rows,link:'/autopilot/reviews/'+key};
+    const {summary,rows,more}=await reviews.run(db,ctx,key,{filter,scheduled:true,trained:true});
+    const query=filter?'?'+new URLSearchParams({filter}):'';
+    return {label:def.label,summary:summary+(more?' View the full review for additional records.':''),rows,link:'/autopilot/reviews/'+key+query};
   }
   if(def.report){
     const output=await reports.run(db,ctx,actor,def.report,{});
@@ -183,13 +196,13 @@ async function advance(db,ctx,book,run,actor,state){
   const results=[...(run.result||[])];
   try{
     for(let index=Number(run.next_step)||0;index<book.steps.length;index++){
-      const key=book.steps[index],def=steps.get(key);
+      const step=book.steps[index],key=stepKey(step),def=steps.get(key);
       if(def.work){
         const hold=await stepHold(db,ctx.workspaceId,state,def);
         if(hold)return await stop(db,ctx,book,run,results,index,'Step '+(index+1)+' waits: '+hold);
       }
       let result;
-      try{result=await runStep(db,ctx,actor,key);}
+      try{result=await runStep(db,ctx,actor,step);}
       catch(error){
         if(!(error instanceof DomainError)||error.status>=500)throw error;
         await audit.record(db,ctx,{action:'Playbook step failed',reference:book.name,after:{run:run.id,step:index+1,key,problem:error.message}});
@@ -230,7 +243,7 @@ async function assertRunning(db,workspaceId){
 async function run(db,ctx,id,requestKey,{scheduled=false}={}){
   if(typeof requestKey!=='string'||!requestKey||requestKey.length>160) throw new ValidationError('A playbook run needs its request reference.');
   const b=await loadBook(db,ctx,id);
-  const {actor,state}=await authorize(db,ctx,b.steps);
+  const {actor,state}=await authorize(db,ctx,b.steps.map(stepKey));
   await assertRunning(db,ctx.workspaceId);
   // One run per request: it is created once, claimed by one worker at a time,
   // and a finished or stopped run answers with what it already did.
@@ -265,7 +278,7 @@ async function resume(db,ctx,runId){
   const row=(await db.query(`SELECT * FROM ${runs} WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,String(runId||'')])).rows[0];
   if(!row)throw new NotFoundError('This playbook run is no longer available.');
   const b=await loadBook(db,ctx,row.playbook_id);
-  const {actor,state}=await authorize(db,ctx,b.steps);
+  const {actor,state}=await authorize(db,ctx,b.steps.map(stepKey));
   await assertRunning(db,ctx.workspaceId);
   const claimed=(await db.query(`UPDATE ${runs} SET status='RUNNING',reason=NULL,claimed_until=now()+interval '15 minutes',updated_at=now()
     WHERE workspace_id=$1 AND id=$2 AND status IN ('STOPPED','WAITING') RETURNING *`,[ctx.workspaceId,row.id])).rows[0];
@@ -293,8 +306,8 @@ async function list(db,ctx){
     LEFT JOIN LATERAL (SELECT * FROM ${runs} WHERE workspace_id=b.workspace_id AND playbook_id=b.id ORDER BY created_at DESC,id DESC LIMIT 1) r ON true
     WHERE b.workspace_id=$1 ORDER BY b.created_at,b.id`,[ctx.workspaceId]);
   return {choices:choices(tier),enabled,limit:limits[tier]??null,books:records.rows.map(b=>{
-    const allowed=b.steps.every(key=>canRunStep(tier,steps.get(key)))&&enabled;
-    return {...b,labels:b.steps.map(key=>steps.get(key)?.label||key),result:allowed?b.result:null,
+    const allowed=b.steps.every(step=>canRunStep(tier,steps.get(stepKey(step))))&&enabled;
+    return {...b,labels:b.steps.map(step=>steps.get(stepKey(step))?.label||stepKey(step)),result:allowed?b.result:null,
       run:allowed&&b.run_id?{id:b.run_id,status:b.run_status,reason:b.run_reason,nextStep:Number(b.next_step),scheduled:b.run_scheduled,
         at:b.run_updated_at,open:['STOPPED','WAITING'].includes(b.run_status)}:null};
   })};

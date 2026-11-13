@@ -38,7 +38,8 @@ function discover(catalogue,query){
 function evidence(result){const rows=(result.rows||[]).slice(0,12),sources=require('./answer-sources').collect(result);return {status:result.status,answer:result.answer,
  rows,columns:result.columns,totalReturned:result.rows?.length||0,truncated:(result.rows?.length||0)>rows.length,...(sources.length?{sources}:{}),
  proposal:result.proposal,reason:result.reason,choices:result.choices,awaitingField:result.awaitingField,
- navigation:result.navigation,verifiedStatusFacts:result.verifiedStatusFacts,workId:result.workId};}
+ navigation:result.navigation,verifiedStatusFacts:result.verifiedStatusFacts,workId:result.workId,
+ handoff:result.handoff};}
 async function catalogueFor(db,ctx){const actor=(await db.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
  [ctx.workspaceId,ctx.actorId])).rows[0];if(!actor)throw new ValidationError('This user no longer belongs to the business.');
  return {actor,catalogue:await control.planningCatalogue(db,ctx,actor)};}

@@ -44,7 +44,7 @@ test('a damage claim sends the original evidence and approved amount in one prov
     return confirmation;
   });
   assert.equal(writes,1);
-  assert.deepEqual(result,{id:'clm_fixture',reference:claim.reference,status:'submitted',amountMinor:2505,detail:null});
+  assert.deepEqual(result,{id:'clm_fixture',reference:claim.reference,status:'submitted',amountMinor:2505,approvedMinor:null,detail:null});
   await assert.rejects(claims.submit(ctx,{...claim,supporting:null},()=>assert.fail('Missing damage evidence')),/required evidence/);
 });
 

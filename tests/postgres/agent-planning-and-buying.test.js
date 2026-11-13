@@ -208,8 +208,8 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
       assert.equal(Number(received.Received),1);assert.equal(Number(received['Still due']),3);
     }
   }
-  await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,safety_stock,source,created_at,updated_at)
-    VALUES($1,$2,$3,$4,20,30,0,'manual',now()::text,now()::text)`,[randomUUID(),ctx.workspaceId,sku,f.location.id]);
+  await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,safety_stock,lead_time_days,source,created_at,updated_at)
+    VALUES($1,$2,$3,$4,20,30,0,10,'manual',now()::text,now()::text)`,[randomUUID(),ctx.workspaceId,sku,f.location.id]);
   await db.query("UPDATE sales_orders SET needed_by=$3 WHERE workspace_id=$1 AND id IN (SELECT sales_order_id FROM sales_shipments WHERE id=ANY($2))",[ctx.workspaceId,parcels,ago(today,-1)]);
   await f.shipping.applyTracking(db,ctx,parcels[0],{status:'DELIVERED',externalEventId:'service-level-first',occurredAt:ago(today,-1)+'T12:00:00Z'});
   // Job 144's saved weekly forecasts; the stock-out week is not comparable.
@@ -232,6 +232,7 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
     }
     if(tier==='starter'){
       await browser.get('/autopilot/reviews/demand-scenario').query({change:20}).expect(402);
+      await browser.get('/autopilot/reviews/demand-scenario').query({supplierDelayDays:7}).expect(402);
       assert.doesNotMatch((await browser.get('/autopilot/reviews').expect(200)).text,/href="\/autopilot\/reviews\/demand-scenario"/);
       for(const key of ['compare-quotes','repeat-loss','demand-scenario'])await assert.rejects(review(key,{change:20}),e=>e.code==='entitlement_required');
       assert.match((await review('overdue-incoming')).rows[0].Suggestion,/overdue/);continue;
@@ -245,9 +246,22 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
     const sales=/^([\d.]+) → ([\d.]+)$/.exec(asked.rows.find(r=>r.SKU===code)['Sales in 30 days']);
     assert.ok(sales&&Number(sales[1])>0,JSON.stringify(asked.rows));assert.equal(Number(sales[2]),Math.round(Number(sales[1])*1.2*100)/100);
     assert.ok(asked.sources[0].href.includes('change=20'));
-    assert.match((await review('demand-scenario',{change:-100})).rows[0]['Sales in 30 days'],/ → 0$/);
+    const scenario=(await review('demand-scenario',{change:20})).rows.find(r=>r.Warehouse==='Dispatch');
+    assert.equal(scenario['Baseline 30-day sales'],1);assert.equal(scenario['Scenario 30-day sales'],1.2);
+    assert.equal((await review('demand-scenario',{change:-100})).rows[0]['Scenario 30-day sales'],0);
+    const delayed=await require('../../src/assistant/postgres-capability-registry').registry.get('read.agent_review').prepare(null,db,ctx,
+      'What if sales grow 20% and the supplier takes 150 days longer?',{agentJob:'demand-scenario',search:code,demandChangePercent:20,supplierDelayDays:150});
+    const gap=delayed.rows.find(r=>r.Warehouse==='Dispatch');
+    assert.equal(gap['Recorded lead time (days)'],10);
+    assert.equal(gap['Scenario lead time (days)'],160);
+    assert.equal(gap['Baseline units short before replenishment'],0);
+    assert.equal(gap['Scenario units short before replenishment'],1.4);
+    assert.match(delayed.sources[0].href,/supplierDelayDays=150/);
+    assert.match((await browser.get('/autopilot/reviews/demand-scenario').query({filter:code,supplierDelayDays:-15}).expect(200)).text,/Scenario lead time \(days\)/);
+    assert.equal((await review('demand-scenario',{supplierDelayDays:-15})).rows.find(r=>r.Warehouse==='Dispatch')['Scenario lead time (days)'],0);
   }
   await assert.rejects(review('demand-scenario',{change:'anything'}),/between/);
+  await assert.rejects(review('demand-scenario',{supplierDelayDays:1.5}),/whole-day/);
   assert.equal((await review('customer-check-in',{filter:''})).rows.length,0);
   await db.query("UPDATE sales_shipments SET shipped_at=(now()-interval '100 days')::text WHERE workspace_id=$1 AND id=ANY($2)",[ctx.workspaceId,parcels]);
   assert.match((await review('customer-check-in',{filter:'Receiver'})).rows[0].Draft,/Hello Receiver/);
@@ -266,6 +280,15 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
   const physical=Number((await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND location_id=$2 AND sku_id=$3',[ctx.workspaceId,f.location.id,sku])).rows[0].on_hand);
   const count=await counts.prepare(db,ctx,{locationId:f.location.id,reference:'Year close count',lines:[{skuId:sku,quantity:physical}]});
   await counts.approve(db,ctx,count.id,(await counts.get(db,ctx,count.id)).integrity_hash);
+  const worksheets=require('../../src/operations/postgres-count-campaigns');
+  const worksheet=await worksheets.create(db,ctx,{locationId:f.location.id,title:'Year close worksheet'},{exactLocation:true});
+  const updated=await worksheets.save(db,ctx,worksheet.id,{revision:1,lines:[{locationId:f.location.id,skuId:sku,quantity:physical}]});
+  await worksheets.approve(db,ctx,worksheet.id,updated.revision);
+  const apply={workspaceId:ctx.workspaceId,payload:{actorId:ctx.actorId,campaignId:worksheet.id}};
+  assert.equal((await worksheets.run(apply,db)).status,'APPLYING');
+  assert.equal((await worksheets.run(apply,db)).status,'COMPLETED');
+  await db.query('UPDATE warehouse_count_campaigns SET completed_at=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,worksheet.id,end+'T12:00:00Z']);
+  await worksheets.create(db,ctx,{locationId:f.location.id,title:'Unfinished worksheet'},{exactLocation:true});
   await db.query("UPDATE physical_count_reviews SET approved_at=($2::date+time '12:00') AT TIME ZONE 'UTC' WHERE id=$1",[count.id,end]);
   await counts.prepare(db,ctx,{locationId:f.location.id,reference:'Pending count',lines:[{skuId:sku,quantity:physical}]});
   const download=(job)=>browser.get('/autopilot/reviews/'+job+'/download').query({filter:end.slice(0,7)});
@@ -291,7 +314,11 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
       const xlsx=require('xlsx'),workbook=xlsx.read(pack.body,{type:'buffer'});
       assert.equal(xlsx.utils.sheet_to_json(workbook.Sheets['Closing valuation']).find(r=>r.SKU==='Unassigned ledger entries')['Closing value'],15);
       const lines=xlsx.utils.sheet_to_json(workbook.Sheets['Approved count lines']);
-      assert.equal(lines.length,1);assert.equal(lines[0].SKU,code);assert.equal(lines[0].Reference,'Year close count');assert.equal(lines[0].Counted,physical);
+      assert.equal(lines.length,2);
+      for(const reference of ['Year close count','Year close worksheet']){
+        const line=lines.find(r=>r.Reference===reference);
+        assert.equal(line.SKU,code);assert.equal(line.Counted,physical);
+      }
     }
     if(tier==='starter'){
       for(const key of ['month-end-stock','margin-change'])await assert.rejects(review(key,{filter:end.slice(0,7)}),e=>e.code==='entitlement_required');continue;
@@ -322,6 +349,11 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
     for(let i=1;i<=doc.numPages;i++)content+=(await (await doc.getPage(i)).getTextContent()).items.map(i=>i.str).join(' ')+' ';
     assert.ok(content.includes(line.Order));assert.ok(content.includes('Alternative'));assert.ok(content.includes('$1.25'));
     assert.doesNotMatch(content,/Fixture parts/);await loading.destroy();
+    const quarter=priorQuarter.end.slice(0,4)+'-Q'+Math.ceil(Number(priorQuarter.end.slice(5,7))/3);
+    const chosen=await browser.get('/autopilot/reviews/quarterly-supplier-pack').query({filter:supplier.id,quarter}).expect(200);
+    assert.match(chosen.text,new RegExp('quarter='+quarter));
+    await binary(browser.get('/autopilot/reviews/quarterly-supplier-pack/download').query({filter:supplier.id,quarter})).expect(200);
+    await browser.get('/autopilot/reviews/quarterly-supplier-pack/download').query({filter:supplier.id,quarter:'9999-Q1'}).expect(400);
     await browser.get('/autopilot/reviews/quarterly-supplier-pack/download').expect(400);
   }
 });

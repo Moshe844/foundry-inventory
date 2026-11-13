@@ -27,6 +27,33 @@ test('customer progress never transports the growing native journal and retains 
  fullReads=0;const response=await web.get('/ask/goals/'+goal.id);
  assert.equal(response.status,200);assert.equal(response.body.status,'READY');assert.equal(fullReads,0);
  assert(!JSON.stringify(response.body).includes(secret));assert(Buffer.byteLength(JSON.stringify(response.body))<10000);
+ const answered=await store.create(db,ctx,'Read the warehouse record.');
+ await db.query(`UPDATE stockchief_runtime.assistant_goals SET status='COMPLETED',answer='The warehouse is recorded.',
+   checkpoint=checkpoint||$2::jsonb WHERE id=$1`,[answered.id,JSON.stringify({answerSources:['/inventory?location=checked-record']})]);
+ const answeredProgress=await web.get('/ask/goals/'+answered.id).expect(200);
+ assert.deepEqual(answeredProgress.body.answerSources,['/inventory?location=checked-record']);
+ const subscribed=await db.query(`INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status)
+   SELECT $1,$2,'growth',id,'ACTIVE' FROM commercial_plan_versions WHERE plan_id='growth' AND status='ACTIVE'`,
+   [randomUUID(),owner.accountId]);
+ assert.equal(subscribed.rowCount,1);
+ const priorAdaptive=process.env.STOCKCHIEF_ADAPTIVE_ASK,priorWorkspaces=process.env.STOCKCHIEF_ADAPTIVE_ASK_WORKSPACES;
+ process.env.STOCKCHIEF_ADAPTIVE_ASK='1';process.env.STOCKCHIEF_ADAPTIVE_ASK_WORKSPACES=ctx.workspaceId;
+ try{
+   const decision=(action,input={})=>({action,progress:'Checking inventory.',query:'',steps:[],answer:'',evidence:[],...input});
+   const decisions=[decision('discover',{query:'inventory_summary'}),
+     decision('operate',{steps:[{capability:'read.inventory_summary',arguments:[],dependsOn:[]}]}),
+     decision('finish',{answer:'No units are recorded.',evidence:[0]})];
+   const usage=require('../helpers/postgres-model-fixture'),model={name:'anthropic',model:usage.PRICED_MODEL,
+     async complete(req){return {usage:usage.pricedUsage(),data:req.schemaName==='stockchief_adaptive_verification'
+       ?{complete:true,grounded:true,reason:''}:decisions.shift()};}};
+   const adaptive=await require('../../src/assistant/postgres-goal-controller').start(db,ctx,'Check current recorded units.',{provider:model});
+   assert.equal(adaptive.goalStatus,'COMPLETED');
+   const adaptiveProgress=await web.get('/ask/goals/'+adaptive.goalId).expect(200);
+   assert.deepEqual(adaptiveProgress.body.answerSources,['/inventory']);
+ }finally{
+   for(const [key,value] of [['STOCKCHIEF_ADAPTIVE_ASK',priorAdaptive],['STOCKCHIEF_ADAPTIVE_ASK_WORKSPACES',priorWorkspaces]])
+     if(value===undefined)delete process.env[key];else process.env[key]=value;
+ }
  // A new canonical proposal must still surface through the very same endpoint.
  const active=await store.claim(db,ctx,goal.id),gateway=require('../../scripts/environment-agent-demo/gateway').createGateway({database:db,ctx,goal:active.original_request,goalId:goal.id,runToken:active.run_token});
  const session=require('../../scripts/environment-agent-demo/session').createSession({database:db,ctx,goalId:goal.id,runToken:active.run_token,candidate:'codex',authorize:gateway.authorize});

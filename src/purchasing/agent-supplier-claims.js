@@ -227,6 +227,17 @@ const RULE=`LEFT JOIN LATERAL(SELECT r.id rule_id,r.authorized_by,r.connector_id
    AND r.location_id=rl.location_id AND r.enabled AND r.scope->>'claimKind' IS NULL ORDER BY r.created_at DESC,r.id DESC LIMIT 1) rule ON true`;
 // One routine pass, at most 40 claims. Failed inspections, then staff damage
 // reports, then confirmed shortages; the cursor names the phase.
+async function schedule(client,workspaceId,cycleId){
+ const kind='agent.supplier-claims';
+ await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[kind+':'+workspaceId]);
+ const waiting=await client.query(`SELECT 1 FROM stockchief_runtime.jobs
+   WHERE workspace_id=$1 AND kind=$2 AND status IN ('PENDING','RUNNING','RETRY') LIMIT 1`,[workspaceId,kind]);
+ if(waiting.rowCount)return {created:false};
+ const database={query:(sql,args)=>client.query(sql,args),transaction:work=>work(client)};
+ return require('../operations/postgres-job-queue').enqueue(database,{workspaceId,kind,
+   idempotencyKey:'supplier-claims:'+cycleId,payload:{cycleId},priority:65,maxAttempts:3});
+}
+
 async function run(db,workspaceId,{afterId=''}={}){
  const phase=afterId.startsWith('shortage:')?'shortage':afterId.startsWith('report:')?'report':'hold';
  const after=afterId.replace(/^(shortage|report|hold):/,'');
@@ -279,4 +290,4 @@ async function run(db,workspaceId,{afterId=''}={}){
  const more=shortages.length>room;
  return {results,more,nextAfterId:more?'shortage:'+(room?shortages[room-1].id:start):null};
 }
-module.exports={claim,preview,configure,authority,deliveryAuthority,attachments,send,sendAutomatic,rule,page,run,inbox,definition,photoDefinition,kind,action};
+module.exports={claim,preview,configure,authority,deliveryAuthority,attachments,send,sendAutomatic,rule,page,run,schedule,inbox,definition,photoDefinition,kind,action};

@@ -83,6 +83,9 @@ test('real Chromium queues hosted payments, posts signed results once, and fence
       fulfillmentLocationId:location.id,idempotencyKey:'pay-order-deposit',
       lines:[{skuId:item.skuIds[0],quantity:2,unitPriceMinor:1200}]});
     await workflows.confirmSalesOrder(database,ctx,depositOrder.salesOrderId,{idempotencyKey:'pay-confirm-deposit'});
+    await assert.rejects(workflows.fulfillSalesOrder(database,ctx,depositOrder.salesOrderId,{
+      idempotencyKey:'pay-fulfill-deposit',lines:[{lineId:depositOrder.lineIds[0],locationId:location.id,quantity:2}]
+    }),/agreed payment of \$12\.00 is still due/);
     await page.goto(`${base}/orders/${depositOrder.salesOrderId}`);
     assert.match(await page.locator('main').innerText(),/Agreed deposit:.*12\.00.*Still due:.*12\.00/s);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Prepare secure deposit link'}).click()]);
@@ -122,6 +125,9 @@ test('real Chromium queues hosted payments, posts signed results once, and fence
       liability:Number(afterFulfillment.deposit_liability)},
     {total:2400,balance:1200,status:'PARTIALLY_PAID',allocated:1200,liability:0});
 
+    await database.transaction(client=>require('../../src/sales/postgres-payment-terms').saveInTransaction(client,ctx,{
+      customerId:customer.id,kind:'ON_ACCOUNT',netDays:30
+    }));
     const order=await fulfilledOrder('confirmed',2);
     await page.goto(`${base}/orders/${order.salesOrderId}`);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Prepare secure payment link'}).click()]);

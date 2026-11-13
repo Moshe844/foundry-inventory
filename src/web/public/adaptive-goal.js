@@ -62,6 +62,7 @@
      const changed=goal.status!==status;
      disconnected=false;
      status=goal.status;updated=goal.updatedAt;panel.dataset.goalStatus=status;
+     panel.dataset.goalNavigationOnly=String(goal.navigationOnly===true);
      if(typeof goal.workerAvailable==='boolean')workerAvailable=goal.workerAvailable;
      const resume=panel.querySelector('[data-goal-resume]');if(resume)resume.hidden=status!=='BLOCKED'||goal.continuation?.eligible!==true;
      const recovery=panel.querySelector('[data-goal-recovery-reason]');if(recovery){recovery.hidden=status!=='BLOCKED'||goal.continuation?.eligible!==false;recovery.textContent=goal.continuation?.eligible===false?goal.continuation.reason:'';}
@@ -142,7 +143,9 @@
      }
      // The records behind a finished answer, as the server listed them for this person.
      const sourcePanel=panel.querySelector('[data-goal-sources]'),sources=Array.isArray(goal.sources)?goal.sources:[];
-     if(sourcePanel&&sourcePanel.querySelectorAll('[data-answer-sources] .rm-chat-evidence__row').length!==sources.length){
+     const sourceVersion=JSON.stringify(sources);
+     if(sourcePanel&&sourcePanel.dataset.sourceVersion!==sourceVersion){
+      sourcePanel.dataset.sourceVersion=sourceVersion;
       sourcePanel.replaceChildren();
       if(sources.length){
        const box=document.createElement('details'),summary=document.createElement('summary'),title=document.createElement('span'),count=document.createElement('small'),list=document.createElement('div');

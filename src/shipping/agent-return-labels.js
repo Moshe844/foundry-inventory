@@ -84,7 +84,7 @@ const CANDIDATES=`SELECT r.id FROM customer_returns r WHERE r.workspace_id=$1 AN
   AND NOT EXISTS(SELECT 1 FROM sales_shipments s JOIN ${runs} x ON x.workspace_id=s.workspace_id AND x.shipment_id=s.id
     WHERE s.workspace_id=r.workspace_id AND s.customer_return_id=r.id AND s.status<>'CANCELLED' AND x.status='DECLINED')`;
 // Labels StockChief bought (alone or after a tap) whose email has not gone out.
-const SENDABLE=`SELECT DISTINCT ON (s.id) s.id shipment_id,s.customer_return_id,x.* FROM sales_shipments s
+const SENDABLE=`SELECT DISTINCT ON (s.id) s.customer_return_id,x.* FROM sales_shipments s
   JOIN customer_returns r ON r.workspace_id=s.workspace_id AND r.id=s.customer_return_id AND r.status='AUTHORIZED'
   JOIN ${runs} x ON x.workspace_id=s.workspace_id AND x.shipment_id=s.id
   WHERE s.workspace_id=$1 AND s.status='PACKED' AND s.label_status='PURCHASED' AND x.status='QUEUED'
@@ -273,7 +273,8 @@ async function schedule(c,workspaceId,cycleId){
   if(!await installed(c))return {queued:false};
   const account=await policy.accountState(c,workspaceId);
   if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,JOB,'draft'))return {queued:false};
-  if(!(await c.query(`SELECT 1 FROM (SELECT 1 FROM (${CANDIDATES}) a UNION ALL SELECT 1 FROM (${SENDABLE}) b) waiting LIMIT 1`,[workspaceId])).rowCount)return {queued:false};
+  const {rows:[work]}=await c.query(`SELECT EXISTS(${CANDIDATES}) OR EXISTS(${SENDABLE}) AS pending`,[workspaceId]);
+  if(!work.pending)return {queued:false};
   await jobs.enqueue(scoped(c),{workspaceId,kind:KIND,idempotencyKey:'return-labels:cycle:'+cycleId,payload:{cycleId},priority:45,maxAttempts:3});
   return {queued:true};
 }

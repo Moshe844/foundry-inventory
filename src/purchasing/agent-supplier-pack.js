@@ -12,9 +12,16 @@ const {addDays}=require('../accounting/customer-money');
 const money=require('../domain/currency');
 
 // The calendar quarter that ended most recently before `today`.
-function quarter(today){
+function quarter(today,requested){
   const month=Number(today.slice(5,7))-1;
-  const finish=new Date(Date.UTC(Number(today.slice(0,4)),month-month%3,1)).toISOString().slice(0,10);
+  const latestFinish=new Date(Date.UTC(Number(today.slice(0,4)),month-month%3,1)).toISOString().slice(0,10);
+  let finish=latestFinish;
+  if(requested){
+    const match=/^(\d{4})-Q([1-4])$/.exec(String(requested));
+    if(!match||Number(match[1])<1901)throw new ValidationError('Enter a completed quarter such as 2026-Q1.');
+    finish=new Date(Date.UTC(Number(match[1]),Number(match[2])*3,1)).toISOString().slice(0,10);
+    if(finish>latestFinish)throw new ValidationError('Choose a completed quarter.');
+  }
   const start=new Date(Date.UTC(Number(finish.slice(0,4)),Number(finish.slice(5,7))-4,1)).toISOString().slice(0,10);
   const end=addDays(finish,-1);
   return {start,end,finish,closing:end.slice(0,7),label:'Q'+Math.ceil(Number(end.slice(5,7))/3)+' '+end.slice(0,4)};
@@ -80,19 +87,19 @@ function describe(pack){
     pack.totals.map(sentence).join(' ');
 }
 
-async function report(db,ctx,{today,filter,page=1,download=false}){
-  const span=quarter(today);
-  if(!filter)return {span,rows:[],more:false,summary:'Enter the exact supplier name to prepare their pack for '+span.start+' through '+span.end+'.'};
+async function report(db,ctx,{today,filter,page=1,download=false,quarter:requestedQuarter}){
+  const span=quarter(today,requestedQuarter),reportQuarter=span.end.slice(0,4)+'-Q'+Math.ceil(Number(span.end.slice(5,7))/3);
+  if(!filter)return {span,reportQuarter,rows:[],more:false,summary:'Enter the exact supplier name to prepare their pack for '+span.start+' through '+span.end+'.'};
   const suppliers=(await db.query('SELECT id,name FROM suppliers WHERE workspace_id=$1 AND (id=$2 OR lower(name)=lower($2)) ORDER BY id LIMIT 2',[ctx.workspaceId,filter])).rows;
   if(suppliers.length!==1){
     if(download)throw new ValidationError('Choose one matching supplier in this inventory.');
-    return {span,rows:[],more:false,summary:suppliers.length?'Several suppliers have this name. Use the supplier record ID.':'No supplier matched this name.'};
+    return {span,reportQuarter,rows:[],more:false,summary:suppliers.length?'Several suppliers have this name. Use the supplier record ID.':'No supplier matched this name.'};
   }
   const [supplier]=suppliers;
-  if(download){const pack=await facts(db,ctx.workspaceId,supplier,span);return {...pack,more:false,summary:describe(pack),rows:clean(pack.rows)};}
+  if(download){const pack=await facts(db,ctx.workspaceId,supplier,span);return {...pack,reportQuarter,more:false,summary:describe(pack),rows:clean(pack.rows)};}
   const zone=(await time.forWorkspace(db,ctx.workspaceId)).timeZone;
   const raw=await lines(db,ctx.workspaceId,supplier.id,span,zone,{limit:101,offset:(page-1)*100});
-  return {supplier:supplier.name,span,more:raw.length>100,
+  return {supplier:supplier.name,span,reportQuarter,more:raw.length>100,
     summary:'Orders placed with '+supplier.name+' from '+span.start+' through '+span.end+'. Received units use receipts dated through the quarter close.',
     rows:clean(raw.slice(0,100).map(row))};
 }

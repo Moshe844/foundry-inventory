@@ -28,35 +28,39 @@ async function yearEnd(db,ctx,{today,filter,page=1,download=false}){
   const zone=(await time.forWorkspace(db,ctx.workspaceId)).timeZone;
   const bounds=[ctx.workspaceId,time.dayBoundary(span.start,zone),time.dayBoundary(span.end,zone,{nextDay:true})];
   const during="r.workspace_id=$1 AND r.status='COMPLETED' AND r.approved_at >= $2::timestamptz AND r.approved_at < $3::timestamptz";
-  const total=await db.query('SELECT coalesce(sum(jsonb_array_length(r.payload->\'lines\')),0) AS n FROM physical_count_reviews r WHERE '+during,bounds);
+  const worksheets="w.workspace_id=$1 AND w.status='COMPLETED' AND w.completed_at >= $2::timestamptz AND w.completed_at < $3::timestamptz";
+  const total=await db.query(`SELECT (SELECT coalesce(sum(jsonb_array_length(r.payload->'lines')),0) FROM physical_count_reviews r WHERE ${during})
+    +(SELECT count(*) FROM warehouse_count_campaigns w JOIN warehouse_count_campaign_lines l ON l.workspace_id=w.workspace_id AND l.campaign_id=w.id
+      WHERE ${worksheets} AND l.applied_at IS NOT NULL) AS n`,bounds);
   const counts=download?(await db.query(`SELECT (r.approved_at AT TIME ZONE $4)::date::text AS day,r.payload->'location'->>'name' AS location,
     r.payload->>'reference' AS reference,l->>'code' AS sku,l->'before'->>'physical' AS before,l->>'quantity' AS counted,
-    l->>'delta' AS difference,r.payload->>'currency' AS currency,l->>'costDeltaMinor' AS value,u.name AS approver
+    l->>'delta' AS difference,r.payload->>'currency' AS currency,l->>'costDeltaMinor' AS value,u.name AS approver,'Count review' AS source
     FROM physical_count_reviews r CROSS JOIN LATERAL jsonb_array_elements(r.payload->'lines') AS l
     LEFT JOIN users u ON u.workspace_id=r.workspace_id AND u.id=r.approved_by_user_id
-    WHERE ${during} ORDER BY r.approved_at,r.id,l->>'code'`,[...bounds,zone])).rows:[];
+    WHERE ${during}
+    UNION ALL
+    SELECT (w.completed_at AT TIME ZONE $4)::date::text,loc.name,w.title,s.code,l.before_quantity::text,l.counted_quantity::text,
+      (l.counted_quantity-l.before_quantity)::text,settings.base_currency,l.cost_delta_minor::text,u.name,'Count worksheet'
+    FROM warehouse_count_campaigns w JOIN warehouse_count_campaign_lines l ON l.workspace_id=w.workspace_id AND l.campaign_id=w.id
+    JOIN locations loc ON loc.workspace_id=l.workspace_id AND loc.id=l.location_id
+    JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id
+    LEFT JOIN accounting_settings settings ON settings.workspace_id=w.workspace_id
+    LEFT JOIN users u ON u.workspace_id=w.workspace_id AND u.id=w.approved_by_user_id
+    WHERE ${worksheets} AND l.applied_at IS NOT NULL
+    ORDER BY day,location,reference,sku`,[...bounds,zone])).rows:[];
   const listed=download?balances:balances.slice(0,100);
   const rows=listed.map(b=>({Currency:b.currency,Account:b.system_key==='INVENTORY_ASSET'?'Stock on books':'Stock in transit',
     SKU:b.code||'Unassigned ledger entries','Closing value':money.format(b.value,b.currency),
     link:'/accounting/reports/general-ledger?'+new URLSearchParams({to:span.end})}));
   const settings=(await db.query('SELECT enabled,accounting_start_date,base_currency,costing_method FROM accounting_settings WHERE workspace_id=$1',[ctx.workspaceId])).rows[0]||null;
   const method=METHODS[settings?.costing_method]||'Not set';
-  // Completed count worksheets (cycle counts and the annual stocktake) applied in the year.
-  const worksheets=download?(await db.query(`SELECT (q.applied_at AT TIME ZONE $4)::date::text AS day,l.name AS location,c.title AS reference,s.code AS sku,
-      q.before_quantity::text AS before,q.counted_quantity::text AS counted,(q.counted_quantity-q.before_quantity)::text AS difference,q.cost_delta_minor::text AS value,u.name AS approver
-    FROM warehouse_count_campaign_lines q JOIN warehouse_count_campaigns c ON c.workspace_id=q.workspace_id AND c.id=q.campaign_id
-    JOIN skus s ON s.workspace_id=q.workspace_id AND s.id=q.sku_id JOIN locations l ON l.workspace_id=q.workspace_id AND l.id=q.location_id
-    LEFT JOIN users u ON u.workspace_id=c.workspace_id AND u.id=c.approved_by_user_id
-    WHERE q.workspace_id=$1 AND c.status='COMPLETED' AND q.applied_at IS NOT NULL AND q.counted_quantity IS NOT NULL
-      AND q.applied_at >= $2::timestamptz AND q.applied_at < $3::timestamptz ORDER BY q.applied_at,c.id,s.code,l.name`,[...bounds,zone])).rows:[];
   const base=settings?.base_currency||'USD';
-  const details=[...counts.map(c=>({Date:c.day,Location:c.location,Reference:c.reference||'',SKU:c.sku,Before:c.before,Counted:c.counted,
-    Difference:c.difference,Currency:c.currency,'Change in value':money.format(c.value,c.currency),'Approved by':c.approver||'Former team member',Source:'Count review'})),
-  ...worksheets.map(c=>({Date:c.day,Location:c.location,Reference:c.reference||'',SKU:c.sku,Before:c.before,Counted:c.counted,
-    Difference:c.difference,Currency:base,'Change in value':money.format(c.value||0,base),'Approved by':c.approver||'Former team member',Source:'Count worksheet'}))];
+  const details=counts.map(c=>({Date:c.day,Location:c.location,Reference:c.reference||'',SKU:c.sku,Before:c.before,Counted:c.counted,
+    Difference:c.difference,Currency:c.currency||'','Change in value':c.currency&&c.value!=null?money.format(c.value,c.currency):'',
+    'Approved by':c.approver||'Former team member',Source:c.source}));
   const amount=(minor,currency)=>Number(money.fromMinor(money.integer(minor,'Stock valuation',{signed:true}),currency));
   const result={span,rows,counts:details,values:listed.map(b=>amount(b.value,b.currency)),
-    countValues:[...counts.map(c=>amount(c.value,c.currency)),...worksheets.map(c=>amount(c.value||0,base))],method,
+    countValues:counts.map(c=>c.currency&&c.value!=null?amount(c.value,c.currency):null),method,
     more:!download&&balances.length>100,summary:'Posted stock valuation at '+span.end+' ('+method.toLowerCase()+') and '+total.rows[0].n+' approved count lines from '+span.start+' through '+span.end+'. The workbook includes the supporting count lines.'};
   if(!download)return result;
   // The rest of the accountant's pack: the year's roll-forward, write-downs and signed-off stocktakes.

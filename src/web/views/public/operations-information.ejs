@@ -22,7 +22,7 @@ Content-Type: application/json
 Idempotency-Key: YOUR_UNIQUE_OPERATION_KEY
 
 {"review":"stock-health","filter":"YOUR_SKU"}</pre>
-<p>Use the returned job ID with <code>GET /api/v1/public/agent/jobs/JOB_ID</code> and the same token to read its status and result. Reviews use the registered jobs in Agent reviews. An optional signed <code>agent.review.completed</code> webhook contains the job ID.</p>
+<p>Use the returned job ID with <code>GET /api/v1/public/agent/jobs/JOB_ID</code> and the same token to read its status and result. Reviews use the registered jobs in Agent reviews. To run a report you own, send <code>{"review":"saved-report","reportId":"REPORT_ID","page":1}</code>. Use the ID from the saved report’s URL. An optional signed <code>agent.review.completed</code> webhook contains the job ID.</p>
 <h2>Read stock</h2><pre>GET /api/v1/public/inventory?limit=200</pre><p>The response contains <code>data</code> with <code>skuId</code>, <code>code</code>, <code>name</code>, <code>locationId</code>, <code>location</code>, and <code>onHand</code>. Request up to 500 positions per page. Pass the returned <code>nextCursor</code> as <code>cursor</code> until it is null. Preserve the cursor as returned; do not construct it.</p>
 <h2>Receive physical stock</h2><pre>POST /api/v1/public/commands/inventory/receive
 Content-Type: application/json

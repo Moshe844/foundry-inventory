@@ -127,8 +127,9 @@
       var answer = goal.querySelector('[data-goal-answer]');
       if (!answer || !answer.textContent.trim()) return;
       function addDownload(target, query, label) {
-        if (target.previousElementSibling && target.previousElementSibling.matches('.ask-download')) return;
+        if (target.parentElement.querySelector('[data-download-query="'+query+'"]')) return;
         var menu = document.createElement('details');
+        menu.dataset.downloadQuery = query;
         menu.className = query==='?content=answer'?'ask-download':'ask-download ask-download--inline';
         var summary = document.createElement('summary');
         summary.textContent = label;
@@ -145,10 +146,10 @@
         menu.appendChild(list);
         target.parentNode.insertBefore(menu, target);
       }
-      // Only an answer worth keeping offers a download: a table, or a written
-      // report of 400 characters or more (the same rule as ask-export.js).
-      if (answer.querySelector('table') || answer.textContent.trim().length >= 400) addDownload(answer, '?content=answer', 'Download answer');
-      answer.querySelectorAll('.rm-agent__table').forEach(function (table, index) {
+      var tables = answer.querySelectorAll('table');
+      if (tables.length || goal.dataset.goalNavigationOnly !== 'true') addDownload(answer, '?content=answer', 'Download answer');
+      tables.forEach(function (element, index) {
+        var table = element.closest('.rm-agent__table') || element;
         addDownload(table, '?table=' + index, 'Download');
       });
     });

@@ -234,6 +234,13 @@ function ready(r){
     href:href+'?'+new URLSearchParams({month:r.month}),actionLabel:'Open the ROI report'}};
 }
 
+async function costRecipients(c,workspaceId){
+  const {rows}=await c.query(`SELECT lower(a.email) AS email,u.role,u.permissions FROM users u JOIN accounts a ON a.id=u.account_id
+    LEFT JOIN platform_account_access x ON x.account_id=u.account_id
+    WHERE u.workspace_id=$1 AND a.email IS NOT NULL AND x.disabled_at IS NULL`,[workspaceId]);
+  return new Set(rows.filter(require('../actions/financial-visibility').costs).map(member=>member.email));
+}
+
 // Email alerts on and not limited to critical alerts: email the report too.
 async function email(c,ctx,r){
   const config=require('../config');
@@ -251,9 +258,7 @@ async function email(c,ctx,r){
   const moneyLines=r.totals.flatMap(t=>t.kinds.map(k=>k.label+': '+fmt(k.amount,t.currency)+' ('+k.count+')'));
   // Job 203: the money caught comes from supplier costs and bills. Only the owner
   // and team members who may see costs get it; any other address gets the hours.
-  const seesCosts=new Set((await c.query(`SELECT lower(a.email) AS email,u.role,u.permissions FROM users u JOIN accounts a ON a.id=u.account_id
-    LEFT JOIN platform_account_access x ON x.account_id=u.account_id WHERE u.workspace_id=$1 AND a.email IS NOT NULL AND x.disabled_at IS NULL`,[ctx.workspaceId])).rows
-    .filter(m=>require('../actions/financial-visibility').costs(m)).map(m=>m.email));
+  const seesCosts=await costRecipients(c,ctx.workspaceId);
   const account=(await c.query(`SELECT a.id FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1`,[ctx.workspaceId])).rows[0];
   const jobs=require('../operations/postgres-job-queue'),credentials=require('../connections/credentials');
   let queued=0;
@@ -264,7 +269,7 @@ async function email(c,ctx,r){
       html:'<h1>Your ROI report for '+escapeHtml(r.name)+'</h1><p>'+escapeHtml(summary)+'</p>'+(lines.length?'<ul>'+lines.map(l=>'<li>'+escapeHtml(l)+'</li>').join('')+'</ul>':'')+
         (link?'<p><a href="'+escapeHtml(link)+'">Open the report</a></p>':'')+'<p>Standard estimates are StockChief’s starting minutes for a task; time a task yourself to replace them.</p>'};
     const job=await jobs.enqueue(reports.scoped(c),{workspaceId:ctx.workspaceId,kind:'system.email-send',idempotencyKey:'roi-report-email:'+ctx.workspaceId+':'+r.month+':'+address,
-      payload:{messageType:'scheduled_report',accountId:account?.id||null,sealed:credentials.encrypt(message)},priority:30,maxAttempts:5});
+      payload:{messageType:'scheduled_report',accountId:account?.id||null,includesCosts:full,sealed:credentials.encrypt(message)},priority:30,maxAttempts:5});
     if(job.created)queued++;
   }
   if(queued)await audit.record(c,ctx,{action:'Emailed the monthly ROI report',reference:r.name,after:{recipients:queued}});
@@ -372,5 +377,5 @@ async function download(db,ctx,query={}){
   return {filename:'roi-report-'+month+'.'+format,format,body};
 }
 
-module.exports={JOB,ACTION,KIND,href,STANDARD_MINUTES,KINDS,compute,headline,run,schedule,checkNow,page,readPage,download,email,
+module.exports={JOB,ACTION,KIND,href,STANDARD_MINUTES,KINDS,compute,headline,run,schedule,checkNow,page,readPage,download,email,costRecipients,
   definition:{id:JOB,key:'roi-report',label:'Monthly ROI report: hours saved and money caught',filterLabel:'Completed month (YYYY-MM)',readPage}};

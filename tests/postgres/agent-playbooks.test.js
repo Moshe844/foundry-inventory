@@ -12,17 +12,21 @@ test('playbooks recheck each job and the owner at registration, schedule, replay
     VALUES($1,$2,$3,(SELECT id FROM commercial_plan_versions WHERE plan_id=$3 AND status='ACTIVE'),'ACTIVE')
     ON CONFLICT(account_id) DO UPDATE SET plan_id=EXCLUDED.plan_id,plan_version_id=EXCLUDED.plan_version_id`,[randomUUID(),owner.accountId,id]);}
   const definition={name:'Weekly stock',steps:['low-stock','value'],cadence:'weekly'};
+  const filtered={name:'Warehouse buying check',steps:['low-stock','reorder-explanation'],cadence:'daily',filters:{'reorder-explanation':'Exact SKU + warehouse'}};
   await subscribe('starter');await assert.rejects(books.create(db,ctx,definition),/Growth/);
   await subscribe('growth');
   await assert.rejects(books.create(db,ctx,{...definition,steps:['value','supplier-review']}),/Pro/);
   await assert.rejects(books.create(db,ctx,{...definition,steps:['value','combined-stock']}),/Custom/);
   await assert.rejects(books.create(db,ctx,{...definition,steps:['value','payout']}),/supported/);
+  await assert.rejects(books.create(db,ctx,{...definition,filters:{value:'unsupported'}}),/supported step filter/);
   await assert.rejects(books.create(db,{...ctx,actorId:'fake-owner'},definition),/owner/);
-  const first=await books.create(db,ctx,definition);
-  for(let i=1;i<10;i++) await books.create(db,ctx,definition);
+  const first=await books.create(db,ctx,definition),filteredBook=await books.create(db,ctx,filtered);
+  for(let i=2;i<10;i++) await books.create(db,ctx,definition);
   await assert.rejects(books.create(db,ctx,definition),/10 playbooks/);
   const results=await books.run(db,ctx,first,'review');assert.equal(results.length,2);
   assert.deepEqual(await books.run(db,ctx,first,'review'),results);
+  const filteredResults=await books.run(db,ctx,filteredBook,'review-filtered');
+  assert.equal(filteredResults[1].link,'/autopilot/reviews/reorder-explanation?filter=Exact+SKU+%2B+warehouse');
   await db.query("UPDATE stockchief_runtime.agent_playbooks SET next_at=now()-interval '1 minute' WHERE id=$1",[first]);
   await db.transaction(books.schedule);await db.transaction(books.schedule);
   const queued=await db.query("SELECT * FROM stockchief_runtime.jobs WHERE kind='agent.playbook' AND workspace_id=$1",[ctx.workspaceId]);
@@ -30,14 +34,21 @@ test('playbooks recheck each job and the owner at registration, schedule, replay
   const handler=require('../../src/operations/postgres-runtime-handlers').create()['agent.playbook'];
   const job={workspaceId:ctx.workspaceId,payload:queued.rows[0].payload};
   assert.equal((await handler(job,db)).length,2);
+  await db.query("UPDATE stockchief_runtime.agent_playbooks SET next_at=now()-interval '1 minute' WHERE id=$1",[filteredBook]);
+  await db.transaction(books.schedule);
+  const scheduled=(await db.query("SELECT payload FROM stockchief_runtime.jobs WHERE kind='agent.playbook' AND workspace_id=$1 AND payload->>'id'=$2",[ctx.workspaceId,filteredBook])).rows[0];
+  assert.equal((await handler({workspaceId:ctx.workspaceId,payload:scheduled.payload},db))[1].link,filteredResults[1].link);
   await subscribe('starter');
   assert.equal((await handler(job,db)).held,true);
   assert.equal((await books.list(db,ctx)).books.find(b=>b.id===first).result,null);
   await subscribe('pro');
+  assert.equal((await books.run(db,ctx,filteredBook,'pro'))[1].link,filteredResults[1].link);
   const report=await books.create(db,ctx,{...definition,steps:['value','supplier-review']});
   assert.equal((await books.run(db,ctx,report,'review'))[1].rows.length,0);
   await assert.rejects(books.create(db,ctx,{...definition,steps:['value','combined-stock']}),/Custom/);
   await subscribe('enterprise');
+  const filteredRun=await books.run(db,ctx,filteredBook,'custom');
+  assert.equal(filteredRun[1].link,filteredResults[1].link);
   const combined=await books.create(db,ctx,{...definition,steps:['value','combined-stock']});
   assert.equal((await books.run(db,ctx,combined,'review'))[1].rows[0].inventory,'Books');
   await books.remove(db,ctx,combined);await assert.rejects(books.run(db,ctx,combined,'review'),/available/);

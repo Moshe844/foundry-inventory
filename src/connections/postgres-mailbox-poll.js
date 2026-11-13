@@ -78,11 +78,28 @@ async function advance(db,job,connection,window,next,{restart=false}={}){
     if(!finished.rowCount)return false;
     const at=nowIso(),watermark=new Date(window.until_at).toISOString();
     await c.query(`UPDATE workspace_connectors SET last_synced_at=$3,last_error=NULL,updated_at=$4,
-      config=jsonb_set(config::jsonb,'{syncCadenceStartedAt}',to_jsonb($3::text),true)::text WHERE workspace_id=$1 AND id=$2`,
+      config=jsonb_set(config::jsonb-'syncRetryAt'-'syncFailureCount','{syncCadenceStartedAt}',to_jsonb($3::text),true)::text WHERE workspace_id=$1 AND id=$2`,
       [job.workspaceId,connection.id,watermark,at]);
     await c.query(`UPDATE connection_issues SET status='RESOLVED',resolved_at=$3,updated_at=$3
       WHERE workspace_id=$1 AND fingerprint=$2 AND status='OPEN'`,[job.workspaceId,'connector-stale:'+connection.id,at]);
     return true;
+  });
+}
+
+async function deferUnavailable(db,job,connection,error){
+  error.retryAfterMs=Math.max(120_000,error.retryAfterMs||0);
+  await db.transaction(async c=>{
+    const active=await current(c,job,connection);
+    if(!active||active.updated_at!==connection.updated_at)return;
+    await fence(c,job);
+    const config=require('./synchronization-policy').object(active.config);
+    const prior=Number(config.syncFailureCount);
+    const failures=Math.min(6,(Number.isSafeInteger(prior)&&prior>=0?prior:0)+1);
+    error.retryAfterMs=Math.max(120_000*2**(failures-1),error.retryAfterMs||0);
+    const retryAt=new Date(Date.now()+error.retryAfterMs).toISOString();
+    await c.query(`UPDATE workspace_connectors SET config=(config::jsonb||$3::jsonb)::text,
+      last_error='The latest mailbox check did not finish. StockChief will retry automatically.',updated_at=$4
+      WHERE workspace_id=$1 AND id=$2`,[job.workspaceId,connection.id,JSON.stringify({syncRetryAt:retryAt,syncFailureCount:failures}),nowIso()]);
   });
 }
 
@@ -123,6 +140,7 @@ async function run(database,job,connection,provider){
       return provider.pollPage({credentials,since:new Date(window.since_at).toISOString(),
         until:new Date(window.until_at).toISOString(),cursor:window.cursor,accept});
     });}catch(error){
+      if(error.code==='provider_unavailable')await deferUnavailable(db,job,connection,error);
       if(!window.cursor||!expiredCursor(error)||window.last_cursor_reset_at&&Date.now()-Date.parse(window.last_cursor_reset_at)<300000)throw error;
       const saved=await advance(db,job,connection,window,null,{restart:true});
       return {...totals,continued:saved,restarted:saved};

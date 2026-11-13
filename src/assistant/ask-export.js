@@ -114,8 +114,9 @@ function worthKeeping(answer,rowCount=0){
 async function keepable(database,ctx,ids){
  const wanted=[...new Set(ids.filter(id=>typeof id==='string'))];
  if(!wanted.length)return [];
- const rows=(await database.query(`SELECT id,answer,CASE WHEN jsonb_typeof(evidence)='array' THEN jsonb_array_length(evidence) ELSE 0 END AS row_count
-   FROM stockchief_runtime.assistant_interactions WHERE workspace_id=$1 AND actor_user_id=$2 AND id=ANY($3::text[])`,[ctx.workspaceId,ctx.actorId,wanted])).rows;
- return rows.filter(row=>worthKeeping(row.answer,row.row_count)).map(row=>row.id);
+ const rows=(await database.query(`SELECT id FROM stockchief_runtime.assistant_interactions
+   WHERE workspace_id=$1 AND actor_user_id=$2 AND id=ANY($3::text[])
+   AND status='ANSWERED' AND btrim(answer)<>'' AND intent->>'intent' IS DISTINCT FROM 'navigation'`,[ctx.workspaceId,ctx.actorId,wanted])).rows;
+ return rows.map(row=>row.id);
 }
 module.exports={TYPES,LONG_ANSWER,tables,send,interaction,goal,work,conversation,worthKeeping,keepable};

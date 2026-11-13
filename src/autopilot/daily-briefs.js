@@ -7,8 +7,42 @@
 const time=require('../lib/business-time');
 const {addDays}=require('../accounting/customer-money');
 const policy=require('../commercial/agent-plan');
+const installed=require('../db/schema-installed');
+const staffTasks=require('../operations/agent-staff-tasks');
 const {ValidationError}=require('../domain/errors');
 const verbs={receive:'Stock receipts',issue:'Stock issues',transfer:'Transfers',adjust:'Count adjustments'};
+const businessEvents=[
+  ['Purchase orders placed','/purchasing/orders'],
+  ['Customer orders confirmed','/orders'],
+  ['Customer shipments sent','/fulfilment']
+];
+
+async function businessActivity(db,bounds){
+  const {rows:[counts]}=await db.query(`SELECT
+    (SELECT count(*)::int FROM purchase_orders WHERE workspace_id=$1
+      AND ordered_at::timestamptz >= $2 AND ordered_at::timestamptz < $3) AS purchases,
+    (SELECT count(*)::int FROM sales_orders WHERE workspace_id=$1
+      AND confirmed_at::timestamptz >= $2 AND confirmed_at::timestamptz < $3) AS sales,
+    (SELECT count(*)::int FROM sales_shipments WHERE workspace_id=$1 AND customer_return_id IS NULL
+      AND shipped_at::timestamptz >= $2 AND shipped_at::timestamptz < $3) AS shipments`,bounds);
+  return [counts.purchases,counts.sales,counts.shipments];
+}
+
+async function staffActivity(db,bounds,asOf){
+  const {rows}=await db.query(`WITH events AS (
+    SELECT coalesce(done_by,assignee_id) AS actor,done_by IS NOT NULL AS known,kind,'completed' AS state
+    FROM ${staffTasks.table} WHERE workspace_id=$1 AND status='DONE' AND done_at>=$2 AND done_at<$3
+    UNION ALL
+    SELECT assignee_id,true,kind,'late'
+    FROM ${staffTasks.table} WHERE workspace_id=$1 AND status='ASSIGNED' AND due_at<$4
+  )
+  SELECT CASE WHEN e.known THEN coalesce(u.name,'Former team member') ELSE 'Team member not recorded' END AS person,
+    e.kind,e.state,count(*)::int AS n
+  FROM events e LEFT JOIN users u ON u.workspace_id=$1 AND u.id=e.actor
+  GROUP BY e.actor,e.known,u.name,e.kind,e.state ORDER BY e.state DESC,person,e.kind,e.actor`,[...bounds,asOf]);
+  return rows;
+}
+
 
 // What happened from the start of `from` to the end of `to` (business days in
 // the workspace's time zone), and what needs the owner now.
@@ -40,7 +74,9 @@ async function collect(db,workspaceId,from,to,timeZone,{team=false}={}){
     (SELECT count(*)::int FROM stockchief_runtime.agent_operational_notices WHERE workspace_id=$1 AND job_id=166 AND kind<>'Out of stock' AND NOT resolved) AS "runningLow",
     (SELECT count(*)::int FROM work_items WHERE workspace_id=$1 AND execution_status='COMPLETED' AND verification_status='VERIFIED' AND completed_at::timestamptz>=$2 AND completed_at::timestamptz<$3) AS verified`,bounds)).rows[0];
   const totals={};for(const row of activity)totals[row.operation]=(totals[row.operation]||0)+row.n;
-  return {totals,...sources,...(team?{team:activity}:{})};
+  const business=await businessActivity(db,bounds);
+  const staff=team&&await installed.has(db,staffTasks.table)?await staffActivity(db,bounds,new Date().toISOString()):null;
+  return {totals,business,...(staff?{staffTasks:staff}:{}),...sources,...(team?{team:activity}:{})};
 }
 
 async function deliver(db,workspaceId,account,{now=new Date()}={}){
@@ -50,19 +86,26 @@ async function deliver(db,workspaceId,account,{now=new Date()}={}){
   await require('./briefing-email').ensureSchedule(db,workspaceId,timeZone,now);
   const team=policy.permits(account.plan,180,'automatic');
   const existing=(await db.query('SELECT summary::jsonb AS data FROM workspace_daily_digests WHERE workspace_id=$1 AND report_date=$2',[workspaceId,day])).rows[0]?.data;
-  if(existing?.format==='agent-brief'&&(!team||existing.team))return;
+  if(existing?.format==='agent-brief'&&existing.business&&(!team||existing.team&&existing.staffTasks))return;
   const data={format:'agent-brief',day,deliveredOn:calendarDate,asOf:new Date().toISOString(),...await collect(db,workspaceId,day,day,timeZone,{team})};
   await db.query(`INSERT INTO workspace_daily_digests AS d(workspace_id,report_date,generated_at,summary) VALUES($1,$2,$3,$4)
     ON CONFLICT(workspace_id,report_date) DO UPDATE SET summary=CASE WHEN d.summary::jsonb->>'format'='agent-brief' THEN
-      (d.summary::jsonb||jsonb_build_object('team',excluded.summary::jsonb->'team'))::text ELSE excluded.summary END
-    WHERE d.summary::jsonb->>'format' IS DISTINCT FROM 'agent-brief' OR (NOT (d.summary::jsonb ? 'team') AND excluded.summary::jsonb ? 'team')`,
+      (d.summary::jsonb||jsonb_build_object('business',excluded.summary::jsonb->'business')
+        ||CASE WHEN excluded.summary::jsonb ? 'team' THEN jsonb_build_object('team',excluded.summary::jsonb->'team') ELSE '{}'::jsonb END
+        ||CASE WHEN excluded.summary::jsonb ? 'staffTasks' THEN jsonb_build_object('staffTasks',excluded.summary::jsonb->'staffTasks') ELSE '{}'::jsonb END)::text
+      ELSE excluded.summary END
+    WHERE d.summary::jsonb->>'format' IS DISTINCT FROM 'agent-brief'
+      OR NOT (d.summary::jsonb ? 'business')
+      OR (NOT (d.summary::jsonb ? 'team') AND excluded.summary::jsonb ? 'team')
+      OR (NOT (d.summary::jsonb ? 'staffTasks') AND excluded.summary::jsonb ? 'staffTasks')`,
     [workspaceId,day,data.asOf,JSON.stringify(data)]);
 }
 async function latest(db,ctx){
   const {rows:[r]}=await db.query("SELECT report_date FROM workspace_daily_digests WHERE workspace_id=$1 AND summary::jsonb->>'format'='agent-brief' ORDER BY report_date DESC LIMIT 1",[ctx.workspaceId]);
   if(!r)return null;
   const state=await policy.accountState(db,ctx.workspaceId);
-  return policy.usesAgentTerms(state)&&policy.permits(state.plan,156,'automatic')?r.report_date:null;
+  return policy.usesAgentTerms(state)&&policy.permits(state.plan,156,'automatic')
+    ?{date:r.report_date,team:policy.permits(state.plan,180,'automatic')}:null;
 }
 async function report(db,ctx,{filter,team,page}){
   if(filter&&(!/^\d{4}-\d{2}-\d{2}$/.test(filter)||!Number.isFinite(Date.parse(filter))||new Date(filter).toISOString().slice(0,10)!==filter))throw new ValidationError('Choose a date in YYYY-MM-DD format.');
@@ -75,11 +118,17 @@ async function report(db,ctx,{filter,team,page}){
   if(data.stockOuts!=null)pending.push({Activity:'Out of stock',Count:data.stockOuts,link:'/autopilot/reviews/low-stock-alerts'},{Activity:'Running low',Count:data.runningLow,link:'/autopilot/reviews/low-stock-alerts'});
   const summary='Stock activity for '+data.day+'. Approvals and overdue records were counted when this briefing arrived on '+data.deliveredOn+'.';
   if(team){
-    const rows=(data.team||[]).map(r=>({'Team member':r.person,Activity:verbs[r.operation],Count:r.n,link:'/activity?'+dates+'&user='+encodeURIComponent(r.actor)+'&operation='+r.operation}));
+    const rows=(data.staffTasks||[]).map(r=>({'Team member':r.person,
+      Activity:staffTasks.specs[r.kind].plural+(r.state==='late'?' overdue':' completed'),Count:r.n,
+      link:staffTasks.path+(r.state==='late'?'#open':'#done')}));
+    for(const r of data.team||[])rows.push({'Team member':r.person,Activity:verbs[r.operation],Count:r.n,link:'/activity?'+dates+'&user='+encodeURIComponent(r.actor)+'&operation='+r.operation});
     rows.push({'Team member':'Inventory',...pending[1]});
-    return {rows:rows.slice((page-1)*100,page*100),more:rows.length>page*100,summary:summary+(data.team?'':' A team breakdown was unavailable on the plan that received this briefing.')};
+    const teamSummary=data.staffTasks?' Completed warehouse tasks are listed by who did them. Overdue tasks are listed by who they were assigned to when the summary ran.':
+      ' This briefing was recorded before staff tasks were included.';
+    return {rows:rows.slice((page-1)*100,page*100),more:rows.length>page*100,summary:summary+teamSummary};
   }
   const rows=Object.entries(data.totals).map(([k,n])=>({Activity:verbs[k],Count:n,link:'/activity?'+dates+'&operation='+k}));
+  if(data.business)businessEvents.forEach(([Activity,link],index)=>rows.push({Activity,Count:data.business[index],link}));
   rows.push({Activity:'Completed agent actions',Count:data.actions,link:'/activity'},{Activity:'Verified work items',Count:data.verified,link:'/autopilot'},...pending);
   return {rows,more:false,summary};
 }

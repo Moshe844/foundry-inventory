@@ -44,6 +44,44 @@ async function reorder(db,ctx,options){
   return {rows,more,reorderForm:true,summary:'Planning shows exact usable stock after commitments, dated incoming, recorded sales speed, supplier lead time and the saved target. Unknown delivery facts or existing unsent drafts hold a new order. Supplier packs, minimums and competitive choice are reviewed separately before native drafts are created.'};
 }
 
+async function demandScenario(db,ctx,options){
+  const raw=String(options.change??'').trim();
+  const delay=String(options.supplierDelayDays??'').trim();
+  const scenarioOptions={supplierDelayDays:delay};
+  if(!raw&&!delay)return {rows:[],more:false,scenarioOptions,summary:'Enter a change in sales, supplier lead time, or both to compare what happens to stock.'};
+  if(raw&&(!/^[+-]?\d{1,4}(?:\.\d{1,2})?$/.test(raw)||Number(raw)<-100||Number(raw)>1000))
+    throw new ValidationError('Enter a sales change between -100% and 1,000%.');
+  if(delay&&(!/^[+-]?\d{1,3}$/.test(delay)||Math.abs(Number(delay))>365))
+    throw new ValidationError('Enter a whole-day supplier lead-time change between -365 and 365 days.');
+  const change=Number(raw),leadChange=Number(delay),{items,ids,more}=await positions(db,ctx,options);
+  const shipments=await db.query(`SELECT l.sku_id,l.location_id,sum(l.quantity) AS units
+    FROM sales_shipment_lines l JOIN sales_shipments h ON h.workspace_id=l.workspace_id AND h.id=l.shipment_id
+    WHERE l.workspace_id=$1 AND l.sku_id=ANY($2) AND h.status IN ('SHIPPED','DELIVERED') AND h.customer_return_id IS NULL
+      AND h.shipped_at::timestamptz BETWEEN now()-interval '90 days' AND now() GROUP BY l.sku_id,l.location_id`,[ctx.workspaceId,ids]);
+  const byLocation=new Map();
+  for(const s of shipments.rows){
+    if(!byLocation.has(s.sku_id))byLocation.set(s.sku_id,new Map());
+    byLocation.get(s.sku_id).set(s.location_id,Number(s.units));
+  }
+  const rows=items.filter(r=>r.location_id).map(r=>{
+    const units=byLocation.get(r.sku_id)?.get(r.location_id)||0;
+    const base=units/3,scenario=base*(1+change/100),available=Math.max(0,r.available);
+    const rounded=n=>Math.round(n*100)/100;
+    const lead=r.lead_time_assumed?null:r.leadTimeDays;
+    const adjustedLead=lead==null?null:Math.max(0,lead+leadChange);
+    const leadShortfall=(days,rate)=>days==null?'Unknown':rounded(Math.max(0,days*rate-available));
+    return {SKU:r.code,Warehouse:r.location_name,'Shipped in 90 days':units,'Available now':r.available,
+      'Expected incoming':r.incoming,'Baseline 30-day sales':rounded(base),'Scenario 30-day sales':rounded(scenario),
+      'Additional units needed from today’s stock':rounded(Math.max(0,scenario-available)),
+      ...(delay?{'Recorded lead time (days)':lead??'Unknown','Scenario lead time (days)':adjustedLead??'Unknown',
+        'Baseline units short before replenishment':leadShortfall(lead,base/30),
+        'Scenario units short before replenishment':leadShortfall(adjustedLead,scenario/30)}:{}),
+      Evidence:units?'Recorded shipments':'No shipments in the window',link:'/inventory/'+r.item_id};
+  });
+  const leadSummary=delay?' The scenario changes supplier lead time by '+leadChange+' days. Stock gaps before replenishment use current available stock and recorded lead times.':'';
+  return {rows,more,scenarioOptions,summary:'With a '+change+'% change in demand, estimated sales use the last 90 days of customer shipments. Expected incoming is shown separately because its arrival date can change.'+leadSummary};
+}
+
 module.exports=[
   {id:144,key:'seasonal-demand',label:'Forecast sales by SKU',readPage:require('../forecasting/agent-demand-forecast').review},
   {id:146,key:'new-product-forecast',label:'Forecast a new product from similar items',readPage:require('../forecasting/agent-launch-forecast').review},

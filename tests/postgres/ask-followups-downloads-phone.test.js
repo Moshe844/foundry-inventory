@@ -88,7 +88,12 @@ test('in the browser the Ask page cannot get stuck, and the top bar and customer
   assert.equal(await page.evaluate(()=>{const m=document.querySelector('main#main');return m.scrollHeight<=m.clientHeight+1;}),true,width+': nothing is left to scroll out of place');
   await page.evaluate(()=>{for(const s of ['main#main','.rm-chat'])document.querySelector(s).scrollTop=400;document.scrollingElement.scrollTop=400;});await page.waitForTimeout(150);
   assert.equal(await moved(page),0,width+': a forced move goes straight back');
-  assert.equal(await page.locator('.ask-download--inline').count(),1,'The written table has a Download button');
+  const downloadState=await page.evaluate(()=>Array.from(document.querySelectorAll('[data-adaptive-goal]'),panel=>({
+    status:panel.dataset.goalStatus,navigationOnly:panel.dataset.goalNavigationOnly,
+    tables:panel.querySelectorAll('[data-goal-answer] table').length,
+    menus:Array.from(panel.querySelectorAll('.ask-download'),menu=>menu.dataset.downloadQuery),
+  })));
+  assert.equal(await page.locator('.ask-download--inline').count(),1,'The written table has a Download button '+JSON.stringify(downloadState));
   // Every format in a download menu can be seen and chosen, wherever its button sits in the chat.
   for(const place of ['start','end']){
    const shown=await page.evaluate(async place=>{document.querySelectorAll('.ask-download[open]').forEach(d=>{d.open=false;});

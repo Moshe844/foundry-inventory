@@ -40,10 +40,10 @@ function normalizeStoreUrl(value) {
 }
 
 async function jsonRequest(url, options = {}) {
-  const {selfHostedStore=false,...requestOptions}=options;
+  const {selfHostedStore=false,timeoutMs=20_000,retries,...requestOptions}=options;
   let response;
   try {
-    response = await providerFetch(url, requestOptions, { provider: options.provider || providerNameFor(url), timeoutMs: 20_000,
+    response = await providerFetch(url, requestOptions, { provider: options.provider || providerNameFor(url), timeoutMs,retries,
       ...(selfHostedStore?{fetch:require('./store-network').fetchStore}:{}) });
   } catch (cause) {
     if(cause instanceof DomainError)throw cause;

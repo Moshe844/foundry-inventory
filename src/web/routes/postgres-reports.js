@@ -6,6 +6,7 @@ const composed=require('../../reports/postgres-composed');
 const reports=require('../../reports/postgres-service');
 const builderEntry=require('../../reports/builder-entry');
 const reportExports=require('../../reports/exports');
+const managerPreferences=require('../../reports/manager-presentation');
 const permissions=require('../../actions/permissions');
 const {requireAuth,asyncRoute}=require('../middleware');
 const {ValidationError}=require('../../domain/errors');
@@ -144,9 +145,16 @@ function createPostgresReportsRouter(database){
     const view=await prefs.personal(database,req.ctx),query=await prefs.dateQuery(database,req.ctx,req.query,view);
     return view&&view.report_view!=='default'&&query.view===undefined&&['sellers','stock-value'].includes(req.params.key)?{...query,view:view.report_view}:query;
   }
-  router.get('/reports/business/:key',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),query=await managerQuery(req),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,query),totals=report.definition.current?null:await reports.totals(database,req.ctx,actor,{...report.result.config,compare:'previous_period'}),profitBreakdown=req.params.key==='profit'?await require('../../accounting/postgres-reports').profitAndLoss(database,req.ctx.workspaceId,{from:report.context.from,to:report.context.to}).catch(()=>null):null;return res.page('reports/business',{profitBreakdown,title:report.definition.title,nav:'accounting',room:true,report,totals});}));
+  router.get('/reports/business/:key',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),managerView=await managerPreferences.personal(database,req.ctx),query=await managerQuery(req),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,query),totals=report.definition.current?null:await reports.totals(database,req.ctx,actor,{...report.result.config,compare:'previous_period'}),profitBreakdown=req.params.key==='profit'?await require('../../accounting/postgres-reports').profitAndLoss(database,req.ctx.workspaceId,{from:report.context.from,to:report.context.to}).catch(()=>null):null;return res.page('reports/business',{profitBreakdown,title:report.definition.title,nav:'accounting',room:true,report,totals,managerView});}));
   router.get('/reports/business/:key/customize',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query);req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:report.result.config,schedule:req.query.weekly==='1'?{frequency:'weekly',hour:res.locals.reportPreferredHour??8,minute:0,weekday:1,timeZone:res.locals.reportBusinessTimeZone,recipient:actor.email}:null};await saveDraftSession(req);return res.redirect(303,'/reports/builder?draft=1');}));
   router.get('/reports/business/:key/export.csv',asyncRoute(async(req,res)=>{await require('../../reports/manager-presentation').note(database,req.ctx,'download_format','csv');const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query);if(await reports.countAtMost(database,req.ctx,actor,report.result.config,100000)>100000)throw new ValidationError('This export has more than 100,000 rows. Narrow the dates or filters before exporting.');res.set('Content-Type','text/csv; charset=utf-8');res.set('Content-Disposition','attachment; filename="stockchief-'+report.definition.key+'.csv"');res.set('Cache-Control','private, no-store');let offset=0,started=false;do{const part=await reports.run(database,req.ctx,actor,report.result.config,{limit:1001,offset});await require('../../reports/business-reports').enrich(database,req.ctx,report.definition.key,part);if(!started){res.write(reportExports.csvHeader(part));started=true;}res.write(reportExports.csvRows(part));offset+=part.rows.length;if(!part.hasMore)break;if(offset>=100000)break;}while(!res.destroyed);return res.end();}));
+  router.get('/reports/business/:key/export.:format',asyncRoute(async(req,res)=>{
+    if(!['pdf','xlsx'].includes(req.params.format))throw new ValidationError('That export format is unavailable.');
+    const actor=await actorFor(database,req.ctx),managerView=await managerPreferences.personal(database,req.ctx,{required:true});
+    const query=await managerPreferences.dateQuery(database,req.ctx,req.query,managerView);
+    const report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,query);
+    return sendExport(database,req,res,actor,report.result.config,'stockchief-'+report.definition.key);
+  }));
   router.get('/reports/from-ask/:interactionId',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
     const row=(await database.query(`SELECT intent->'reportConfig' AS definition

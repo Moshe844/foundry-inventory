@@ -159,14 +159,12 @@ async function configure(db,ctx,input={}){
 }
 
 // Earlier sent purchase orders, per item and supplier, for the purchase checks.
-async function purchaseHistory(db,workspaceId,skuIds){
-  if(!skuIds.length)return new Map();
-  const rows=(await db.query(`SELECT DISTINCT ON(line.sku_id,po.supplier_id) line.sku_id,po.supplier_id,line.unit_cost::text AS unit_cost,po.currency,
+function purchaseHistoryRows(){
+  return `SELECT DISTINCT ON(line.sku_id,po.supplier_id) line.sku_id,po.supplier_id,line.unit_cost::text AS unit_cost,po.currency,
       count(*) OVER (PARTITION BY line.sku_id,po.supplier_id)::int AS orders
     FROM purchase_orders po JOIN purchase_order_lines line ON line.workspace_id=po.workspace_id AND line.purchase_order_id=po.id
     WHERE po.workspace_id=$1 AND line.sku_id=ANY($2::text[]) AND po.status IN ('ORDERED','PARTIALLY_RECEIVED','RECEIVED')
-    ORDER BY line.sku_id,po.supplier_id,po.ordered_at::timestamptz DESC NULLS LAST,po.id DESC`,[workspaceId,skuIds])).rows;
-  return new Map(rows.map(r=>[r.sku_id+':'+r.supplier_id,{orders:r.orders,lastUnitCost:r.unit_cost==null?null:Number(r.unit_cost),lastCurrency:r.currency}]));
+    ORDER BY line.sku_id,po.supplier_id,po.ordered_at::timestamptz DESC NULLS LAST,po.id DESC,line.id`;
 }
 
 // Ask and the agent reviews: how sure StockChief is about each waiting action.
@@ -184,5 +182,5 @@ async function review(db,ctx,{page=1}={}){
     rows:rows.slice(0,100),more:work.length>100};
 }
 
-module.exports={JOB,LEVELS,WORDS,MINIMUMS,assess,purchase,transfer,forAction,countPosting,forCount,shippingNotice,minimum,stop,settings,configure,purchaseHistory,review,
+module.exports={JOB,LEVELS,WORDS,MINIMUMS,assess,purchase,transfer,forAction,countPosting,forCount,shippingNotice,minimum,stop,settings,configure,purchaseHistoryRows,review,
   definition:{id:JOB,key:'confidence',label:'See how sure StockChief is about each waiting action',readPage:review}};

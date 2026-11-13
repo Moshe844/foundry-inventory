@@ -97,6 +97,7 @@ async function renewWebhooks({ credentials, webhookUrl }) {
 
 const SELECT_FIELDS = 'id,conversationId,internetMessageId,internetMessageHeaders,subject,from,toRecipients,receivedDateTime,body,hasAttachments';
 const TEXT_BODY = { Prefer: 'outlook.body-content-type="text"' };
+const pollRequest={timeoutMs:15000,retries:0};
 
 function continuation(value,expected){
   const url=new URL(value);
@@ -105,26 +106,26 @@ function continuation(value,expected){
   return url.pathname.slice('/v1.0'.length)+url.search;
 }
 
-async function allAttachments(credentials,id){
+async function allAttachments(credentials,id,options){
   const endpoint='/me/messages/'+encodeURIComponent(id)+'/attachments';
   const rows=[],visited=new Set();
   for(let path=endpoint;path;){
     if(visited.has(path))throw new ValidationError('Microsoft returned the same attachment page.');
     visited.add(path);
-    const page=(await graph(credentials,path)).body;
+    const page=(await graph(credentials,path,options)).body;
     rows.push(...(page.value||[]));
     path=page['@odata.nextLink']?continuation(page['@odata.nextLink'],endpoint):null;
   }
   return rows;
 }
 
-async function mapMessage(credentials,row,folder='inbox'){
+async function mapMessage(credentials,row,folder='inbox',options){
   const headers=row.internetMessageHeaders||[];
   const providerJunk=folder==='junkemail';
   let attachments=[],sourceIssue=null;
   if(row.hasAttachments&&!providerJunk){
     const source=require('./mailbox-source');
-    try{attachments=await allAttachments(credentials,row.id);}
+    try{attachments=await allAttachments(credentials,row.id,options);}
     catch(error){if(!source.oversized(error))throw error;sourceIssue=source.originalReview;}
   }
   const html=String(row.body?.contentType||'').toLowerCase()==='html',body=row.body?.content;
@@ -177,12 +178,12 @@ async function pollPage({credentials,since,until,cursor=null,accept=null}){
   const query=new URLSearchParams({'$top':'50','$orderby':'receivedDateTime desc','$select':SELECT_FIELDS,
     '$filter':'receivedDateTime ge '+from+' and receivedDateTime lt '+new Date(until).toISOString()});
   const path=cursor?.url?continuation(cursor.url,endpoint):endpoint+'?'+query;
-  const page=(await graph(credentials,path,{headers:TEXT_BODY})).body;
+  const page=(await graph(credentials,path,{...pollRequest,headers:TEXT_BODY})).body;
   const messages=[],seen=new Set();
   for(const row of page.value||[]){
     if(seen.has(row.id))continue;
     seen.add(row.id);
-    const message=await mapMessage(credentials,row,folder);
+    const message=await mapMessage(credentials,row,folder,pollRequest);
     if(accept){if(await accept(message)===false)return {messages,stopped:true,next:null};}
     else messages.push(message);
   }

@@ -85,6 +85,7 @@ function supplierFrom(r){
   return {supplierId:r.supplier_id,samples:r.samples,latest:r.latest,leadDays:typical,low,high,
     lead:low===high?'About '+days(typical):'About '+days(typical)+' (usually '+low+' to '+high+')',
     onTime:r.dated?r.on_time+' of '+r.dated+' on time ('+Math.round(r.on_time*100/r.dated)+'%)':'No dates on the orders',
+    lateDeliveries:r.dated?(r.dated-r.on_time)+' of '+r.dated+' dated deliveries':'No promised dates',
     onTimeRate:r.dated?r.on_time/r.dated:null,short:r.short,over:r.over,
     shortText:r.short?'First delivery short on '+r.short+' of '+r.samples+(r.short_percent!=null?' (usually '+Number(r.short_percent)+'% short)':''):'Never short on the first delivery',
     overText:r.over?'More than ordered on '+r.over+' of '+r.samples:'Never more than ordered'};
@@ -173,7 +174,7 @@ async function habits(db,ctx,{filter,page,today}){
   ...supplierRows.rows.filter(s=>learnedSuppliers.has(s.id)).map(s=>{const h=learnedSuppliers.get(s.id);
     return {Partner:s.name,Type:'Supplier','Observed days or deliveries':h.samples,'Last recorded':h.latest,Pattern:'Delivers in about '+days(h.leadDays),
       Spread:h.low===h.high?'Always about '+days(h.leadDays):h.low+' to '+days(h.high),'On time':h.onTime,'Short or over':h.shortText+'. '+h.overText+'.',
-      'Estimated next order':null,'Next step':feed.active?'Reorders use '+days(h.leadDays)+' when a product has no deliveries of its own':feed.reason||'Shown only',link:'/suppliers/'+s.id};})];
+      'Estimated next order':null,'Late deliveries':h.lateDeliveries,'Next step':feed.active?'Reorders use '+days(h.leadDays)+' when a product has no deliveries of its own':feed.reason||'Shown only',link:'/suppliers/'+s.id};})];
   const start=(page-1)*100;
   return {summary:'After three ordering days or three completed warehouse deliveries, StockChief shows the usual pattern. Customer dates are estimates. Supplier lead time runs from placing the order to the last warehouse receipt.'+(feed.reason?' '+feed.reason:''),
     more:all.length>start+100,rows:all.slice(start,start+100)};

@@ -5,6 +5,7 @@ const {hasVerifiedMigration}=require('../db/migrate-postgres');
 const transferArrivals=require('../transfers/agent-transfer-arrivals');
 const purchaseBudgets=require('../purchasing/agent-budgets');
 const stockLoss=require('./stock-loss-patterns');
+const unusualActivity=require('./unusual-activity');
 const returnRates=require('./return-rates');
 const marginPrices=require('../pricing/agent-margin-prices');
 const orderPrices=require('../sales/agent-order-price-alerts');
@@ -91,18 +92,13 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   // (agent-channel-alerts.js), then kept open or cleared like the others.
   if(policy.permits(account.plan,169,'automatic'))args.push(JSON.stringify(await require('../connections/agent-channel-alerts').candidates(db,workspaceId)));
   const channelAlerts=policy.permits(account.plan,169,'automatic')?' UNION ALL SELECT 169,kind,ref,link,$3::date FROM jsonb_to_recordset($'+args.length+'::jsonb) AS channel(kind text,ref text,link text)':'';
-  // Job 208: routines the owner always approved, read in JS like job 169.
-  // Its notice job number arrives with migration 498, checked by notices().
-  const learned=await require('./approval-learning').notices(db,workspaceId,account);
-  if(learned.length)args.push(JSON.stringify(learned));
-  const learning=learned.length?' UNION ALL SELECT 208,kind,ref,link,$3::date FROM jsonb_to_recordset($'+args.length+'::jsonb) AS learned(kind text,ref text,link text)':'';
   // Job 209: every kind of repeated fix, from records.
   const corrections=policy.permits(account.plan,209,'automatic')?` UNION ALL SELECT 209,'Correction',reference,link,$3::date FROM (`+await require('./correction-rules').noticeSql(db)+`) corrections`:'';
   if(policy.permits(account.plan,3,'automatic'))await checkStockDiscrepancies(db,workspaceId,today);
   await require('../accounting/agent-cash-planning').preparePaymentChecks(db,workspaceId,account,today);
   // Job 166 needs migration 459 (its notice job number and alert levels).
   const stockAlerts=await require('../db/schema-installed').has(db,'stockchief_runtime.agent_alert_channels');
-  // Job 180 needs migration 485 (its summaries and notice job number).
+  // Job 180 needs the team summary table and its notice job number.
   const teamSummary=require('./team-summary'),teamSummaries=policy.permits(account.plan,180,'automatic')&&await require('../db/schema-installed').has(db,teamSummary.table);
   // Job 204 opens its own daily digest once migration 492 adds it.
   const workDigest=require('./agent-work-digest'),workDigests=await require('../db/schema-installed').has(db,workDigest.table);
@@ -112,9 +108,16 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   const stockReady=require('../sales/agent-stock-ready'),stockLines=await require('../db/schema-installed').has(db,'stockchief_runtime.agent_stock_ready_lines');
   const watched=[];
   // Jobs 170 and 171 need migration 473 (their settings and sources).
-  for(const [job,d] of Object.entries(require('./activity-watches').spec))
-    if(policy.permits(account.plan,Number(job),'automatic')&&(!d.ready||await d.ready(db)))watched.push([job,d]);
-  const watchQueries=watched.map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('');
+  let unusualAlerts='';
+  for(const [job,d] of Object.entries(require('./activity-watches').spec)){
+    if(!policy.permits(account.plan,Number(job),'automatic')||(d.ready&&!await d.ready(db)))continue;
+    if(Number(job)===unusualActivity.JOB){
+      const rows=await unusualActivity.read(db,[workspaceId,'',today]);
+      args.push(JSON.stringify(rows.map(row=>({kind:row.Alert,ref:row.reference,link:row.link}))));
+      unusualAlerts=' UNION ALL SELECT '+job+',kind,ref,link,$3::date FROM jsonb_to_recordset($'+args.length+'::jsonb) AS unusual(kind text,ref text,link text)';
+    }else watched.push([job,d]);
+  }
+  const watchQueries=watched.map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('')+unusualAlerts;
   // Job 201: the pause StockChief took itself stays open until the owner resumes.
   const breakerPause=await require('./circuit-breaker').noticeSql(db,account);
   // Job 87's channel price checks run through the worker (agent-channel-price-checks.js).

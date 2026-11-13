@@ -77,7 +77,7 @@ test('unanswered alerts and approvals pass to the next person on their own on Pr
   // settings manager) and the approval, which needs settings, to the manager.
   await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
   result=await check();
-  assert.equal(result.passed,2);
+  assert.equal(result.passed,2,JSON.stringify({result,items:await rows()}));
   assert.deepEqual((await rows()).map(r=>[r.source,r.step,r.holder]),[['ALERT',1,'Stock clerk'],['APPROVAL',1,'Office manager']]);
   assert.equal(await audits('Unanswered alert passed on'),1);assert.equal(await audits('Unanswered approval passed on'),1);
   const clerkView=await passed(clerk.actorId);

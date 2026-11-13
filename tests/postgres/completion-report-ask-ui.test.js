@@ -1,5 +1,30 @@
 'use strict';process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict');
+
+test('one sentence creates a governed stock report from the web form on every plan',{timeout:180000},async t=>{
+ const {browser,subscribe,csrf}=await require('../helpers/agent-workflow-fixture').fixture(t,{units:17});
+ const sentence='Show current stock on hand by product and location.';
+ const definition=JSON.stringify(require('../../src/reports/builder-entry').standardDefinition(sentence,'USD'));
+ for(const tier of ['starter','growth','pro','enterprise']){
+  await subscribe(tier);
+  const page=await browser.get('/reports/builder').expect(200),token=csrf(page.text);
+  const draft=await browser.post('/reports/describe').set('Accept','application/json').type('form').send({
+   _csrf:token,q:sentence
+  }).expect(200);
+  assert.equal(draft.body.creditsUsed,0,tier);
+  assert.equal(draft.body.title,'Stock on hand by product and location');
+  const result=await browser.get('/reports/run').expect(200);
+  assert.match(result.text,/Stock on hand by product and location/);
+  const preview=await browser.post('/reports/preview').set('Accept','application/json').type('form').send({
+   _csrf:token,definition
+  }).expect(200);
+  assert.deepEqual(preview.body.columns,['product','sku','location','on_hand']);
+  assert(preview.body.rows.some(row=>Number(row.on_hand)===17),tier);
+  const saved=await browser.post('/reports/save').type('form').send({_csrf:token,definition}).expect(303);
+  await browser.get(saved.headers.location).expect(200);
+ }
+});
+
 test('saved report controls work through browser forms and governed Ask contracts without changing the calculation',{timeout:180000},async t=>{
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,reports=require('../../src/reports/postgres-service'),contracts=require('../../src/reports/ask-schedules'),actor={role:'owner',email:f.email};await db.query("UPDATE workspaces SET time_zone='America/New_York' WHERE id=$1",[ctx.workspaceId]);
  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'reports-ui-fixture'}),server=await new Promise(r=>{const s=app.listen(0,'127.0.0.1',()=>r(s));}),browser=await require('playwright').chromium.launch();f.cleanup(async()=>{await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));await app.locals.sessionStore.close();});const page=await browser.newPage(),origin='http://127.0.0.1:'+server.address().port;page.setDefaultTimeout(12000);await page.goto(origin+'/login');await page.locator('[name=email]').fill(f.email);await page.locator('[name=password]').fill(f.password);await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Sign in',exact:true}).click()]);

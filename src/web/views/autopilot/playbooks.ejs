@@ -14,7 +14,10 @@
     </fieldset>
     <% const reviewChoices=choices.filter(c=>!c.work); %>
     <details><summary>Reviews and reports (<%= reviewChoices.length %>)</summary>
-      <% reviewChoices.forEach(c=>{ %><label class="checkbox"><input type="checkbox" name="steps" value="<%= c.key %>"><span class="checkbox-text"><%= c.label %></span></label><% }); %>
+      <% reviewChoices.forEach(c=>{ %>
+        <label class="checkbox"><input type="checkbox" name="steps" value="<%= c.key %>"><span class="checkbox-text"><%= c.label %></span></label>
+        <% if(c.filterLabel){ %><label class="rm-field"><span><%= c.filterLabel %> (optional)</span><input name="filters[<%= c.key %>]" maxlength="150"></label><% } %>
+      <% }); %>
     </details>
     <p class="rm-sub">Steps run in the order listed here. Choose at least two.<% if(limit&&limit!==Infinity){ %> Your plan includes <%= limit %> playbooks.<% } %></p>
     <label class="rm-field"><span>Schedule</span><select name="cadence"><option value="manual">Run by hand</option><option value="daily">Every day</option><option value="weekly">Every week</option></select></label>

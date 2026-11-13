@@ -335,8 +335,10 @@ async function runtimeSweep(job,client,options={}){
       const intervalMs=syncPolicy.effectiveMinutes*60_000;
       const due=Date.parse(syncPolicy.nextCheckAt)<=now;
       const active=await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1
-        AND kind='mailbox.poll' AND payload->>'connectorId'=$2 AND status IN ('PENDING','RUNNING','RETRY','PAUSED') LIMIT 1`,
-      [connector.workspace_id,connector.id]);
+        AND kind='mailbox.poll' AND payload->>'connectorId'=$2
+        AND (status IN ('PENDING','RUNNING','RETRY','PAUSED')
+          OR status='DEAD' AND last_error->>'code'='provider_unavailable' AND available_at>$3) LIMIT 1`,
+        [connector.workspace_id,connector.id,now-5*60_000]);
       if(due&&!active.rows.length){
         const bucket=Math.floor(now/intervalMs);
         const scheduled=await jobs.enqueue(scopedDatabase(client),{workspaceId:connector.workspace_id,kind:'mailbox.poll',
@@ -459,7 +461,7 @@ async function autopilotEvaluate(job,client){
     await require('../purchasing/agent-freight-combine').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-rfq-competition').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-purchase-splitting').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
-    await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'agent.supplier-claims',idempotencyKey:'supplier-claims:'+cycleId,payload:{cycleId},priority:65,maxAttempts:3});
+    await require('../purchasing/agent-supplier-claims').schedule(client,job.workspaceId,cycleId);
     const account=await require('../commercial/agent-plan').accountState(client,job.workspaceId);
     await require('../autopilot/daily-briefs').deliver(client,job.workspaceId,account);
     // Job 172: follow unanswered alerts and approvals, once this check has raised them.
@@ -591,6 +593,16 @@ async function systemEmail(job,database,options={}){
   if(receipt.provider_id){await recordAttempt(receipt.accepted_attempt);return accepted({provider:'resend',externalId:receipt.provider_id,replayed:true});}
   if(job.payload.messageType==='purchase_approval'&&!await require('../autopilot/approval-email').stillWanted(database,job,message.to)){
     return {skipped:'This owner no longer needs this approval email.'};
+  }
+  if(job.payload.messageType==='scheduled_report'&&job.idempotencyKey?.startsWith('scheduled-report-email:')&&
+    !await require('../reports/postgres-scheduling').emailStillWanted(database,job.workspaceId,job.id,message.to,job.payload.reportRevision)){
+    return {skipped:'This scheduled report delivery was cancelled.'};
+  }
+  if(job.payload.messageType==='scheduled_report'&&job.idempotencyKey?.startsWith('roi-report-email:')&&job.payload.includesCosts!==false){
+    const allowed=await require('../reports/agent-roi-report').costRecipients(database,job.workspaceId);
+    if(!recipientAddresses.length||recipientAddresses.some(address=>!allowed.has(address.toLowerCase()))){
+      return {skipped:'The recipient no longer has access to the financial figures in this report.'};
+    }
   }
   if(!receipt.retry_safe){
     await database.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
@@ -747,7 +759,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'system.alert-delivery':external((job,database)=>alertDelivery(job,database,options)),
   'system.email-send':external((job,database)=>systemEmail(job,database,options)),
   'custody.recurring-invoice':external((job,database)=>require('../custody/postgres-billing').run(database,job.workspaceId,job.payload.agreementId)),
-  'mailbox.poll':external((job,database)=>mailboxPoll(job,database,providers)),
+  'mailbox.poll':external((job,database)=>mailboxPoll(job,database,providers),'reading'),
   // Deletion owns its serializable transaction, just like retention removal.
   // The durable request is its completion receipt if the worker stops afterward.
   'developer.account-delete':external((job,database)=>require('../domain/postgres-developer-accounts').execute(database,job.payload.requestId)),
@@ -849,7 +861,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     return {...result,...(certificate.queued?{certificate}:{}),...(order.skipped?{}:{order}),...(filing.queued||filing.stopped?{filing}:{})};
   }),
   'mail.supplier-review':external((job,database)=>require('../connections/postgres-document-review').prepare(database,job.workspaceId,job.payload.messageId,{allowTextMessage:true})),
-  'mailbox.renew-push':external((job,database)=>mailboxPushRenewal(job,database,providers,options)),
+  'mailbox.renew-push':external((job,database)=>mailboxPushRenewal(job,database,providers,options),'reading'),
   'provider.catalog-sync':external((job,database)=>providerSync.sync(job,database,providers)),
     'provider.webhook-setup':external((job,database)=>require('../connections/postgres-application-authorization').setupJob(job,database,providers)),
   'provider.webhook-process':external((job,database)=>require('../connections/postgres-webhook-inbox').job(job,database,providers)),

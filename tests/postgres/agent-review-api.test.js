@@ -68,7 +68,7 @@ test('only Custom can start an agent review by API and receive the signed comple
   await subscribe('enterprise');
   const client=await mint(['agent:run']),other=await mint(['agent:run']),ordinary=await mint(['inventory:read']),hook=await endpoint();
   const base='/api/v1/public/agent/jobs',auth=token=>'Bearer '+token;
-  const submit=(token,key,review='catalog-health')=>browser.post(base).set('Authorization',auth(token)).set('Idempotency-Key',key).send({review});
+  const submit=(token,key,review='catalog-health',inputs={})=>browser.post(base).set('Authorization',auth(token)).set('Idempotency-Key',key).send({review,...inputs});
   await submit(ordinary.token,'denied').expect(403);
   const {body:job}=await submit(client.token,'one-review').expect(202);
   assert.equal((await submit(client.token,'one-review').expect(200)).body.jobId,job.jobId);
@@ -102,6 +102,32 @@ test('only Custom can start an agent review by API and receive the signed comple
   assert.equal(sent,1);
   await clients.revoke(db,ctx.workspaceId,client.id,ctx.actorId);
   await browser.get(base+'/'+pending.body.jobId).set('Authorization',auth(client.token)).expect(401);
+  await submit(other.token,'invalid-delay','demand-scenario',{supplierDelayDays:366}).expect(400);
+  await submit(other.token,'invalid-quarter','quarterly-supplier-pack',{quarter:'2026-Q9'}).expect(400);
+  const {body:scenario}=await submit(other.token,'lead-time','demand-scenario',{supplierDelayDays:6}).expect(202);
+  await submit(other.token,'lead-time','demand-scenario',{supplierDelayDays:8}).expect(409);
+  const scenarioJob=await queue.processOne(db,handlers,{owner:'agent-review-test',kinds:['agent.api_review']});
+  assert.equal(scenarioJob.status,'COMPLETED');
+  const scenarioResult=(await browser.get(base+'/'+scenario.jobId).set('Authorization',auth(other.token)).expect(200)).body;
+  assert.match(scenarioResult.result.summary,/supplier lead time by 6 days/);
+
+  const reports=require('../../src/reports/postgres-service'),actor={role:'owner',email:'owner@example.test'};
+  const definition={dataset:'stock',title:'Inventory to reconcile',columns:['sku','on_hand'],sort:'sku'};
+  const report=await reports.save(db,ctx,actor,definition);
+  await submit(other.token,'missing-report-id','saved-report').expect(400);
+  await submit(other.token,'unknown-report','saved-report',{reportId:'report_unknown'}).expect(400);
+  await submit(other.token,'outside-page-range','saved-report',{reportId:report.id,page:10002}).expect(400);
+  const {body:savedJob}=await submit(other.token,'saved-current','saved-report',{reportId:report.id}).expect(202);
+  assert.equal((await submit(other.token,'saved-current','saved-report',{reportId:report.id}).expect(200)).body.jobId,savedJob.jobId);
+  assert.equal((await queue.processOne(db,handlers,{owner:'agent-review-test',kinds:['agent.api_review']})).status,'COMPLETED');
+  const reportOutput=(await browser.get(base+'/'+savedJob.jobId).set('Authorization',auth(other.token)).expect(200)).body.result;
+  assert.equal(reportOutput.summary,definition.title);
+  assert.ok(reportOutput.rows.length);
+  assert.ok(reportOutput.rows.every(r=>Object.hasOwn(r,'on_hand')));
+  const waiting=await submit(other.token,'report-before-edit','saved-report',{reportId:report.id}).expect(202);
+  await reports.save(db,ctx,actor,{...definition,title:'Updated stock'},{id:report.id,expectedRevision:Number(report.revision)});
+  assert.equal((await queue.processOne(db,handlers,{owner:'agent-review-test',kinds:['agent.api_review']})).status,'DEAD');
+  assert.equal((await browser.get(base+'/'+waiting.body.jobId).set('Authorization',auth(other.token)).expect(200)).body.status,'DEAD');
 });
 test('Custom managers keep their own report period, download format and decision order in each inventory',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,browser,subscribe}=f;
@@ -109,6 +135,7 @@ test('Custom managers keep their own report period, download format and decision
   const choice={revision:0,report_period:'last_month',download_format:'xlsx',inbox_sort:'oldest'};
   for(const tier of ['starter','growth','pro']){
     await subscribe(tier);await browser.get(path).expect(402);
+    await browser.get('/reports/business/sales/export.xlsx').expect(402);
     await assert.rejects(prefs.save(db,ctx,choice),e=>e.code==='entitlement_required');
   }
   await subscribe('enterprise');const page=await browser.get(path).expect(200);
@@ -125,11 +152,19 @@ test('Custom managers keep their own report period, download format and decision
   assert.match((await browser.get('/reports').query({from:'2024-01-02',to:'2024-01-10'}).expect(200)).text,/name="from" value="2024-01-02"/);
   assert.match((await browser.get('/needs-you/all').expect(200)).text,/data-decision-sort="oldest"/);
   assert.match((await browser.get('/needs-you/all?sort=priority').expect(200)).text,/data-decision-sort="priority"/);
+  const standardReport='/reports/business/sales';
+  const standard=await browser.get(standardReport).expect(200);
+  assert.match(standard.text,new RegExp('name="from" value="'+range.from+'"'));
+  assert.match(standard.text,/Download Excel/);
+  assert.match((await browser.get(standardReport).query({from:'2024-01-02',to:'2024-01-10'}).expect(200)).text,/name="from" value="2024-01-02"/);
+  await browser.get(standardReport+'/export.xlsx').expect(200).expect('Content-Type',/spreadsheet/);
+  await browser.get(standardReport+'/export.csv').expect(200).expect('Content-Type',/text\/csv/);
   const saved=await require('../../src/reports/postgres-service').save(db,ctx,{role:'owner',email:f.email},{dataset:'stock',title:'Manager stock',columns:['sku','on_hand'],sort:'sku'});
   const report='/reports/saved/'+saved.id;
   assert.match((await browser.get(report).expect(200)).text,/>Download Excel<\/a>/);
   const file=await browser.get(report+'/export.xlsx').expect(200);assert.match(file.headers['content-type'],/spreadsheet/);
   await subscribe('pro');assert.equal(await prefs.personal(db,ctx),null);
+  assert.doesNotMatch((await browser.get(standardReport).expect(200)).text,/Download Excel/);
   assert.match((await browser.get('/needs-you/all').expect(200)).text,/data-decision-sort="priority"/);
   assert.doesNotMatch((await browser.get(report).expect(200)).text,/>Download Excel<\/a>/);
   await subscribe('enterprise');assert.equal((await prefs.personal(db,ctx)).inbox_sort,'oldest');

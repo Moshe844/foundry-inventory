@@ -2152,10 +2152,13 @@ function createPostgresAutopilotRouter(database,options={}){
   router.get('/autopilot/reviews/brand-watches',requireAuth,(req,res)=>res.redirect(301,'/autopilot/reviews/watch-rules'));
   router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
     return reportPage(req,res,reviews.definitions.find(d=>d.key===req.params.job)?.id,'autopilot/review-result',{title:'Agent review',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>{
-      const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,change:req.query.change});
+      const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,
+        change:req.query.change,supplierDelayDays:req.query.supplierDelayDays,quarter:req.query.quarter});
       const packs=require('../../accounting/agent-report-packs');
       if(Object.hasOwn(packs.downloads,req.params.job)&&(req.params.job!=='quarterly-supplier-pack'||result.rows.length)){
-        result.download='/autopilot/reviews/'+req.params.job+'/download?'+new URLSearchParams({filter:req.query.filter||''});
+        const query=new URLSearchParams({filter:req.query.filter||''});
+        if(result.reportQuarter)query.set('quarter',result.reportQuarter);
+        result.download='/autopilot/reviews/'+req.params.job+'/download?'+query;
         result.downloadLabel=packs.downloads[req.params.job].label;
       }
       if(req.params.job==='margin-prices'&&result.mode==='draft'){
@@ -2414,7 +2417,8 @@ function createPostgresAutopilotRouter(database,options={}){
     const definition=packs.definitions.find(d=>d.key===req.params.job);
     if(!definition)throw new (require('../../domain/errors').NotFoundError)();
     await policy.requireWorkspaceJob(database,req.ctx.workspaceId,definition.id,'suggest');
-    const report=await database.transaction(async c=>definition.readPage(c,req.ctx,{download:true,filter:req.query.filter,today:await require('../../lib/business-time').today(c,req.ctx.workspaceId)}),{isolation:'REPEATABLE READ'});
+    const report=await database.transaction(async c=>definition.readPage(c,req.ctx,{download:true,filter:req.query.filter,quarter:req.query.quarter,
+      today:await require('../../lib/business-time').today(c,req.ctx.workspaceId)}),{isolation:'REPEATABLE READ'});
     const format=packs.downloads[definition.key],file=await format.render(report);
     res.set('Cache-Control','private, no-store').attachment(definition.key+'-'+report.span.closing+'.'+format.extension).send(file);
   }));

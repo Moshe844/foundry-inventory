@@ -66,11 +66,14 @@ const sql=`WITH zone AS MATERIALIZED (
 ), price_moves AS (
   SELECT *,abs(amount_minor-previous)*100.0/previous AS pct FROM price_steps
   WHERE previous_currency=currency AND previous>0 AND amount_minor IS NOT NULL AND amount_minor<>previous
+), price_history AS MATERIALIZED (
+  SELECT m.*,count(*) OVER previous_year AS earlier,avg(m.pct) OVER previous_year AS usual
+  FROM price_moves m CROSS JOIN bounds b WHERE m.at>=b.since-interval '365 days' AND m.at<b.until
+  WINDOW previous_year AS (PARTITION BY m.sku_id ORDER BY m.at
+    RANGE BETWEEN interval '365 days' PRECEDING AND interval '1 microsecond' PRECEDING)
 ), prices AS (
-  SELECT m.*,s.code,s.item_id,h.n AS earlier,h.usual FROM price_moves m CROSS JOIN bounds b
+  SELECT m.*,s.code,s.item_id FROM price_history m CROSS JOIN bounds b
   JOIN skus s ON s.workspace_id=$1 AND s.id=m.sku_id
-  LEFT JOIN LATERAL (SELECT count(*) AS n,avg(x.pct) AS usual FROM price_moves x
-    WHERE x.sku_id=m.sku_id AND x.at<m.at AND x.at>=m.at-interval '365 days') h ON true
   WHERE m.at>=b.since AND m.at<b.until
 ), changes AS (
   SELECT m.id,'Stock correction' AS what,m.actor_user_id AS actor,m.occurred_at::timestamptz AS at,false AS deleted,NULL::text AS subject,NULL::text AS link
@@ -165,9 +168,24 @@ function describe(r){
 
 async function ready(db){return require('../db/schema-installed').has(db,'stockchief_runtime.agent_alert_settings','edit_count');}
 
+async function read(db,args,{page}={}){
+  const statement=page===undefined?sql:sql+' LIMIT 101 OFFSET $4';
+  const values=page===undefined?args:[...args,(page-1)*100];
+  const run=async client=>{
+    // Large inventories can produce a nested-loop plan that repeatedly scans
+    // the alert history. Limit the planner change to this read.
+    const {rows:[{previous}]}=await client.query("SELECT current_setting('enable_nestloop') AS previous");
+    await client.query('SET LOCAL enable_nestloop = off');
+    const result=await client.query(statement,values);
+    await client.query("SELECT set_config('enable_nestloop',$1,true)",[previous]);
+    return result.rows;
+  };
+  return typeof db.transaction==='function'?db.transaction(run,{readOnly:true,isolation:'READ COMMITTED'}):run(db);
+}
+
 async function review(db,ctx,{filter='',page=1,today}){
   if(!await ready(db))return {rows:[],more:false,summary:'Unusual activity alerts are being upgraded. Check back shortly.'};
-  const {rows}=await db.query(sql+' LIMIT 101 OFFSET $4',[ctx.workspaceId,filter||'',today,(page-1)*100]);
+  const rows=await read(db,[ctx.workspaceId,filter||'',today],{page});
   return {rows:rows.slice(0,100).map(describe),more:rows.length>100,summary};
 }
 
@@ -177,9 +195,9 @@ function line(r){
 }
 async function lines(db,workspaceId,keys){
   const today=await require('../lib/business-time').today(db,workspaceId);
-  const rows=(await db.query(sql,[workspaceId,'',today])).rows;
+  const rows=await read(db,[workspaceId,'',today]);
   const found=new Map(rows.map(r=>[r.Alert+'\u0000'+r.reference+'\u0000'+r.link,r]));
   return keys.map(k=>{const r=found.get(k.kind+'\u0000'+k.reference+'\u0000'+k.link);return r?line(r):k.kind+'.';});
 }
 
-module.exports={JOB,key,path,label,summary,sql,ready,review,lines,describe};
+module.exports={JOB,key,path,label,summary,sql,ready,read,review,lines,describe};

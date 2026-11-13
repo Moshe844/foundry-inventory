@@ -41,6 +41,18 @@ test('assigned counters use a blind phone list, while the owner verifies quantit
     assert.equal((await guide.prepare(null,db,counter,'How do I change purchasing authority?',{})).rows.length,0);
     const ownerGuide=await browser.get('/guide').query({q:'receive a purchase order'}).expect(200);
     assert.match(ownerGuide.text,/only the quantity that arrived/);
+    for(const [question,heading,href] of [
+      ['How do I find an item barcode?','Find an item or barcode','/inventory'],
+      ['How do I pack a shipment?','Pick and pack a shipment','/fulfilment'],
+      ['How do I inspect a damaged customer return?','Inspect a customer return','/orders'],
+    ]){
+      const ownerHelp=await guide.prepare(null,db,ctx,question,{});
+      assert.equal(ownerHelp.rows[0]?.task,heading,tier+' '+question);
+      assert.equal(ownerHelp.rows[0]?.destination,href);
+      await browser.get(href).expect(200);
+    }
+    assert((await guide.prepare(null,db,counter,'How do I pack a shipment?',{})).rows.every(row=>row.destination!=='/fulfilment'));
+    assert((await guide.prepare(null,db,counter,'How do I inspect a customer return?',{})).rows.every(row=>row.destination!=='/orders'));
   }
   await subscribe('growth');await mobile.goto(base+'/guide');await mobile.getByLabel('How do I…?').fill('Where is my assigned count?');
   await Promise.all([mobile.waitForNavigation(),mobile.getByRole('button',{name:'Find instructions'}).click()]);

@@ -72,6 +72,7 @@ test('PostgreSQL production dependency graph has no unclassified direct provider
  assert.match(read('lib/provider-http.js'),/no commercial operation scope/);
  assert.match(read('operations/postgres-runtime-handlers.js'),/provider:'resend',operation:'system_email'/);
  assert.match(read('operations/postgres-monitoring.js'),/operation:'operational_alert'/);
+ assert.match(read('autopilot/alert-phones.js'),/recordCost\([\s\S]*?operation:'alert_delivery'/);
  assert.match(read('operations/monitoring.js'),/legacy alert dispatcher is unavailable in PostgreSQL/);
  assert.match(read('shipping/shipengine-platform.js'),/legacy ShipEngine platform connector is not enabled in PostgreSQL/);
 });

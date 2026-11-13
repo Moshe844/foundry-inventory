@@ -1,6 +1,11 @@
 <% const r=report,d=r.definition,c=r.context,q=new URLSearchParams({from:c.from,to:c.to,...(['sellers','stock-value'].includes(d.key)?{view:r.hierarchy?'items':r.view}:{})}).toString(),result=r.result,metric=result.metricColumns?.[0]||result.columns.at(-1),first=result.columns[0],numeric=col=>['money_minor','number'].includes(result.columnTypes[col]),grain=result.config.dateGrain,monthly=value=>new Intl.DateTimeFormat('en-US',{month:'short',year:'numeric',timeZone:'UTC'}).format(new Date(String(value).slice(0,10)+'T12:00:00Z')),dayText=value=>grain==='month'?monthly(value):helpers.shortDate(value),cellText=(col,value)=>result.columnTypes[col]==='date'?dayText(value):value,lead=locals.totals?.metrics?.[0],span=locals.totals?.comparison; %>
 <a class="back-link" href="/reports?<%= q %>">‹ Reports</a>
-<header class="sc-business-head"><div><h1><%= d.title %></h1><p><%= d.question %></p></div><div class="sc-row-actions"><a class="btn" download="stockchief-<%= d.key %>.csv" href="/reports/business/<%= d.key %>/export.csv?<%= q %>">Export</a><a class="btn" data-dest="/reports/builder?draft=1" href="/reports/business/<%= d.key %>/customize?weekly=1&amp;<%= q %>">Email me weekly</a><a class="btn btn--primary" data-dest="/reports/builder?draft=1" href="/reports/business/<%= d.key %>/customize?<%= q %>">Customize</a></div></header>
+<header class="sc-business-head"><div><h1><%= d.title %></h1><p><%= d.question %></p></div><div class="sc-row-actions">
+  <% const preferred=locals.managerView?.download_format; if(preferred&&preferred!=='default'&&preferred!=='csv'){ %>
+    <a class="btn" href="/reports/business/<%= d.key %>/export.<%= preferred %>?<%= q %>">Download <%= preferred==='xlsx'?'Excel':'PDF' %></a>
+  <% } %>
+  <a class="btn" download="stockchief-<%= d.key %>.csv" href="/reports/business/<%= d.key %>/export.csv?<%= q %>"><%= preferred&&preferred!=='default'?'Download CSV':'Export' %></a>
+  <a class="btn" data-dest="/reports/builder?draft=1" href="/reports/business/<%= d.key %>/customize?weekly=1&amp;<%= q %>">Email me weekly</a><a class="btn btn--primary" data-dest="/reports/builder?draft=1" href="/reports/business/<%= d.key %>/customize?<%= q %>">Customize</a></div></header>
 <% if(!d.current){ %><%- include('../accounting/customer-period',{model:c,action:'/reports/business/'+d.key}) %><% } %>
 <section class="report-card report-hero">
   <% if(r.needsReorderSetup){ %><p data-report-headline data-reorder-setup>Set reorder levels to see low stock.</p><a class="btn btn--primary" href="/purchasing/setup">Set reorder levels</a>

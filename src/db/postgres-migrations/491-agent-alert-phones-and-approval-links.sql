@@ -1,26 +1,18 @@
 -- Job 173: alerts by text message and push as well as email, chosen per kind
 -- of alert. Job 175: approving from an email, a text or a push notification.
 
--- Each kind of alert and approvals waiting for a person (job 175) may also go
--- by text and push. Job 175 joins whatever job list the channel settings allow
--- by now, so jobs other migrations added (169, 170 to 172, 180) stay allowed.
-DO $$
-DECLARE allowed text;
-BEGIN
- SELECT pg_get_constraintdef(oid) INTO allowed FROM pg_constraint
-  WHERE conname='agent_alert_channels_job_id_check' AND conrelid='stockchief_runtime.agent_alert_channels'::regclass;
- IF allowed IS NULL OR position('ARRAY[' IN allowed)=0 THEN
-  RAISE EXCEPTION 'The job list on stockchief_runtime.agent_alert_channels has an unexpected form.';
- END IF;
- IF allowed !~ '\m175\M' THEN
-  EXECUTE 'ALTER TABLE stockchief_runtime.agent_alert_channels DROP CONSTRAINT agent_alert_channels_job_id_check, ADD CONSTRAINT agent_alert_channels_job_id_check '||replace(allowed,'ARRAY[','ARRAY[175, ');
- END IF;
-END $$;
+-- Each kind of alert (jobs 166 to 172) and approvals waiting for a person
+-- (job 175) may also go by text and push. The lists name every alert job, so
+-- this holds whichever earlier alert migrations ran.
 ALTER TABLE stockchief_runtime.agent_alert_channels
+  DROP CONSTRAINT IF EXISTS agent_alert_channels_job_id_check,
+  ADD CONSTRAINT agent_alert_channels_job_id_check CHECK (job_id IN (166,167,168,169,170,171,172,175)),
   ADD COLUMN sms boolean NOT NULL DEFAULT false,
   ADD COLUMN push boolean NOT NULL DEFAULT false,
   ADD COLUMN phone_note text CHECK (phone_note IS NULL OR length(phone_note)<=500);
 ALTER TABLE stockchief_runtime.agent_alert_deliveries
+  DROP CONSTRAINT IF EXISTS agent_alert_deliveries_job_id_check,
+  ADD CONSTRAINT agent_alert_deliveries_job_id_check CHECK (job_id IN (166,167,168,169,170,171)),
   ADD COLUMN sms_batch text,
   ADD COLUMN push_batch text;
 ALTER TABLE stockchief_runtime.agent_escalations

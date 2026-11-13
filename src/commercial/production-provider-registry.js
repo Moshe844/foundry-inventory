@@ -60,9 +60,6 @@ const classification=Object.freeze({
  // server's own Twilio account and push keys, like the system email sender.
  'notifications/alert-providers.js':'METERED_INTERNAL_COST',
  'operations/email.js':'METERED_INTERNAL_COST',
- // StockChief's own Twilio account carries alert texts (job 173) and the
- // answers to customer text orders (job 83); neither is billed per business.
- 'notifications/alert-providers.js':'METERED_INTERNAL_COST',
  'operations/monitoring.js':'NOT_PG_ENABLED',
  'operations/postgres-monitoring.js':'METERED_INTERNAL_COST',
  'payments/connect.js':'METERED',
