@@ -366,4 +366,4 @@ async function review(db,ctx){
   return {summary:'Each waiting approval goes to one person who can approve it: your routing rules first, then the team member with the lowest approval limit that covers it, then you. Set rules and limits on the approval routing page.',
     rows:d.rows.map(r=>({Approval:r.title,Kind:KINDS[r.kind].label,Amount:format(r)||'',Reviewer:r.person?.name||'Nobody yet',Reason:r.reason,link:r.href}))};
 }
-module.exports={KINDS,ACTIONS,LIMIT_KINDS,path,requests,people,settings,eligible,covers,route,desk,inbox,item,run,saveRule,saveLimit,assertLimit,proposalRequest,screen,review,describeRule,canApproveKind,holdReason};
+module.exports={JOB,KINDS,ACTIONS,LIMIT_KINDS,path,requests,people,settings,eligible,covers,route,desk,inbox,item,run,saveRule,saveLimit,assertLimit,proposalRequest,screen,review,describeRule,canApproveKind,holdReason};

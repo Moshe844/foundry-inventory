@@ -40,6 +40,9 @@ test('approvals of every kind go to the person whose role, access and limit cove
  const keys={small:'purchase:'+small.purchaseOrderId,large:'purchase:'+large.purchaseOrderId,move:'transfer:'+move.id,rtv:'supplier_return:'+rtv.supplierReturnId,
   shelf:'proposal:'+shelf,big:'proposal:'+big,cost:'proposal:'+cost};
  const page=desk.path,review='/autopilot/reviews/purchase-review-routing';
+ const olderPlan=await browser.get(page).expect(200);
+ assert.match(olderPlan.text,/data-agent-plan-locked/);
+ assert.ok(olderPlan.text.includes('This work is available on Pro and above.'));
  // Starter and Growth: excluded. Nothing is routed and the plan lock shows.
  for(const tier of ['starter','growth']){
   await subscribe(tier);
