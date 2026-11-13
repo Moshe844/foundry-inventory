@@ -104,6 +104,8 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   const stockAlerts=await require('../db/schema-installed').has(db,'stockchief_runtime.agent_alert_channels');
   // Job 180 needs migration 485 (its summaries and notice job number).
   const teamSummary=require('./team-summary'),teamSummaries=policy.permits(account.plan,180,'automatic')&&await require('../db/schema-installed').has(db,teamSummary.table);
+  // Job 204 opens its own daily digest once migration 492 adds it.
+  const workDigest=require('./agent-work-digest'),workDigests=await require('../db/schema-installed').has(db,workDigest.table);
   const watchRules=await require('./watch-rules').candidates(db);
   const watched=[];
   // Jobs 170 and 171 need migration 473 (their settings and sources).
@@ -116,9 +118,11 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
      WHERE o.workspace_id=$1 AND o.status='CONFIRMED'
       AND EXISTS(SELECT 1 FROM sales_order_events e WHERE e.workspace_id=o.workspace_id AND e.sales_order_id=o.id AND e.event_type='confirmed' AND e.detail::jsonb->>'status'='BACKORDERED')
       AND NOT EXISTS(SELECT 1 FROM customer_communications m WHERE m.workspace_id=o.workspace_id AND m.stock_ready_order_id=o.id AND m.status IN ('QUEUED','SENT'))`:'')+
-    (policy.permits(account.plan,204,'automatic')?` UNION ALL SELECT 204,'Daily work',d.report_date,'/autopilot/reviews/daily-work?filter='||d.report_date,d.report_date::date
+    (policy.permits(account.plan,204,'automatic')?(workDigests?` UNION ALL SELECT 204,'Daily work',d.report_date::text,'${workDigest.path}?filter='||d.report_date::text,d.report_date
+     FROM ${workDigest.table} d WHERE d.workspace_id=$1 AND (d.summary->>'count')::int>0
+      AND d.report_date=(SELECT max(report_date) FROM ${workDigest.table} WHERE workspace_id=$1)`:` UNION ALL SELECT 204,'Daily work',d.report_date,'/autopilot/reviews/daily-work?filter='||d.report_date,d.report_date::date
      FROM workspace_daily_digests d WHERE d.workspace_id=$1 AND d.summary::jsonb->>'format'='agent-brief' AND (d.summary::jsonb->>'actions')::int>0
-      AND d.report_date=(SELECT max(report_date) FROM workspace_daily_digests WHERE workspace_id=$1 AND summary::jsonb->>'format'='agent-brief')`:'')+
+      AND d.report_date=(SELECT max(report_date) FROM workspace_daily_digests WHERE workspace_id=$1 AND summary::jsonb->>'format'='agent-brief')`):'')+
     corrections+learning+
     (policy.permits(account.plan,21,'draft')?` UNION ALL SELECT 21,'Reorder change',c.id,'/planning/reorder-refresh',c.created_at::date
       FROM stockchief_runtime.agent_reorder_refresh_changes c WHERE c.workspace_id=$1 AND c.status='DRAFT'`:'')+
@@ -294,8 +298,8 @@ async function inbox(db,workspaceId,actorId=null){
       happened:'The summary for '+r.due+' is ready.',why:'Who did what that day, and what is late now, from the recorded work.',
       recommendation:'Read it and follow up on anything late.',href:require('./team-summary').path+'?filter='+encodeURIComponent(r.due),actionLabel:'Read team summary',sourceId:'agent-notice-180'};
     if(Number(r.job_id)===204)return {kind:'inventory',grouped:true,importance:'Information',priority:35,title:'Your daily record of StockChief work',
-      happened:'Completed agent work is ready to review.',why:'The daily briefing recorded completed actions for '+r.due+'.',
-      recommendation:'Review completed work and available undo actions.',href:'/autopilot/reviews/daily-work?filter='+encodeURIComponent(r.due),actionLabel:'View completed work',sourceId:'agent-notice-204'};
+      happened:'What StockChief did on '+r.due+' is ready.',why:'Each action shows why it was done and what allowed it.',
+      recommendation:'Undo anything you do not want in one tap, where nothing changed since.',href:'/autopilot/reviews/daily-work?filter='+encodeURIComponent(r.due),actionLabel:'View completed work',sourceId:'agent-notice-204'};
     if(Number(r.job_id)===21)return {kind:'inventory',grouped:true,importance:'Important',priority:60,title:'Reorder point changes need your approval',
       happened:r.n+' reorder point and target '+(r.n===1?'change is':'changes are')+' ready.',why:'The daily check compared recorded sales, lead time and safety stock with the current settings.',
       recommendation:'Approve the changes or keep the current settings.',href:'/planning/reorder-refresh#waiting',actionLabel:'Review reorder changes',sourceId:'agent-notice-21'};

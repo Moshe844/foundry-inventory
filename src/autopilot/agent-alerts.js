@@ -1,6 +1,7 @@
 'use strict';
 
-// Jobs 166, 167, 168, 169, 170 and 171 deliver their alerts the same way. Job 172
+// Jobs 166 to 171 deliver their alerts the same way, and jobs 180 and 204
+// their daily team summary and "what I did" digest. Job 172
 // (escalations.js) uses the same mailbox choice and outbox for the emails it
 // sends to the person an unanswered item is passed to, and job 175
 // (approval-links.js) for the approval links it sends.
@@ -60,7 +61,10 @@ const JOBS={
     subject:(n,first)=>first.replace(/\.$/,''),intro:'What your team did, and what is late.'},
   // Job 175, needs migration 490: approval links to the person who has each
   // approval, sent by approval-links.js.
-  175:{action:'approval.link',name:'Approvals waiting for you',module:'./approval-links',needs490:true,own:true}
+  175:{action:'approval.link',name:'Approvals waiting for you',module:'./approval-links',needs490:true,own:true},
+  // Job 204: the daily "what I did" digest is one alert per business day. Needs migration 492.
+  204:{action:'report.work_digest',name:'Daily record of StockChief work',module:'./agent-work-digest',needs492:true,
+    subject:(n,first)=>first.replace(/:.*$/,''),intro:'What StockChief did, each with a one-tap undo or how to correct it.'}
 };
 const plural=(n,one,many)=>n+' '+(Number(n)===1?one:many);
 const expected=error=>error instanceof DomainError&&[400,402,403,404,409,422].includes(error.status);
@@ -73,7 +77,8 @@ async function tracked(db){
   const latest=later&&await installed.has(db,'stockchief_runtime.agent_escalations');
   const summaries=await installed.has(db,'stockchief_runtime.agent_team_summaries'),channels=await has480(db);
   const links=latest&&await installed.has(db,'stockchief_runtime.agent_approval_links');
-  return Object.keys(JOBS).map(Number).filter(id=>(later||!JOBS[id].needs473)&&(latest||!JOBS[id].needs474)&&(summaries||!JOBS[id].needs485)&&(channels||!JOBS[id].needs480)&&(links||!JOBS[id].needs490));
+  const digests=await installed.has(db,'stockchief_runtime.agent_work_digests');
+  return Object.keys(JOBS).map(Number).filter(id=>(later||!JOBS[id].needs473)&&(latest||!JOBS[id].needs474)&&(summaries||!JOBS[id].needs485)&&(channels||!JOBS[id].needs480)&&(links||!JOBS[id].needs490)&&(digests||!JOBS[id].needs492));
 }
 // Texts and push need migration 490.
 const phoneColumns=db=>installed.has(db,channels,'sms');
@@ -125,10 +130,12 @@ async function track(db,workspaceId,account){
       WHERE n.workspace_id=$1 AND n.job_id=ANY($2::int[]) AND NOT n.resolved AND NOT EXISTS(SELECT 1 FROM ${deliveries} d
         WHERE d.workspace_id=n.workspace_id AND d.job_id=n.job_id AND d.kind=n.kind AND d.reference=n.reference AND d.link=n.link)
       ON CONFLICT DO NOTHING RETURNING job_id`,[workspaceId,await tracked(c)])).rows;
-    // The daily team summary (job 180) is audited when it is written, so a new
-    // day's summary does not count as an alert change here.
-    if([...raised,...cleared].some(r=>Number(r.job_id)!==180)){
-      const count=rows=>{const out={};for(const r of rows)if(Number(r.job_id)!==180)out[r.job_id]=(out[r.job_id]||0)+1;return out;};
+    // The daily team summary (job 180) and the daily work digest (job 204) are
+    // audited when they are written, so a new day's does not count as an
+    // alert change here.
+    const daily=r=>[180,204].includes(Number(r.job_id));
+    if([...raised,...cleared].some(r=>!daily(r))){
+      const count=rows=>{const out={};for(const r of rows)if(!daily(r))out[r.job_id]=(out[r.job_id]||0)+1;return out;};
       const person=await currentOwner(c,workspaceId);
       await audit.record(c,{workspaceId,actorId:person?.id||null},{action:'Alerts updated',after:{opened:count(raised),cleared:count(cleared)}});
     }

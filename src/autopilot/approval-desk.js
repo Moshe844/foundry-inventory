@@ -264,7 +264,7 @@ async function run(db,workspaceId){
       WHERE ${ASSIGNED}.user_id IS DISTINCT FROM EXCLUDED.user_id OR ${ASSIGNED}.reason IS DISTINCT FROM EXCLUDED.reason RETURNING 1`,[workspaceId,r.key,r.person.id,r.reason]);
     if(!changed.rowCount)continue;
     routed++;
-    await audit.record(db,{workspaceId,actorId:null},{action:'Approval sent to '+r.person.name,reference:r.title.slice(0,200),
+    await audit.record(db,{workspaceId,actorId:null},{action:'Approval sent to a team member',reference:r.title.slice(0,200),
       before:prior?{person:team.find(p=>p.id===prior.user_id)?.name||'A former member',why:prior.reason}:{},after:{person:r.person.name,why:r.reason,kind:KINDS[r.kind].label,amount:format(r)}});
   }
   if(current.size)await db.query(`DELETE FROM ${ASSIGNED} WHERE workspace_id=$1 AND request_key=ANY($2::text[])`,[workspaceId,[...current.keys()]]);
