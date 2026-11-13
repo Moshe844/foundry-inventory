@@ -45,7 +45,8 @@ function client(apiKey,transport=fetch){
     return {id:String(result.id),status:result.status};
   }
   async function inbox(con,start,end,cursor){
-    const params=new URLSearchParams({stream:'test',direction:'in',senderId:con.buyer,receiverId:con.seller,validationStatus:'VALID',createdAtStart:start,createdAtEnd:end,limit:'50'});
+    // Without a buyer, every retailer's documents to this seller come back; each is matched to its retailer.
+    const params=new URLSearchParams({stream:'test',direction:'in',...(con.buyer?{senderId:con.buyer}:{}),receiverId:con.seller,validationStatus:'VALID',createdAtStart:start,createdAtEnd:end,limit:'50'});
     if(cursor)params.set('nextCursor',cursor);
     const result=await body(await request(root+'?'+params,{headers}));
     if(!Array.isArray(result.data))throw new ValidationError('Orderful returned an unexpected inbox response.');

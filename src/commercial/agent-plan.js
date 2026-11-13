@@ -244,7 +244,7 @@ const actionJobs=new Map([
   ['inventory.transfer',118],['transfer.approve',118],['transfer.prepare_balance',118],['shipping.label',59],['shipping.batch_purchase',59],['shipping.address_check',69],['shipping.choose_rate',58],['shipping.parcel_watch',62],
   ['shipping.carrier_claim',63],['shipping.freight_pickup',66],['shipping.plan_van_routes',71],['purchasing.track_inbound_freight',39],['agent.answer_slack',188],
   ['purchase_order.record_supplier_invoice',98],['supplier_invoice.recheck',98],['supplier_invoice.dispute',100],['supplier_credit.apply_note',105],
-  ['connection.accounting_export',184],['report.template.create',154],['report.template.schedule',155],['report.template.resume',155],['report.template.send_now',155],['report.email',155],['report.briefing',156]
+  ['connection.accounting_export',184],['edi.import_order',185],['edi.confirm_order',185],['edi.send_document',185],['fulfillment.send_to_3pl',186],['fulfillment.record_3pl_shipment',186],['report.template.create',154],['report.template.schedule',155],['report.template.resume',155],['report.template.send_now',155],['report.email',155],['report.briefing',156]
 ]);
 function actionJob(name,operation,payload) {
   if(name?.startsWith('document.file_to_'))return require('../documents/agent-filing').job(payload?.documentKind);

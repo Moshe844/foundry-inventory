@@ -24,7 +24,7 @@ test('retailer test PO to acknowledgment, actual ship notice and posted invoice 
     }
     assert.equal(u.hostname,'api.orderful.com');assert.equal(opts.headers['orderful-api-key'],config.apiKey);assert.equal(opts.headers['orderful-api-version'],'v4');
     if(u.searchParams.has('createdAtStart')){
-      assert.equal(u.searchParams.get('stream'),'test');assert.equal(u.searchParams.get('senderId'),config.buyer);
+      assert.equal(u.searchParams.get('stream'),'test');assert.equal(u.searchParams.get('receiverId'),config.seller);assert.equal(u.searchParams.get('senderId'),null,'Every retailer of this seller is read.');
       return json({data:[],metadata:{pagination:{links:{next:null,prev:null}}}});
     }
     if(opts.method==='POST'){
@@ -77,6 +77,8 @@ test('retailer test PO to acknowledgment, actual ship notice and posted invoice 
   await event('invoice.paid',{id:'in_'+purchase.id,status:'paid',currency:'usd',total:29900,customer,subscription,lines:{has_more:false,data:[{quantity:1,price:{id:'agent-pro-edi'},period:{start:time-1,end:time+86400}}]}});
   await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[scope.accountId]);
   await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+  // The owner lets StockChief send this retailer's documents on its own (job 185).
+  await edi.saveRetailer(db,ctx,{partnerId:config.buyer,revision:1,name:'Test buyer',customerId:config.customerId,locationId:config.locationId,currency:'USD',maxOrder:'100',automatic:'yes'});
   await edi.configure(db,ctx,'enable');await db.transaction(edi.schedule);
   const job={workspaceId:ctx.workspaceId,payload:(await db.query("SELECT payload FROM stockchief_runtime.jobs WHERE kind='orderful.test-inbox' AND workspace_id=$1",[ctx.workspaceId])).rows[0].payload};
   await plan('growth');await assert.rejects(edi.poll(db,job,transport),e=>e.code==='entitlement_required');assert.equal(outgoing.length,1);

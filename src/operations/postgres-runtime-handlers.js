@@ -397,7 +397,8 @@ async function runtimeSweep(job,client,options={}){
     if(scheduled.created)scheduledMissionResumes+=1;}
   await require('../autopilot/playbooks').schedule(client);
   await require('../reports/agent-inventory-rollup').schedule(client);
-  await require('../connections/postgres-shipbob-sandbox').schedule(client);
+  // Job 186: each inventory with a 3PL route, every five minutes.
+  await require('../connections/agent-3pl-orders').schedule(client);
   await require('../connections/agent-partner-stock-reads').schedule(client);
   await require('../connections/postgres-orderful-test').schedule(client);
   const scheduledWorkflowChecks=await require('./postgres-workflow-ownership').scheduleDue(client,now);
@@ -753,6 +754,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     try{return await require('../connections/postgres-shipbob-sandbox').runJob(database,job,options.shipbobFetch);}
     catch(error){if(!error.retryable&&[400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}
   }),
+  // Job 186: orders go to the 3PL that runs their warehouse; its shipping, tracking and stock come back.
+  'fulfillment.3pl-orders.v1':external((job,database)=>require('../connections/agent-3pl-orders').run(database,job.workspaceId,{transport:options.thirdPartyFetch||options.shipbobFetch})),
   'shipbob.sandbox-stock':external(async(job,database)=>{
     try{return await require('../connections/agent-partner-stock-reads').run(database,job,options.shipbobFetch);}
     catch(error){if(error.retryable||[400,402,403,404].includes(error.status))await require('../connections/agent-partner-stock-reads').noteIssue(database,job,error);if(!error.retryable&&[400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}

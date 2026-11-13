@@ -1687,8 +1687,13 @@ function createPostgresAutopilotRouter(database,options={}){
   }
   const lots=require('../../autopilot/lot-controls');
   const edi=require('../../connections/postgres-orderful-test');
-  router.get('/autopilot/orderful',requireAuth,owner,asyncRoute(async(req,res)=>{
-    res.page('autopilot/orderful',{title:'Orderful retail test',nav:'autopilot',...(await edi.dashboard(database,req.ctx))});
+  // Job 185: retail EDI. An account on its older terms sees the plan card; below Pro with the add-on, the lock.
+  router.get('/autopilot/orderful',requireAuth,owner,asyncRoute((req,res)=>reportPage(req,res,edi.JOB,'autopilot/orderful',
+    {title:'Retail EDI',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},
+    async()=>{const data=await edi.dashboard(database,req.ctx);if(!data.enabled)await edi.access(database,req.ctx);return data;},402)));
+  router.post('/autopilot/orderful/retailers',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const r=await edi.saveRetailer(database,req.ctx,req.body);
+    req.flash('success',r.stopped?'Retailer stopped. Its new documents wait for you.':'Retailer saved.');res.redirect(303,'/autopilot/orderful#retailers');
   }));
   router.post('/autopilot/orderful/connect',requireAuth,owner,asyncRoute(async(req,res)=>{
     await edi.connect(database,req.ctx,req.body);res.redirect(303,'/autopilot/orderful');
@@ -1732,6 +1737,19 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/shipbob/:order/refresh',requireAuth,owner,asyncRoute(async(req,res)=>{
     await shipbob.refresh(database,req.ctx,req.params.order);res.redirect(303,'/autopilot/shipbob');
   }));
+  // Job 186: orders go to the 3PL that runs their warehouse; shipping, tracking and stock come back.
+  const thirdParty=require('../../connections/agent-3pl-orders'),tpl=thirdParty.href;
+  router.get(tpl,requireAuth,owner,asyncRoute((req,res)=>reportPage(req,res,thirdParty.JOB,'autopilot/3pl-orders',
+    {title:'3PL orders',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>thirdParty.panel(database,req.ctx),402)));
+  for(const [path,run,done] of [
+    ['/connect',req=>thirdParty.connect(database,req.ctx,req.body),()=>'3PL connected.'],
+    ['/routes',req=>thirdParty.saveRoute(database,req.ctx,req.body),r=>r.stopped?'Route stopped. Orders for that warehouse stay with you.':'Route saved. StockChief checks that warehouse’s orders now.'],
+    ['/stock',req=>thirdParty.readStock(database,req.ctx,req.body),()=>'Stock read from the 3PL.'],
+    ['/orders/:id/approve',req=>thirdParty.approve(database,req.ctx,req.params.id),()=>'Order sent to the 3PL.'],
+    ['/orders/:id/dismiss',req=>thirdParty.dismiss(database,req.ctx,req.params.id),()=>'Draft dismissed.'],
+    ['/orders/:id/refresh',req=>thirdParty.refreshNow(database,req.ctx,req.params.id),()=>'Shipping read from the 3PL.'],
+    ['/shipments/:connector/:shipment/record',req=>thirdParty.record(database,req.ctx,req.params.connector,req.params.shipment),()=>'Shipment recorded. Stock left the warehouse.']])
+    router.post(tpl+path,requireAuth,owner,asyncRoute(async(req,res)=>{const r=await run(req);req.flash('success',done(r||{}));res.redirect(303,tpl);}));
   const lotCertificates=require('../../autopilot/lot-certificate-evidence');
   const certificateCoverage=require('../../autopilot/lot-certificate-coverage');
   const lotCertificatePage=async(req,res)=>res.page('autopilot/lot-certificates',{title:'Lot certificate evidence',nav:'autopilot',

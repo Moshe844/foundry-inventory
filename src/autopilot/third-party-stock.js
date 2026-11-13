@@ -2,6 +2,8 @@
 const policy=require('../commercial/agent-plan'),exact=require('../domain/exact-quantity');
 async function review(db,ctx,{page=1,filter=''}){
  await policy.requireWorkspaceJob(db,ctx.workspaceId,123,'automatic');
+ // Job 186: stock other 3PLs reported, read through the same 3PL connections that ship orders.
+ const thirdParty=require('../connections/agent-3pl-orders'),partnerReads=await require('../db/schema-installed').has(db,thirdParty.STOCK)?' UNION ALL '+thirdParty.partnerStockSql:'';
  const rows=(await db.query(`WITH activity AS (
   SELECT agreement_id,max(created_at) recorded_at FROM custody_events WHERE workspace_id=$1 GROUP BY agreement_id
  ), positions AS (
@@ -27,7 +29,7 @@ async function review(db,ctx,{page=1,filter=''}){
    CASE WHEN c.status='connected' AND c.paused_at IS NULL THEN 'Connected; saved provider reading' ELSE 'Connection paused or disconnected; saved reading' END,
    b.observed_at,'/autopilot/shipbob'
   FROM stockchief_runtime.shipbob_sandbox_stock b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.sku_id
-   JOIN workspace_connectors c ON c.workspace_id=b.workspace_id AND c.id=b.connector_id WHERE b.workspace_id=$1
+   JOIN workspace_connectors c ON c.workspace_id=b.workspace_id AND c.id=b.connector_id WHERE b.workspace_id=$1${partnerReads}
  ) SELECT * FROM positions WHERE $2='' OR lower(sku)=lower($2) OR partner ILIKE '%'||$2||'%' OR lower(reference)=lower($2)
  ORDER BY source,partner,reference,sku,sort_key LIMIT 101 OFFSET $3`,[ctx.workspaceId,filter,(page-1)*100])).rows;
  const {timeZone}=await require('../lib/business-time').forWorkspace(db,ctx.workspaceId),clock=new Intl.DateTimeFormat('en-US',{timeZone,dateStyle:'medium',timeStyle:'short'});

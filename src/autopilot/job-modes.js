@@ -2,17 +2,22 @@
 
 const policy=require('../commercial/agent-plan');
 const {ValidationError,AuthorizationError}=require('../domain/errors');
-const auditedJobs=new Set([4,5,6,7,8,9,10,11,12,13,14,16,17,19,20,21,22,23,24,25,26,27,31,32,36,37,38,39,40,42,43,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,91,93,94,95,96,97,98,100,101,102,103,104,105,107,108,110,111,112,113,114,115,116,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,135,136,137,140,142,143,144,145,146,147,148,150,155,156,157,158,159,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,180,182,183,188,190,191,192,196,197,204,212,213]);
+const auditedJobs=new Set([4,5,6,7,8,9,10,11,12,13,14,16,17,19,20,21,22,23,24,25,26,27,31,32,36,37,38,39,40,42,43,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,91,93,94,95,96,97,98,100,101,102,103,104,105,107,108,110,111,112,113,114,115,116,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,135,136,137,140,142,143,144,145,146,147,148,150,155,156,157,158,159,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,180,182,183,185,186,188,190,191,192,196,197,204,212,213]);
 const definitions=require('../commercial/agent-plan-v3.json').filter(r=>auditedJobs.has(r.id));
 const tiers=[['starter','Starter'],['growth','Growth'],['pro','Pro'],['enterprise','Custom']];
 const modes={inherit:'Use inventory setting',watch:'Watch only',ask:'Ask me first',routine:'Handle routine work'};
 
-function choices(plan,job){
-  if(!policy.permits(plan,job,'suggest'))return [];
+function choices(plan,job,{edi=false}={}){
+  if(!policy.permits(plan,job,'suggest',{edi}))return [];
   const allowed=['inherit','watch'];
-  if(policy.permits(plan,job,'draft'))allowed.push('ask');
-  if(plan!=='starter'&&policy.permits(plan,job,'automatic',{trained:true})&&job!==77)allowed.push('routine');
+  if(policy.permits(plan,job,'draft',{edi}))allowed.push('ask');
+  if(plan!=='starter'&&policy.permits(plan,job,'automatic',{trained:true,edi})&&job!==77)allowed.push('routine');
   return allowed;
+}
+// Job 185 on Pro needs the paid EDI add-on.
+async function ediPaid(db,workspaceId,plan){
+  if(plan!=='pro')return false;
+  try{await policy.requireWorkspaceJob(db,workspaceId,185,'suggest');return true;}catch(error){if(error.code==='entitlement_required')return false;throw error;}
 }
 
 async function owner(db,ctx){
@@ -23,10 +28,10 @@ async function owner(db,ctx){
 }
 
 async function page(db,ctx){
-  const plan=await owner(db,ctx);
+  const plan=await owner(db,ctx),edi=await ediPaid(db,ctx.workspaceId,plan);
   const {rows}=await db.query('SELECT job_id,mode,revision FROM stockchief_runtime.agent_job_modes WHERE workspace_id=$1',[ctx.workspaceId]);
   return definitions.map(d=>{
-    const setting=rows.find(r=>Number(r.job_id)===d.id),allowed=choices(plan,d.id);
+    const setting=rows.find(r=>Number(r.job_id)===d.id),allowed=choices(plan,d.id,{edi});
     return {id:d.id,label:d.job,allowed,mode:setting?.mode||'inherit',revision:setting?.revision||0,
       minimum:tiers.find(([k])=>policy.permits(k,d.id,'suggest'))?.[1],
       routineMinimum:d.id===77?null:tiers.find(([k])=>policy.permits(k,d.id,'automatic',{trained:true}))?.[1]};
@@ -39,9 +44,9 @@ async function save(db,ctx,raw,input){
     throw new ValidationError('Review the current job settings before changing this mode.');
   return db.transaction(async c=>{
     if(job===26)await require('../purchasing/postgres-purchase-exposure').lock(c,ctx.workspaceId,{budgetFence:true});
-    const plan=await owner(c,ctx);
-    policy.requireJob(plan,job,'suggest');
-    if(!choices(plan,job).includes(mode))throw new ValidationError('This job cannot run at that level on your plan.');
+    const plan=await owner(c,ctx),edi=job===185&&await ediPaid(c,ctx.workspaceId,plan);
+    policy.requireJob(plan,job,'suggest',{edi});
+    if(!choices(plan,job,{edi}).includes(mode))throw new ValidationError('This job cannot run at that level on your plan.');
     if([4,5,7,24,25,26,120,122,150].includes(job))await c.query('SELECT workspace_id FROM workspace_autopilot WHERE workspace_id=$1 FOR UPDATE',[ctx.workspaceId]);
     const prior=(await c.query('SELECT mode,revision FROM stockchief_runtime.agent_job_modes WHERE workspace_id=$1 AND job_id=$2 FOR UPDATE',[ctx.workspaceId,job])).rows[0];
     if((prior?.revision||0)!==revision)throw new ValidationError('This job setting has changed. Open its current settings.');
