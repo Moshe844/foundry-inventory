@@ -137,6 +137,26 @@
           <dt>Sending</dt><dd><%= supplier.autoSendEnabled ? 'Sends routine orders' : 'Asks you first' %><% if (permissions.suppliers && senderReady) { %> · <button class="ox-linkbtn" type="button" data-modal-open="ox-rules">Change</button><% } %></dd>
         </dl>
       </section>
+
+      <% if (locals.habits) { var H = habits.habit; %>
+      <section class="ox-card ox-card__b" aria-labelledby="ox-h-habits" data-supplier-habits>
+        <h2 id="ox-h-habits" class="ox-h2">Habits</h2>
+        <% if (habits.locked) { %><p class="ox-fine ox-fine--flush">Learning each supplier’s habits comes with Growth. <a href="/billing">Review plans</a></p>
+        <% } else if (!H) { %><p class="ox-fine ox-fine--flush"><%= habits.empty %></p>
+        <% } else { %>
+        <dl class="ox-kv">
+          <dt>Lead time</dt><dd><%= H.lead %></dd>
+          <dt>On time</dt><dd><%= H.onTime %></dd>
+          <dt>Short</dt><dd><%= H.shortText %></dd>
+          <dt>Over</dt><dd><%= H.overText %></dd>
+        </dl>
+        <% if (habits.open.length) { %><ul class="ox-fine" data-supplier-likely>
+          <% habits.open.forEach(function (o) { %><li><a href="/purchasing/orders/<%= o.id %>"><%= o.number %></a>: usually arrives about <%= o.likely %><% if (o.late) { %> <span class="ox-badge ox-badge--amber">Later than <%= o.expected %></span><% } %></li><% }) %>
+        </ul><% } %>
+        <p class="ox-fine"><%= habits.feed.active ? 'Reorders use ' + H.leadDays + ' days for products with no deliveries of their own.' : (habits.feed.reason || '') %> From <%= H.samples %> completed deliveries.</p>
+        <% } %>
+      </section>
+      <% } %>
     </aside>
   </div>
 

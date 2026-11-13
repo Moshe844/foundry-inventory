@@ -2241,6 +2241,20 @@ function createPostgresAutopilotRouter(database,options={}){
   });
   router.post('/autopilot/reviews/watch-rules/rules',requireAuth,owner,saveWatchRule);
   router.post('/autopilot/reviews/brand-watches/rules',requireAuth,owner,saveWatchRule);
+  // Job 207: any rule in plain words, read exactly, confirmed, then saved by
+  // its own kind's service. An unreadable rule is explained and saves nothing.
+  const plainRules=require('../../autopilot/plain-rules');
+  router.get(plainRules.path,requireAuth,owner,asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');
+    return reportPage(req,res,plainRules.JOB,'autopilot/plain-rules',{title:'Rules in plain words',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},
+      async()=>({screen:await plainRules.page(database,req.ctx,req.query)}),402);}));
+  router.post(plainRules.path+'/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{
+    try{const saved=await plainRules.confirm(database,req.ctx,req.body);req.flash('success',saved.message);return res.redirect(303,saved.href);}
+    catch(error){if(error?.code!=='validation_error')throw error;req.flash('error',error.message);
+      return res.redirect(303,plainRules.path+'?'+new URLSearchParams({rule:String(req.body.rule||'').slice(0,400)}));}
+  }));
+  router.post(plainRules.path+'/supplier-rules/remove',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const removed=await require('../../purchasing/supplier-choice-rules').remove(database,req.ctx,req.body.id);
+    req.flash('success',removed.removed?'Supplier rule removed.':'That rule was already removed.');res.redirect(303,plainRules.path+'#supplier-rules');}));
   router.post('/autopilot/reviews/payment-run/approve',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../accounting/agent-cash-planning').approvePaymentRun(database,req.ctx,req.body);
     req.flash('success','Payment review recorded. Pay suppliers and record payments from their individual bills.');

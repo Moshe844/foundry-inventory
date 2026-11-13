@@ -170,6 +170,7 @@
 
 <p class="rm-disclose">
   <a href="/ask?from=%2Fwhat-you-told-me">Tell me something new</a>
+  <% if (locals.currentUser?.role === 'owner') { %><a href="/autopilot/learning/rules">Write a rule in plain words</a><% } %>
   <a href="/settings">Advanced — people, plan, terminology, exports</a>
   <a href="/everything">Everything else</a>
 </p>
