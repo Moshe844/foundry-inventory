@@ -7,6 +7,10 @@ const exponents=Object.fromEntries([...Intl.supportedValuesOf('currency'),'CLF',
 
 function mayBuy(member){return permissions.can(member,permissions.VIEW_PURCHASING)&&permissions.can(member,permissions.APPROVE_PO);}
 function mayTransfer(member){return permissions.can(member,permissions.VIEW_TRANSFERS)&&permissions.can(member,permissions.APPROVE_TRANSFER);}
+function mayCover(member){
+  const desk=require('./approval-desk');
+  return Object.keys(desk.KINDS).some(kind=>desk.canApproveKind(member,kind));
+}
 const members=`SELECT u.id,u.account_id,u.name,u.role,u.permissions,u.po_approval_limit_minor,u.po_approval_currency
   FROM users u JOIN workspaces w ON w.id=u.workspace_id
   LEFT JOIN platform_account_access a ON a.account_id=u.account_id
@@ -18,7 +22,7 @@ async function setting(db,workspaceId){
     WHERE d.workspace_id=$1`,[workspaceId])).rows[0]||{revision:0};
 }
 async function setup(db,ctx){
-  const people=(await db.query(members+' ORDER BY u.name,u.id',[ctx.workspaceId])).rows.filter(p=>mayBuy(p)||mayTransfer(p));
+  const people=(await db.query(members+' ORDER BY u.name,u.id',[ctx.workspaceId])).rows.filter(mayCover);
   return {people,rule:await setting(db,ctx.workspaceId),today:await time.today(db,ctx.workspaceId)};
 }
 async function save(db,ctx,input){
@@ -35,7 +39,7 @@ async function save(db,ctx,input){
     }
     await policy.requireWorkspaceJob(c,ctx.workspaceId,202,'automatic');
     const selected=(await c.query(members+' AND u.id=$2',[ctx.workspaceId,input.deputyId])).rows[0];
-    if(!selected||!mayBuy(selected)&&!mayTransfer(selected))throw new ValidationError('Choose a current team member authorized to approve purchases or transfers across this inventory.');
+    if(!selected||!mayCover(selected))throw new ValidationError('Choose a current team member with approval permissions across this inventory.');
     const {timeZone,calendarDate}=await time.forWorkspace(c,ctx.workspaceId);
     time.dayBoundary(input.start,timeZone);time.dayBoundary(input.end,timeZone);
     if(input.end<input.start||input.end<calendarDate)throw new ValidationError('Choose a vacation end date on or after the start date and today.');
@@ -46,16 +50,22 @@ async function save(db,ctx,input){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
-async function inbox(db,workspaceId,actorId){
-  const active=(await db.query(`SELECT u.* FROM stockchief_runtime.vacation_deputies d JOIN users u ON u.id=d.deputy_id AND u.workspace_id=d.workspace_id
+async function activeDeputy(db,workspaceId,state){
+  if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,202,'automatic')||
+    !await require('../db/schema-installed').has(db,'stockchief_runtime.vacation_deputies'))return null;
+  return (await db.query(`SELECT u.* FROM stockchief_runtime.vacation_deputies d JOIN users u ON u.id=d.deputy_id AND u.workspace_id=d.workspace_id
     JOIN users owner ON owner.id=d.owner_id AND owner.workspace_id=d.workspace_id AND owner.role='owner'
     JOIN workspaces w ON w.id=d.workspace_id JOIN accounts a ON a.id=w.owner_account_id
     LEFT JOIN platform_account_access access ON access.account_id=u.account_id
-    WHERE d.workspace_id=$1 AND d.deputy_id=$2 AND u.account_id<>a.id AND u.warehouse_location_ids IS NULL AND access.disabled_at IS NULL
-    AND (now() AT TIME ZONE coalesce(w.time_zone,a.time_zone,'UTC'))::date BETWEEN d.starts_on AND d.ends_on`,[workspaceId,actorId])).rows[0];
-  if(!active)return [];
+    WHERE d.workspace_id=$1 AND owner.account_id=a.id AND w.deletion_requested_at IS NULL
+    AND u.account_id<>a.id AND u.warehouse_location_ids IS NULL AND access.disabled_at IS NULL
+    AND (now() AT TIME ZONE coalesce(w.time_zone,a.time_zone,'UTC'))::date BETWEEN d.starts_on AND d.ends_on`,[workspaceId])).rows[0]||null;
+}
+
+async function inbox(db,workspaceId,actorId){
   const state=await policy.accountState(db,workspaceId);
-  if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,202,'automatic'))return [];
+  const active=await activeDeputy(db,workspaceId,state);
+  if(active?.id!==actorId)return [];
   const rows=[];
   if(mayBuy(active)){
     const dual=require('../purchasing/dual-approval'),rule=await dual.setting(db,workspaceId);
@@ -86,7 +96,7 @@ async function inbox(db,workspaceId,actorId){
 }
 const definition={id:202,key:'vacation-deputy',label:'Assign a vacation deputy',read:async(db,ctx)=>{
   const rule=await setting(db,ctx.workspaceId);
-  return {summary:'Purchases and stock transfers appear in your deputy’s Needs you list during the dates you choose. Their existing approval permissions and purchase limits apply.',
+  return {summary:'During the dates you choose, each approval your deputy is allowed to make appears in their Needs you list. Their usual permissions and approval limits apply.',
     rows:rule.deputy_id?[{Deputy:rule.name,From:rule.starts_on,Through:rule.ends_on}]:[]};
 }};
-module.exports={definition,setup,save,inbox};
+module.exports={definition,setup,save,inbox,activeDeputy};
