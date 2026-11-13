@@ -1698,6 +1698,11 @@ function createPostgresAutopilotRouter(database,options={}){
   for(const step of Object.keys(billDone)){
     router.post(landedCostBills.path+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
       const result=await landedCostBills[step](database,req.ctx,req.params.id,req.body);
+      if(result.twoPeople){
+        const id=await require('../../autopilot/two-person-approval').landedCostChange(database,req.ctx,result.documentId);
+        req.flash('info','This is over your two-person amount, so two people approve it. Approve it here; a second person approves it from Needs you.');
+        return res.redirect(303,'/actions/'+encodeURIComponent(id));
+      }
       req.flash('success',result.replayed?'This was already done.':billDone[step]);
       res.redirect(303,landedCostBills.path+'/'+encodeURIComponent(req.params.id));
     }));

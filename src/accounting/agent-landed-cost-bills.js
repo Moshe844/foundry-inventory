@@ -212,6 +212,9 @@ async function decide(c,gate,bill,line,row){
     charges:[{sourceBillLineId:line.id,amountMinor:base.amount,category:base.category}],method:base.method,requestKey:'landed-bill:'+line.id+':'+base.attempt})).id;
   const built=await costs.build(scoped(c),ctx,{id:base.documentId});
   if(!allowed.allowed||gate.blocked)return save(c,base,{status:'REVIEW',reason:allowed.allowed?gate.blocked:allowed.reason,wouldPost:Boolean(allowed.allowed)});
+  // Job 205: over the owner's two-person amount it waits for two people.
+  const twoPeople=await require('../autopilot/two-person-approval').landedCostWaiting(c,ctx,built.payload);
+  if(twoPeople)return save(c,base,{status:'REVIEW',reason:twoPeople,wouldPost:true});
   const posted=await costs.applyInTransaction(c,ctx,built.payload,{routine:{trained:true}});
   await save(c,base,{status:'POSTED',automatic:true,decidedBy:gate.owner,ruleRevision:allowed.rule.revision});
   await audit.record(c,ctx,{action:'Delivery cost posted to stock on its own',reference:posted.documentNumber,
@@ -351,6 +354,8 @@ async function approve(db,ctx,lineId,input={}){
     if(input.confirmed!=='yes')throw new ValidationError('Confirm this exact split.');
     const built=await costs.build(scoped(c),ctx,{id:row.document_id});
     if(input.fingerprint!==built.payload.fingerprint)throw new ValidationError('The delivery, the bill or the split changed. Review it again.');
+    // Job 205: over the owner's amount two people approve it as a prepared change.
+    if(await require('../autopilot/two-person-approval').landedCostWaiting(c,ctx,built.payload))return {twoPeople:true,documentId:row.document_id};
     const posted=await costs.applyInTransaction(c,ctx,built.payload);
     await c.query(`UPDATE ${bills} SET status='POSTED',automatic=false,decided_by=$3,decided_at=clock_timestamp(),reason=NULL,would_post=false,
       checked_at=clock_timestamp() WHERE workspace_id=$1 AND bill_line_id=$2`,[ctx.workspaceId,lineId,ctx.actorId]);
