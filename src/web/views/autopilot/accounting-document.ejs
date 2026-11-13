@@ -1,0 +1,22 @@
+<% const d=document,base='/autopilot/accounting-documents/'+encodeURIComponent(connectorId)+'/'+kind+'/'+encodeURIComponent(id); %>
+<h1><%= d.title %></h1>
+<p><%= d.contact %> · <%= d.books %> · <%= d.outcome %><%= d.automatic&&['QUEUED','SENT'].includes(d.status)?' by StockChief':'' %></p>
+<% if(d.reason){ %><p class="notice" data-document-reason><%= d.reason %></p><% } %>
+<% if(booksProblem){ %><p class="notice"><%= booksProblem %></p><% } %>
+<section class="card section" data-accounting-document><h2>What goes to <%= d.provider||'the books' %></h2>
+<% if(d.lines.length){ %>
+<p>Dated <%= d.issueDate %><% if(d.taxCode){ %> · tax code <%= d.taxCode %><% } %></p>
+<ul class="rm-list"><% for(const l of d.lines){ %><li class="list-row"><span><%= l.description %></span><strong><%= d.currency %> <%= l.amount %></strong></li><% } %>
+<li class="list-row"><span>Tax</span><strong><%= d.currency %> <%= d.tax %></strong></li>
+<li class="list-row"><span><strong>Total</strong></span><strong><%= d.currency %> <%= d.total %></strong></li></ul>
+<% }else{ %><p>StockChief could not build this one from its books entry. The reason is above.</p><% } %>
+<% if(canSend){ %>
+<form method="post" action="<%= base %>/send" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedFingerprint" value="<%= fingerprint %>">
+<p>StockChief builds it again from the records before it sends, and checks what the books show afterwards.</p>
+<label><input type="checkbox" name="confirmed" value="yes" required> I checked these amounts and the books.</label>
+<button class="btn btn--primary">Send to <%= d.provider %></button></form>
+<% } %>
+<% if(canCheck){ %>
+<form method="post" action="<%= base %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><p>StockChief will look in the books for it. Nothing is sent.</p><button class="btn btn--primary">Check the books</button></form>
+<% } %></section>
+<% if(canDismiss){ %><form method="post" action="<%= base %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost">Send it as a journal instead</button></form><% } %>

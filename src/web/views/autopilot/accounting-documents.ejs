@@ -1,0 +1,29 @@
+<% const af=result.accountingDocumentsForm; %>
+<section class="card section" data-accounting-document-settings><h2>Books that get invoices and bills</h2>
+<p>Turn this on for books where verified posting is already on. Invoices and bills from the start date go as invoices and bills; what they carry is left out of their journals.</p>
+<% if(!af.books.length){ %><p>Connect QuickBooks or Xero and turn on verified posting first. <a href="/settings/connections">Open connections</a></p><% } %>
+<% for(const b of af.books){ %>
+<form method="post" action="/autopilot/accounting-documents/settings" class="form-stack" data-books="<%= b.id %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<input type="hidden" name="connectorId" value="<%= b.id %>"><input type="hidden" name="revision" value="<%= b.revision %>">
+<h3><%= b.name %> <small><%= b.provider %> · <%= b.enabled?'On':'Off' %></small></h3>
+<label class="rm-field"><span>Send</span><select name="enabled"><option value="yes"<%= b.enabled?' selected':'' %>>On</option><option value="no"<%= b.enabled?'':' selected' %>>Off</option></select></label>
+<fieldset class="rm-field"><legend>What to send</legend>
+<label><input type="checkbox" name="kinds" value="invoice"<%= b.invoices?' checked':'' %>> Customer invoices</label>
+<label><input type="checkbox" name="kinds" value="bill"<%= b.bills?' checked':'' %>> Supplier bills</label></fieldset>
+<label class="rm-field"><span>From this date</span><small>Earlier invoices and bills keep going as journals.</small><input type="date" name="startDate" value="<%= b.startDate %>" required></label>
+<% if(af.training){ %><label><input type="checkbox" name="sendAlone" value="yes"<%= b.sendAlone?' checked':'' %>> Send them on their own. Counts as one rule.</label><% } %>
+<button class="btn btn--primary">Save</button></form>
+<% } %>
+</section>
+<% if(af.needs.length){ %>
+<section class="card section" data-accounting-document-needs><h2>Links your books still need</h2>
+<p>StockChief never guesses these. Enter the identity your books use for each one.</p>
+<% for(const n of af.needs){ %>
+<% if(n.kind==='account'){ %><p class="list-row"><span><strong><%= n.label %></strong> · <%= n.books %><small>Accounts are mapped on the connection page, then the books are compared again before posting resumes.</small></span>
+<a class="btn" href="/settings/connections/<%= encodeURIComponent(n.connectorId) %>">Map the account</a></p><% continue; } %>
+<form method="post" action="/autopilot/accounting-documents/mappings" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<input type="hidden" name="connectorId" value="<%= n.connectorId %>"><input type="hidden" name="kind" value="<%= n.kind %>"><input type="hidden" name="localKey" value="<%= n.localKey %>">
+<label class="rm-field"><span><%= n.label %> · <%= n.books %></span><small><%= n.ask %></small><input name="externalId" maxlength="100" required aria-label="<%= n.ask %> for <%= n.label %>"></label>
+<button class="btn">Save link</button></form>
+<% } %></section>
+<% } %>

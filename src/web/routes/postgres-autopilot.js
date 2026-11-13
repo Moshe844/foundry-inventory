@@ -1827,6 +1827,38 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/quote-requests/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{
     await quoteRequests.dismiss(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/reviews/quote-requests');
   }));
+  // Job 187: the owner's rules for replies StockChief sends on its own.
+  const mailReplies=require('../../connections/agent-mail-replies');
+  router.post('/autopilot/mail-replies/settings',requireAuth,owner,asyncRoute(async(req,res)=>{
+    try{await mailReplies.saveSettings(database,req.ctx,req.body);req.flash('success','Reply rules saved.');}
+    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+    res.redirect(303,mailReplies.path);
+  }));
+  // Job 184: invoices and bills sent to QuickBooks or Xero.
+  const accountingDocuments=require('../../accounting/agent-accounting-documents');
+  const documentPath=req=>'/autopilot/accounting-documents/'+encodeURIComponent(req.params.connectorId)+'/'+encodeURIComponent(req.params.kind)+'/'+encodeURIComponent(req.params.id);
+  router.get('/autopilot/accounting-documents/:connectorId/:kind/:id',requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,accountingDocuments.JOB,'autopilot/accounting-document',
+    {title:'Invoice or bill for the books',nav:'autopilot',backTo:{href:accountingDocuments.path,label:'Invoices and bills'}},
+    ()=>accountingDocuments.detail(database,req.ctx,req.params.connectorId,req.params.kind,req.params.id),402)));
+  for(const [action,run,done] of [['send',(req)=>accountingDocuments.approve(database,req.ctx,req.params.connectorId,req.params.kind,req.params.id,req.body),'Queued. It counts as sent once the books confirm it.'],
+    ['dismiss',(req)=>accountingDocuments.dismiss(database,req.ctx,req.params.connectorId,req.params.kind,req.params.id),'It goes to the books as a journal instead.'],
+    ['check',async(req)=>(await accountingDocuments.check(database,req.ctx,req.params.connectorId,req.params.kind,req.params.id)).found,'Checked against the books.']]){
+    router.post('/autopilot/accounting-documents/:connectorId/:kind/:id/'+action,requireAuth,owner,asyncRoute(async(req,res)=>{
+      try{const found=await run(req);req.flash('success',action==='check'?(found?'The books have it. It is linked now.':'The books do not have it. You can send it again.'):done);}
+      catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+      res.redirect(303,documentPath(req));
+    }));
+  }
+  router.post('/autopilot/accounting-documents/settings',requireAuth,owner,asyncRoute(async(req,res)=>{
+    try{await accountingDocuments.saveSettings(database,req.ctx,req.body);req.flash('success','Settings saved.');}
+    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+    res.redirect(303,accountingDocuments.path);
+  }));
+  router.post('/autopilot/accounting-documents/mappings',requireAuth,owner,asyncRoute(async(req,res)=>{
+    try{await accountingDocuments.saveMapping(database,req.ctx,req.body);req.flash('success','Link saved. StockChief tries again on its next run.');}
+    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+    res.redirect(303,accountingDocuments.path);
+  }));
   // Job 72: answers to customer emails about stock, delivery and orders.
   const customerQuestions=require('../../sales/agent-customer-questions'),questionsPath='/autopilot/reviews/customer-questions';
   router.get('/autopilot/customer-questions/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
