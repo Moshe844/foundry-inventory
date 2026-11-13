@@ -208,8 +208,8 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
       assert.equal(Number(received.Received),1);assert.equal(Number(received['Still due']),3);
     }
   }
-  await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,safety_stock,source,created_at,updated_at)
-    VALUES($1,$2,$3,$4,20,30,0,'manual',now()::text,now()::text)`,[randomUUID(),ctx.workspaceId,sku,f.location.id]);
+  await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,safety_stock,lead_time_days,source,created_at,updated_at)
+    VALUES($1,$2,$3,$4,20,30,0,10,'manual',now()::text,now()::text)`,[randomUUID(),ctx.workspaceId,sku,f.location.id]);
   await db.query("UPDATE sales_orders SET needed_by=$3 WHERE workspace_id=$1 AND id IN (SELECT sales_order_id FROM sales_shipments WHERE id=ANY($2))",[ctx.workspaceId,parcels,ago(today,-1)]);
   await f.shipping.applyTracking(db,ctx,parcels[0],{status:'DELIVERED',externalEventId:'service-level-first',occurredAt:ago(today,-1)+'T12:00:00Z'});
   // Job 144's saved weekly forecasts; the stock-out week is not comparable.
@@ -232,6 +232,7 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
     }
     if(tier==='starter'){
       await browser.get('/autopilot/reviews/demand-scenario').query({change:20}).expect(402);
+      await browser.get('/autopilot/reviews/demand-scenario').query({supplierDelayDays:7}).expect(402);
       assert.doesNotMatch((await browser.get('/autopilot/reviews').expect(200)).text,/href="\/autopilot\/reviews\/demand-scenario"/);
       for(const key of ['compare-quotes','repeat-loss','demand-scenario'])await assert.rejects(review(key,{change:20}),e=>e.code==='entitlement_required');
       assert.match((await review('overdue-incoming')).rows[0].Suggestion,/overdue/);continue;
@@ -246,8 +247,19 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
     const scenario=(await review('demand-scenario',{change:20})).rows.find(r=>r.Warehouse==='Dispatch');
     assert.equal(scenario['Baseline 30-day sales'],1);assert.equal(scenario['Scenario 30-day sales'],1.2);
     assert.equal((await review('demand-scenario',{change:-100})).rows[0]['Scenario 30-day sales'],0);
+    const delayed=await require('../../src/assistant/postgres-capability-registry').registry.get('read.agent_review').prepare(null,db,ctx,
+      'What if sales grow 20% and the supplier takes 150 days longer?',{agentJob:'demand-scenario',search:code,demandChangePercent:20,supplierDelayDays:150});
+    const gap=delayed.rows.find(r=>r.Warehouse==='Dispatch');
+    assert.equal(gap['Recorded lead time (days)'],10);
+    assert.equal(gap['Scenario lead time (days)'],160);
+    assert.equal(gap['Baseline units short before replenishment'],0);
+    assert.equal(gap['Scenario units short before replenishment'],1.4);
+    assert.match(delayed.sources[0].href,/supplierDelayDays=150/);
+    assert.match((await browser.get('/autopilot/reviews/demand-scenario').query({filter:code,supplierDelayDays:-15}).expect(200)).text,/Scenario lead time \(days\)/);
+    assert.equal((await review('demand-scenario',{supplierDelayDays:-15})).rows.find(r=>r.Warehouse==='Dispatch')['Scenario lead time (days)'],0);
   }
   await assert.rejects(review('demand-scenario',{change:'anything'}),/between/);
+  await assert.rejects(review('demand-scenario',{supplierDelayDays:1.5}),/whole-day/);
   assert.equal((await review('customer-check-in',{filter:''})).rows.length,0);
   await db.query("UPDATE sales_shipments SET shipped_at=(now()-interval '100 days')::text WHERE workspace_id=$1 AND id=ANY($2)",[ctx.workspaceId,parcels]);
   assert.match((await review('customer-check-in',{filter:'Receiver'})).rows[0].Draft,/Hello Receiver/);

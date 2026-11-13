@@ -1824,7 +1824,7 @@ function createPostgresAutopilotRouter(database,options={}){
   router.get('/autopilot/reviews/brand-watches',requireAuth,(req,res)=>res.redirect(301,'/autopilot/reviews/watch-rules'));
   router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
     return reportPage(req,res,reviews.definitions.find(d=>d.key===req.params.job)?.id,'autopilot/review-result',{title:'Agent review',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>{
-      const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,change:req.query.change});
+      const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,change:req.query.change,supplierDelayDays:req.query.supplierDelayDays});
       const packs=require('../../accounting/agent-report-packs');
       if(Object.hasOwn(packs.downloads,req.params.job)&&(req.params.job!=='quarterly-supplier-pack'||result.rows.length)){
         result.download='/autopilot/reviews/'+req.params.job+'/download?'+new URLSearchParams({filter:req.query.filter||''});

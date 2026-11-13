@@ -31,6 +31,7 @@ const FIELDS=Object.freeze({
   fromUnit:{type:'string',maxLength:60,description:'Source unit or the saved supplier purchase unit, such as case, kg or lb.'},
   quoteValidUntil:{type:'string',maxLength:10,description:'Customer quotation expiry date, YYYY-MM-DD.'},
   demandChangePercent:{type:'number',minimum:-100,maximum:1000,description:'The sales change percentage specified by the user for a demand scenario.'},
+  supplierDelayDays:{type:'integer',minimum:-365,maximum:365,description:'The change in supplier lead time, in days, requested for the demand-scenario review. Use a negative value for faster replenishment.'},
   markdownPercent:{type:'number',minimum:0,maximum:100,description:'The proposed markdown specified by the owner for a clearance plan.'},
   agentJob:{type:'string',enum:agentReviews.definitions.map(d=>d.key),description:'Choose the requested inventory-agent review by its registered job name.'},
   supplierDocument:{type:'string',maxLength:32000,description:'Exact supplier evidence JSON: documentType order_acknowledgement/shipment_notice/backorder_notice/quotation/price_update/capacity_notice/substitution_offer/dispute, sourceMessageId, optional sourceAttachmentHash, evidenceQuote copied from the new supplier text or readable attachment, optional documentReference, expectedArrivalDate YYYY-MM-DD, currency, exceptionDetail, and for quotations optional quotationTerms {validThrough YYYY-MM-DD, deliveryMinor, evidence copied exactly from the original}. Only record a delivery charge for a single-product quote, and only when the original explicitly states its amount or free delivery. Include lines[{purchaseOrderLineId or supplierSku or sku,quantity,quantityBasis stock/purchase,unitCostMinor if supplied}]. Quantities and costs retain the document unit basis; the canonical matcher uses the PO pack snapshot. No physical receipt, bill, payment or send is inferred.'},
@@ -380,15 +381,17 @@ add('read.staff_guide','Answer how-to questions about using StockChief. Return i
       sources:[{kind:'page',href:'/guide?q='+encodeURIComponent(guide.query),label:'Staff guide'}],coverage:guide.topics.length?'Matching staff instructions':'No matching staff instructions for this role'};
   },async(_service,_db,_ctx,result)=>Array.isArray(result?.rows),{answerMode:'evidence'});
 add('read.agent_review','Run an operational review using recorded inventory, purchasing, sales or finance data. Discover this contract by name for the accepted agentJob keys. Use search for a SKU, lot, serial or other review filter. The owner’s plan controls access.',
-  ['agentJob','search','offset','demandChangePercent','markdownPercent'],'read',permissions.VIEW,'none',async(_service,db,ctx,_text,args)=>{
+  ['agentJob','search','offset','demandChangePercent','markdownPercent','supplierDelayDays'],'read',permissions.VIEW,'none',async(_service,db,ctx,_text,args)=>{
     const change=args.agentJob==='clearance-plan'?args.markdownPercent:args.demandChangePercent;
     const procedure=args.agentJob==='procedure-originals',offset=procedure?Number(args.offset||0):0;
     const page=offset/50+1;
-    const result=await agentReviews.run(db,ctx,args.agentJob,{filter:args.search,change,page});
+    const supplierDelayDays=args.agentJob==='demand-scenario'?args.supplierDelayDays:undefined;
+    const result=await agentReviews.run(db,ctx,args.agentJob,{filter:args.search,change,page,supplierDelayDays});
     const query=new URLSearchParams();
     if(args.search)query.set('filter',args.search);
     if(page>1)query.set('page',String(page));
     if(change!=null)query.set('change',String(change));
+    if(supplierDelayDays!=null)query.set('supplierDelayDays',String(supplierDelayDays));
     const href='/autopilot/reviews/'+encodeURIComponent(args.agentJob)+(query.size?'?'+query:'');
     const sources=[{kind:'page',href,label:result.label}],visited=new Set([href]);
     for(const row of result.rows){
