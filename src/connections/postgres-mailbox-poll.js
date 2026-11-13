@@ -123,6 +123,7 @@ async function run(database,job,connection,provider){
       return provider.pollPage({credentials,since:new Date(window.since_at).toISOString(),
         until:new Date(window.until_at).toISOString(),cursor:window.cursor,accept});
     });}catch(error){
+      if(error.code==='provider_unavailable')error.retryAfterMs=Math.max(120000,error.retryAfterMs||0);
       if(!window.cursor||!expiredCursor(error)||window.last_cursor_reset_at&&Date.now()-Date.parse(window.last_cursor_reset_at)<300000)throw error;
       const saved=await advance(db,job,connection,window,null,{restart:true});
       return {...totals,continued:saved,restarted:saved};

@@ -83,3 +83,15 @@ test('Microsoft consumes the exact next page, retains attachment metadata and ma
   await assert.rejects(graph.pollPage({...options,cursor:{folder:'inbox',url:'https://another.example.test/v1.0/me/mailFolders/inbox/messages'}}),/outside/);
   assert.equal(calls.filter(url=>url.searchParams.has('$skiptoken')).length,2);
 });
+
+test('Microsoft defers an unavailable mailbox page to the durable queue after one provider attempt',async t=>{
+  const original=global.fetch;
+  let attempts=0;
+  t.after(()=>{global.fetch=original;});
+  global.fetch=async()=>{attempts++;return new Response('',{status:503,headers:{'Retry-After':'180'}});};
+  const graph=require('../../src/connections/providers/microsoft365');
+  await assert.rejects(graph.pollPage({credentials:{accessToken:'graph-fixture'},
+    since:'2026-11-10T09:45:00.000Z',until:'2026-11-10T11:00:00.000Z'}),
+  error=>error.code==='provider_unavailable'&&error.retryAfterMs===180000);
+  assert.equal(attempts,1);
+});

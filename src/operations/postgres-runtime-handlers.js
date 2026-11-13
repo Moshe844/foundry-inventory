@@ -333,8 +333,10 @@ async function runtimeSweep(job,client,options={}){
       const intervalMs=syncPolicy.effectiveMinutes*60_000;
       const due=Date.parse(syncPolicy.nextCheckAt)<=now;
       const active=await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1
-        AND kind='mailbox.poll' AND payload->>'connectorId'=$2 AND status IN ('PENDING','RUNNING','RETRY','PAUSED') LIMIT 1`,
-      [connector.workspace_id,connector.id]);
+        AND kind='mailbox.poll' AND payload->>'connectorId'=$2
+        AND (status IN ('PENDING','RUNNING','RETRY','PAUSED')
+          OR status='DEAD' AND last_error->>'code'='provider_unavailable' AND available_at>$3) LIMIT 1`,
+        [connector.workspace_id,connector.id,now-5*60_000]);
       if(due&&!active.rows.length){
         const bucket=Math.floor(now/intervalMs);
         const scheduled=await jobs.enqueue(scopedDatabase(client),{workspaceId:connector.workspace_id,kind:'mailbox.poll',
