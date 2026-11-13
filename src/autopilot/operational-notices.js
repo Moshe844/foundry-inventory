@@ -5,6 +5,7 @@ const {hasVerifiedMigration}=require('../db/migrate-postgres');
 const transferArrivals=require('../transfers/agent-transfer-arrivals');
 const purchaseBudgets=require('../purchasing/agent-budgets');
 const stockLoss=require('./stock-loss-patterns');
+const unusualActivity=require('./unusual-activity');
 const returnRates=require('./return-rates');
 const marginPrices=require('../pricing/agent-margin-prices');
 const orderPrices=require('../sales/agent-order-price-alerts');
@@ -98,9 +99,16 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   const watchRules=await require('./watch-rules').candidates(db);
   const watched=[];
   // Jobs 170 and 171 need migration 473 (their settings and sources).
-  for(const [job,d] of Object.entries(require('./activity-watches').spec))
-    if(policy.permits(account.plan,Number(job),'automatic')&&(!d.ready||await d.ready(db)))watched.push([job,d]);
-  const watchQueries=watched.map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('');
+  let unusualAlerts='';
+  for(const [job,d] of Object.entries(require('./activity-watches').spec)){
+    if(!policy.permits(account.plan,Number(job),'automatic')||(d.ready&&!await d.ready(db)))continue;
+    if(Number(job)===unusualActivity.JOB){
+      const rows=await unusualActivity.read(db,[workspaceId,'',today]);
+      args.push(JSON.stringify(rows.map(row=>({kind:row.Alert,ref:row.reference,link:row.link}))));
+      unusualAlerts=' UNION ALL SELECT '+job+',kind,ref,link,$3::date FROM jsonb_to_recordset($'+args.length+'::jsonb) AS unusual(kind text,ref text,link text)';
+    }else watched.push([job,d]);
+  }
+  const watchQueries=watched.map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('')+unusualAlerts;
   // Job 87's channel price checks run through the worker (agent-channel-price-checks.js).
   const candidates='SELECT 168 AS job,"Type" AS kind,"Reference" AS ref,link,"Due"::date AS due FROM ('+overdue.sql+') x'+
     (policy.permits(account.plan,50,'suggest')?` UNION ALL SELECT 50,'Stock ready',o.order_number,'/autopilot/reviews/stock-ready-updates',$3::date FROM sales_orders o
