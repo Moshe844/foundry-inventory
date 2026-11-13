@@ -1,17 +1,22 @@
 <h1>Own-van delivery routes</h1>
-<p>Build a driver manifest from packed shipments, road travel times, measured loads and customer delivery windows.</p>
+<p>Build a driver manifest from packed shipments, road travel times, measured loads and customer delivery windows. With a saved fleet rule, StockChief plans the next delivery day on its own each day.</p>
 <% const labels={DRAFT:'Needs your review',READY:'Ready for drivers',STOPPED:'Stopped'}; %>
-<% if(!allowed){ %>
-  <p class="notice"><strong>Pro / Custom</strong> · Van routes require Pro or Custom. <a class="btn" href="/billing">Upgrade</a></p>
-<% }else if(run){ %>
+<% if(run){ %>
   <section class="card"><div class="card-body">
     <h2><%= run.facts.depot.name %> · <%= run.delivery_date %></h2>
-    <p><strong><%= labels[run.status] %></strong><%= run.automatic?' · Published by the fleet rule':'' %></p>
+    <p><strong><%= labels[run.status] %></strong><%= run.automatic?' · Published by the fleet rule':preparedByRoutine?' · Planned by the fleet rule':'' %></p>
+    <% if(run.status==='DRAFT'&&waitingReason){ %><p class="notice"><%= waitingReason %></p><% } %>
     <p>Depot <%= run.facts.depot.address %></p>
     <% if(run.manifest.unassigned.length){ %>
       <h3>Stops needing attention</h3>
       <ul><% for(const item of run.manifest.unassigned){ const stop=run.facts.stops.find(entry=>entry.id===item.id); %>
         <li><%= stop.number %> · <%= stop.customer %> · <%= item.reason %></li>
+      <% } %></ul>
+    <% } %>
+    <% if(run.facts.held?.length){ %>
+      <h3>Deliveries not on this route</h3>
+      <ul><% for(const item of run.facts.held){ %>
+        <li><a href="/fulfilment/<%= item.id %>"><%= item.number %></a> · <%= item.customer %> · <%= item.reason %></li>
       <% } %></ul>
     <% } %>
     <% for(const route of run.manifest.routes){ const van=run.facts.vans.find(entry=>entry.id===route.vehicleId); %>
@@ -21,7 +26,7 @@
         <li><strong><%= clock(visit.arrival) %>–<%= clock(visit.leave) %></strong> · <%= stop.customer %> · <%= stop.address %> · <a href="/fulfilment/<%= stop.id %>"><%= stop.number %></a> (<%= stop.weightGrams/1000 %> kg)</li>
       <% } %></ol>
     <% } %>
-    <% if(run.status==='DRAFT'&&!run.manifest.unassigned.length){ %>
+    <% if(run.status==='DRAFT'&&!run.manifest.unassigned.length&&run.facts.stops.length){ %>
       <form method="post" action="/autopilot/van-routes/<%= run.id %>/approve" class="form-stack">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="revision" value="<%= run.revision %>">
@@ -40,16 +45,23 @@
       </form>
     <% } %>
   </div></section>
-  <% if((canTeach&&run.status!=='STOPPED'&&!run.manifest.unassigned.length)||control?.enabled){ %>
+  <% if(canTeach||control?.enabled){ %>
     <section class="card"><div class="card-body">
       <h2>Fleet rule</h2>
-      <p>Applies only to this depot and the same vans, drivers, shifts and capacities.</p>
-      <% if(canTeach&&run.status!=='STOPPED'&&!run.manifest.unassigned.length){ %>
+      <p>Applies only to this depot and the same vans, drivers, shifts and capacities. StockChief plans packed deliveries to addresses these vans already deliver to.</p>
+      <% if(control){ %><p><strong><%= control.state %></strong></p><% } %>
+      <% if(canTeach){ const days=(control?.delivery_days||[1,2,3,4,5]).map(Number); %>
         <form method="post" action="/autopilot/van-routes/<%= run.id %>/configure" class="form-stack">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <input type="hidden" name="ruleRevision" value="<%= control?.revision||0 %>">
           <label>Maximum stops per run <input type="number" name="maximumStops" min="<%= run.facts.stops.length %>" max="40" value="<%= control?.maximum_stops||run.facts.stops.length %>" required></label>
-          <label><input type="checkbox" name="confirmed" value="yes" required> Let StockChief publish matching, fully assigned routes when I select this rule.</label>
+          <label>Plan each day at <input type="time" name="planAt" value="<%= control?.plan_at!=null?clock(Number(control.plan_at)):'15:00' %>" required></label>
+          <fieldset>
+            <legend>Delivery days</legend>
+            <% for(const [day,name] of weekdays){ %><label><input type="checkbox" name="days" value="<%= day %>" <%= days.includes(day)?'checked':'' %>> <%= name %></label> <% } %>
+          </fieldset>
+          <% if(teachLater){ %><p>Until you publish one of this fleet’s routes yourself, StockChief prepares each route for your review. After that it publishes routes that fully fit on its own.</p><% } %>
+          <label><input type="checkbox" name="confirmed" value="yes" required> Let StockChief plan this fleet’s deliveries each day and publish routes that fully fit, within this limit.</label>
           <button class="btn" type="submit">Save fleet rule</button>
         </form>
       <% } %>
@@ -114,8 +126,13 @@
     <% } %>
   </div></section>
 <% } %>
-<% if(allowed&&rows.length){ %>
+<% if(fleets.length){ %>
+  <section class="card"><div class="card-body"><h2>Fleet rules</h2>
+    <ul><% for(const control of fleets){ %><li><strong><%= control.depot||'Depot' %></strong> · <%= (control.vans||[]).map(van=>van.id+' ('+van.driver+')').join(', ')||'Vans from the saved route' %> · <%= control.state %></li><% } %></ul>
+  </div></section>
+<% } %>
+<% if(rows.length){ %>
   <section class="card"><div class="card-body"><h2>Saved runs</h2>
-    <ul><% for(const row of rows){ %><li><a href="/autopilot/van-routes/<%= row.id %>"><%= row.delivery_date %> · <%= row.depot %> · <%= labels[row.status] %></a></li><% } %></ul>
+    <ul><% for(const row of rows){ %><li><a href="/autopilot/van-routes/<%= row.id %>"><%= row.delivery_date %> · <%= row.depot %> · <%= labels[row.status] %><%= row.prepared_by_routine?' · Planned by the fleet rule':'' %></a></li><% } %></ul>
   </div></section>
 <% } %>

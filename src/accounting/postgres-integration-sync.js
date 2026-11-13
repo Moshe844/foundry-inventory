@@ -295,7 +295,11 @@ async function entry(database,workspaceId,connectorId,entryId){
     .map((account)=>[String(account.externalId),account.code||account.externalId]));
   const currencies=[...new Set(lines.map(line=>require('../domain/currency').code(line.currency)))];
   if(currencies.length!==1)throw new ValidationError('A journal with missing or mixed currencies requires reconciliation before export.');
-  return {...header,currency:currencies[0],lines:lines.map((line)=>({...line,debit_minor:Number(line.debit_minor),
+  // Job 184: what a queued or sent invoice or bill already carries is left out
+  // of its journal; a document in scope that has not gone yet holds it back.
+  const documents=await require('./agent-accounting-documents').coverage(database,workspaceId,connectorId,entryId);
+  return {...header,currency:currencies[0],documentsWaiting:documents.waiting,carriedByDocuments:documents.covered.size,
+    lines:lines.filter(line=>!documents.covered.has(line.id)).map((line)=>({...line,debit_minor:Number(line.debit_minor),
     credit_minor:Number(line.credit_minor),account_code:line.external_account_id
       ?externalCodes.get(String(line.external_account_id))||line.account_code:line.account_code}))};
 }
@@ -315,6 +319,7 @@ async function pendingEntries(database,workspaceId,connectorId){
           AND identity.entity_type='journal_entry' AND identity.foundry_record_id=journal.id)
     ORDER BY journal.entry_number LIMIT 100`,[workspaceId,connectorId])).rows;
   const output=[];for(const row of rows){const full=await entry(database,workspaceId,connectorId,row.id);
+    if(full.documentsWaiting.length||!full.lines.length)continue;
     output.push({...full,effect_status:row.effect_status,effect_error_message:row.effect_error_message,
       missingAccounts:full.lines.filter((line)=>!line.external_account_id),
       missingParties:providerType==='quickbooks'?full.lines.filter((line)=>(line.customer_id&&!line.external_customer_id)||
@@ -394,6 +399,8 @@ async function executeExportEffect(database,workspaceId,effectId,options={}){
     if(!adapter?.postJournalEntry||!adapter.verifyJournalEntry)throw Object.assign(new ValidationError('This provider has not been qualified to post and independently verify governed journals.'),{status:422});
     const credentials=options.credentials||await providerService.loadProviderCredentials(database,connection,adapter);
     const journal=await entry(database,workspaceId,connection.id,effect.payload.journalEntryId);
+    if(journal.documentsWaiting.length)throw Object.assign(new ValidationError(journal.documentsWaiting[0]+' goes to the books first. Nothing was posted.'),{status:409});
+    if(!journal.lines.length)throw Object.assign(new ValidationError('An invoice or bill already carries this whole journal. Nothing was posted.'),{status:409});
     if(journal.lines.some((line)=>!line.external_account_id||(connection.provider_type==='quickbooks'&&
       ((line.customer_id&&!line.external_customer_id)||(line.supplier_id&&!line.external_supplier_id)))))throw Object.assign(
       new ValidationError('A journal mapping changed before export. Nothing was posted.'),{status:422});

@@ -177,7 +177,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
   if(fundingReference!==idempotencyKey&&!fundedRequest)
    throw new ValidationError('This internal model call has no funded Ask request. No provider call was made.');
   const totalUnits=usage.reduce((sum,row)=>sum+Number(row.units),0);
-  const includedReport=goalScope.includedReport===true && operation==='ask' && subscription?.plan_configuration?.offerId==='agent-v3';
+  const includedReport=goalScope.includedReport===true && operation==='ask' && (subscription?.plan_configuration?.offerId==='agent-v3'||subscription?.plan_id==='enterprise');
   if(creditsOnly()&&!includedReport&&(!fundedRequest||totalUnits<=0))throw new ValidationError('Reserve available AI credits before starting this model request.');
   if(usage.some(row=>row.grant_id&&Number(row.pack_version)>=2&&!row.budget_minor))
    throw new RateLimitError('Purchased AI funding is not reconciled. No model call was made.');

@@ -5,8 +5,8 @@ const exact=require('../domain/exact-quantity');
 const costAlerts=require('./cost-alerts');
 const unusualActivity=require('./unusual-activity');
 
-const spec={
-  // Job 170 lives in cost-alerts.js; it needs migration 473.
+// Job 169's channel alerts live in connections/agent-channel-alerts.js.
+const spec={// Job 170 lives in cost-alerts.js; it needs migration 473.
   170:{key:costAlerts.key,label:costAlerts.label,sql:costAlerts.sql,summary:costAlerts.summary,readPage:costAlerts.review,ready:costAlerts.ready,filterLabel:'Exact SKU, category or channel'},
   // Job 171 lives in unusual-activity.js; it needs migration 473.
   171:{key:unusualActivity.key,label:unusualActivity.label,sql:unusualActivity.sql,summary:unusualActivity.summary,readPage:unusualActivity.review,ready:unusualActivity.ready,

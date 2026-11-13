@@ -1,0 +1,42 @@
+<% const base='/autopilot/reviews/year-end-stocktake',stamp=v=>helpers.dateTime(v),s=settings&&settings.enabled?settings:null; %>
+<div class="page-head"><div class="titles"><h1>Year-end stocktake and valuation pack</h1>
+<p>For your accountant: how your stock is valued, the closing stock value from your books, how stock value changed during the year at each location, write-offs and write-downs, every approved count with its differences, and signed-off stocktakes. Counts not approved by the year end are left out. After each year end StockChief makes the workbook, keeps it and sends it to your accountant.</p></div></div>
+
+<% if(paused){ %><p class="notice notice--warn">StockChief is paused. It makes and sends nothing until you resume it.</p>
+<% }else if(shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It makes and keeps the pack, and sends nothing.</p>
+<% }else if(who.mode==='watch'){ %><p class="notice notice--info"><%= who.reason %> It keeps the pack and sends nothing.</p>
+<% }else if(who.mode==='ask'){ %><p class="notice notice--info">StockChief keeps the pack ready. You press send. <a href="/autopilot/job-modes">Change this job’s mode</a></p>
+<% }else{ %><p class="notice notice--ok">StockChief sends the pack to your accountant on its own after each year end.</p><% } %>
+<% if(booksOff){ %><p class="notice notice--warn">Accounting is off, so the pack has no stock values. <a href="/accounting">Open accounting</a></p><% } %>
+<% if(s&&sender.problem){ %><p class="notice notice--warn"><%= sender.reason %></p><% } %>
+
+<section class="card section" id="year-end-packs"><h2>Kept packs</h2>
+<% if(!packs.length){ %><p class="cell-sub">No packs kept yet.<%= s?' StockChief makes the next one after your year ends in '+monthNames[s.year_end_month-1]+'.':'' %></p><% }else{ %>
+<ul class="rm-list"><% packs.forEach(p=>{ const r=(p.summary.rollForward||[]); %><li class="list-row"><span><strong>Year to <%= p.year_end %></strong> <span class="badge badge--<%= p.view.tone %>"><%= p.view.label %></span>
+<small><%= p.year_start %> to <%= p.year_end %><%= r.map(c=>' · closing stock '+fmt(c.closing,c.currency)+(r.length>1?' '+c.currency:'')).join('') %> · <%= p.summary.counts %> count line<%= p.summary.counts===1?'':'s' %></small>
+<% if(p.view.detail){ %><small><%= p.view.detail %><%= p.queued_at&&p.status==='QUEUED'?' · '+stamp(p.queued_at):'' %></small><% } %></span>
+<span class="sc-row-actions"><a class="btn btn--ghost btn--sm" href="<%= base %>/packs/<%= p.id %>">Download</a>
+<% if((p.view.send||p.view.retry)&&!paused&&who.mode!=='watch'){ %><form method="post" action="<%= base %>/packs/<%= p.id %>/send"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="fingerprint" value="<%= p.fingerprint %>"><button class="btn btn--primary btn--sm"><%= p.view.retry?'Send again':'Send' %></button></form><% } %></span></li><% }) %></ul>
+<% } %>
+</section>
+
+<section class="card section" id="year-end-settings"><h2>Send it to your accountant each year</h2>
+<p class="cell-sub"><%= s?'Your financial year ends in '+monthNames[s.year_end_month-1]+'. '+(s.accountant_email?'The pack goes to '+s.accountant_email+'.':'Add your accountant’s email so StockChief can send it.'):'Tell StockChief when your financial year ends and who your accountant is.' %></p>
+<% if(alone){ %><form method="post" action="<%= base %>/settings" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= settings?.revision||0 %>">
+<label class="rm-field"><span>Month your financial year ends</span><select name="yearEndMonth" aria-label="Month your financial year ends"><% monthNames.forEach((m,i)=>{ %><option value="<%= i+1 %>" <%= (s?s.year_end_month:12)===i+1?'selected':'' %>><%= m %></option><% }) %></select></label>
+<label class="rm-field"><span>Accountant’s name (optional)</span><input name="accountantName" maxlength="120" value="<%= settings?.accountant_name||'' %>"></label>
+<label class="rm-field"><span>Accountant’s email</span><input name="accountantEmail" type="email" maxlength="254" value="<%= settings?.accountant_email||'' %>"></label>
+<% if(sender.boxes.length>1){ %><label class="rm-field"><span>Send from</span><select name="connectorId" aria-label="Send from"><% sender.boxes.forEach(b=>{ %><option value="<%= b.id %>" <%= sender.box&&sender.box.id===b.id?'selected':'' %>><%= b.display_name||b.provider_account_name %></option><% }) %></select></label><% } %>
+<button class="btn btn--primary">Save</button></form>
+<% if(s){ %><form method="post" action="<%= base %>/settings"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= settings.revision %>"><button class="btn btn--ghost" name="stop" value="yes">Stop the yearly pack</button></form><% } %>
+<p class="cell-sub">This counts as one of your saved rules. <% if(!sender.boxes.length){ %><a href="/connections">Connect your mailbox</a><% } %></p><% } %>
+</section>
+
+<section class="card section"><h2>Any financial year</h2>
+<form method="get" action="<%= base %>/download" class="form-stack">
+<label class="rm-field"><span>Last month of the financial year</span><select name="filter" aria-label="Last month of the financial year"><% months.forEach(m=>{ %><option value="<%= m %>" <%= m===closing?'selected':'' %>><%= m %></option><% }) %></select></label>
+<button class="btn">Download workbook</button></form>
+<% if(!paused){ %><form method="post" action="<%= base %>/make" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label class="rm-field"><span>Make and keep the pack for the year ending</span><select name="closing" aria-label="Make and keep the pack for the year ending"><% months.forEach(m=>{ %><option value="<%= m %>" <%= m===closing?'selected':'' %>><%= m %></option><% }) %></select></label>
+<button class="btn btn--ghost">Make and keep it now</button></form><% } %>
+</section>

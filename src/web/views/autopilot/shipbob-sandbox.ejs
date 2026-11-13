@@ -10,10 +10,7 @@
 <p><%= p.recipient.name %> · <%= [a.address1,a.address2,a.city,a.state,a.zip_code,a.country].filter(Boolean).join(', ') %></p>
 <p>Channel <%= review.channelId %> · <%= p.shipping_method %></p><ul><% p.products.forEach(item=>{ %><li><%= item.quantity %> × <%= item.name %> (<%= item.reference_id %>)</li><% }); %></ul>
 <form action="/autopilot/shipbob/<%= p.reference_id %>/send" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="reviewHash" value="<%= review.hash %>"><button class="btn">Approve and send to sandbox</button></form></section><% } %>
-<section class="card"><h2>Automatic sandbox orders</h2>
-<% if(rule){ %><p>Enabled for <%= rule.name %></p><form method="post" action="/autopilot/shipbob/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" name="action" value="disable">Turn off</button></form><% } %>
-<% if(automatic){ %><form method="post" action="/autopilot/shipbob/rule"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Send newly confirmed delivery orders from <select name="locationId" required><% warehouses.forEach(w=>{ %><option value="<%= w.id %>"><%= w.name %></option><% }); %></select></label><p>Requires automatic work under standing authority after the first 14 days. Uses Standard test shipping.</p><button class="btn" name="action" value="enable">Enable for this warehouse</button></form>
-<% }else{ %><p>Automatic submission requires Pro. <a href="/billing">Upgrade</a></p><% } %></section>
+<section class="card"><h2>Orders that go to ShipBob</h2><p>Choose which warehouse ShipBob runs on <a href="/autopilot/3pl-orders">3PL orders</a>. <%= automatic?'Orders for it then go to ShipBob on their own, and its shipping and tracking come back onto the order.':'StockChief then drafts each order for your approval, and its shipping and tracking come back onto the order.' %></p></section>
 <h2>Delivery orders</h2><% if(!orders.length){ %><p>No confirmed delivery orders.</p><% } %>
 <% orders.forEach(o=>{ %><section class="card"><h3><a href="/orders/<%= o.id %>"><%= o.order_number %></a></h3>
 <% if(o.provider_order_id){ %><p>ShipBob <%= o.provider_order_id %> · <%= o.provider_status %> · <%= helpers.dateTime(o.observed_at) %></p>

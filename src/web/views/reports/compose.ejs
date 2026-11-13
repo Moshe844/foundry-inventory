@@ -7,6 +7,7 @@
 <div class="page-head"><div><a class="back-link" href="/reports">Reports</a>
   <h1><%= saved?'Edit combined report':draft?'Customize Ask report':'Build a combined report' %></h1>
   <p class="lede">Put numbers from different sources side by side, matched on one shared identifier. Each source is totalled first, so line items never inflate a total.</p></div></div>
+<%- include('sentence-preview',{sentence:locals.draftSentence}) %>
 <form class="report-builder" method="post" action="/reports/run">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
   <input type="hidden" name="dataset" value="composed">

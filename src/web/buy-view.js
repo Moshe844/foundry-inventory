@@ -208,7 +208,8 @@ function returnBadge(status) {
 }
 
 const EVENT_WORDS = { created: 'Draft created', approved: 'Approved', ordered: 'Sent to the supplier', placed: 'Sent to the supplier',
-  received: 'Delivery received', cancelled: 'Cancelled', draft_reference_revised: 'Reference changed', priced: 'Prices added' };
+  received: 'Delivery received', cancelled: 'Cancelled', draft_reference_revised: 'Reference changed', priced: 'Prices added',
+  inbound_freight_date_updated: 'Expected date moved with its shipment', inbound_freight_date_undone: 'Shipment date change undone' };
 
 function dateTime(value) {
   const at = new Date(value);

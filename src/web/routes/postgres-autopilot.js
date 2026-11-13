@@ -172,7 +172,25 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   router.post(sopPath+'/:id/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const proposal=await sop.prepare(database,req.ctx,{...req.body,sourceId:req.params.id},{provider:options.provider});
+    await sop.syncNotice(database,req.ctx.workspaceId,req.params.id);
     res.redirect(303,'/operating-instructions/'+proposal.id);
+  }));
+  // Job 212: follow the whole procedure, then confirm or keep each prepared rule.
+  router.post(sopPath+'/:id/follow',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await sop.follow(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.replayed?'StockChief is already following this procedure.':'StockChief is going through each clause. Refresh to see the rules it prepares.');
+    res.redirect(303,sopPath+'/'+result.id);
+  }));
+  router.post(sopPath+'/:id/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await sop.confirm(database,req.ctx,req.params.id,req.body);
+    if(result.confirmed)req.flash('success',result.confirmed+(result.confirmed===1?' rule is':' rules are')+' now in force.');
+    if(result.problem)req.flash('error',result.problem+(result.waiting?' '+result.waiting+(result.waiting===1?' rule still waits.':' rules still wait.'):''));
+    res.redirect(303,sopPath+'/'+result.id);
+  }));
+  router.post(sopPath+'/:id/keep',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await sop.keep(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Kept for people. No rule was set.');
+    res.redirect(303,sopPath+'/'+result.id);
   }));
   const voice=require('../../documents/agent-voice-receiving'),voicePath='/autopilot/receiving-voice-notes';
   const voiceAvailable=options.voiceAvailable??Boolean(process.env.OPENAI_API_KEY&&require('../../config').ai.configured);
@@ -205,6 +223,43 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post(voicePath+'/:id/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{
     const result=await voice.confirm(database,req.ctx,req.params.id,req.body);
     res.redirect(303,'/purchasing/orders/'+result.purchaseOrderId);
+  }));
+  // Job 141: any voice note becomes its receipt, count, transfer or stock correction.
+  const paperwork=require('../../documents/agent-voice-paperwork');
+  const paperworkPage=asyncRoute(async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    return reportPage(req,res,paperwork.JOB,'autopilot/voice-paperwork',{title:'Voice note paperwork',nav:'autopilot',providerAvailable:voiceAvailable,
+      backTo:req.params.id?{href:paperwork.path,label:'Voice note paperwork'}:{href:'/autopilot/reviews',label:'Agent reviews'}},
+    async()=>({screen:await paperwork.page(database,req.ctx,req.params.id||null)}),402);
+  });
+  router.get(paperwork.path,requireAuth,owner,paperworkPage);
+  router.get(paperwork.path+'/:id',requireAuth,owner,paperworkPage);
+  router.get(paperwork.path+'/:id/audio',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await paperwork.authorize(database,req.ctx);
+    const note=await paperwork.load(database,req.ctx,req.params.id,{content:true});
+    res.set({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}).type('audio/wav').send(note.content);
+  }));
+  router.post(paperwork.path,requireAuth,owner,asyncRoute(async(req,res)=>{
+    await paperwork.authorize(database,req.ctx);
+    if(!voiceAvailable)throw new ValidationError('Voice note reading is currently unavailable.');
+    if(req.files?.length!==1||req.files[0].field!=='recording')throw new ValidationError('Choose one recording.');
+    const {id}=await paperwork.enqueue(database,req.ctx,{...req.files[0],confirmed:req.body.confirmed});
+    res.redirect(303,paperwork.path+'/'+id);
+  }));
+  router.post(paperwork.path+'/limits',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await paperwork.configure(database,req.ctx,req.body);
+    req.flash('success',result.enabled?'Your limits were saved.':'Every voice note will wait for you.');
+    res.redirect(303,paperwork.path+'#limits');
+  }));
+  router.post(paperwork.path+'/:id/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await paperwork.confirm(database,req.ctx,req.params.id,req.body);
+    req.flash('success','The paperwork was posted.');
+    res.redirect(303,paperwork.path+'/'+encodeURIComponent(req.params.id));
+  }));
+  router.post(paperwork.path+'/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await paperwork.dismiss(database,req.ctx,req.params.id);
+    req.flash('success','The voice note was dismissed. Nothing was posted.');
+    res.redirect(303,paperwork.path);
   }));
   function starterAgentPage(job,mode,title,render,tier='Starter'){
     return asyncRoute(async(req,res)=>{
@@ -688,6 +743,24 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',result.replayed?'You already chose. Change a single job in Authority by job.':result.areas.length?'Automatic work is on for the areas you chose. The rest keep watching.':'StockChief keeps watching. Nothing changes on its own.');
     res.redirect(303,shadowMode.path);
   }));
+  // Job 208: offers to stop asking about routines the owner always approves.
+  // Job 209: rules suggested by repeated fixes. Both show job 210's past-data
+  // test before anything is switched on.
+  const approvalLearning=require('../../autopilot/approval-learning'),correctionRules=require('../../autopilot/correction-rules');
+  router.get(approvalLearning.path,requireAuth,owner,asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');
+    return reportPage(req,res,approvalLearning.JOB,'autopilot/approval-learning',{title:'Stop asking about routines',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},
+      async()=>({screen:await approvalLearning.page(database,req.ctx)}),402);}));
+  router.post(approvalLearning.path+'/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await approvalLearning.confirm(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'StockChief already does this routine alone.':'StockChief now does this alone: '+r.label+', '+r.limit+'.');res.redirect(303,approvalLearning.path+'#learned');}));
+  router.post(approvalLearning.path+'/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await approvalLearning.dismiss(database,req.ctx,req.body);
+    req.flash('success','StockChief will keep asking. It offers again only after another run of approvals.');res.redirect(303,approvalLearning.path);}));
+  router.get(correctionRules.path,requireAuth,owner,asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');
+    return reportPage(req,res,correctionRules.JOB,'autopilot/correction-rules',{title:'Rules from your repeated fixes',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},
+      async()=>({screen:await correctionRules.page(database,req.ctx)}),402);}));
+  router.post(correctionRules.path+'/accept',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await correctionRules.accept(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'That rule is already saved.':'Rule saved: '+r.rule);res.redirect(303,r.ruleId?'/operating-instructions/'+r.ruleId:correctionRules.path);}));
+  router.post(correctionRules.path+'/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await correctionRules.dismiss(database,req.ctx,req.body);
+    req.flash('success','Not now. StockChief suggests it again only if you make the same fix again.');res.redirect(303,correctionRules.path);}));
   // Job 199: how sure StockChief must be to act on its own.
   router.post('/autopilot/confidence',requireAuth,owner,asyncRoute(async(req,res)=>{
     const result=await require('../../autopilot/confidence').configure(database,req.ctx,req.body);
@@ -764,6 +837,7 @@ function createPostgresAutopilotRouter(database,options={}){
   router.get('/autopilot/website-stock-chat',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/website-stock-chat',{title:'Website stock and delivery answers',nav:'autopilot',suppressBack:true,issuedUrl:null,screen:await stockChat.screen(database,req.ctx,req.query)})));
   router.post('/autopilot/website-stock-chat/publish',requireAuth,owner,asyncRoute(async(req,res)=>{const base=new URL(req.protocol+'://'+req.get('host'));if(!['https:','http:'].includes(base.protocol)||base.username||base.password)throw new ValidationError('Open the current StockChief website before publishing its assistant link.');const p=await stockChat.publish(database,req.ctx,req.body);res.page('autopilot/website-stock-chat',{title:'Website assistant ready',nav:'autopilot',suppressBack:true,issuedUrl:new URL('/stock-assistant/'+p.token,base.origin).href,screen:await stockChat.screen(database,req.ctx)});}));
   router.post('/autopilot/website-stock-chat/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{await stockChat.stop(database,req.ctx,req.params.id,req.body);req.flash('success','Public stock answers stopped.');res.redirect(303,'/autopilot/website-stock-chat');}));
+  router.post('/autopilot/website-stock-chat/handoffs/:id/done',requireAuth,owner,asyncRoute(async(req,res)=>{await stockChat.closeHandoff(database,req.ctx,req.params.id);req.flash('success','Website question marked done.');res.redirect(303,'/autopilot/website-stock-chat#handoffs');}));
   const customerPages=require('../../sales/agent-customer-order-pages');
   const preorderFills=require('../../sales/agent-preorder-fills');
   router.get('/autopilot/reviews/preorders',requireAuth,owner,(_req,res)=>res.redirect(303,preorderFills.href));
@@ -850,6 +924,32 @@ function createPostgresAutopilotRouter(database,options={}){
   router.get(boardPack.href+'/packs/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const file=await boardPack.kept(database,req.ctx,req.params.id);
     res.set('Cache-Control','private, no-store').type('application/pdf').attachment(file.filename).send(file.body);}));
   router.post(boardPack.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,boardPack.href+'#kept-packs');}));
+  // Job 164 (Pro and Custom): each supplier's quarterly review pack, kept and sent.
+  const supplierPacks=require('../../purchasing/agent-supplier-review-packs');
+  const toPacks=(res,period,anchor='packs')=>res.redirect(303,supplierPacks.href+(period?'?'+new URLSearchParams({period:String(period)}):'')+'#'+anchor);
+  router.get(supplierPacks.href,requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,supplierPacks.JOB,'autopilot/supplier-review-packs',{title:'Supplier review packs',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>supplierPacks.page(database,req.ctx,req.query),402)));
+  router.post(supplierPacks.href+'/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierPacks.prepareNow(database,req.ctx);
+    req.flash('success',r.prepared?r.prepared+' pack'+(r.prepared===1?'':'s')+' prepared and kept.'+(r.more?' StockChief prepares the rest on its own.':''):'Every pack for this quarter is already prepared.');toPacks(res,r.period);}));
+  router.post(supplierPacks.href+'/packs/:id/send',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierPacks.send(database,req.ctx,req.params.id,req.body);
+    req.flash(r.changed?'error':'success',r.changed?'The figures changed since you opened this pack. Check the new pack, then send it.':r.replayed?'This pack was already sent.':'Pack sent to '+r.pack.supplier_name+'.');toPacks(res,r.pack.period);}));
+  router.post(supplierPacks.href+'/send-all',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierPacks.sendAll(database,req.ctx,req.body);
+    req.flash('success',r.sent+' pack'+(r.sent===1?'':'s')+' sent.'+(r.changed?' '+r.changed+' changed; check them and send again.':''));toPacks(res,req.body.period);}));
+  router.post(supplierPacks.href+'/mailbox',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierPacks.chooseMailbox(database,req.ctx,req.body);
+    req.flash('success',r.unchanged?'Your mailbox is unchanged.':'Supplier packs will be sent from this mailbox.');toPacks(res,null,'pack-mailbox');}));
+  router.get(supplierPacks.href+'/packs/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const file=await supplierPacks.kept(database,req.ctx,req.params.id);
+    res.set('Cache-Control','private, no-store').type('application/pdf').attachment(file.filename).send(file.body);}));
+  // Job 165 (Growth and up): the year-end stocktake and valuation pack, kept and sent to the accountant.
+  const yearEndPack=require('../../accounting/agent-year-end-pack');
+  const toYearEnd=(res,anchor='year-end-packs')=>res.redirect(303,yearEndPack.href+'#'+anchor);
+  router.get(yearEndPack.href,requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,yearEndPack.JOB,'autopilot/year-end-pack',{title:'Year-end stock pack',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>yearEndPack.page(database,req.ctx,req.query),402)));
+  router.post(yearEndPack.href+'/settings',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await yearEndPack.configure(database,req.ctx,req.body);
+    req.flash('success',r.stopped?'The yearly pack is stopped.':r.unchanged?'Your settings are unchanged.':'Saved. StockChief makes and sends the pack after each year end.');toYearEnd(res,'year-end-settings');}));
+  router.post(yearEndPack.href+'/make',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await yearEndPack.makeNow(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'This pack was already sent.':'Pack made and kept.');toYearEnd(res);}));
+  router.post(yearEndPack.href+'/packs/:id/send',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await yearEndPack.send(database,req.ctx,req.params.id,req.body);
+    req.flash(r.changed?'error':'success',r.changed?'The figures changed since you opened this pack. Check the new pack, then send it.':r.replayed?'This pack was already sent.':'Pack sent to '+r.pack.recipient+'.');toYearEnd(res);}));
+  router.get(yearEndPack.href+'/packs/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const file=await yearEndPack.kept(database,req.ctx,req.params.id);
+    res.set('Cache-Control','private, no-store').type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').attachment(file.filename).send(file.body);}));
   router.post(monthEndStock.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,monthEndStock.href+'?'+new URLSearchParams({month:r.period})+'#month-end-flags');}));
   // Job 161: the monthly ROI report, made on its own after each month on every plan.
   const roiReport=require('../../reports/agent-roi-report');
@@ -921,6 +1021,14 @@ function createPostgresAutopilotRouter(database,options={}){
     router.post(inboundPath+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
       await inbound[method](database,req.ctx,req.params.id,req.body);
       res.redirect(303,inboundPath+'/'+req.params.id);
+    }));
+  }
+  // Job 39: carrier tracking, undoing a purchase-order date change and noting a run-out alert.
+  const arrivals=require('../../purchasing/inbound-freight-arrivals');
+  for(const [step,method,anchor] of [['tracking','configureTracking','#tracking'],['undo','undo','#orders'],['seen','seen','#orders']]){
+    router.post(inboundPath+'/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await arrivals[method](database,req.ctx,req.params.id,req.body);
+      res.redirect(303,inboundPath+'/'+req.params.id+anchor);
     }));
   }
   const carrierClaims=require('../../shipping/agent-carrier-claims');
@@ -1012,14 +1120,35 @@ function createPostgresAutopilotRouter(database,options={}){
     await require('../../purchasing/direct-shipment-routines').configure(database,req.ctx,req.params.id,req.body);
     res.redirect(303,direct.path+'/'+req.params.id);
   }));
-  const slackPage=async(req,res,issuedCode=null)=>{
-    const data=await slack.page(database,req.ctx);
+  // Job 188: one page for Slack, Microsoft Teams and WhatsApp answers.
+  const agentChat=require('../../connections/agent-chat');
+  const slackPage=async(req,res,issuedCode=null,teamsCode=null)=>{
+    const title='Ask StockChief in Slack, Teams or WhatsApp';
+    if(await olderTerms(req))return planCard(req,res,188,{title,nav:'autopilot'});
+    const data=await slack.page(database,req.ctx),chats=await agentChat.page(database,req.ctx);
     const origin=require('../../config').connections.publicOrigin;
+    const absolute=path=>path&&origin?new URL(path,origin).href:path;
     const requestPath=data.owner&&data.connection?slack.publicPath+'/'+data.connection.endpoint_id:null;
-    return res.set('Cache-Control','private, no-store').page('autopilot/slack',{title:'Ask StockChief in Slack',nav:'autopilot',issuedCode,
-      requestUrl:origin&&requestPath?new URL(requestPath,origin).href:requestPath,...data});
+    const teamsPath=chats.owner&&chats.teams?.connection?agentChat.publicPaths.teams+'/'+chats.teams.connection.endpoint_id:null;
+    return res.set('Cache-Control','private, no-store').page('autopilot/slack',{title,nav:'autopilot',issuedCode,teamsCode,
+      requestUrl:absolute(requestPath),teamsUrl:absolute(teamsPath),whatsappNumber:require('../../connections/chat-providers').get('whatsapp').number(),chats,...data});
   };
   router.get(slack.path,requireAuth,asyncRoute((req,res)=>slackPage(req,res)));
+  router.get(agentChat.path,requireAuth,asyncRoute((req,res)=>slackPage(req,res)));
+  router.post(agentChat.path+'/:channel/connection',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await agentChat.configure(database,req.ctx,req.params.channel,req.body);
+    res.redirect(303,agentChat.path);
+  }));
+  router.post(agentChat.path+'/teams/code',requireAuth,asyncRoute(async(req,res)=>slackPage(req,res,null,await agentChat.code(database,req.ctx))));
+  router.post(agentChat.path+'/whatsapp/link',requireAuth,asyncRoute(async(req,res)=>{
+    await agentChat.linkPhone(database,req.ctx);
+    req.flash('success','WhatsApp questions are on for your confirmed number.');
+    res.redirect(303,agentChat.path);
+  }));
+  router.post(agentChat.path+'/:channel/unlink',requireAuth,asyncRoute(async(req,res)=>{
+    await agentChat.unlink(database,req.ctx,req.params.channel);
+    res.redirect(303,agentChat.path);
+  }));
   router.post(slack.path+'/connection',requireAuth,owner,asyncRoute(async(req,res)=>{
     await slack.configure(database,req.ctx,req.body);
     res.redirect(303,slack.path);
@@ -1031,9 +1160,11 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   const vanRoutes=require('../../shipping/agent-van-routes');
   const vanPath=vanRoutes.path;
-  const vansPage=async(req,res)=>res.set('Cache-Control','private, no-store').page('autopilot/van-routes',{
-    title:'Own-van delivery routes',nav:'autopilot',backTo:{href:req.params.id?vanPath:'/autopilot/reviews',label:req.params.id?'Van routes':'Agent reviews'},
-    ...await vanRoutes.page(database,req.ctx,{id:req.params.id,depotId:req.query.depot})});
+  // Job 71: older terms see the shared plan card; Agent terms below Pro keep the 402 lock.
+  const vansPage=async(req,res)=>{res.set('Cache-Control','private, no-store');
+    return reportPage(req,res,vanRoutes.definition.id,'autopilot/van-routes',{title:'Own-van delivery routes',nav:'autopilot',
+      backTo:{href:req.params.id?vanPath:'/autopilot/reviews',label:req.params.id?'Van routes':'Agent reviews'}},
+    ()=>vanRoutes.page(database,req.ctx,{id:req.params.id,depotId:req.query.depot}),402);};
   router.get(vanPath,requireAuth,owner,asyncRoute(vansPage));
   router.get(vanPath+'/:id',requireAuth,owner,asyncRoute(vansPage));
   router.post(vanPath,requireAuth,owner,asyncRoute(async(req,res)=>{
@@ -1088,7 +1219,24 @@ function createPostgresAutopilotRouter(database,options={}){
   for(const [path,method,message]of [['freeze','freeze','Stock locations frozen. The assigned blind count lists are ready.'],['recheck','recheck','The rechecked worksheet is ready for a new individual owner approval.'],['reassign','reassign','Remaining physical counts reassigned. Earlier counts keep their original counter.'],['signoff','signoff','Stocktake signed off. Its stock freeze has been released.'],['stop','stop','Stocktake stopped and freeze released. Completed adjustments remain posted.']])router.post('/autopilot/annual-stocktakes/:id/'+path,requireAuth,owner,asyncRoute(async(req,res)=>{await annual[method](database,req.ctx,req.params.id,req.body);req.flash('success',message);res.redirect(303,'/autopilot/annual-stocktakes/'+req.params.id);}));
   const buffers=require('../../connections/agent-channel-buffers');
   const bufferPage=async(req,res,input={})=>res.page('autopilot/channel-buffers',{title:'Channel stock buffers',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},...await buffers.page(database,req.ctx,{...req.query,...input})});
-  router.get('/autopilot/channel-buffers',requireAuth,owner,asyncRoute((req,res)=>bufferPage(req,res,{positionId:req.query.position})));
+  router.get('/autopilot/channel-buffers',requireAuth,owner,asyncRoute(async(req,res)=>{
+    // An account still on its older terms sees the plan card.
+    const state=await policy.accountState(database,req.ctx.workspaceId);
+    if(!policy.usesAgentTerms(state))return res.page('autopilot/agent-plan-locked',{title:'Channel stock buffers',nav:'autopilot',tier:'Growth',
+      reviewTerms:policy.permits(state.plan,183,'draft'),backTo:{href:'/autopilot/reviews',label:'Agent reviews'}});
+    return bufferPage(req,res,{positionId:req.query.position});
+  }));
+  // Job 183: the owner's rule per channel, and the buffers StockChief worked out.
+  const bufferPlans=require('../../connections/agent-channel-buffer-plans');
+  router.post('/autopilot/channel-buffers/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const r=await bufferPlans.saveRule(database,req.ctx,req.body);
+    req.flash('success',r.stopped?'StockChief stopped setting buffers on this channel. Buffers already set stay until you change them.':'Rule saved. StockChief works out the buffers now.');
+    res.redirect(303,'/autopilot/channel-buffers#buffer-rules');
+  }));
+  for(const [step,done] of [['approve','Buffer set.'],['dismiss','Buffer dismissed.'],['undo','Buffer undone. The buffer before it is back.']])
+    router.post('/autopilot/channel-buffer-plans/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await bufferPlans[step](database,req.ctx,req.params.id);req.flash('success',done);res.redirect(303,'/autopilot/channel-buffers#buffer-plans');
+    }));
   router.get('/autopilot/channel-buffer-reviews/:id',requireAuth,owner,asyncRoute((req,res)=>bufferPage(req,res,{reviewId:req.params.id})));
   router.post('/autopilot/channel-buffers/batch',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await buffers.configureBatch(database,req.ctx,req.body);req.flash('success','Saved '+r.changed+' of '+r.count+' exact product buffers together. Identical settings share one saved-rule slot.');res.redirect(303,'/autopilot/channel-buffers');}));
   router.post('/autopilot/channel-buffers/:id/settings',requireAuth,owner,asyncRoute(async(req,res)=>{await buffers.configure(database,req.ctx,req.params.id,req.body);req.flash('success',req.body.stop==='yes'?'Buffer removed. Ordinary channel synchronization may publish more units.':'Channel buffer saved. Every provider update rechecks current stock, plan and authority.');res.redirect(303,'/autopilot/channel-buffers?'+new URLSearchParams({position:req.params.id}));}));
@@ -1258,21 +1406,23 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/supplier-benefits/:id/claims/:claimId',requireAuth,owner,asyncRoute(async(req,res)=>{
     await supplierBenefits.updateClaim(database,req.ctx,req.params.id,req.params.claimId,req.body);res.redirect(303,'/autopilot/supplier-benefits/'+req.params.id);
   }));
-  router.get('/autopilot/supplier-forecasts',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/supplier-forecast',{title:'Supplier stock forecast',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>require('../../purchasing/agent-supplier-forecasts').page(database,req.ctx,{q:req.query.q}))));
-  router.post('/autopilot/supplier-forecasts/preview',requireAuth,owner,asyncRoute(async(req,res)=>{
-    const forecasts=require('../../purchasing/agent-supplier-forecasts'),skuIds=await forecasts.resolveCodes(database,req.ctx.workspaceId,req.body.codes);
-    const saved=await forecasts.preview(database,req.ctx,{supplierId:req.body.supplierId,connectorId:req.body.connectorId,skuIds,requestKey:req.body.requestKey});res.redirect(303,'/autopilot/supplier-forecasts/'+saved.id);
-  }));
-  router.get('/autopilot/supplier-forecasts/:id',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/supplier-forecast',{title:'Review supplier forecast',nav:'autopilot',backTo:{href:'/autopilot/supplier-forecasts',label:'Supplier forecasts'}},()=>require('../../purchasing/agent-supplier-forecasts').page(database,req.ctx,{id:req.params.id}))));
-  router.post('/autopilot/supplier-forecasts/:id/send',requireAuth,owner,asyncRoute(async(req,res)=>{
-    await require('../../purchasing/agent-supplier-forecasts').send(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/supplier-forecasts/'+req.params.id);
-  }));
-  router.post('/autopilot/supplier-forecasts/:id/schedule',requireAuth,owner,asyncRoute(async(req,res)=>{
-    await require('../../purchasing/agent-supplier-forecasts').configure(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/supplier-forecasts/'+req.params.id);
-  }));
-  router.post('/autopilot/supplier-forecast-rules/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{
-    await require('../../purchasing/agent-supplier-forecasts').configure(database,req.ctx,null,{...req.body,ruleId:req.params.id,stop:'yes'});res.redirect(303,'/autopilot/supplier-forecasts');
-  }));
+  // Job 36: key suppliers get their stock and a 12-week forecast each week.
+  const supplierForecasts=require('../../purchasing/agent-supplier-forecasts'),forecastLocals=back=>({title:'Supplier forecasts',nav:'autopilot',backTo:back});
+  const toForecasts=(res,anchor='this-week',id=null)=>res.redirect(303,supplierForecasts.href+(id?'/'+encodeURIComponent(id):'')+'#'+anchor);
+  router.get(supplierForecasts.href,requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,supplierForecasts.JOB,'autopilot/supplier-forecast',forecastLocals({href:'/autopilot/reviews',label:'Agent reviews'}),()=>supplierForecasts.page(database,req.ctx,{q:req.query.q}),402)));
+  router.get(supplierForecasts.href+'/:id',requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,supplierForecasts.JOB,'autopilot/supplier-forecast',forecastLocals({href:supplierForecasts.href,label:'Supplier forecasts'}),()=>supplierForecasts.page(database,req.ctx,{id:req.params.id}),402)));
+  router.post(supplierForecasts.href+'/key',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierForecasts.addKey(database,req.ctx,req.body);
+    req.flash('success',r.unchanged?'This supplier is already a key supplier.':'Key supplier added. StockChief prepares their forecast at its next check.');toForecasts(res,'key-suppliers');}));
+  router.post(supplierForecasts.href+'/key/:id/remove',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierForecasts.removeKey(database,req.ctx,{...req.body,ruleId:req.params.id});
+    req.flash('success',r.unchanged?'Nothing changed.':'Weekly forecasts to this supplier are stopped.');toForecasts(res,'key-suppliers');}));
+  router.post(supplierForecasts.href+'/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierForecasts.prepareNow(database,req.ctx);
+    req.flash('success',r.prepared?r.prepared+' forecast'+(r.prepared===1?'':'s')+' prepared.'+(r.more?' StockChief prepares the rest on its own.':''):'Every forecast for this week is already sent.');toForecasts(res);}));
+  router.post(supplierForecasts.href+'/send-all',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierForecasts.sendAll(database,req.ctx);
+    req.flash('success',r.sent+' forecast'+(r.sent===1?'':'s')+' sent.'+(r.changed?' '+r.changed+' changed; check them and send again.':''));toForecasts(res);}));
+  router.post(supplierForecasts.href+'/mailbox',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierForecasts.chooseMailbox(database,req.ctx,req.body);
+    req.flash('success',r.unchanged?'Your mailbox is unchanged.':'Supplier forecasts will be sent from this mailbox.');toForecasts(res,'forecast-mailbox');}));
+  router.post(supplierForecasts.href+'/:id/send',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierForecasts.send(database,req.ctx,req.params.id,req.body);
+    req.flash(r.changed?'error':'success',r.changed?'The figures changed since you opened this forecast. Check the new one, then send it.':r.replayed?'This forecast was already sent.':'Forecast sent to '+r.report.recipient+'.');toForecasts(res,'forecast',r.report.id);}));
   router.post('/autopilot/return-labels/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await assistant.prepareAction(database,req.ctx,'Send this purchased return label and its authorized instructions',{action:'customer_return.send_label',recordReference:req.body.returnReference,mailbox:req.body.connectorId});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact authorized return and connected sending mailbox.');res.redirect(303,'/actions/'+prepared.proposal.id);
@@ -1463,8 +1613,21 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   router.post('/autopilot/undo/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
     const day=String(req.body.day||'');if(day)require('../../lib/business-time').dayBoundary(day,'UTC');
-    await require('../../autopilot/agent-work-digest').undo(database,req.ctx,req.params.id);
+    const done=await require('../../autopilot/agent-work-digest').undo(database,req.ctx,req.params.id,{origin:String(req.body.origin||'action')});
+    req.flash('success',done.replayed?'That was already undone.':'Undone.');
     res.redirect(303,'/autopilot/reviews/daily-work'+(day?'?'+new URLSearchParams({filter:day}):''));
+  }));
+  // Job 181: undo from the activity log, and the log as a spreadsheet (Pro and Custom).
+  const activityLog=require('../../autopilot/agent-activity');
+  router.post('/autopilot/activity/undo',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const done=await activityLog.undo(database,req.ctx,{origin:req.body.origin,id:req.body.id});
+    req.flash('success',done.replayed?'That was already undone.':'Undone.');
+    const back=String(req.body.returnTo||'');
+    res.redirect(303,back.startsWith(activityLog.path)&&!back.includes('//')?back:activityLog.path);
+  }));
+  router.get(activityLog.path+'/download',requireAuth,owner,asyncRoute(async(req,res)=>{
+    if(await olderTerms(req))return res.redirect(303,activityLog.path);
+    await activityLog.download(database,req.ctx,res,{filter:req.query.filter});
   }));
   const requests=require('../../purchasing/agent-purchase-requests');
   const budgets=require('../../purchasing/agent-budgets');
@@ -1563,8 +1726,13 @@ function createPostgresAutopilotRouter(database,options={}){
   }
   const lots=require('../../autopilot/lot-controls');
   const edi=require('../../connections/postgres-orderful-test');
-  router.get('/autopilot/orderful',requireAuth,owner,asyncRoute(async(req,res)=>{
-    res.page('autopilot/orderful',{title:'Orderful retail test',nav:'autopilot',...(await edi.dashboard(database,req.ctx))});
+  // Job 185: retail EDI. An account on its older terms sees the plan card; below Pro with the add-on, the lock.
+  router.get('/autopilot/orderful',requireAuth,owner,asyncRoute((req,res)=>reportPage(req,res,edi.JOB,'autopilot/orderful',
+    {title:'Retail EDI',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},
+    async()=>{const data=await edi.dashboard(database,req.ctx);if(!data.enabled)await edi.access(database,req.ctx);return data;},402)));
+  router.post('/autopilot/orderful/retailers',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const r=await edi.saveRetailer(database,req.ctx,req.body);
+    req.flash('success',r.stopped?'Retailer stopped. Its new documents wait for you.':'Retailer saved.');res.redirect(303,'/autopilot/orderful#retailers');
   }));
   router.post('/autopilot/orderful/connect',requireAuth,owner,asyncRoute(async(req,res)=>{
     await edi.connect(database,req.ctx,req.body);res.redirect(303,'/autopilot/orderful');
@@ -1608,6 +1776,19 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/shipbob/:order/refresh',requireAuth,owner,asyncRoute(async(req,res)=>{
     await shipbob.refresh(database,req.ctx,req.params.order);res.redirect(303,'/autopilot/shipbob');
   }));
+  // Job 186: orders go to the 3PL that runs their warehouse; shipping, tracking and stock come back.
+  const thirdParty=require('../../connections/agent-3pl-orders'),tpl=thirdParty.href;
+  router.get(tpl,requireAuth,owner,asyncRoute((req,res)=>reportPage(req,res,thirdParty.JOB,'autopilot/3pl-orders',
+    {title:'3PL orders',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>thirdParty.panel(database,req.ctx),402)));
+  for(const [path,run,done] of [
+    ['/connect',req=>thirdParty.connect(database,req.ctx,req.body),()=>'3PL connected.'],
+    ['/routes',req=>thirdParty.saveRoute(database,req.ctx,req.body),r=>r.stopped?'Route stopped. Orders for that warehouse stay with you.':'Route saved. StockChief checks that warehouse’s orders now.'],
+    ['/stock',req=>thirdParty.readStock(database,req.ctx,req.body),()=>'Stock read from the 3PL.'],
+    ['/orders/:id/approve',req=>thirdParty.approve(database,req.ctx,req.params.id),()=>'Order sent to the 3PL.'],
+    ['/orders/:id/dismiss',req=>thirdParty.dismiss(database,req.ctx,req.params.id),()=>'Draft dismissed.'],
+    ['/orders/:id/refresh',req=>thirdParty.refreshNow(database,req.ctx,req.params.id),()=>'Shipping read from the 3PL.'],
+    ['/shipments/:connector/:shipment/record',req=>thirdParty.record(database,req.ctx,req.params.connector,req.params.shipment),()=>'Shipment recorded. Stock left the warehouse.']])
+    router.post(tpl+path,requireAuth,owner,asyncRoute(async(req,res)=>{const r=await run(req);req.flash('success',done(r||{}));res.redirect(303,tpl);}));
   const lotCertificates=require('../../autopilot/lot-certificate-evidence');
   const certificateCoverage=require('../../autopilot/lot-certificate-coverage');
   const lotCertificatePage=async(req,res)=>res.page('autopilot/lot-certificates',{title:'Lot certificate evidence',nav:'autopilot',
@@ -1684,6 +1865,38 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   router.post('/autopilot/quote-requests/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{
     await quoteRequests.dismiss(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/reviews/quote-requests');
+  }));
+  // Job 187: the owner's rules for replies StockChief sends on its own.
+  const mailReplies=require('../../connections/agent-mail-replies');
+  router.post('/autopilot/mail-replies/settings',requireAuth,owner,asyncRoute(async(req,res)=>{
+    try{await mailReplies.saveSettings(database,req.ctx,req.body);req.flash('success','Reply rules saved.');}
+    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+    res.redirect(303,mailReplies.path);
+  }));
+  // Job 184: invoices and bills sent to QuickBooks or Xero.
+  const accountingDocuments=require('../../accounting/agent-accounting-documents');
+  const documentPath=req=>'/autopilot/accounting-documents/'+encodeURIComponent(req.params.connectorId)+'/'+encodeURIComponent(req.params.kind)+'/'+encodeURIComponent(req.params.id);
+  router.get('/autopilot/accounting-documents/:connectorId/:kind/:id',requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,accountingDocuments.JOB,'autopilot/accounting-document',
+    {title:'Invoice or bill for the books',nav:'autopilot',backTo:{href:accountingDocuments.path,label:'Invoices and bills'}},
+    ()=>accountingDocuments.detail(database,req.ctx,req.params.connectorId,req.params.kind,req.params.id),402)));
+  for(const [action,run,done] of [['send',(req)=>accountingDocuments.approve(database,req.ctx,req.params.connectorId,req.params.kind,req.params.id,req.body),'Queued. It counts as sent once the books confirm it.'],
+    ['dismiss',(req)=>accountingDocuments.dismiss(database,req.ctx,req.params.connectorId,req.params.kind,req.params.id),'It goes to the books as a journal instead.'],
+    ['check',async(req)=>(await accountingDocuments.check(database,req.ctx,req.params.connectorId,req.params.kind,req.params.id)).found,'Checked against the books.']]){
+    router.post('/autopilot/accounting-documents/:connectorId/:kind/:id/'+action,requireAuth,owner,asyncRoute(async(req,res)=>{
+      try{const found=await run(req);req.flash('success',action==='check'?(found?'The books have it. It is linked now.':'The books do not have it. You can send it again.'):done);}
+      catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+      res.redirect(303,documentPath(req));
+    }));
+  }
+  router.post('/autopilot/accounting-documents/settings',requireAuth,owner,asyncRoute(async(req,res)=>{
+    try{await accountingDocuments.saveSettings(database,req.ctx,req.body);req.flash('success','Settings saved.');}
+    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+    res.redirect(303,accountingDocuments.path);
+  }));
+  router.post('/autopilot/accounting-documents/mappings',requireAuth,owner,asyncRoute(async(req,res)=>{
+    try{await accountingDocuments.saveMapping(database,req.ctx,req.body);req.flash('success','Link saved. StockChief tries again on its next run.');}
+    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+    res.redirect(303,accountingDocuments.path);
   }));
   // Job 72: answers to customer emails about stock, delivery and orders.
   const customerQuestions=require('../../sales/agent-customer-questions'),questionsPath='/autopilot/reviews/customer-questions';
@@ -1775,6 +1988,46 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',result.replayed?'This order was already undone.':'The order was cancelled and its stock released.');
     res.redirect(303,customerOrders.path);
   }));
+  // Job 83: customer orders by text message and WhatsApp.
+  const textOrders=require('../../sales/agent-text-orders');
+  const textOrdersPage=asyncRoute(async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    return reportPage(req,res,textOrders.JOB,'autopilot/text-orders',{title:'Orders by text and WhatsApp',nav:'autopilot',
+      backTo:req.params.id?{href:textOrders.path,label:'Orders by text and WhatsApp'}:{href:'/autopilot/reviews',label:'Agent reviews'}},
+    async()=>({screen:await textOrders.page(database,req.ctx,{id:req.params.id||null,base:res.locals.origin})}),402);
+  });
+  router.get(textOrders.path,requireAuth,owner,textOrdersPage);
+  router.get(textOrders.path+'/:id',requireAuth,owner,textOrdersPage);
+  router.post(textOrders.path+'/lines',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await textOrders.saveLine(database,req.ctx,req.body);
+    req.flash('success',result.enabled?'The number was saved.':'StockChief stopped reading messages to this number.');
+    res.redirect(303,textOrders.path+'#numbers');
+  }));
+  router.post(textOrders.path+'/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await textOrders.saveRule(database,req.ctx,req.body);
+    req.flash('success',result.enabled?'StockChief will take this customer’s text orders on its own, within your limits.':'Every text order from this customer will wait for you.');
+    res.redirect(303,textOrders.path+'#customers');
+  }));
+  router.post(textOrders.path+'/:id/retry',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await textOrders.retry(database,req.ctx,req.params.id);
+    req.flash('success',result.held?'StockChief read the message again. It still needs you.':'StockChief read the message again and made the order.');
+    res.redirect(303,textOrders.path+'/'+encodeURIComponent(req.params.id));
+  }));
+  router.post(textOrders.path+'/:id/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await textOrders.prepare(database,req.ctx,req.params.id,req.body);
+    req.flash('success','The draft order is ready for you to check and confirm.');
+    res.redirect(303,'/orders/'+result.salesOrderId);
+  }));
+  router.post(textOrders.path+'/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await textOrders.dismiss(database,req.ctx,req.params.id);
+    req.flash('success','The message was dismissed. No order was made.');
+    res.redirect(303,textOrders.path);
+  }));
+  router.post(textOrders.path+'/:id/undo',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const result=await customerOrders.undo(database,req.ctx,'text',req.params.id);
+    req.flash('success',result.replayed?'This order was already undone.':'The order was cancelled and its stock released.');
+    res.redirect(303,textOrders.path);
+  }));
   router.post('/autopilot/putaway/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const made=await require('../../warehouse/agent-putaway').prepare(database,req.ctx,req.body.receiptLine,req.body.destination);
     res.redirect(303,'/warehouse/putaway/'+made.id);
@@ -1857,6 +2110,39 @@ function createPostgresAutopilotRouter(database,options={}){
     await require('../../connections/agent-partner-stock-reads').configure(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/third-party-stock');
   }));
+  // Job 123: partner locations, their counts and the differences from StockChief's records.
+  const partnerStock=require('../../autopilot/partner-stock');
+  const partnerLocals={title:'Stock at partners',nav:'autopilot',backTo:{href:'/autopilot/reviews/third-party-stock',label:'Partner stock review'}};
+  const partnerPage=(req,res,extra={})=>reportPage(req,res,partnerStock.JOB,'autopilot/partner-stock',{...partnerLocals,issuedFeed:null,...extra},
+    async()=>{res.set('Cache-Control','private, no-store');return partnerStock.page(database,req.ctx);},402);
+  router.get(partnerStock.path,requireAuth,owner,asyncRoute((req,res)=>partnerPage(req,res)));
+  router.post(partnerStock.path,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const saved=await partnerStock.savePartner(database,req.ctx,req.body);
+    req.flash('success',saved.removed?'Removed the partner location. Its counts are no longer compared.':'Saved the partner location.');
+    res.redirect(303,partnerStock.path);
+  }));
+  router.post(partnerStock.path+'/:locationId/feed',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const issued=await partnerStock.issueFeed(database,req.ctx,req.params.locationId,req.body);
+    return partnerPage(req,res,{issuedFeed:{locationId:req.params.locationId,path:issued}});
+  }));
+  router.post(partnerStock.path+'/:locationId/feed/stop',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await partnerStock.stopFeed(database,req.ctx,req.params.locationId);
+    req.flash('success','The partner’s feed link no longer works.');
+    res.redirect(303,partnerStock.path);
+  }));
+  router.post(partnerStock.path+'/:locationId/upload',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const files=req.files||[];
+    if(files.length!==1||files[0].field!=='counts')throw new ValidationError('Choose one stock file from the partner.');
+    const saved=await partnerStock.upload(database,req.ctx,req.params.locationId,files[0],req.body);
+    req.flash('success',saved.replayed?'This file was already recorded. Nothing changed.':'Recorded '+saved.lines+' partner counts. '+
+      (saved.differences?saved.differences+' differ from your records.':'They agree with your records.'));
+    res.redirect(303,partnerStock.path+'#differences');
+  }));
+  router.post(partnerStock.path+'/:locationId/explain',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await partnerStock.explain(database,req.ctx,req.params.locationId,req.body);
+    req.flash('success','Your note is saved. Stock did not change.');
+    res.redirect(303,partnerStock.path+'#differences');
+  }));
   const abcPath=require('../../forecasting/monthly-product-classes').path;
   router.get(abcPath+'/products/:itemId',requireAuth,owner,starterAgentPage(15,'suggest','ABC count and safety planning',async(req,res)=>{
     return res.page('autopilot/monthly-abc-planning',{
@@ -1902,9 +2188,13 @@ function createPostgresAutopilotRouter(database,options={}){
       }
       const alertJob=require('../../autopilot/agent-alerts').forKey(req.params.job);
       if(alertJob)result.alerts=await require('../../autopilot/agent-alerts').panel(database,req.ctx,alertJob);
+      // Jobs 155 and 156: how report emails and the briefing are sent.
+      if(req.params.job===require('../../reports/agent-report-email').key)result.reportEmail=await require('../../reports/agent-report-email').panel(database,req.ctx);
+      if(req.params.job===require('../../autopilot/briefing-email').key)result.reportEmail=await require('../../autopilot/briefing-email').panel(database,req.ctx);
       if(req.params.job===require('../../autopilot/escalations').key)result.escalations=await require('../../autopilot/escalations').actions(database,req.ctx);
       if(req.params.job==='staff-count-lists')result.countAssignments={...await require('../../operations/agent-count-tasks').setup(database,req.ctx),requestKey:newId('count-assignment'),selectedLocationId:req.query.locationId};
       if(req.params.job==='vacation-deputy')result.vacation=await require('../../autopilot/vacation-deputy').setup(database,req.ctx);
+      if(req.params.job===require('../../autopilot/circuit-breaker').key)result.breaker=await require('../../autopilot/circuit-breaker').status(database,req.ctx);
       if(req.params.job==='purchase-approval-threshold'){
         const rule=await require('../../purchasing/dual-approval').setting(database,req.ctx.workspaceId);
         result.purchaseThreshold={...rule,amount:rule.amount_minor==null?'':require('../../domain/currency').fromMinor(rule.amount_minor,rule.currency)};
@@ -1932,8 +2222,23 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   router.post('/autopilot/alerts/:job/send',requireAuth,owner,asyncRoute(async(req,res)=>{
     const alerts=require('../../autopilot/agent-alerts'),sent=await alerts.sendNow(database,req.ctx,req.params.job);
-    req.flash('success',Number(req.params.job)===175?(sent.sent===1?'1 approval link is on its way.':sent.sent+' approval links are on their way.'):sent.sent===1?'1 alert is on its way to you.':sent.sent+' alerts are on their way to you.');
+    req.flash('success',Number(req.params.job)===175?(sent.sent===1?'1 approval link is on its way.':sent.sent+' approval links are on their way.'):Number(req.params.job)===50?(sent.sent===1?'1 update is on its way to your team.':sent.sent+' updates are on their way to your team.'):sent.sent===1?'1 alert is on its way to you.':sent.sent+' alerts are on their way to you.');
     res.redirect(303,alerts.pathFor(Number(req.params.job)));
+  }));
+  // Jobs 155 and 156: the mailbox, people and time, and sending a waiting email.
+  router.post('/autopilot/report-emails/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const mail=require('../../reports/agent-report-email'),saved=await mail.configure(database,req.ctx,req.params.job,req.body);
+    req.flash('success',saved.unchanged?'Nothing changed.':'Email settings saved.');
+    res.redirect(303,Number(req.params.job)===156?require('../../autopilot/briefing-email').path:mail.path);
+  }));
+  router.post('/autopilot/report-emails/:job/send',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const mail=require('../../reports/agent-report-email'),job=Number(req.params.job);
+    if(job===156){const sent=await require('../../autopilot/briefing-email').sendNow(database,req.ctx);
+      req.flash('success',sent.emailed===1?'The briefing is on its way.':'The briefing is on its way to '+sent.emailed+' people.');return res.redirect(303,require('../../autopilot/briefing-email').path);}
+    if(job!==155)throw new (require('../../domain/errors').NotFoundError)('Those email settings are not available.');
+    const sent=await mail.sendHeld(database,req.ctx,req.body.deliveryId);
+    req.flash('success',sent.queued===1?'The report is on its way.':'The report is on its way to '+sent.queued+' people.');
+    res.redirect(303,mail.path);
   }));
   // Job 172: answer an item passed on, answer every alert of a kind, or pass one on now.
   const back=(req,fallback)=>{const to=String(req.body.returnTo||'');return to.startsWith('/')&&!to.startsWith('//')?to:fallback;};
@@ -1941,6 +2246,11 @@ function createPostgresAutopilotRouter(database,options={}){
     const done=await require('../../autopilot/escalations').answerJob(database,req.ctx,req.body.entryId);
     req.flash('success',done.answered===1?'Thanks. Nobody else will be asked about it.':'Thanks. Nobody else will be asked about these '+done.answered+' alerts.');
     res.redirect(303,back(req,'/needs-you'));
+  }));
+  // Job 50: the person told about waited-for stock marks it seen.
+  router.post('/autopilot/stock-ready/staff/:id/seen',requireAuth,asyncRoute(async(req,res)=>{
+    await require('../../sales/agent-stock-ready-staff').seen(database,req.ctx,req.params.id);
+    req.flash('success','Marked as seen.');res.redirect(303,back(req,'/needs-you'));
   }));
   router.post('/autopilot/escalations/:id/answer',requireAuth,asyncRoute(async(req,res)=>{
     const escalations=require('../../autopilot/escalations');await escalations.answer(database,req.ctx,req.params.id);
@@ -1951,6 +2261,15 @@ function createPostgresAutopilotRouter(database,options={}){
     const escalations=require('../../autopilot/escalations'),done=await escalations.passNow(database,req.ctx,req.params.id);
     req.flash('success','Passed to '+done.to+'.');
     res.redirect(303,escalations.path);
+  }));
+  // Job 182: the owner approves a channel sync fix, or undoes a product match StockChief made.
+  router.post('/autopilot/reviews/channel-sync-fixes/fix',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const fixes=require('../../connections/agent-channel-sync-fixes');await fixes.fixNow(database,req.ctx,req.body.problem);
+    req.flash('success','Fixed. StockChief logged the fix.');res.redirect(303,fixes.path);
+  }));
+  router.post('/autopilot/reviews/channel-sync-fixes/undo',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const fixes=require('../../connections/agent-channel-sync-fixes');await fixes.undo(database,req.ctx,req.body.entry);
+    req.flash('success','Match removed. Orders already taken in stay.');res.redirect(303,fixes.path);
   }));
   // Job 173: each person's own mobile number and push devices.
   const alertPhones=require('../../autopilot/alert-phones');
@@ -1999,6 +2318,17 @@ function createPostgresAutopilotRouter(database,options={}){
     await watch.save(database,req.ctx,id,req.body);
     res.redirect(303,'/autopilot/reviews/'+watch.spec[id].key);
   }));
+  // Job 201: the owner resumes after reviewing what StockChief did today.
+  router.post('/autopilot/circuit-breaker/resume',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const breaker=require('../../autopilot/circuit-breaker');
+    await breaker.resume(database,req.ctx,req.body);
+    req.flash('success','StockChief is running again. Your review is in the activity record.');
+    res.redirect(303,breaker.path);
+  }));
+  router.post('/autopilot/vacation-deputy/hand-back',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../autopilot/vacation-deputy').handBack(database,req.ctx,req.body);
+    res.redirect(303,'/autopilot/reviews/vacation-deputy');
+  }));
   router.post('/autopilot/vacation-deputy',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../autopilot/vacation-deputy').save(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/reviews/vacation-deputy');
@@ -2033,8 +2363,13 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   // Job 176: who approves what, by role and amount.
   const approvalDesk=require('../../autopilot/approval-desk');
-  router.get(approvalDesk.path,requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,approvalDesk.JOB,'autopilot/approval-routing',
-    {title:'Who approves what',nav:'autopilot'},async()=>({model:await approvalDesk.screen(database,req.ctx)}),402)));
+  // An account still on its older terms sees the shared plan card; Agent terms
+  // below Pro keep the lock and its 402.
+  router.get(approvalDesk.path,requireAuth,owner,asyncRoute(async(req,res)=>{
+    const locals={title:'Who approves what',nav:'autopilot'},state=await policy.accountState(database,req.ctx.workspaceId);
+    if(!policy.usesAgentTerms(state))return res.page('autopilot/agent-plan-locked',{...locals,backTo:{href:'/autopilot/reviews',label:'Agent reviews'},tier:'Pro',reviewTerms:policy.permits(state.plan,176,'suggest')});
+    return agentPage(req,res,'autopilot/approval-routing',locals,async()=>({model:await approvalDesk.screen(database,req.ctx)}),402);
+  }));
   router.post(approvalDesk.path+'/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
     const saved=await approvalDesk.saveRule(database,req.ctx,req.body);
     req.flash('success',saved.removed!==undefined?(saved.removed?'Rule removed.':'That rule was already removed.'):saved.unchanged?'Nothing changed.':'Rule saved: '+saved.rule+'.');
@@ -2060,6 +2395,20 @@ function createPostgresAutopilotRouter(database,options={}){
   });
   router.post('/autopilot/reviews/watch-rules/rules',requireAuth,owner,saveWatchRule);
   router.post('/autopilot/reviews/brand-watches/rules',requireAuth,owner,saveWatchRule);
+  // Job 207: any rule in plain words, read exactly, confirmed, then saved by
+  // its own kind's service. An unreadable rule is explained and saves nothing.
+  const plainRules=require('../../autopilot/plain-rules');
+  router.get(plainRules.path,requireAuth,owner,asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');
+    return reportPage(req,res,plainRules.JOB,'autopilot/plain-rules',{title:'Rules in plain words',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},
+      async()=>({screen:await plainRules.page(database,req.ctx,req.query)}),402);}));
+  router.post(plainRules.path+'/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{
+    try{const saved=await plainRules.confirm(database,req.ctx,req.body);req.flash('success',saved.message);return res.redirect(303,saved.href);}
+    catch(error){if(error?.code!=='validation_error')throw error;req.flash('error',error.message);
+      return res.redirect(303,plainRules.path+'?'+new URLSearchParams({rule:String(req.body.rule||'').slice(0,400)}));}
+  }));
+  router.post(plainRules.path+'/supplier-rules/remove',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const removed=await require('../../purchasing/supplier-choice-rules').remove(database,req.ctx,req.body.id);
+    req.flash('success',removed.removed?'Supplier rule removed.':'That rule was already removed.');res.redirect(303,plainRules.path+'#supplier-rules');}));
   router.post('/autopilot/reviews/payment-run/approve',requireAuth,owner,asyncRoute(async(req,res)=>{
     await require('../../accounting/agent-cash-planning').approvePaymentRun(database,req.ctx,req.body);
     req.flash('success','Payment review recorded. Pay suppliers and record payments from their individual bills.');
@@ -2179,14 +2528,23 @@ function createPostgresAutopilotRouter(database,options={}){
     await timeSaved.sample(database,req.ctx,req.body);
     res.redirect(303,'/autopilot/time-saved'+(req.body.period==='month'?'?period=month':''));
   }));
-  router.get('/autopilot/playbooks',requireAuth,owner,asyncRoute(async(req,res)=>res.page('autopilot/playbooks',{
-    title:'Playbooks',nav:'autopilot',backTo:{href:'/autopilot',label:'StockChief AI'},requestKey:newId('run'),
-    ...(await playbooks.list(database,req.ctx))})));
+  router.get('/autopilot/playbooks',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const locals={title:'Playbooks',nav:'autopilot',backTo:{href:'/autopilot',label:'StockChief AI'}};
+    const state=await policy.accountState(database,req.ctx.workspaceId);
+    if(!policy.usesAgentTerms(state))return planCard(req,res,playbooks.JOB,locals);
+    if(!policy.permits(state.plan,playbooks.JOB,'automatic',{trained:true})){res.status(402);return planCard(req,res,playbooks.JOB,locals);}
+    return res.page('autopilot/playbooks',{...locals,requestKey:newId('run'),...(await playbooks.list(database,req.ctx))});
+  }));
   router.post('/autopilot/playbooks',requireAuth,owner,asyncRoute(async(req,res)=>{
     await playbooks.create(database,req.ctx,req.body);res.redirect(303,'/autopilot/playbooks');
   }));
   router.post('/autopilot/playbooks/:id/run',requireAuth,owner,asyncRoute(async(req,res)=>{
-    await playbooks.run(database,req.ctx,req.params.id,req.body.requestKey);res.redirect(303,'/autopilot/playbooks');
+    const result=await playbooks.run(database,req.ctx,req.params.id,req.body.requestKey);
+    if(result?.held)req.flash('info',result.reason);res.redirect(303,'/autopilot/playbooks');
+  }));
+  // Job 213: continue a run that stopped to ask, or start one waiting for the owner.
+  router.post('/autopilot/playbooks/runs/:runId/continue',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await playbooks.resume(database,req.ctx,req.params.runId);res.redirect(303,'/autopilot/playbooks');
   }));
   router.post('/autopilot/playbooks/:id/delete',requireAuth,owner,asyncRoute(async(req,res)=>{
     await playbooks.remove(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/playbooks');

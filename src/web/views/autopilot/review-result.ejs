@@ -1,4 +1,17 @@
 <h1><%= result.label %></h1><p><%= result.summary %></p>
+<% if(result.breaker){ const b=result.breaker; %>
+<section class="card card-body stack" data-circuit-breaker>
+  <% if(b.paused){ %>
+    <p class="notice notice--warn"><strong>Automatic work is paused.</strong> <%= b.reason %></p>
+    <form method="post" action="/autopilot/circuit-breaker/resume" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label><input type="checkbox" name="reviewed" value="yes" required> I reviewed today’s automatic work below</label>
+      <label>Note for the record (optional) <input name="note" maxlength="500"></label>
+      <p><button class="btn btn--primary">Resume automatic work</button></p>
+    </form>
+  <% }else{ %><p>Automatic work is running. StockChief pauses it on its own if today looks unusual.</p><% } %>
+</section>
+<% } %>
 <% if(result.pricePreparationHold){ %><p><%= result.pricePreparationHold %></p><% } %>
 <% if(result.countSourcePath){ %><p><a class="btn" href="<%= result.countSourcePath %>">Open physical count originals</a></p><% } %>
 <% if(result.customerCheckinLink){ %><p><a href="/autopilot/customer-check-ins">Open saved check-ins and routine settings</a></p><% } %>
@@ -71,6 +84,8 @@
 <% if(result.returnLabelForm){ %><%- include('return-labels',{result,csrfToken}) %><% } %>
 <% if(result.customerStatementForm){ %><%- include('customer-statements',{result,csrfToken}) %><% } %>
 <% if(result.customerQuestionForm){ %><%- include('customer-questions',{result,csrfToken}) %><% } %>
+<% if(result.mailReplyForm){ %><%- include('mail-reply-settings',{result,csrfToken}) %><% } %>
+<% if(result.accountingDocumentsForm){ %><%- include('accounting-documents',{result,csrfToken}) %><% } %>
 <% if(result.quoteRequestForm){ %><%- include('quote-requests',{result,csrfToken}) %><% } %>
 <% if(result.quoteFollowupDefaults){ %><%- include('quote-followup-defaults',{result,csrfToken}) %><% } %>
 <% if(result.creditForm){ %><%- include('customer-credits',{result,csrfToken}) %><% } %>
@@ -91,13 +106,25 @@
   <% if(n.revision){ %><button class="btn" formaction="/autopilot/negotiation-rule" name="remove" value="1">Stop the routine lead-time note</button>
   <% }else if(result.mode==='draft'){ %><a href="/settings/billing">Routine lead-time notes that send on their own need Custom</a><% } %>
 </form><% } %>
-<% if(result.vacation){ const {rule,people,today}=result.vacation; %>
+<% if(result.vacation){ const {rule,people,today,handback}=result.vacation; %>
+<% if(handback){ %>
+<section class="card card-body stack" data-vacation-handback>
+  <h2>Welcome back</h2>
+  <p><%= handback.deputy %> covered your approvals from <%= handback.from %> to <%= handback.through %>.
+    <%= handback.rows.length?handback.decided+' were decided and '+handback.back+(handback.back===1?' is':' are')+' back with you.':'Nothing waited for them.' %></p>
+  <% if(handback.rows.length){ %><ul>
+    <% for(const r of handback.rows){ %><li><a href="<%= r.href %>"><%= r.title %></a> · <%= r.kind %> · <%= r.waiting?'Back with you':'Decided' %></li><% } %>
+  </ul><% } %>
+  <form method="post" action="/autopilot/vacation-deputy/hand-back"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="revision" value="<%= handback.revision %>"><button class="btn btn--primary">I have reviewed this</button></form>
+</section>
+<% } %>
 <form method="post" action="/autopilot/vacation-deputy">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule.revision %>">
   <label>Deputy <select required name="deputyId"><option value="">Choose a team member</option><% for(const p of people){ %><option value="<%= p.id %>" <%= p.id===rule.deputy_id?'selected':'' %>><%= p.name %></option><% } %></select></label>
   <label>First day <input type="date" required name="start" value="<%= rule.starts_on||today %>"></label>
   <label>Last day <input type="date" required name="end" value="<%= rule.ends_on||today %>"></label>
-  <% if(people.length){ %><button class="btn">Save vacation coverage</button><% }else{ %><p>A deputy needs approval permissions across this inventory. <a href="/settings?section=team#team-authority">Review team access</a></p><% } %>
+  <% if(people.length){ %><button class="btn">Save vacation coverage</button><% }else{ %><p>A deputy needs permission to approve purchases, transfers, returns, stock changes, refunds or landed costs across this inventory. <a href="/settings?section=team#team-authority">Review team access</a></p><% } %>
   <% if(rule.deputy_id){ %><button class="btn" name="remove" value="1" formnovalidate>End coverage</button><% } %>
 </form><% } %>
 <% if(result.countAssignments){ const config=result.countAssignments; %><form method="post" action="/warehouse/count-assignments">
@@ -179,7 +206,7 @@
     </form><% } %>
   </section>
 <% } %>
-<% if(result.rows.length){const fields=Object.keys(result.rows[0]).filter(f=>!['link','linkLabel'].includes(f)); %><div class="card<%= result.paymentRun?' table-wrap':'' %>"><table><thead><tr><% fields.forEach(f=>{ %><th><%= f %></th><% }); %><% if(result.rows[0].link){ %><th>Record</th><% } %></tr></thead><tbody>
+<% if(result.activity){ %><%- include('agent-activity',{result,csrfToken}) %><% }else if(result.rows.length){const fields=Object.keys(result.rows[0]).filter(f=>!['link','linkLabel'].includes(f)); %><div class="card<%= result.paymentRun?' table-wrap':'' %>"><table><thead><tr><% fields.forEach(f=>{ %><th><%= f %></th><% }); %><% if(result.rows[0].link){ %><th>Record</th><% } %></tr></thead><tbody>
 <% result.rows.forEach(r=>{ %><tr><% fields.forEach(f=>{ %><td><%= r[f]??'Unknown' %><% if(result.reviewPrices&&f==='Suggested selling price'){ %><form method="post" action="/autopilot/reviews/margin-prices/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="sku" value="<%= r.SKU %>"><button class="btn">Prepare price change</button></form><% } %></td><% }); %><% if(r.link){ %><td><a href="<%= r.link %>"><%= r.linkLabel||'Open' %></a></td><% } %></tr><% }); %>
 </tbody></table></div><% }else if(!result.requiresChange||result.change||result.scenarioOptions?.supplierDelayDays){ %><p><%= result.bankMatchForm?'No completed matches in this view.':'No matching records.' %></p><% } %>
 <% const reviewPageQuery=new URLSearchParams({filter}); if(result.requiresChange)reviewPageQuery.set('change',result.change||''); if(result.scenarioOptions?.supplierDelayDays)reviewPageQuery.set('supplierDelayDays',result.scenarioOptions.supplierDelayDays); if(result.reportQuarter)reviewPageQuery.set('quarter',result.reportQuarter); %>
@@ -187,8 +214,10 @@
 <% if(result.more){ %><a href="?page=<%= result.page+1 %>&amp;<%= reviewPageQuery %>">Next page</a><% } %>
 <% if(result.escalations){ %><%- include('escalations',{escalations:result.escalations,csrfToken}) %><% } %>
 <% if(result.alerts){ %><%- include('alert-delivery',{alerts:result.alerts,csrfToken}) %><% } %>
+<% if(result.reportEmail){ %><%- include('report-email-delivery',{panel:result.reportEmail,csrfToken}) %><% } %>
 <% if(result.recurringForm){ %><%- include('recurring-orders',{result,csrfToken}) %><% } %>
 <% if(result.mapForm){ %><%- include('map-terms',{result,csrfToken}) %><% } %>
-<% if(result.undoForm){ %><%- include('daily-work',{result,csrfToken}) %><% } %>
+<% if(result.syncFixForm){ %><%- include('channel-sync-fixes',{result,csrfToken}) %><% } %>
+<% if(result.undoForm&&!result.activity){ %><%- include('daily-work',{result,csrfToken}) %><% } %>
 <% if(result.bankMatchForm){ %><%- include('bank-payment-matches',{result,csrfToken}) %><% } %>
 <% if(result.reminderForm){ %><%- include('invoice-reminders',{result,csrfToken}) %><% } %>

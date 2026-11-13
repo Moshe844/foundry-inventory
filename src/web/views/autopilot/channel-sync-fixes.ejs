@@ -1,0 +1,19 @@
+<% const s=result.syncFixForm; %>
+<% if(s.approve.length){ %><section class="card card-body stack" data-sync-fixes>
+  <h2>Approve a fix</h2>
+  <p>Fixes wait for you now. <%= s.stop %></p>
+  <% for(const fix of s.approve){ %><form method="post" action="/autopilot/reviews/channel-sync-fixes/fix" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="problem" value="<%= fix.key %>">
+    <p><strong><%= fix.label %></strong><br><%= fix.fix %></p>
+    <button class="btn">Fix it now</button>
+  </form><% } %>
+</section><% } %>
+<% if(s.undo.length){ %><section class="card card-body stack">
+  <h2>Undo a product match</h2>
+  <p>StockChief matched these channel products itself. Undo removes the match; orders already taken in stay.</p>
+  <% for(const u of s.undo){ %><form method="post" action="/autopilot/reviews/channel-sync-fixes/undo" class="form-stack">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="entry" value="<%= u.id %>">
+    <p><%= u.label %></p>
+    <button class="btn">Undo this match</button>
+  </form><% } %>
+</section><% } %>

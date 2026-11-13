@@ -61,17 +61,28 @@ async function team(db,workspaceId){
 
 // Who gets an item next: team members who may see it and whose purchase
 // approval limit covers its amount, the least senior first, the owner last.
+function canRead(person,item){
+  return person.is_owner||String(item.permission).split(',').every(name=>permissions.can(person,name));
+}
+
 function chain(item,people){
   const owner=people.find(p=>p.is_owner);
   const covers=p=>item.amount_minor==null||!item.currency||p.po_approval_limit_minor==null&&p.warehouse_location_ids==null||
     p.po_approval_currency===item.currency&&Number(item.amount_minor)<=Number(p.po_approval_limit_minor);
   const limit=p=>p.po_approval_limit_minor==null?Number.MAX_SAFE_INTEGER:Number(p.po_approval_limit_minor);
-  const helpers=people.filter(p=>!p.is_owner&&p.role!=='owner'&&permissions.can(p,item.permission)&&covers(p))
+  // Job 203: every permission the item needs, such as seeing its costs.
+  const helpers=people.filter(p=>!p.is_owner&&p.role!=='owner'&&canRead(p,item)&&covers(p))
     .sort((a,b)=>Number(permissions.can(a,permissions.ADMIN))-Number(permissions.can(b,permissions.ADMIN))||
       (item.amount_minor==null?0:limit(a)-limit(b))||String(a.name).localeCompare(String(b.name))||String(a.id).localeCompare(String(b.id)));
   return owner?[...helpers,owner]:helpers;
 }
 
+// Every permission an approval needs, kept as one list. A list too long to
+// keep goes only to people who can administer the inventory.
+function needed(list){
+  const names=[...new Set((list||[]).map(String).filter(Boolean))],joined=names.join(',');
+  return !names.length?permissions.VIEW:joined.length<=60?joined:permissions.ADMIN;
+}
 // The permission an alert needs, from its job and kind.
 function alertPermission(job,kind){
   if(job===168)return /invoice|bill/i.test(kind)?permissions.VIEW_ACCOUNTING:/purchase/i.test(kind)?permissions.VIEW_PURCHASING:permissions.VIEW_SALES;
@@ -103,7 +114,7 @@ async function currentItems(database,workspaceId,owner,state){
     if(d.kind!=='approval'||d.ownerOnly||!d.href||source.startsWith('escalation:')||source.startsWith('po-signature-'))continue;
     const amount=Number.isSafeInteger(d.moneyValue)&&/^[A-Z]{3}$/.test(d.moneyCurrency||'')?d.moneyValue:null;
     items.push({key:'approval:'+hash([source,d.href]),source:'APPROVAL',job_id:null,title:String(d.title||'An approval').slice(0,300),href:String(d.href).slice(0,500),
-      permission:String((d.requiredPermissions||[])[0]||permissions.VIEW).slice(0,60),amount_minor:amount,currency:amount==null?null:d.moneyCurrency,
+      permission:needed(d.requiredPermissions),amount_minor:amount,currency:amount==null?null:d.moneyCurrency,
       opened_at:d.createdAt&&!Number.isNaN(Date.parse(d.createdAt))?new Date(d.createdAt).toISOString():null});
   }
   return items;
@@ -155,12 +166,13 @@ async function deliverPhone(c,workspaceId,account,setting,{manual}){
   for(const holder of [...new Set(rows.map(r=>r.holder_user_id))]){
     const person=people.find(p=>p.id===holder);if(!person)continue;
     for(const ch of want){
-      const list=rows.filter(r=>r.holder_user_id===holder&&!r[ch+'_batch']);if(!list.length)continue;
-      const title=list.length===1?(person.is_owner?'Nobody answered: ':'Passed to you: ')+list[0].title.split('. ')[0]:list.length+' unanswered alerts and approvals passed to you';
-      const body=list.length===1?list[0].title:title+'. '+list.slice(0,2).map(r=>r.title.split('. ')[0]+'.').join(' ')+(list.length>2?' And '+(list.length-2)+' more.':'');
+      const list=rows.filter(r=>r.holder_user_id===holder&&!r[ch+'_batch']&&canRead(person,r));if(!list.length)continue;
+      const headline=row=>row.source==='APPROVAL'?'An approval needs attention':row.title.split('. ')[0];
+      const title=list.length===1?(person.is_owner?'Nobody answered: ':'Passed to you: ')+headline(list[0]):list.length+' unanswered alerts and approvals passed to you';
+      const body=list.length===1&&list[0].source==='ALERT'?list[0].title:title+'. Open Needs you to review.';
       const batch=newId('escalation-'+ch);
       const queued=await phones.queue(c,workspaceId,{purpose:'ALERT',job:JOB,batch,userId:person.id,sms:ch==='sms',push:ch==='push',
-        title,body,url:phones.link(list.length===1?list[0].href:'/needs-you'),manual});
+        title,body,url:phones.link(list.length===1&&list[0].source==='ALERT'?list[0].href:'/needs-you'),manual});
       if(!queued[ch]){problems.push(person.name+': '+queued.problems.join(' '));continue;}
       await c.query(`UPDATE ${table} SET ${ch}_batch=$3 WHERE workspace_id=$1 AND id=ANY($2::text[])`,[workspaceId,list.map(r=>r.id),batch]);
       await audit.record(c,{workspaceId,actorId:people.find(p=>p.is_owner)?.id||person.id},{action:ch==='sms'?'Alert text queued':'Alert push queued',reference:batch,
@@ -174,9 +186,8 @@ async function deliverPhone(c,workspaceId,account,setting,{manual}){
 // waiting with the same person.
 async function phoneAuthority(db,workspaceId,m){
   const column=m.channel==='SMS'?'sms_batch':'push_batch';
-  const open=(await db.query(`SELECT 1 FROM ${table} WHERE workspace_id=$1 AND ${column}=$2 AND status='WAITING' AND holder_user_id=$3 LIMIT 1`,
-    [workspaceId,String(m.batch||''),String(m.user_id||'')])).rowCount;
-  if(!open)throw new ValidationError('These items were answered or moved on before the message was sent, so it was not sent.');
+  const userId=String(m.user_id||'');
+  await checkBatch(db,workspaceId,column,String(m.batch||''),userId);
 }
 // Items passed on and not sent yet on a channel the owner chose.
 async function waiting(db,workspaceId,setting){
@@ -199,12 +210,14 @@ async function deliverEmail(c,workspaceId,account,setting,{manual=false}={}){
   if(!box){const text='The chosen mailbox is disconnected, paused or cannot send. Reconnect it, or choose another. No email was sent.';await note(c,workspaceId,text);return {emailed:0,note:text};}
   const people=await team(c,workspaceId);let emailed=0,last=null;
   for(const holder of [...new Set(waiting.map(r=>r.holder_user_id))]){
-    const person=people.find(p=>p.id===holder),rows=waiting.filter(r=>r.holder_user_id===holder);
+    const person=people.find(p=>p.id===holder);
     if(!person||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(person.email||''))continue;
+    const rows=waiting.filter(r=>r.holder_user_id===holder&&canRead(person,r));
+    if(!rows.length)continue;
     const subject=rows.length===1?(person.is_owner?'Nobody answered: ':'Passed to you: ')+rows[0].title.split('. ')[0]:rows.length+' unanswered alerts and approvals passed to you';
     const body=(person.is_owner?'Nobody on your team answered these in time, so they are back with you.':'Nobody answered these in time, so StockChief passed them to you.')+
       '\n\n'+rows.map(r=>'- '+r.title).join('\n')+'\n\nOpen Needs you in StockChief and tap "I\'m on it" when you take one.';
-    const queued=await alerts.queue(c,workspaceId,{job:JOB,person,box,subject,body,manual,count:rows.length,authority:{userId:person.id},
+    const queued=await alerts.queue(c,workspaceId,{job:JOB,person,box,subject,body,manual,count:rows.length,authority:{userId:person.id,itemCount:rows.length},
       sender:people.find(p=>p.is_owner)?.id||person.id});
     if(queued.problem){await note(c,workspaceId,'No email was sent. '+queued.problem);continue;}
     await c.query(`UPDATE ${table} SET email_batch=$3,email_communication_id=$4 WHERE workspace_id=$1 AND id=ANY($2::text[])`,
@@ -217,10 +230,17 @@ async function deliverEmail(c,workspaceId,account,setting,{manual=false}={}){
 
 // Checked again just before the mailbox sends: the items are still waiting
 // with the same person.
+async function checkBatch(db,workspaceId,column,batch,userId,itemCount){
+  const {rows}=await db.query(`SELECT permission,status,holder_user_id FROM ${table} WHERE workspace_id=$1 AND ${column}=$2`,[workspaceId,batch]);
+  const person=(await team(db,workspaceId)).find(p=>p.id===userId);
+  if(!person||!rows.length||(itemCount!=null&&rows.length!==itemCount)||
+    rows.some(r=>r.status!=='WAITING'||r.holder_user_id!==userId||!canRead(person,r))){
+    throw new ValidationError('These items were answered or moved on, or the assigned person’s access changed, before the alert was sent.');
+  }
+}
+
 async function emailAuthority(db,workspaceId,grant){
-  const open=(await db.query(`SELECT 1 FROM ${table} WHERE workspace_id=$1 AND email_batch=$2 AND status='WAITING' AND holder_user_id=$3 LIMIT 1`,
-    [workspaceId,String(grant.batch||''),String(grant.userId||'')])).rowCount;
-  if(!open)throw new ValidationError('These items were answered or moved on before the email was sent, so it was not sent.');
+  await checkBatch(db,workspaceId,'email_batch',String(grant.batch||''),String(grant.userId||''),grant.itemCount);
 }
 
 // The worker: follow every open item, close answered ones and pass due ones.
@@ -238,7 +258,13 @@ async function run(database,workspaceId){
     for(const item of items){
       const row=rows.get(item.key);
       if(row&&row.status!=='CLOSED'){
-        if(row.title!==item.title||row.href!==item.href)await c.query(`UPDATE ${table} SET title=$3,href=$4,updated_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2`,[workspaceId,row.id,item.title,item.href]);
+        if(row.permission!==item.permission){
+          await c.query(`UPDATE ${table} SET title=$3,href=$4,permission=$5,holder_user_id=NULL,step=0,passed_to='[]',passed_at=NULL,
+            email_batch=NULL,email_communication_id=NULL${resetPhones},updated_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2`,
+          [workspaceId,row.id,item.title,item.href,item.permission]);
+        }else if(row.title!==item.title||row.href!==item.href){
+          await c.query(`UPDATE ${table} SET title=$3,href=$4,updated_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2`,[workspaceId,row.id,item.title,item.href]);
+        }
         continue;
       }
       opened++;
@@ -330,7 +356,7 @@ async function inbox(db,workspaceId,actorId){
   if(!rows.length)return [];
   const state=await policy.accountState(db,workspaceId);if(!alone(state))return [];
   const window=await windowHours(db,workspaceId),owner=await currentOwner(db,workspaceId),mine=owner?.id===actorId;
-  return rows.map(r=>({kind:'approval',requiredPermissions:[r.permission],importance:mine?'Urgent':'Important',priority:mine?93:89,
+  return rows.map(r=>({kind:'approval',requiredPermissions:String(r.permission).split(','),importance:mine?'Urgent':'Important',priority:mine?93:89,
     title:(mine?'Nobody answered: ':'Passed to you: ')+r.title.split('. ')[0],
     happened:r.title+(window?' Nobody answered it within '+hours(window)+(mine?', so it is back with you.':', so StockChief passed it to you.'):''),
     why:'The owner asked StockChief to pass alerts and approvals on when nobody answers.',

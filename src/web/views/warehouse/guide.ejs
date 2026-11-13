@@ -1,8 +1,9 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Staff guide · StockChief</title><link rel="stylesheet" href="/app.css"></head><body><main>
-<a href="/warehouse/stock" data-dest="/warehouse/stock">Back to warehouse stock</a><h1>Staff guide</h1>
-<form action="/guide" method="get"><label for="guide-question">How do I…?</label>
-  <input id="guide-question" type="search" name="q" value="<%= query %>" maxlength="200"><button class="btn">Find instructions</button>
-</form>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Staff guide · StockChief</title><link rel="stylesheet" href="/app-system.css"><link rel="stylesheet" href="/app.css"></head><body><main class="rm-canvas rm rm-legacy">
+<p><a href="/warehouse/stock" data-dest="/warehouse/stock">Back to warehouse stock</a></p>
+<div class="page-head"><div class="titles"><h1>Staff guide</h1><p>Instructions for the work you can do here, with a link to where you do it.</p></div></div>
+<section class="card section"><form action="/guide" method="get" class="form-stack"><label class="rm-field" for="guide-question"><span>How do I…?</span>
+  <input id="guide-question" type="search" name="q" value="<%= query %>" maxlength="200"></label><button class="btn">Find instructions</button>
+</form></section>
 <% if(query&&!topics.length){ %><p role="status">No matching instructions for your role. <a href="/guide" data-dest="/guide">Browse the guide</a>.</p><% } %>
-<% for(const t of topics){ %><section><h2><%= t.title %></h2><p><%= t.path %></p><a href="<%= t.href %>" data-dest="<%= t.href %>"><%= t.action %></a></section><% } %>
+<% for(const t of topics){ %><section class="card section"><h2><%= t.title %></h2><p><%= t.path %></p><a class="btn" href="<%= t.href %>" data-dest="<%= t.href %>"><%= t.action %></a></section><% } %>
 </main></body></html>

@@ -350,7 +350,9 @@ function createPostgresCommerceRouter(database,options={}){
       isActive:Boolean(Number(row.is_active))}));
     const buyView=require('../buy-view');
     const view=await buyView.supplierView(database,req.ctx.workspaceId,supplier,orderRows,purchasingPermissions(req),dateToday(req));
-    return res.page('buy/supplier',{title:supplier.name,nav:'purchasing',supplier,items,view,shortDate:buyView.shortDay,pane:['orders','bills'].includes(req.query.tab)?req.query.tab:'products',
+    // Job 211: this supplier's delivery habits.
+    const habits=await require('../../autopilot/partner-habits').panel(database,req.ctx,'supplier',supplier.id);
+    return res.page('buy/supplier',{title:supplier.name,nav:'purchasing',supplier,items,view,habits,shortDate:buyView.shortDay,pane:['orders','bills'].includes(req.query.tab)?req.query.tab:'products',
       ownSectionTabs:true,suppressBack:true,screenGuide:null,
       orders:orderRows.filter((row)=>row.supplier_id===supplier.id).slice(0,10).map(purchaseOrderForView),
       mailboxConnections:mailboxRows.rows,senderRules:senderRows.rows,reliability:null,priceHistory:priceRows.rows,
@@ -729,7 +731,9 @@ function createPostgresCommerceRouter(database,options={}){
     const portalInvoiceReviews=can.matchSupplierFiles&&linkResponses.some(reply=>reply.kind==='invoice')?
       await require('../../purchasing/supplier-portal-invoices').reviews(database,req.ctx.workspaceId,req.params.id):null;
     const dualApproval=can.approve&&page.order.hasCosts?await require('../../purchasing/dual-approval').view(database,req.ctx,req.params.id):null;
-    return res.page('buy/order',{title:`${page.order.poNumber} · ${page.order.supplierName}`,nav:'purchasing',room:false,
+    // Job 39: the import shipment carrying this order, its deposit and balance.
+    const inboundFreight=req.user.role==='owner'?await require('../../purchasing/inbound-freight-arrivals').forOrder(database,req.ctx.workspaceId,req.params.id):[];
+    return res.page('buy/order',{inboundFreight,title:`${page.order.poNumber} · ${page.order.supplierName}`,nav:'purchasing',room:false,
       screenGuide:null,story:null,evidenceTrace:null,order:page.order,receipts:page.receipts,events:page.events,
       charges:page.charges,documentTotalMinor:null,view,shortDate:buyView.shortDay,returnBadge:buyView.returnBadge,
       permissions:can,dualApproval,linkResponses,shipDates,portalInvoiceReviews,communications:page.communications,supplierDocuments:page.supplierDocuments,
@@ -1128,7 +1132,9 @@ function createPostgresCommerceRouter(database,options={}){
       database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId]),
       require('../../sales/customer-commercial-terms').current(database,req.ctx.workspaceId,customer.id),
     ]);
-    return res.page('sales/postgres-customer',{title:customer.name,nav:'sales',customer,
+    // Job 211: this customer's ordering habits.
+    const habits=await require('../../autopilot/partner-habits').panel(database,req.ctx,'customer',customer.id);
+    return res.page('sales/postgres-customer',{title:customer.name,nav:'sales',customer,habits,
       orders:orders.rows,balanceMinor:Number(balance.rows[0].minor),currency:settings.rows[0]?.base_currency||'USD',
       terms,depositInput:terms?.deposit_minor==null?'':require('../../domain/currency').fromMinor(terms.deposit_minor,terms.deposit_currency||settings.rows[0]?.base_currency||'USD'),
       canEditTerms:req.user?.role==='owner'&&customer.record_state==='ACTIVE'});

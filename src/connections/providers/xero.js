@@ -7,9 +7,10 @@ const money=require('../../domain/currency'),crypto=require('node:crypto');
 
 // Xero assigns granular Accounting API scopes to Web apps created from March 2026.
 // StockChief only reads the organisation, chart of accounts and trial balance during
-// shadow reconciliation; posting authority only needs Manual Journals.
+// shadow reconciliation; posting authority needs Manual Journals, and Invoices for
+// the invoices and bills job 184 sends.
 const READ_SCOPES = ['openid','offline_access','accounting.settings.read','accounting.reports.trialbalance.read','accounting.invoices.read'];
-const WRITE_SCOPES = [...READ_SCOPES, 'accounting.manualjournals'];
+const WRITE_SCOPES = [...READ_SCOPES, 'accounting.manualjournals', 'accounting.invoices'];
 const basic = () => Buffer.from(`${config.connections.xero.clientId}:${config.connections.xero.clientSecret}`).toString('base64');
 
 function metadata() {
@@ -139,5 +140,55 @@ async function verifyJournalEntry({credentials,entry,externalId}){
  return {...verifyJournalPayload(entry,remote,organization.body.Organisations?.[0]?.BaseCurrency),externalId:String(externalId),version:remote.UpdatedDateUTC};
 }
 
+// Job 184: customer invoices (ACCREC) and supplier bills (ACCPAY) behind the
+// same interface as QuickBooks. Lines carry StockChief's exact amounts, the
+// mapped account code and tax type, and the tax StockChief recorded; the
+// read-back must show the same total, tax and lines.
+const documentType=d=>d.kind==='invoice'?'ACCREC':'ACCPAY';
+function taxShares(d){
+ const net=d.lines.reduce((sum,l)=>sum+Number(l.amount),0);let given=0;
+ return d.lines.map((l,i)=>{const share=i===d.lines.length-1?Number(d.tax)-given:Math.floor(Number(d.tax)*Number(l.amount)/Math.max(1,net));given+=share;return share;});
+}
+async function postDocument({credentials,document,idempotencyKey}){
+ const shares=taxShares(document);
+ const response=await jsonRequest('https://api.xero.com/api.xro/2.0/Invoices',{method:'POST',headers:{authorization:`Bearer ${credentials.accessToken}`,'xero-tenant-id':credentials.tenantId,
+  accept:'application/json','content-type':'application/json','idempotency-key':crypto.createHash('sha256').update(String(idempotencyKey)).digest('hex')},
+  body:JSON.stringify({Invoices:[{Type:documentType(document),Contact:{ContactID:document.contactExternalId},InvoiceNumber:document.number,
+   ...(document.kind==='invoice'?{Reference:document.reference}:{}),Date:document.issueDate,DueDate:document.dueDate||document.issueDate,
+   CurrencyCode:money.code(document.currency),Status:'AUTHORISED',LineAmountTypes:'Exclusive',
+   LineItems:document.lines.map((l,i)=>({Description:l.description,Quantity:1,UnitAmount:exactDecimal(l.amount,document.currency),AccountCode:l.accountCode,
+    TaxType:document.taxCode,TaxAmount:exactDecimal(shares[i],document.currency)}))}]})});
+ const created=response.body.Invoices?.[0];
+ if(!created?.InvoiceID||created.HasErrors||created.ValidationErrors?.length)throw new ValidationError('Xero did not accept the complete '+document.kind+'.');
+ return {externalId:String(created.InvoiceID),version:created.UpdatedDateUTC||null};
+}
+async function findDocument({credentials,document}){
+ const query=new URLSearchParams({InvoiceNumbers:document.number,ContactIDs:document.contactExternalId,Statuses:'DRAFT,SUBMITTED,AUTHORISED,PAID'});
+ const rows=((await api(credentials,'/Invoices?'+query)).body.Invoices||[]).filter(r=>r.Type===documentType(document)&&String(r.InvoiceNumber)===String(document.number)&&String(r.Contact?.ContactID||'')===String(document.contactExternalId));
+ if(rows.length>1)throw Object.assign(new ValidationError('Xero has more than one '+document.kind+' numbered '+document.number+' for this contact. A person checks them.'),{status:409,definite:true});
+ return rows[0]?{externalId:String(rows[0].InvoiceID),version:rows[0].UpdatedDateUTC||null,reference:rows[0].Reference||null}:null;
+}
+// DateString is the organisation's own calendar date; Date is /Date(ms)/.
+const documentDay=value=>/^\d{4}-\d{2}-\d{2}/.test(String(value||''))?String(value).slice(0,10):journalDate(value);
+function verifyDocumentPayload(document,remote){
+ const currency=money.code(remote.CurrencyCode||document.currency);
+ if(remote.Type!==documentType(document)||String(remote.InvoiceNumber)!==String(document.number)||String(remote.Contact?.ContactID||'')!==String(document.contactExternalId)||
+  documentDay(remote.DateString||remote.Date)!==document.issueDate||currency!==money.code(document.currency)||!['AUTHORISED','PAID'].includes(remote.Status))
+  throw new ValidationError('Xero returned a different type, number, contact, date, currency or status for this '+document.kind+'.');
+ if(money.toMinor(String(remote.Total??'0'),currency)!==Number(document.total)||money.toMinor(String(remote.TotalTax??'0'),currency)!==Number(document.tax))
+  throw new ValidationError('Xero shows a different total or tax for this '+document.kind+'.');
+ const expected=document.lines.map(l=>JSON.stringify([String(l.accountCode),Number(l.amount)])).sort();
+ const actual=(remote.LineItems||[]).map(l=>JSON.stringify([String(l.AccountCode||''),money.toMinor(String(l.LineAmount??'0'),currency,{signed:true})])).sort();
+ if(JSON.stringify(expected)!==JSON.stringify(actual))throw new ValidationError('Xero lines do not match the '+document.kind+' StockChief sent.');
+ return {verified:true,lineCount:actual.length};
+}
+async function verifyDocument({credentials,document,externalId}){
+ if(!externalId)throw new ValidationError('Checking a document needs its Xero identity.');
+ const remote=(await api(credentials,'/Invoices/'+encodeURIComponent(externalId))).body.Invoices?.[0];
+ if(!remote||String(remote.InvoiceID)!==String(externalId))throw new ValidationError('Xero did not return the '+document.kind+' it confirmed.');
+ return {...verifyDocumentPayload(document,remote),externalId:String(remote.InvoiceID),version:remote.UpdatedDateUTC||null};
+}
+
 module.exports = { integrationClass: 'accounting',catalogueCapabilities:Object.freeze(['products','skus','stock','locations']),discover, metadata, authorizationUrl, exchangeAuthorization,
-  refresh, refreshCredentials, verifyReadOnly, readAccountingSnapshot, postJournalEntry,verifyJournalEntry,verifyJournalPayload,exactDecimal,trialBalances };
+  refresh, refreshCredentials, verifyReadOnly, readAccountingSnapshot, postJournalEntry,verifyJournalEntry,verifyJournalPayload,exactDecimal,trialBalances,
+  postDocument,findDocument,verifyDocument,verifyDocumentPayload,taxShares };

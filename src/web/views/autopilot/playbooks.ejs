@@ -1,15 +1,46 @@
-<h1>Playbooks</h1>
-<% if(enabled){ %><form class="card" method="post" action="/autopilot/playbooks"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-<label>Name <input name="name" maxlength="100" required></label><fieldset><legend>Steps</legend>
-<% choices.forEach(c=>{ %><div><label><input type="checkbox" name="steps" value="<%= c.key %>"> <%= c.label %></label>
-  <% if(c.filterLabel){ %><label><%= c.filterLabel %> (optional) <input name="filters[<%= c.key %>]" maxlength="150"></label><% } %></div><% }); %></fieldset>
-<label>Schedule <select name="cadence"><option value="manual">Run manually</option><option value="daily">Every day</option><option value="weekly">Every week</option></select></label>
-<button class="btn btn--primary">Save playbook</button></form><% } else { %><p>Scheduled playbooks are available on Growth, Pro and Custom. <a href="/billing">Review your plan</a></p><% } %>
-<% books.forEach(b=>{ %><section class="card"><h2><%= b.name %></h2>
-<p><%= b.cadence %><% if(b.next_at){ %> · Next run <%= helpers.dateTime(b.next_at) %><% } %></p>
-<% if(enabled){ %><form method="post" action="/autopilot/playbooks/<%= b.id %>/run">
-<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= requestKey %>"><button class="btn">Run now</button></form><% } %>
-<% if(b.result){ %><h3>Results from <%= helpers.dateTime(b.ran_at) %></h3><% b.result.forEach(r=>{ %><h4><%= r.label %></h4><p><%= r.summary %><% if(r.link){ %> <a href="<%= r.link %>">View report</a><% } %></p>
-<% if(r.rows?.length){const fields=Object.keys(r.rows[0]); %><table><thead><tr><% fields.forEach(k=>{ %><th><%= k.replaceAll('_',' ') %></th><% }); %></tr></thead><tbody>
-<% r.rows.forEach(row=>{ %><tr><% fields.forEach(k=>{ %><td><% if(k==='link' && typeof row[k]==='string' && row[k].startsWith('/') && !row[k].startsWith('//')){ %><a href="<%= row[k] %>">Open record</a><% }else{ %><%= row[k] %><% } %></td><% }); %></tr><% }); %></tbody></table><% } %><% }); %><% } %>
-<form method="post" action="/autopilot/playbooks/<%= b.id %>/delete"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Delete playbook</button></form></section><% }); %>
+<header class="rm-head">
+  <h1>Playbooks</h1>
+  <p>A playbook runs your steps in order, by hand or on a schedule. Work steps use each job’s own limits. A run stops and asks you when a step fails or leaves something only a person can do.</p>
+</header>
+<% const statusText={DONE:'Finished',STOPPED:'Stopped and waiting for you',WAITING:'Waiting for you to start it',RUNNING:'Running',HELD:'Held'}; %>
+<section class="rm-panel">
+  <h2>New playbook</h2>
+  <form method="post" action="/autopilot/playbooks" class="rm-form" data-playbook-form>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="rm-field"><span>Name</span><input name="name" maxlength="100" required></label>
+    <fieldset><legend>Work steps</legend>
+      <% const workChoices=choices.filter(c=>c.work); if(!workChoices.length){ %><p class="rm-sub">Work steps you can run on your plan appear here.</p><% } %>
+      <% workChoices.forEach(c=>{ %><label class="checkbox"><input type="checkbox" name="steps" value="<%= c.key %>"><span class="checkbox-text"><%= c.label %></span></label><% }); %>
+    </fieldset>
+    <% const reviewChoices=choices.filter(c=>!c.work); %>
+    <details><summary>Reviews and reports (<%= reviewChoices.length %>)</summary>
+      <% reviewChoices.forEach(c=>{ %>
+        <label class="checkbox"><input type="checkbox" name="steps" value="<%= c.key %>"><span class="checkbox-text"><%= c.label %></span></label>
+        <% if(c.filterLabel){ %><label class="rm-field"><span><%= c.filterLabel %> (optional)</span><input name="filters[<%= c.key %>]" maxlength="150"></label><% } %>
+      <% }); %>
+    </details>
+    <p class="rm-sub">Steps run in the order listed here. Choose at least two.<% if(limit&&limit!==Infinity){ %> Your plan includes <%= limit %> playbooks.<% } %></p>
+    <label class="rm-field"><span>Schedule</span><select name="cadence"><option value="manual">Run by hand</option><option value="daily">Every day</option><option value="weekly">Every week</option></select></label>
+    <button class="rm-button">Save playbook</button>
+  </form>
+</section>
+<% if(!books.length){ %><p>Your saved playbooks will appear here.</p><% } %>
+<% books.forEach(b=>{ %><section class="rm-panel" data-playbook="<%= b.id %>">
+  <h2><%= b.name %></h2>
+  <p><%= {manual:'Runs by hand',daily:'Every day',weekly:'Every week'}[b.cadence] %><% if(b.next_at){ %> · Next run <%= helpers.dateTime(b.next_at) %><% } %></p>
+  <ol><% b.labels.forEach((label,i)=>{ %><li data-playbook-step="<%= i %>"><%= label %><% if(b.run){ %> · <%= i<b.run.nextStep?'done':b.run.open&&i===b.run.nextStep?'next':'' %><% } %></li><% }); %></ol>
+  <% if(b.run){ %>
+    <p data-run-status="<%= b.run.status %>"><strong><%= statusText[b.run.status]||b.run.status %></strong><% if(b.run.at){ %> · <%= helpers.dateTime(b.run.at) %><% } %></p>
+    <% if(b.run.reason){ %><p class="notice notice--warn" data-run-reason><%= b.run.reason %></p><% } %>
+    <% if(b.run.open){ %><form method="post" action="/autopilot/playbooks/runs/<%= b.run.id %>/continue">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn" data-continue-run><%= b.run.status==='WAITING'?'Start this run':'Continue the run' %></button></form><% } %>
+  <% } %>
+  <div class="rm-actions">
+    <form method="post" action="/autopilot/playbooks/<%= b.id %>/run">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= requestKey %>"><button class="rm-btn rm-btn--ghost">Run now</button></form>
+    <form method="post" action="/autopilot/playbooks/<%= b.id %>/delete"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost">Delete playbook</button></form>
+  </div>
+  <% if(b.result){ %><h3>Results</h3><% b.result.forEach(r=>{ %><h4><%= r.label %></h4><p><%= r.summary %><% if(r.link){ %> <a href="<%= r.link %>">Open</a><% } %></p>
+  <% if(r.rows?.length){const fields=Object.keys(r.rows[0]); %><div class="report-table-wrap"><table><thead><tr><% fields.forEach(k=>{ %><th><%= k.replaceAll('_',' ') %></th><% }); %></tr></thead><tbody>
+  <% r.rows.forEach(row=>{ %><tr><% fields.forEach(k=>{ %><td><% if(k==='link' && typeof row[k]==='string' && row[k].startsWith('/') && !row[k].startsWith('//')){ %><a href="<%= row[k] %>">Open record</a><% }else{ %><%= row[k] %><% } %></td><% }); %></tr><% }); %></tbody></table></div><% } %><% }); %><% } %>
+</section><% }); %>

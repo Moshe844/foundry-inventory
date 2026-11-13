@@ -224,8 +224,19 @@ async function fetchMessage({ credentials, messageId }) {
 }
 
 async function send({ credentials, message: outgoing }) {
-  const raw = require('./photo-attachments').mime(outgoing) || [`To: ${outgoing.recipient}`, `Subject: ${outgoing.subject}`,
-    ...(outgoing.id ? [`X-StockChief-Message: ${outgoing.id}`] : []), 'Content-Type: text/plain; charset="UTF-8"',
+  const safeId = /^<[^\s<>@]+@[^\s<>@]+>$/;
+  const threadHeaders = [];
+  for (const value of [outgoing.recipient, outgoing.subject, outgoing.id || '']) {
+    if (/[\r\n]/.test(String(value))) throw new ValidationError('Email headers must stay on one line.');
+  }
+  if (outgoing.externalThreadId && safeId.test(outgoing.inReplyTo) && outgoing.inReplyTo.length <= 512) {
+    threadHeaders.push(`In-Reply-To: ${outgoing.inReplyTo}`, `References: ${outgoing.inReplyTo}`);
+  }
+  const subject = /[^\x20-\x7e]/.test(outgoing.subject)
+    ? '=?UTF-8?B?' + Buffer.from(outgoing.subject).toString('base64') + '?='
+    : outgoing.subject;
+  const raw = require('./photo-attachments').mime(outgoing, threadHeaders) || [`To: ${outgoing.recipient}`, `Subject: ${subject}`,
+    ...(outgoing.id ? [`X-StockChief-Message: ${outgoing.id}`] : []), ...threadHeaders, 'Content-Type: text/plain; charset="UTF-8"',
     '', outgoing.body].join('\r\n');
   const encoded = Buffer.from(raw).toString('base64url');
   const result = (await api(credentials, '/gmail/v1/users/me/messages/send', { method: 'POST',

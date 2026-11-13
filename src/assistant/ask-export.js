@@ -34,7 +34,14 @@ async function send(res,format,result){
  if(!result.rows.length)throw new NotFoundError('That answer has no table to download.');
  let output;
  try{output=await reportExports[format](result);}
- catch(error){if(/PDF export/.test(String(error.message)))throw new ValidationError(error.message);throw error;}
+ catch(error){
+  if(error.code==='report_pdf_missing_glyph'){
+   res.set('Cache-Control','private, no-store');
+   return res.render('attention/ask-print',{result});
+  }
+  if(/PDF export/.test(String(error.message)))throw new ValidationError(error.message);
+  throw error;
+ }
  res.set('Content-Type',TYPES[format]);
  res.set('Content-Disposition',`attachment; filename="${fileName(result.config.title)}.${format}"`);
  res.set('Cache-Control','private, no-store');
@@ -86,7 +93,24 @@ function goal(found,index,fullAnswer=false,format){
  if(!table)throw new NotFoundError('That answer has no table to download.');
  return fromTable(table,found.original_request);
 }
-// Look up the answered requests shown in this chat in one query.
+// Job 160: a document the agent wrote for an answer (a draft, a plan, a list)
+// downloads like any answer: its tables in columns for a spreadsheet, its
+// words in a PDF.
+function work(product,format){
+ if(!product||typeof product.content!=='string')throw new NotFoundError('That work product is not available.');
+ const title=String(product.title||'StockChief work').slice(0,120),inText=SHEET.has(format)?tables(product.content):[];
+ if(inText.length)return inText.length===1?fromTable(inText[0],title):stacked(inText,title);
+ const text=written(product.content);return {...text,config:{title},sourceLabel:title};
+}
+// A whole conversation: each question and answer in order, long answers split
+// between words so no cell or PDF row cuts one short.
+function conversation(turns,publicText=text=>text){
+ if(!Array.isArray(turns)||!turns.length)throw new NotFoundError('That conversation has nothing to download.');
+ const lines=(who,text)=>String(text).split(/\r?\n/).flatMap(line=>wrap(line)).map((line,index)=>[index?'':who,line]);
+ const rows=turns.flatMap(turn=>[...lines('You',turn.message||''),...lines('StockChief',publicText(turn.answer||'(no answer recorded)'))]);
+ return {...shape({title:'StockChief conversation',columns:['who','said'],labels:{who:'Who',said:'Said'},rows}),sourceLabel:'StockChief conversation'};
+}
+// Look up completed answers shown in this chat in one query.
 async function keepable(database,ctx,ids){
  const wanted=[...new Set(ids.filter(id=>typeof id==='string'))];
  if(!wanted.length)return [];
@@ -95,4 +119,4 @@ async function keepable(database,ctx,ids){
    AND status='ANSWERED' AND btrim(answer)<>'' AND intent->>'intent' IS DISTINCT FROM 'navigation'`,[ctx.workspaceId,ctx.actorId,wanted])).rows;
  return rows.map(row=>row.id);
 }
-module.exports={TYPES,tables,send,interaction,goal,keepable};
+module.exports={TYPES,tables,send,interaction,goal,work,conversation,keepable};

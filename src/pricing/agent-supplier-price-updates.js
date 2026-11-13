@@ -196,6 +196,8 @@ async function write(c,ctx,row,link,value,{automatic,rule=null}){
       decided_at=excluded.decided_at,reason=NULL,would_apply=false,checked_at=clock_timestamp()`,
   [row.workspace_id,row.source_id,row.ordinal,link.id,value.currency,value.previous,value.amount,automatic,ctx.actorId,
     rule?.revision??null,value.reviewHash,costId,after.updated_at]);
+  // Job 201: a cost StockChief changed on its own counts toward its usual day.
+  if(automatic)await require('../autopilot/circuit-breaker').note(c,ctx.workspaceId,{key:'supplier-price:'+row.source_id+':'+row.ordinal+':'+value.reviewHash,kind:'price',reference:row.filename});
   await audit.record(c,ctx,{action:automatic?'Supplier cost updated on its own from a price list':'Supplier cost updated from a price list',
     reference:row.source_id,before:{unitCost:money.format(value.previous,value.currency)},
     after:{unitCost:money.format(value.amount,value.currency),supplierItemId:link.id,sku:row.sku_code,ordinal:row.ordinal,automatic,

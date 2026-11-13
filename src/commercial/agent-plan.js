@@ -204,6 +204,8 @@ const actionJobs=new Map([
   ['report.roi',161],
   ['report.stock_health',162],
   ['report.service_levels',163],
+  ['report.supplier_review_pack',164],
+  ['report.year_end_pack',165],
   ['channel.price_check',87],
   ['inventory.correct_bin',11],
   ['customer_return.from_email',111],
@@ -230,19 +232,19 @@ const actionJobs=new Map([
   ['catalog.clearance_plan',86],
   ['inventory.slow_stock_step',9],
   ['inventory.expiry_warning',191],
-  ['alert.low_stock',166],['alert.watch_rule',167],['alert.overdue',168],['alert.channel',169],['alert.cost_margin',170],['alert.unusual_activity',171],['alert.escalation',172],['alert.send',173],['approval.link',175],
+  ['alert.low_stock',166],['alert.watch_rule',167],['alert.overdue',168],['alert.channel',169],['alert.cost_margin',170],['alert.unusual_activity',171],['alert.escalation',172],['alert.send',173],['approval.link',175],['report.team_summary',180],['report.work_digest',204],
   ['report.compliance',197],
   ['inventory.write_down_aged',17],
   ['manufacturing.create_work_order',14],['manufacturing.start',14],['manufacturing.complete',14],
   ['sales_order.reserve_all',12],['inventory.protect_stock',12],['sales_order.reserve_arrived',48],['sales_order.notify_stock_ready',50],['sales_order.repeat',53],['sales_order.allocation_priority',65],['sales_order.allocate_backorders',64],['sales_order.share_scarce_stock',65],['sales_order.route_warehouse',121],['sales_order.split_partial',61],['sales_order.check',54],['sales_order.credit_hold',55],
   ['landed_cost.apply',49],['warehouse.prepare_putaway',47],['warehouse.release_orders',56],['warehouse.wave.create',57],['warehouse.wave.scan',57],['warehouse.wave.pack',57],['warehouse.wave.shortage',57],['warehouse.wave.refresh',57],
-  ['approval.route',176],['approval.group',174],
+  ['approval.route',176],['approval.group',174],['approval.vacation',202],['alert.circuit_breaker',201],
   ['customer_return.refund',107],['customer_return.credit_receipt',107],['customer_credit.prepare',107],['shipping.return_parcel',112],['customer_return.inspect',113],
   ['customer_return.receive',114],['customer_return.restock',114],['supplier_return.request',115],['supplier_return.authorize',115],['supplier_return.ship',115],['supplier_return.reconcile',115],
   ['inventory.transfer',118],['transfer.approve',118],['transfer.prepare_balance',118],['shipping.label',59],['shipping.batch_purchase',59],['shipping.address_check',69],['shipping.choose_rate',58],['shipping.parcel_watch',62],
   ['shipping.carrier_claim',63],['shipping.freight_pickup',66],['shipping.plan_van_routes',71],['purchasing.track_inbound_freight',39],['agent.answer_slack',188],
   ['purchase_order.record_supplier_invoice',98],['supplier_invoice.recheck',98],['supplier_invoice.dispute',100],['supplier_credit.apply_note',105],
-  ['connection.accounting_export',184],['report.template.create',154],['report.template.schedule',155],['report.template.resume',155],['report.template.send_now',155]
+  ['connection.accounting_export',184],['edi.import_order',185],['edi.confirm_order',185],['edi.send_document',185],['fulfillment.send_to_3pl',186],['fulfillment.record_3pl_shipment',186],['report.template.create',154],['report.template.schedule',155],['report.template.resume',155],['report.template.send_now',155],['report.email',155],['report.briefing',156]
 ]);
 function actionJob(name,operation,payload) {
   if(name?.startsWith('document.file_to_'))return require('../documents/agent-filing').job(payload?.documentKind);

@@ -96,6 +96,10 @@ async function ordersList(database, workspaceId, result, query = {}) {
   const requested = String(query.status || LEGACY_VIEWS[query.view] || 'all');
   const tab = TABS.includes(requested) || requested === 'open' ? requested : 'all';
   const q = String(query.q || '').trim().slice(0, 120);
+  // Orders placed between two dates, counted as Ask counts them (job 153):
+  // by order date, leaving out drafts and cancelled orders.
+  const day = (value) => (/^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? String(value) : null);
+  const placed = day(query.from) || day(query.to) ? { from: day(query.from), to: day(query.to) } : null;
   const invoicedRows = (await database.query(`SELECT DISTINCT sales_order_id FROM accounting_customer_invoices
     WHERE workspace_id=$1 AND sales_order_id IS NOT NULL AND status<>'VOID'`, [workspaceId])).rows;
   const invoiced = new Set(invoicedRows.map((row) => row.sales_order_id));
@@ -108,7 +112,7 @@ async function ordersList(database, workspaceId, result, query = {}) {
   const all = result.orders.map((order) => {
     const tabKey = bucket(order);
     return {
-      id: order.id, number: order.order_number, status: order.status, tab: tabKey,
+      id: order.id, number: order.order_number, status: order.status, tab: tabKey, placedOn: order.order_date ? isoDay(order.order_date) : null,
       customer: order.customer.name, initials: initials(order.customer.name),
       date: shortDay(order.order_date || order.created_at), day: isoDay(order.order_date || order.created_at),
       totalMinor: Number(order.pricing.totalMinor || 0), balanceMinor: Number(order.balance_minor || 0),
@@ -121,7 +125,8 @@ async function ordersList(database, workspaceId, result, query = {}) {
 
   const matches = q ? await matchingOrderIds(database, workspaceId, q) : null;
   const OPEN = ['CONFIRMED', 'BACKORDERED', 'PARTIALLY_FULFILLED'];
-  const filtered = all.filter((row) => (tab === 'all' || row.tab === tab || (tab === 'open' && OPEN.includes(row.status))) && (!matches || matches.has(row.id)));
+  const filtered = all.filter((row) => (tab === 'all' || row.tab === tab || (tab === 'open' && OPEN.includes(row.status))) && (!matches || matches.has(row.id))
+    && (!placed || (row.placedOn && !['DRAFT', 'CANCELLED'].includes(row.status) && (!placed.from || row.placedOn >= placed.from) && (!placed.to || row.placedOn <= placed.to))));
   const size = query.pageSize || PAGE_SIZE;
   const pages = Math.max(1, Math.ceil(filtered.length / size));
   const page = Math.min(pages, Math.max(1, Number.parseInt(query.page, 10) || 1));
@@ -138,7 +143,7 @@ async function ordersList(database, workspaceId, result, query = {}) {
   };
   // The same sales, one bar per day of the month, as on Home.
   kpis.month.days = await require('../accounting/posted-sales').monthByDay(database, workspaceId, kpis.month);
-  return { tab, q, counts, rows, page, pages, shown: rows.length, matching: filtered.length, kpis,
+  return { tab, q, placed, counts, rows, page, pages, shown: rows.length, matching: filtered.length, kpis,
     currency: (result.orders[0] && result.orders[0].currency) || 'USD' };
 }
 

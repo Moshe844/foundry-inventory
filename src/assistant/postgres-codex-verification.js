@@ -1,6 +1,20 @@
 'use strict';
 const {createHash}=require('node:crypto');
 const {isDeepStrictEqual:equal}=require('node:util');
+const links=require('./answer-sources');
+
+function citedSources(cited,catalogue){
+ const lists=[];
+ for(const {claim,entry} of cited){
+  if(entry?.name!=='business_operations'||typeof entry.text!=='string')continue;
+  let observation;
+  try{observation=JSON.parse(entry.text);}catch{continue;}
+  const index=/^\/outcomes\/(0|[1-9]\d*)(?:\/|$)/.exec(claim.path||'');
+  const outcome=index&&observation?.outcomes?.[Number(index[1])];
+  if(outcome?.result?.status==='ANSWERED'&&catalogue?.get?.(outcome.capability)?.kind==='read')lists.push(links.collect(outcome.result));
+ }
+ return links.merge(...lists);
+}
  const unavailable=(answer,code,detail={})=>({verified:false,answer,report:{version:1,status:'blocked',answer},verificationFailure:code,verificationDetail:detail});
 // Models identify claims; the host checks their values against durable evidence
 // and canonical PostgreSQL effects. A model's success flag alone is insufficient.
@@ -29,12 +43,14 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   const journal=Array.isArray(evidence.entries)?evidence.entries:Object.values(evidence.entries||{});
   return [...entries,...journal].find(e=>e?.id===id||e?.evidenceId===id)||observed.find(e=>e?._stockchiefEvidence?.evidenceId===id);
  }
- const verified=[],answerSources=new Set(),fresh=new Map(),sourceCache=new Map(),sourceMetadataCache=new Map();
+ const verified=[],answerSources=new Map(),fresh=new Map(),sourceCache=new Map(),sourceMetadataCache=new Map();
  const {localPath}=require('./agent-navigation-path');
  const {transferable}=require('../../scripts/environment-agent-demo/browser-link-evidence');
- function source(value){
+ function source(value,metadata={}){
   const href=localPath(value);
-  if(answerSources.size<12&&href&&transferable(href))answerSources.add(href);
+  if(answerSources.size<12&&href&&transferable(href)&&!answerSources.has(href)){
+   answerSources.set(href,{href,kind:metadata.kind||'record',label:metadata.label||'Source record'});
+  }
  }
  async function currentEvidence(entry,path){
   const match=entry.name==='business_operations'&&/^\/outcomes\/(0|[1-9]\d*)(?:\/|$)/.exec(path);
@@ -123,10 +139,9 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
     const before=match[2]?presentation.locate(original,match[0]).value:null;
     const requested=Array.isArray(before)?before:[before],currentRows=Array.isArray(currentResult[match[2]])?currentResult[match[2]]:[];
     const ids=new Set(requested.filter(row=>row?.id!=null).map(row=>row.id));
-    for(const row of currentRows)if(ids.has(row?.id))source(row.href);
-    if(!ids.size&&match[3]!==undefined&&before?.href===currentRows[Number(match[3])]?.href)source(before?.href);
-    if(Array.isArray(currentResult.sources))for(const item of currentResult.sources)source(item?.href);
-    source(currentResult.handoff?.href);
+    const authorizedRows=currentRows.filter((row,index)=>ids.has(row?.id)||
+      (!ids.size&&match[3]!==undefined&&index===Number(match[3])&&before?.href===row?.href));
+    for(const item of links.collect({...currentResult,rows:authorizedRows}))source(item.href,item);
    }
   }else if(claim.historical!==true&&entry.name==='environment_browser'){
    const current=await currentEvidence(entry,claim.path),screen=current.screen||current;
@@ -176,7 +191,7 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
    evidenceId:entry.id,evidenceHash:entry.sha256};
  }
  return {verified:true,answer:report.answer,receipt,claims:verified,verificationScope:'referenced_claims_and_canonical_effects',navigation,
-  answerSources:[...answerSources],delivery:require('./agent-delivery').create(report)};
+  answerSources:[...answerSources.values()],delivery:require('./agent-delivery').create(report)};
 }
 const instructions=`\nFor a completed result, use the native final-output schema with outcome "answer" or "navigation", the usable answer, and its supporting claims. The host alone verifies completion.
 The browser tool controls a private inspection browser, NOT the user's website. When the user asks to open a page, use outcome "navigation" and navigation: {evidenceId,path:"/url"} referencing an actual successful applicationPage observation (use /screen/url if wrapped). The host will deliver that page to the user's browser and verify its arrival without another model call. Do not claim it has already opened for the user. Do not return outcome "answer" to fulfill a navigation request. For questions or completed business changes that do not request moving the user's browser, use outcome "answer".
@@ -226,4 +241,4 @@ async function verifyFinal(database,ctx,goal,raw,catalogue,options={}){
  if(scope.required&&!scope.verified)return {...unavailable('I could not verify that these findings answer the complete request. Your goal and collected evidence are saved.',scope.code,{reason:scope.reason}),receipt:result.receipt};
  return {...result,answerScopeReview:scope.required?'governed_semantic_review':'canonical_or_navigation_lifecycle'};
 }
-module.exports={verify,verifyFinal,instructions,needsBrowser};
+module.exports={verify,verifyFinal,instructions,needsBrowser,citedSources};

@@ -152,7 +152,9 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
       title:'Review standing instruction',nav:'settings',room:true,
       backTo:proposal.sopSource?{href:'/autopilot/procedure-originals/'+proposal.sopSource.sourceId,label:'Procedure original'}:
         fromAsk?{href:'/ask#latest',label:'Ask StockChief'}:{href:'/what-you-told-me',label:"What you've told me"},
-      fromAsk,proposal,nativeGoal,notificationLog,editProposal:req.query.edit==='1',descriptions:proposal.resolvedChanges.map(operatingInstructions.describe),usageKey:newId('instructionusage')});}));
+      fromAsk,proposal,nativeGoal,notificationLog,editProposal:req.query.edit==='1',
+      // Job 210: a new rule is replayed on past records before it is switched on.
+      ruleTest:proposal.status==='PENDING'&&!proposal.questions.length&&!proposal.sopSource?await require('../../autopilot/rule-rehearsal').instruction(database,req.ctx,proposal):null,descriptions:proposal.resolvedChanges.map(operatingInstructions.describe),usageKey:newId('instructionusage')});}));
   router.post('/operating-instructions/:id/answer',requireOwner,asyncRoute(async(req,res)=>{
     const native=await require('../../assistant/postgres-native-proposal').find(database,req.ctx,req.params.id);
     if(native){req.flash('success','Continue this instruction in Ask so its original goal and approvals stay together.');return res.redirect(303,'/ask?goal='+encodeURIComponent(native.id)+'#focused-goal');}
@@ -163,18 +165,28 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     req.flash('success','The same instruction was read again with your answer.');
     return res.redirect(303,`/operating-instructions/${replacement.id}${req.body.fromAsk==='1'?'?from=ask':''}`);}));
   router.post('/operating-instructions/:id/approve',requireOwner,asyncRoute(async(req,res)=>{
+    // Job 210: the past-data test the owner saw is kept with the switch-on.
+    const pending=await operatingInstructions.get(database,req.ctx.workspaceId,req.params.id);
+    if(pending.status==='PENDING'&&pending.integrityHash===req.body.integrityHash){
+      const rehearsal=require('../../autopilot/rule-rehearsal'),tested=await rehearsal.instruction(database,req.ctx,pending);
+      if(tested)await require('../../operations/postgres-security-audit').record(database,req.ctx,{action:'Rule tested on past data before it was switched on',reference:pending.id,after:rehearsal.snapshot(tested)});
+    }
     const native=await require('../../assistant/postgres-native-proposal').decide(database,req.ctx,req.params.id,req.body.integrityHash,true,`Authenticated rule review by ${req.ctx.actorId}`);
     if(native){req.flash('success','Approved. StockChief is checking the rule and continuing your request.');return res.redirect(303,'/ask?goal='+encodeURIComponent(native.goalId)+'#focused-goal');}
     const result=await operatingInstructions.approve(
-    database,req.ctx,req.params.id,req.body.integrityHash);req.flash('success',result.replayed?'That rule was already in force.':
+    database,req.ctx,req.params.id,req.body.integrityHash);
+    if(result.sopSource)await require('../../documents/agent-sop-sources').syncProposal(database,req.ctx,result);
+    req.flash('success',result.replayed?'That rule was already in force.':
       'Standing rule approved. Its exact settings and authority limits are now in force.');
     return res.redirect(303,req.body.fromAsk==='1'?'/ask#latest':`/operating-instructions/${req.params.id}`);}));
   router.post('/operating-instructions/:id/cancel',requireOwner,asyncRoute(async(req,res)=>{
     const native=await require('../../assistant/postgres-native-proposal').find(database,req.ctx,req.params.id);
     if(native){const proposal=await operatingInstructions.get(database,req.ctx.workspaceId,req.params.id);await require('../../assistant/postgres-native-proposal').decide(database,req.ctx,req.params.id,proposal.integrityHash,false,`Authenticated rule rejection by ${req.ctx.actorId}`);
       req.flash('success','The prepared rule was rejected.');return res.redirect(303,'/ask?goal='+encodeURIComponent(native.id)+'#focused-goal');}
-    await operatingInstructions.cancel(
-    database,req.ctx,req.params.id);req.flash('success','Discarded. That standing rule never took effect.');
+    const discarded=await operatingInstructions.cancel(
+    database,req.ctx,req.params.id);
+    if(discarded.sopSource)await require('../../documents/agent-sop-sources').syncProposal(database,req.ctx,discarded);
+    req.flash('success','Discarded. That standing rule never took effect.');
     return res.redirect(303,req.body.fromAsk==='1'?'/ask#latest':'/what-you-told-me');}));
   router.post('/settings/workspace',requireOwner,asyncRoute(async(req,res)=>{const name=String(req.body.name||'').trim();
     if(!name||name.length>120)throw new ValidationError('Inventory name must be between 1 and 120 characters.');

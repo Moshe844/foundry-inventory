@@ -36,7 +36,8 @@
     <form method="post" action="<%= base %>/push" data-push-subscribe data-key="<%= d.publicKey %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <input type="hidden" name="endpoint"><input type="hidden" name="p256dh"><input type="hidden" name="auth">
       <button class="btn btn--primary" type="submit">Turn on push on this device</button></form>
-    <p class="hint" data-push-status>Your browser asks whether to allow notifications. On an iPhone, push works only once StockChief is added to the Home Screen, so use text messages there.</p>
+    <p class="hint" data-ios-push-help hidden>On iPhone or iPad, open Share, choose Add to Home Screen, then open StockChief from the new icon. Return to Your phone and devices to turn on push.</p>
+    <p class="hint" data-push-status role="status">Your device asks whether to allow notifications.</p>
   <% } %>
 </section>
 <% if(d.isOwner&&d.kinds.length){ %>

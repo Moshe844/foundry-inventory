@@ -1,0 +1,32 @@
+<% const s=screen; %>
+<div class="page-head"><div class="titles"><h1>Stop asking about what you always approve</h1>
+<p>When you approve the same routine <%= s.run %> times in a row without changing it, StockChief offers to do it alone. You confirm once, and it becomes a taught rule inside your limits. It never offers anything that always needs a person, and it never raises a limit.</p></div></div>
+
+<% if(s.shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It can offer to stop asking after <%= helpers.dateTime(s.shadowEndsAt) %>.</p><% }else if(s.watching){ %><p class="notice notice--info" data-learning-watching>StockChief is set to Watch only, so it keeps asking about everything. Change this in <a href="/autopilot">StockChief AI</a>.</p><% }else if(s.routineOff){ %><p class="notice notice--info" data-learning-routine-off>Routine work is off or paused, so StockChief still asks about everything. Taught routines start once you switch routine work on in <a href="/autopilot">StockChief AI</a>.</p><% } %>
+
+<section class="card section" id="offers"><h2>Routines you always approve</h2>
+<% if(!s.offers.length){ %><p class="cell-sub" data-learning-empty>Nothing to offer yet. A routine appears here after <%= s.run %> approvals in a row in the same scope, within the last <%= s.days %> days.</p><% } %>
+<% s.offers.forEach(function(o){ %>
+<article class="section" id="<%= o.anchor %>" data-learning-offer>
+  <h3><%= o.label %></h3>
+  <p>You approved this <%= o.run %> times in a row since <%= o.first %>, without a change.<% if(o.runMaximum){ %> The largest was <%= o.runMaximum %>.<% } %></p>
+  <p><strong>The rule:</strong> do this alone, <%= o.limit %>.<% if(o.capped){ %> That is <%= o.capped %>, which is lower than the largest you approved.<% } %> Anything above it, or outside this scope, still comes to you. The rule counts toward your plan’s rules, and you can stop it where you approved these.</p>
+  <h4>What it would have done</h4>
+  <%- include('rule-test',{test:o.test}) %>
+  <div class="form-actions">
+    <form method="post" action="/autopilot/learning/approvals/confirm"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="latestId" value="<%= o.latestId %>"><input type="hidden" name="maximum" value="<%= o.token %>"><input type="hidden" name="source" value="<%= o.source %>">
+      <button class="btn btn--primary">Stop asking me</button></form>
+    <form method="post" action="/autopilot/learning/approvals/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="latestId" value="<%= o.latestId %>"><input type="hidden" name="source" value="<%= o.source %>"><button class="btn btn--ghost">Keep asking me</button></form>
+    <a class="btn btn--ghost" href="<%= o.example %>">See the latest approval</a>
+  </div>
+</article>
+<% }) %>
+</section>
+
+<section class="card section" id="learned"><h2>What it already does alone</h2>
+<% if(!s.learned.length){ %><p class="cell-sub">No taught routines yet.</p><% }else{ %>
+<ul class="rm-list"><% s.learned.forEach(function(r){ %><li class="list-row"><span><strong><%= r.label %></strong></span><span class="badge badge--ok"><%= r.limit %></span></li><% }) %></ul>
+<p class="cell-sub">Change or stop a routine from one of its approvals, or set a whole job to Ask me first in <a href="/autopilot/job-modes">Authority by job</a>.</p><% } %>
+</section>

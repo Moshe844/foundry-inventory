@@ -1,0 +1,41 @@
+<% const base='/autopilot/reviews/quarterly-supplier-pack',stamp=v=>helpers.dateTime(v); %>
+<div class="page-head"><div class="titles"><h1>Supplier review packs</h1>
+<p>After each quarter StockChief prepares a review for every supplier you ordered from: each order line, what arrived by the quarter end, whether it arrived in full by the promised date, and the fill rate. It keeps the PDF and sends it to the supplier from your mailbox. Only that supplier’s own orders are in their pack.</p></div></div>
+
+<% if(paused){ %><p class="notice notice--warn">StockChief is paused. It prepares and sends nothing until you resume it.</p>
+<% }else if(shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It prepares and keeps the packs, and sends nothing.</p>
+<% }else if(who.mode==='watch'){ %><p class="notice notice--info"><%= who.reason %> It keeps the packs and sends nothing.</p>
+<% }else if(who.mode==='ask'){ %><p class="notice notice--info">StockChief keeps each pack ready. You press send. <a href="/autopilot/job-modes">Change this job’s mode</a></p>
+<% }else{ %><p class="notice notice--ok">StockChief sends each pack on its own once it is ready.</p><% } %>
+<% if(sender.problem){ %><p class="notice notice--warn"><%= sender.reason %></p><% } %>
+
+<section class="card section" id="packs"><h2><%= span.label %> · <%= span.start %> to <%= span.end %></h2>
+<% if(periods.length>1){ %><form method="get" action="<%= base %>" class="form-stack">
+<label class="rm-field"><span>Quarter</span><select name="period" aria-label="Quarter"><% periods.forEach(p=>{ %><option value="<%= p %>" <%= p===period?'selected':'' %>><%= p %></option><% }) %></select></label>
+<button class="btn">Show quarter</button></form><% } %>
+<% if(!packs.length){ %><p class="cell-sub"><%= period===current.closing?'No packs yet for this quarter. StockChief prepares them on its own after the quarter ends.':'No packs were kept for this quarter.' %></p><% }else{ %>
+<ul class="rm-list"><% packs.forEach(p=>{ const t=p.summary.totals||[]; %><li class="list-row"><span><strong><%= p.supplier_name %></strong> <span class="badge badge--<%= p.view.tone %>"><%= p.view.label %></span>
+<small><%= t.map(x=>x.currency+' · '+x.orders+' order'+(x.orders===1?'':'s')+(x.fillRate===null?'':' · '+x.fillRate+'% filled')+(x.onTimeRate===null?'':' · '+x.onTimeRate+'% on time in full')).join(' · ') %></small>
+<% if(p.view.detail){ %><small><%= p.view.detail %><%= p.queued_at&&p.status==='QUEUED'?' · '+stamp(p.queued_at):'' %></small><% } %></span>
+<span class="sc-row-actions"><a class="btn btn--ghost btn--sm" href="<%= base %>/packs/<%= p.id %>">Download</a>
+<% if((p.view.send||p.view.retry)&&!paused&&who.mode!=='watch'){ %><form method="post" action="<%= base %>/packs/<%= p.id %>/send"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="fingerprint" value="<%= p.fingerprint %>"><button class="btn btn--primary btn--sm"><%= p.view.retry?'Send again':'Send' %></button></form><% } %></span></li><% }) %></ul>
+<% } %>
+<% if(waiting>1&&!paused&&who.mode!=='watch'){ %><form method="post" action="<%= base %>/send-all"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="period" value="<%= period %>"><button class="btn btn--primary">Send all <%= waiting %> ready packs</button></form><% } %>
+<% if(period===current.closing&&!paused){ %><form method="post" action="<%= base %>/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost">Prepare this quarter’s packs now</button></form><% } %>
+</section>
+
+<section class="card section" id="pack-mailbox"><h2>Sending mailbox</h2>
+<% if(!sender.boxes.length){ %><p class="cell-sub">No mailbox is connected. <a href="/connections">Connect your mailbox</a></p>
+<% }else{ %><p class="cell-sub"><%= sender.box?'Packs are sent from '+(sender.box.display_name||sender.box.provider_account_name)+'.':'Choose the mailbox packs are sent from.' %></p>
+<% if(sender.boxes.length>1||!sender.box){ %><form method="post" action="<%= base %>/mailbox" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= setting?.revision||0 %>">
+<label class="rm-field"><span>Mailbox</span><select name="connectorId" aria-label="Mailbox"><% sender.boxes.forEach(b=>{ %><option value="<%= b.id %>" <%= sender.box&&sender.box.id===b.id?'selected':'' %>><%= b.display_name||b.provider_account_name %></option><% }) %></select></label>
+<button class="btn btn--primary">Save mailbox</button></form><% } %><% } %>
+<p class="cell-sub">Each supplier’s pack goes to the email on their supplier record. A supplier with no email waits in Needs you.</p>
+</section>
+
+<section class="card section"><h2>One supplier’s pack for <%= lookupSpan.label %></h2>
+<form method="get" action="<%= lookup %>" class="form-stack">
+<label class="rm-field"><span>Exact supplier name or ID</span><input name="filter" value="<%= filter %>" maxlength="150" required></label>
+<label class="rm-field"><span>Completed quarter</span><input name="quarter" value="<%= quarter %>" pattern="[0-9]{4}-Q[1-4]" maxlength="7" required></label>
+<button class="btn">Download PDF</button></form>
+</section>

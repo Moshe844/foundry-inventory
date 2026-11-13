@@ -13,6 +13,11 @@ const locations=new Set(['airport','carrier_terminal','commercial','construction
 const accessorials=['liftgate_pickup','liftgate_delivery','inside_pickup','inside_delivery','residential_pickup','residential_delivery',
   'construction_site_pickup','construction_site_delivery','appointment_delivery','notify_before_delivery','hold_at_terminal',
   'sort_and_segregate','protection_from_cold','protection_from_heat','grocery_consolidation_pickup','grocery_consolidation_delivery'];
+// Standard LTL handling units: a pallet up to 96 inches on each side and
+// 2,500 pounds, and up to 15,000 pounds a shipment. Anything larger is
+// oversized freight: a person confirms the carrier takes it, and a routine
+// never books it.
+const limits={sideInches:96,palletPounds:2500,shipmentPounds:15000};
 const time=/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/;
 const calendar=/^\d{4}-\d{2}-\d{2}$/;
 const iso=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -44,6 +49,18 @@ function address(input){
   return contact;
 }
 
+// Which pallet groups are over the standard limits, in plain words, or null.
+function oversize(handling){
+  const over=[];let total=0;
+  for(const [index,unit] of handling.entries()){
+    const pounds=unit.commodities.reduce((sum,commodity)=>sum+commodity.weight,0);total+=pounds*unit.quantity;
+    if([unit.length,unit.width,unit.height].some(side=>side>limits.sideInches)||pounds>limits.palletPounds)over.push(index+1);
+  }
+  if(over.length)return 'Pallet group '+over.join(', ')+' is over the standard LTL limit of '+limits.sideInches+
+    ' inches a side and '+limits.palletPounds.toLocaleString('en-US')+' pounds a pallet.';
+  return total>limits.shipmentPounds?'This freight is over the standard LTL limit of '+limits.shipmentPounds.toLocaleString('en-US')+' pounds.':null;
+}
+
 function handlingUnits(rows){
   if(!Array.isArray(rows)||!rows.length||rows.length>40)throw new ValidationError('Record one to 40 pallet groups from the packed freight.');
   return rows.map(row=>{
@@ -63,7 +80,8 @@ function handlingUnits(rows){
 }
 
 function build(input){
-  if(input?.confirmed!=='yes'||input.nonHazardous!=='yes')throw new ValidationError('Confirm the measured freight and that this shipment is non-hazardous.');
+  if(input?.confirmed!=='yes')throw new ValidationError('Confirm the measured freight and that this shipment is non-hazardous.');
+  if(input.nonHazardous!=='yes')throw new ValidationError('Confirm this shipment is non-hazardous. Hazardous freight always needs a person to book it directly with the carrier.');
   if(!identifier.test(input.accountId))throw new ValidationError('Choose an active freight account from your ShipStation API connection.');
   const date=String(input.pickupDate||''),dateTime=new Date(date+'T00:00:00Z');
   if(!calendar.test(date)||!Number.isFinite(dateTime.getTime())||dateTime.toISOString().slice(0,10)!==date||
@@ -73,7 +91,11 @@ function build(input){
   if(!Array.isArray(extras)||extras.some(extra=>!accessorials.includes(extra)))throw new ValidationError('Choose only supported pickup or delivery services.');
   const shipFrom=address(input.from),shipTo=address(input.to);
   const pickup={pickup_date:date,ready_time:input.readyTime,close_time:input.closeTime,is_self_scheduled:false,location_type:shipFrom.location_type};
-  return {accountId:input.accountId,shipFrom,shipTo,pickup,handling:handlingUnits(input.pallets),
+  const handling=handlingUnits(input.pallets),over=oversize(handling);
+  // Over the standard limits it stops and asks: a person checks that the
+  // carrier takes this freight, or books it with the carrier directly.
+  if(over&&input.oversizeConfirmed!=='yes')throw new ValidationError(over+' Check with the carrier first, then confirm it takes this freight.');
+  return {accountId:input.accountId,shipFrom,shipTo,pickup,handling,...(over?{oversize:true}:{}),
     services:Object.fromEntries(accessorials.filter(extra=>extras.includes(extra)).map(extra=>[extra,true]))};
 }
 
@@ -97,9 +119,15 @@ async function quotes(ctx,snapshot,request=shipengine.call,now=Date.now()){
       !iso.test(quote.quote_expiration_date)||!quote.carrier_scac||!quote.carrier_name||!quote.service_name)
       throw new ValidationError('A freight quote is missing its exact account, carrier, service, offer or expiration.');
     ids.add(quote.offer_id);
+    // Freight limits and approvals are in US dollars. A quote in another
+    // currency stops the request: it is never converted or compared.
+    const charge=quote.total_charges!==null&&typeof quote.total_charges==='object'?quote.total_charges:{amount:quote.total_charges,currency:quote.currency};
+    const currency=String(charge.currency??'USD').trim().toUpperCase();
+    if(currency!=='USD')throw new ValidationError('The carrier quoted in '+(/^[A-Z]{3}$/.test(currency)?currency:'another currency')+
+      ', but freight here is approved in US dollars. Book this pickup with the carrier directly.');
     return {id:quote.offer_id,accountId:snapshot.accountId,carrier:requireText(quote.carrier_scac,'Carrier code',{max:20}),
       carrierName:requireText(quote.carrier_name,'Carrier name',{max:150}),service:requireText(quote.service_name,'Freight service',{max:100}),
-      amountMinor:money.toMinor(quote.total_charges,'USD',{label:'Quoted freight charge'}),expiresAt:quote.quote_expiration_date,
+      amountMinor:money.toMinor(charge.amount,'USD',{label:'Quoted freight charge'}),expiresAt:quote.quote_expiration_date,
       estimatedDelivery:iso.test(quote.estimated_delivery_date)?quote.estimated_delivery_date:null,guaranteed:quote.is_guaranteed===true};
   }).filter(quote=>Date.parse(quote.expiresAt)>now&&quote.amountMinor>0);
 }
@@ -148,4 +176,4 @@ async function retrieve(ctx,accountId,freightId,request=shipengine.call){
   return confirmed(result,accountId,freightId);
 }
 
-module.exports={build,accounts,quotes,book,retrieve,accessorials,locations,freightClasses};
+module.exports={build,accounts,quotes,book,retrieve,accessorials,locations,freightClasses,limits};

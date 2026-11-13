@@ -1,5 +1,9 @@
 'use strict';
 
+// Job 156: the daily briefing, alone on every plan. The routine check writes
+// what happened on the day that just ended; briefing-email.js delivers it in
+// Needs you and by email on the owner's chosen schedule.
+
 const time=require('../lib/business-time');
 const {addDays}=require('../accounting/customer-money');
 const policy=require('../commercial/agent-plan');
@@ -39,18 +43,11 @@ async function staffActivity(db,bounds,asOf){
   return rows;
 }
 
-async function deliver(db,workspaceId,account,now=new Date()){
-  if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,156,'automatic'))return;
-  const {calendarDate,timeZone}=await time.forWorkspace(db,workspaceId,now),day=addDays(calendarDate,-1);
-  const team=policy.permits(account.plan,180,'automatic');
-  const existing=(await db.query('SELECT summary::jsonb AS data FROM workspace_daily_digests WHERE workspace_id=$1 AND report_date=$2',[workspaceId,day])).rows[0]?.data;
-  const tasks=team&&await installed.has(db,staffTasks.table);
-  if(existing?.format==='agent-brief'&&existing.business&&(!team||existing.team&&(!tasks||existing.staffTasks)))return;
-  // Reconcile physical work first so a task finished just before midnight
-  // appears on that day's summary even if its regular check has yet to run.
-  if(tasks)await staffTasks.followUp(db,workspaceId);
-  const asOf=now.toISOString();
-  const bounds=[workspaceId,time.dayBoundary(day,timeZone),time.dayBoundary(calendarDate,timeZone)];
+
+// What happened from the start of `from` to the end of `to` (business days in
+// the workspace's time zone), and what needs the owner now.
+async function collect(db,workspaceId,from,to,timeZone,{team=false}={}){
+  const bounds=[workspaceId,time.dayBoundary(from,timeZone),time.dayBoundary(addDays(to,1),timeZone)];
   const {rows:activity}=await db.query(`SELECT m.actor_user_id AS actor,coalesce(u.name,'Former team member') AS person,m.operation,count(DISTINCT m.group_id)::int AS n
     FROM movements m LEFT JOIN users u ON u.workspace_id=m.workspace_id AND u.id=m.actor_user_id
     WHERE m.workspace_id=$1 AND m.occurred_at::timestamptz>=$2 AND m.occurred_at::timestamptz<$3
@@ -72,11 +69,25 @@ async function deliver(db,workspaceId,account,now=new Date()){
     (SELECT count(*)::int FROM stockchief_runtime.assistant_action_proposals p JOIN users u ON u.workspace_id=p.workspace_id AND u.id=p.actor_user_id AND u.role='owner'
       WHERE p.workspace_id=$1 AND p.status='PENDING') AS approvals,
     (SELECT count(*)::int FROM stockchief_runtime.agent_operational_notices WHERE workspace_id=$1 AND job_id=168 AND NOT resolved) AS overdue,
+    (SELECT count(*)::int FROM stockchief_runtime.agent_operational_notices WHERE workspace_id=$1 AND job_id=168 AND kind='Customer order' AND NOT resolved) AS "lateOrders",
+    (SELECT count(*)::int FROM stockchief_runtime.agent_operational_notices WHERE workspace_id=$1 AND job_id=166 AND kind='Out of stock' AND NOT resolved) AS "stockOuts",
+    (SELECT count(*)::int FROM stockchief_runtime.agent_operational_notices WHERE workspace_id=$1 AND job_id=166 AND kind<>'Out of stock' AND NOT resolved) AS "runningLow",
     (SELECT count(*)::int FROM work_items WHERE workspace_id=$1 AND execution_status='COMPLETED' AND verification_status='VERIFIED' AND completed_at::timestamptz>=$2 AND completed_at::timestamptz<$3) AS verified`,bounds)).rows[0];
   const totals={};for(const row of activity)totals[row.operation]=(totals[row.operation]||0)+row.n;
   const business=await businessActivity(db,bounds);
-  const data={format:'agent-brief',day,deliveredOn:calendarDate,asOf,totals,business,...sources,...(team?{team:activity}:{}),
-    ...(tasks?{staffTasks:await staffActivity(db,bounds,asOf)}:{})};
+  const staff=team&&await installed.has(db,staffTasks.table)?await staffActivity(db,bounds,new Date().toISOString()):null;
+  return {totals,business,...(staff?{staffTasks:staff}:{}),...sources,...(team?{team:activity}:{})};
+}
+
+async function deliver(db,workspaceId,account,{now=new Date()}={}){
+  if(!policy.usesAgentTerms(account)||!policy.permits(account.plan,156,'automatic'))return;
+  const {calendarDate,timeZone}=await time.forWorkspace(db,workspaceId,now),day=addDays(calendarDate,-1);
+  // Every business that gets a briefing has a delivery time (7:00 until the owner chooses).
+  await require('./briefing-email').ensureSchedule(db,workspaceId,timeZone,now);
+  const team=policy.permits(account.plan,180,'automatic');
+  const existing=(await db.query('SELECT summary::jsonb AS data FROM workspace_daily_digests WHERE workspace_id=$1 AND report_date=$2',[workspaceId,day])).rows[0]?.data;
+  if(existing?.format==='agent-brief'&&existing.business&&(!team||existing.team&&existing.staffTasks))return;
+  const data={format:'agent-brief',day,deliveredOn:calendarDate,asOf:new Date().toISOString(),...await collect(db,workspaceId,day,day,timeZone,{team})};
   await db.query(`INSERT INTO workspace_daily_digests AS d(workspace_id,report_date,generated_at,summary) VALUES($1,$2,$3,$4)
     ON CONFLICT(workspace_id,report_date) DO UPDATE SET summary=CASE WHEN d.summary::jsonb->>'format'='agent-brief' THEN
       (d.summary::jsonb||jsonb_build_object('business',excluded.summary::jsonb->'business')
@@ -103,7 +114,9 @@ async function report(db,ctx,{filter,team,page}){
   if(!data)return {rows:[],more:false,summary:'A briefing appears here after the scheduled stock check for a completed day.'};
   const dates='from='+data.day+'&to='+data.day;
   const pending=[{Activity:'Owner approvals waiting',Count:data.approvals,link:'/needs-you'},{Activity:'Overdue orders, shipments and invoices',Count:data.overdue,link:'/autopilot/reviews/overdue-work'}];
-  const summary='Inventory activity for '+data.day+'. Approvals and overdue records were counted when this briefing arrived on '+data.deliveredOn+'.';
+  // Briefings written since job 156 was finished also count stock-outs and low stock.
+  if(data.stockOuts!=null)pending.push({Activity:'Out of stock',Count:data.stockOuts,link:'/autopilot/reviews/low-stock-alerts'},{Activity:'Running low',Count:data.runningLow,link:'/autopilot/reviews/low-stock-alerts'});
+  const summary='Stock activity for '+data.day+'. Approvals and overdue records were counted when this briefing arrived on '+data.deliveredOn+'.';
   if(team){
     const rows=(data.staffTasks||[]).map(r=>({'Team member':r.person,
       Activity:staffTasks.specs[r.kind].plural+(r.state==='late'?' overdue':' completed'),Count:r.n,
@@ -120,7 +133,6 @@ async function report(db,ctx,{filter,team,page}){
   return {rows,more:false,summary};
 }
 const definitions=[
-  {id:156,key:'daily-briefing',label:'Daily briefing',filterLabel:'Business date (YYYY-MM-DD)',readPage:(db,ctx,o)=>report(db,ctx,{...o,team:false})},
-  {id:180,key:'daily-team-summary',label:'Daily team activity and overdue work',filterLabel:'Business date (YYYY-MM-DD)',readPage:(db,ctx,o)=>report(db,ctx,{...o,team:true})}
+  {id:156,key:'daily-briefing',label:'Daily briefing',filterLabel:'Business date (YYYY-MM-DD)',readPage:(db,ctx,o)=>report(db,ctx,{...o,team:false})}
 ];
-module.exports={deliver,latest,definitions};
+module.exports={collect,deliver,latest,report,verbs,definitions};

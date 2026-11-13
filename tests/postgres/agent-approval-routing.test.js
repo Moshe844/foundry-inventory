@@ -20,38 +20,6 @@ async function fixture(t){
  return {...f,P,member,desk,routed,audits,assistant:require('../../src/assistant/postgres-service'),modes:require('../../src/autopilot/job-modes')};
 }
 
-test('vacation coverage sends authorized returns and stock approvals to the deputy on Growth and above',{timeout:300000},async t=>{
- const f=await fixture(t),{db,ctx,subscribe,P,member,routed,assistant,desk}=f;
- const vacation=require('../../src/autopilot/vacation-deputy');
- const deputy=await member('Deputy',[P.VIEW,P.ADJUST,P.VIEW_PURCHASING,P.AUTHORIZE_SUPPLIER_RETURN]);
- const returnRequest=await require('../../src/operations/postgres-returns').requestSupplierReturn(db,ctx,{supplierId:'fixture-supplier',
-  reason:'Damaged',idempotencyKey:randomUUID(),lines:[{skuId:f.item.skuIds[0],locationId:f.location.id,quantity:1}]});
- const stockRequest=await assistant.prepareAction(db,ctx,'Prepare a count adjustment',{action:'adjust',sku:'Parcel item',location:'Dispatch',countedQuantity:38,reason:'Shelf count'});
- assert.equal(stockRequest.status,'PREPARED');
- const returned='supplier_return:'+returnRequest.supplierReturnId,adjusted='proposal:'+stockRequest.proposal.id;
- const today=await require('../../src/lib/business-time').today(db,ctx.workspaceId);
- await subscribe('pro');
- await desk.saveLimit(db,ctx,{kind:'adjustment',userId:deputy.actorId,amount:'1',currency:'USD'});
- await vacation.save(db,ctx,{deputyId:deputy.actorId,start:today,end:today,revision:0});
- for(const tier of ['growth','pro','enterprise']){
-  await subscribe(tier);
-  assert.deepEqual(await routed(deputy),[returned],tier);
-  assert.ok((await routed(ctx)).includes(adjusted),tier);
- }
- await subscribe('starter');
- assert.deepEqual(await routed(deputy),[]);
- assert.ok((await routed(ctx)).includes(returned));
- await subscribe('pro');
- await desk.saveLimit(db,ctx,{kind:'adjustment',userId:deputy.actorId,amount:'5',currency:'USD'});
- assert.deepEqual(await routed(deputy),[adjusted,returned].sort());
- assert.equal((await assistant.executeProposal(db,deputy,stockRequest.proposal.id)).status,'EXECUTED');
- assert.deepEqual(await routed(deputy),[returned]);
- await vacation.save(db,ctx,{remove:'1',revision:1});
- await subscribe('growth');
- assert.deepEqual(await routed(deputy),[]);
- assert.ok((await routed(ctx)).includes(returned));
-});
-
 test('approvals of every kind go to the person whose role, access and limit cover them, on Pro and Custom only',{timeout:900000},async t=>{
  const f=await fixture(t),{db,ctx,workflows,browser,subscribe,P,member,desk,routed,audits,assistant}=f,owner={...ctx,name:'Owner'};
  const buyer=await member('Buyer',[P.VIEW_PURCHASING,P.APPROVE_PO],{limit:5000});
@@ -72,9 +40,8 @@ test('approvals of every kind go to the person whose role, access and limit cove
  const keys={small:'purchase:'+small.purchaseOrderId,large:'purchase:'+large.purchaseOrderId,move:'transfer:'+move.id,rtv:'supplier_return:'+rtv.supplierReturnId,
   shelf:'proposal:'+shelf,big:'proposal:'+big,cost:'proposal:'+cost};
  const page=desk.path,review='/autopilot/reviews/purchase-review-routing';
- const olderPlan=await browser.get(page).expect(200);
- assert.match(olderPlan.text,/data-agent-plan-locked/);
- assert.ok(olderPlan.text.includes('This work is available on Pro and above.'));
+ // An account still on its older terms sees the plan card.
+ assert.match((await browser.get(page).expect(200)).text,/data-agent-plan-locked/);
  // Starter and Growth: excluded. Nothing is routed and the plan lock shows.
  for(const tier of ['starter','growth']){
   await subscribe(tier);

@@ -1,6 +1,6 @@
 'use strict';
-
 const {ValidationError}=require('../domain/errors');
+
 const planning=require('../forecasting/postgres-planning-service');
 const {requiredUnits}=require('../purchasing/replenishment-decision');
 
@@ -89,5 +89,20 @@ module.exports=[
   {id:151,key:'stockout-cost',label:'Estimate stockout dates and margin at risk',readPage:(db,ctx,options)=>require('../forecasting/agent-runout').review(db,ctx,options)},
   {id:19,key:'reorder-drafts',label:'Draft reorders grouped by supplier',readPage:async(c,ctx,o)=>({...await reorder(c,ctx,o),reorderForm:true})},
   {id:18,key:'reorder-explanation',label:'Explain what to order and why',readPage:reorder},
-  {id:149,key:'demand-scenario',label:'Compare a change in sales demand',readPage:demandScenario,requiresChange:true}
+  ...require('../forecasting/agent-what-if').definitions.map(definition=>{
+    if(definition.key!=='demand-scenario')return definition;
+    return {...definition,readPage:async(db,ctx,options)=>{
+      const change=String(options.change??'').trim(),delay=String(options.supplierDelayDays??'').trim();
+      if(delay)return demandScenario(db,ctx,options);
+      const result=await definition.readPage(db,ctx,options);
+      if(!change)return result;
+      const warehouse=await demandScenario(db,ctx,options),bySku=new Map(result.rows.map(row=>[row.SKU,row]));
+      return {...result,more:warehouse.more,scenarioOptions:warehouse.scenarioOptions,rows:warehouse.rows.map(row=>{
+        const forecast=bySku.get(row.SKU);
+        if(!forecast)return row;
+        return {...row,'Sales in 30 days':forecast['Sales in 30 days'],'Runs out':forecast['Runs out'],
+          'Next delivery':forecast['Next delivery'],'Short before it':forecast['Short before it'],'Margin lost before it':forecast['Margin lost before it']};
+      })};
+    }};
+  })
 ];

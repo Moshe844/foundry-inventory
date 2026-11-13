@@ -312,4 +312,4 @@ async function onArrival(db,workspaceId,id){
     return {held:true,reason};
   }
 }
-module.exports={review,create,onArrival,isOrderEnvelope,parse,orderSubject};
+module.exports={review,create,onArrival,isOrderEnvelope,parse,orderSubject,addressesOnFile};

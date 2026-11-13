@@ -107,12 +107,12 @@ function needs(database,workspaceId,actorId=null){
   return require('../lib/request-read-cache').read(JSON.stringify(['needs',workspaceId,actorId]),async()=>{
     const actor=await membership(database,workspaceId,actorId);
     if(actorId&&!actor)return [];
-    const [items,notices,purchaseReviews,countTasks,deputyTasks,supplierUpdates,supplierBenefits,supplierDates,staleIncoming,purchaseFx,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,negotiationDrafts,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources,directShipments,lotCertificates,shippingDocuments,documentDiscoveries,supplierCostUpdates,clearancePlans,slowStockSteps,expiryWarnings,lotBlocks,complianceReports,landedCostBills,orderChecks,creditHolds,invoiceDisputes,customerOrders,netMargins,channelPrices,pickReleases,pickWaves,orderSplits,preorderFills,addressChecks,labelRuns,catalogFixes,dataHealth,demandForecasts,reportFlags,shipmentNotices,parcelFlags,carrierClaims,statementRequests,reminderDisputes,creditRefunds,supplierCatalogs,oldSystemMoves,runOuts,productCategories,escalations,returnEmails,returnLabels,returnRestocks,shadowReport,approvalDesk,staffTasks,customerQuestions,quoteRequests,quoteFollowups]=await Promise.all([
+    const [items,notices,purchaseReviews,countTasks,deputyTasks,supplierUpdates,supplierBenefits,supplierDates,staleIncoming,purchaseFx,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,negotiationDrafts,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources,directShipments,lotCertificates,shippingDocuments,documentDiscoveries,supplierCostUpdates,clearancePlans,slowStockSteps,expiryWarnings,lotBlocks,complianceReports,landedCostBills,orderChecks,creditHolds,invoiceDisputes,customerOrders,netMargins,channelPrices,pickReleases,pickWaves,orderSplits,preorderFills,addressChecks,labelRuns,catalogFixes,dataHealth,demandForecasts,reportFlags,shipmentNotices,parcelFlags,carrierClaims,statementRequests,reminderDisputes,creditRefunds,supplierCatalogs,oldSystemMoves,runOuts,productCategories,escalations,returnEmails,returnLabels,returnRestocks,shadowReport,staffTasks,channelSyncFixes,channelBufferPlans,approvalDesk,customerQuestions,quoteRequests,quoteFollowups,supplierReviewPacks,yearEndPacks,reportEmails,supplierForecasts,stockReadyStaff,inboundFreight,partnerStock,freightPickups,exportPaperChecks,websiteHandoffs,retailEdi,thirdPartyOrders,mailReplies,accountingDocuments,voicePaperwork,vanRoutes]=await Promise.all([
       require('../lib/versioned-read-model').read(database,workspaceId,['needs',actorId],()=>needsUncached(database,workspaceId,actorId,actor)),
       actorId?require('../autopilot/operational-notices').inbox(database,workspaceId,actorId):[],
       actorId?require('../purchasing/approval-routing').inbox(database,workspaceId,actorId):[],
       actorId?require('../operations/agent-count-tasks').inbox(database,workspaceId,actorId):[],
-      actorId?require('../autopilot/vacation-deputy').inbox(database,workspaceId,actorId):[],
+      actor?.role==='owner'?require('../autopilot/vacation-deputy').inbox(database,workspaceId):[],
       actor?.role==='owner'?require('../purchasing/agent-supplier-email-terms').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../purchasing/agent-supplier-benefits').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../purchasing/agent-po-delivery-dates').inbox(database,workspaceId,actorId):[],
@@ -171,26 +171,47 @@ function needs(database,workspaceId,actorId=null){
       actor?.role==='owner'?require('../accounting/agent-customer-credits').inbox(database,workspaceId):[],
       actor?.role==='owner'?require('../catalog/agent-supplier-catalog').inbox(database,workspaceId):[],
       actor?.role==='owner'?require('../onboarding/agent-old-system-migration').inbox(database,workspaceId):[],
-      actor&&require('../actions/permissions').can(actor,require('../actions/permissions').MANAGE_REPLENISHMENT)?require('../forecasting/agent-runout').inbox(database,workspaceId):[],
+      actor&&require('../actions/permissions').can(actor,require('../actions/permissions').MANAGE_REPLENISHMENT)?require('../forecasting/agent-runout').inbox(database,workspaceId,actor):[],
       actor?.role==='owner'?require('../catalog/agent-product-classification').inbox(database,workspaceId):[],
       actorId?require('../autopilot/escalations').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../sales/agent-customer-return-emails').inbox(database,workspaceId):[],
       actor?.role==='owner'?require('../shipping/agent-return-labels').inbox(database,workspaceId):[],
       actor?require('../operations/agent-return-disposition').restockInbox(database,workspaceId,actor):[],
       actor?.role==='owner'?require('../autopilot/shadow-mode').inbox(database,workspaceId):[],
-      actorId?require('../autopilot/approval-desk').inbox(database,workspaceId,actorId):[],
       actorId?require('../operations/agent-staff-tasks').inbox(database,workspaceId,actorId):[],
+      actor?.role==='owner'?require('../connections/agent-channel-sync-fixes').inbox(database,workspaceId):[],
+      actor?.role==='owner'?require('../connections/agent-channel-buffer-plans').inbox(database,workspaceId):[],
+      actorId?require('../autopilot/approval-desk').inbox(database,workspaceId,actorId):[],
       actor?.role==='owner'?require('../sales/agent-customer-questions').inbox(database,workspaceId):[],
       actor?.role==='owner'?require('../sales/agent-quote-requests').inbox(database,workspaceId):[],
       actor?.role==='owner'?require('../sales/agent-quote-followups').inbox(database,workspaceId):[],
+      actor?.role==='owner'?require('../purchasing/agent-supplier-review-packs').inbox(database,workspaceId):[],
+      actor?.role==='owner'?require('../accounting/agent-year-end-pack').inbox(database,workspaceId):[],
+      actor?.role==='owner'?require('../reports/agent-report-email').inbox(database,workspaceId):[],
+      actor?.role==='owner'?require('../purchasing/agent-supplier-forecasts').inbox(database,workspaceId):[],
+      actorId&&require('../actions/permissions').can(actor,require('../actions/permissions').VIEW_SALES)?require('../sales/agent-stock-ready-staff').inbox(database,workspaceId,actorId):[],
+      actor?.role==='owner'?require('../purchasing/inbound-freight-arrivals').inbox(database,workspaceId):[],
+      actor?.role==='owner'?require('../autopilot/partner-stock').inbox(database,workspaceId):[],
+      actor?.role==='owner'?require('../shipping/agent-freight-routine').inbox(database,workspaceId):[],
+      actor?.role==='owner'?require('../shipping/agent-export-paper-routine').inbox(database,workspaceId):[],
+      actor?.role==='owner'?require('../sales/agent-website-stock-chat').inbox(database,workspaceId):[],
+      actor?.role==='owner'?require('../connections/postgres-orderful-test').inbox(database,workspaceId):[],
+      actor?.role==='owner'?require('../connections/agent-3pl-orders').inbox(database,workspaceId):[],
+      actor?.role==='owner'?require('../connections/agent-mail-replies').inbox(database,workspaceId):[],
+      actor?.role==='owner'?require('../accounting/agent-accounting-documents').inbox(database,workspaceId):[],
+      actor?.role==='owner'?require('../documents/agent-voice-paperwork').inbox(database,workspaceId):[],
+      actor?.role==='owner'?require('../shipping/agent-van-route-routine').inbox(database,workspaceId):[],
     ].map(schemaTolerant));
     // A parcel StockChief is watching (job 62) shows once, with its own words.
     const watchedParcels=new Set(parcelFlags.map(r=>r.shipmentId));
-    const delegated=new Set(deputyTasks.map(r=>r.href));
+    // Job 202: an approval the deputy covers for the owner shows once, as covered.
+    const delegated=new Set(deputyTasks.concat(approvalDesk.filter(r=>r.approvalRequest?.covering)).map(r=>r.href));
     const supplierMail=new Set(supplierUpdates.filter(r=>!r.grouped).map(r=>r.href.replace(/\/supplier-details$/,'')));
+    // Job 187: a reply StockChief prepared replaces the plain "waiting for a response" item for that email.
+    const replyMail=new Set(mailReplies.map(r=>r.href));
     // An approval routed here (job 176) shows once: a native approval, a deputy's
     // copy or another source naming the same record wins.
-    const all=items.concat(notices,purchaseReviews,countTasks).filter(r=>!delegated.has(r.href)&&!supplierMail.has(r.href)&&!(r.kind==='shipping'&&watchedParcels.has(r.sourceId))).concat(deputyTasks,supplierUpdates,supplierBenefits,supplierDates,staleIncoming,purchaseFx,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources,directShipments,lotCertificates,shippingDocuments,documentDiscoveries,supplierCostUpdates,clearancePlans,slowStockSteps,expiryWarnings,lotBlocks,complianceReports,landedCostBills,negotiationDrafts,orderChecks,creditHolds,invoiceDisputes,customerOrders,netMargins,channelPrices,pickReleases,pickWaves,orderSplits,preorderFills,addressChecks,labelRuns,catalogFixes,dataHealth,demandForecasts,reportFlags,shipmentNotices,parcelFlags,carrierClaims,statementRequests,reminderDisputes,creditRefunds,supplierCatalogs,oldSystemMoves,runOuts,productCategories,escalations,returnEmails,returnLabels,returnRestocks,shadowReport,approvalDesk,staffTasks,customerQuestions,quoteRequests,quoteFollowups),shown=new Set(all.filter(r=>!r.approvalRequest).map(r=>r.href));
+    const all=items.concat(notices,purchaseReviews,countTasks).filter(r=>!delegated.has(r.href)&&!supplierMail.has(r.href)&&!(r.kind==='mail'&&replyMail.has(r.href))&&!(r.kind==='shipping'&&watchedParcels.has(r.sourceId))).concat(deputyTasks,supplierUpdates,supplierBenefits,supplierDates,staleIncoming,purchaseFx,containerPlans,teamProcedures,productRetirements,supplierShutdowns,promotionStock,annualStocktakes,deliveryQuality,supplierRfqs,supplierClaims,exportPapers,orderCosts,returnAssessments,customerPageRequests,channelCopies,blanketContracts,productSources,directShipments,lotCertificates,shippingDocuments,documentDiscoveries,supplierCostUpdates,clearancePlans,slowStockSteps,expiryWarnings,lotBlocks,complianceReports,landedCostBills,negotiationDrafts,orderChecks,creditHolds,invoiceDisputes,customerOrders,netMargins,channelPrices,pickReleases,pickWaves,orderSplits,preorderFills,addressChecks,labelRuns,catalogFixes,dataHealth,demandForecasts,reportFlags,shipmentNotices,parcelFlags,carrierClaims,statementRequests,reminderDisputes,creditRefunds,supplierCatalogs,oldSystemMoves,runOuts,productCategories,escalations,returnEmails,returnLabels,returnRestocks,shadowReport,staffTasks,channelSyncFixes,channelBufferPlans,approvalDesk,customerQuestions,quoteRequests,quoteFollowups,supplierReviewPacks,yearEndPacks,reportEmails,supplierForecasts,stockReadyStaff,inboundFreight,partnerStock,freightPickups,exportPaperChecks,websiteHandoffs,retailEdi,thirdPartyOrders,mailReplies,accountingDocuments,voicePaperwork,vanRoutes),shown=new Set(all.filter(r=>!r.approvalRequest).map(r=>r.href));
     return all.filter(r=>!r.approvalRequest||!shown.has(r.href)).sort((a,b)=>b.priority-a.priority || Number(Boolean(b.grouped))-Number(Boolean(a.grouped)) || (a.moneyCurrency&&a.moneyCurrency===b.moneyCurrency?(b.moneyValue??-1)-(a.moneyValue??-1):0) || String(a.at||'').localeCompare(String(b.at||'')));
   });
 }

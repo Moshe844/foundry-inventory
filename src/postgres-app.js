@@ -102,6 +102,8 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
     provider:commercialOptions.billingProvider,providerOptions:commercialOptions.providerOptions||{}}:{}));
   app.use(createPostgresShippingWebhooks(database,shippingOptions || {}));
   app.use(require('./web/routes/agent-slack-command').router(database));
+  app.use(require('./web/routes/agent-chat-inbound').router(database));
+  app.use(require('./web/routes/text-order-webhooks').router(database));
   app.use(require('./web/routes/postgres-shipstation-custom').createShipStationCustomRouter(database));
   app.use(createPostgresPaymentWebhooks(database,paymentOptions || {}));
   app.use(require('./web/routes/postgres-cardknox').createCardknoxPublicRouter(database));
@@ -116,6 +118,7 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.post('/autopilot/product-facts',multipart({limit:20*1024*1024+65536,maxFiles:1,memoryBudgetBytes:32*1024*1024}));
   app.post('/autopilot/procedure-originals',multipart({limit:20*1024*1024+65536,maxFiles:1,memoryBudgetBytes:32*1024*1024}));
   app.post('/autopilot/receiving-voice-notes',multipart({limit:12*1024*1024+65536,maxFiles:1,memoryBudgetBytes:24*1024*1024}));
+  app.post('/autopilot/voice-paperwork',multipart({limit:12*1024*1024+65536,maxFiles:1,memoryBudgetBytes:24*1024*1024}));
   app.use(multipart({limit:config.uploads.maxBytes,maxFiles:config.uploads.maxFiles}));
   // One bounded JSON field carries up to 500 checked packing profiles.
   // Keep the larger form allowance specific to this owner-only workflow.
@@ -123,12 +126,15 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.post('/autopilot/delivery-checks',express.urlencoded({extended:true,limit:'1mb',parameterLimit:5000}));
   app.post('/imports/variants/:id/map',express.urlencoded({extended:true,limit:'1mb',parameterLimit:3000}));
   app.post('/supplier/order/:token/amendment',express.urlencoded({extended:true,limit:'256kb',parameterLimit:1100}));
+  // Job 123: a partner's stock feed can carry a few thousand product counts.
+  app.post('/partner-stock/feed/:token',express.json({limit:'2mb'}),express.text({type:['text/csv','text/plain'],limit:'2mb'}));
   app.use(express.urlencoded({extended:true,limit:'256kb'}));
   app.use(express.json({limit:'256kb'}));
   app.use('/api/v1/feed',createPostgresFeedApi(database));
   app.use('/api/v1',createPostgresConnectionsApi(database,{providers:connectionProviders || undefined}));
   app.use('/api/v1/operations',createPostgresOperationsApi(database));
   app.use('/api/v1/public',createPostgresPublicApi(database));
+  app.use(require('./web/routes/partner-stock-feed').router(database));
   const probes=new Map();
   const probe=(key,ttl,run)=>{
     const prior=probes.get(key);

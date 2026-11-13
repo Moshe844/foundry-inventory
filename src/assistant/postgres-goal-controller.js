@@ -33,11 +33,13 @@ function discover(catalogue,query){
    (description.includes(t)?1/(1+Math.log(1+description.split(/\s+/).length)):0),0)};})
  .filter(x=>!tokens.length||x.score).sort((a,b)=>b.score-a.score||a.c.name.localeCompare(b.c.name)).slice(0,4).map(x=>descriptor(x.c));
 }
-function evidence(result){const rows=(result.rows||[]).slice(0,12);return {status:result.status,answer:result.answer,
- rows,columns:result.columns,totalReturned:result.rows?.length||0,truncated:(result.rows?.length||0)>rows.length,
+// Job 153: each observation keeps the pages and records it read, so the finished
+// answer links to the records behind it.
+function evidence(result){const rows=(result.rows||[]).slice(0,12),sources=require('./answer-sources').collect(result);return {status:result.status,answer:result.answer,
+ rows,columns:result.columns,totalReturned:result.rows?.length||0,truncated:(result.rows?.length||0)>rows.length,...(sources.length?{sources}:{}),
  proposal:result.proposal,reason:result.reason,choices:result.choices,awaitingField:result.awaitingField,
  navigation:result.navigation,verifiedStatusFacts:result.verifiedStatusFacts,workId:result.workId,
- sources:(Array.isArray(result.sources)?result.sources:[]).slice(0,12),handoff:result.handoff};}
+ handoff:result.handoff};}
 async function catalogueFor(db,ctx){const actor=(await db.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
  [ctx.workspaceId,ctx.actorId])).rows[0];if(!actor)throw new ValidationError('This user no longer belongs to the business.');
  return {actor,catalogue:await control.planningCatalogue(db,ctx,actor)};}
@@ -160,11 +162,8 @@ async function run(db,ctx,id,options={}){
      await store.save(db,ctx,goal,'verification_rejected',verified.data);continue;}
     await assertCurrentActor(db,ctx,actor);
     goal.status='COMPLETED';goal.answer=data.answer;cp.verifiedEvidence=data.evidence;
-    const {localPath}=require('./agent-navigation-path');
-    const {transferable}=require('../../scripts/environment-agent-demo/browser-link-evidence');
-    cp.answerSources=[...new Set(selected.filter(o=>catalogue.get(o.capability)?.kind==='read').flatMap(({result})=>
-      [...result.rows.map(row=>row?.href),...result.sources.map(source=>source?.href),result.handoff?.href]
-        .map(localPath).filter(path=>path&&transferable(path))))].slice(0,12);
+    // The records behind the answer: only the freshly verified reads it cites.
+    cp.answerSources=require('./answer-sources').merge(...selected.filter(o=>catalogue.get(o.capability)?.kind==='read').map(o=>o.result.sources||[]));
     let recorded=data.answer;
     if(opened){
      // The same hand-off the native agent uses: the browser follows it and
@@ -175,7 +174,7 @@ async function run(db,ctx,id,options={}){
      cp.waiting=null;goal.status='WAITING_EVENT';goal.answer=`Ready to open ${label} in your browser.`;
      if(onlyPages)recorded=`Opening ${label}.`;
     }
-    await service.recordCapabilityOutcome(db,ctx,source,{result:{status:'ANSWERED',answer:recorded,rows:[],columns:[]},args:{},provenance:{}},{batchId:id});
+    await service.recordCapabilityOutcome(db,ctx,source,{result:{status:'ANSWERED',answer:recorded,rows:[],columns:[],sources:cp.answerSources},args:{},provenance:{}},{batchId:id});
     await store.save(db,ctx,goal,'verified',{evidence:data.evidence,...(opened?{navigation:href}:{})});break;
    }
    if(data.action!=='operate')throw new ValidationError('Unknown goal action.');

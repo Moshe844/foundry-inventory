@@ -86,18 +86,23 @@ function createPostgresPublicApi(database){
     return res.status(execution.replayed?200:201).json(execution);
   }));
   router.get('/audit',route('audit:read',async(auth,req,res)=>{
+    // Job 181 on Custom: ?view=agent-activity reads everything StockChief did, why and what allowed it.
+    if(req.query.view==='agent-activity')return res.json(await require('../../autopilot/agent-activity').api(database,auth,req.query));
     await require('../../commercial/agent-history').requireApi(database,auth);
     const result=await require('../../operations/postgres-audit').page(database,auth.workspaceId,req.query,100);
     const data=result.rows.map(row=>({at:row.at,who:row.who,action:row.action,product:row.product,variant:row.variant,sku:row.sku,
       location:row.location,reference:row.reference,before:row.before,after:row.after}));
     return res.json({data,nextCursor:result.hasMore?result.next:null});
   }));
-  const agent=require('../../connections/agent-review-api');
+  const agent=require('../../connections/agent-review-api'),agentJobs=require('../../connections/agent-api-jobs');
+  // A body naming a review runs that read-only review; a body naming a job
+  // starts that agent job through its own service (job 189).
   router.post('/agent/jobs',route('agent:run',async(auth,req,res)=>{
-    const job=await agent.start(database,auth,req.body,req.get('idempotency-key'));
+    const start=req.body&&typeof req.body==='object'&&Object.hasOwn(req.body,'job')?agentJobs.start:agent.start;
+    const job=await start(database,auth,req.body,req.get('idempotency-key'));
     return res.status(job.replayed?200:202).json(job);
   }));
-  router.get('/agent/jobs/:id',route('agent:run',async(auth,req,res)=>res.json(await agent.status(database,auth,req.params.id))));
+  router.get('/agent/jobs/:id',route('agent:run',async(auth,req,res)=>res.json(await agentJobs.status(database,auth,req.params.id))));
   return router;
 }
 

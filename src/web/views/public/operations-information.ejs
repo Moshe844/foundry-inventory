@@ -23,6 +23,12 @@ Idempotency-Key: YOUR_UNIQUE_OPERATION_KEY
 
 {"review":"stock-health","filter":"YOUR_SKU"}</pre>
 <p>Use the returned job ID with <code>GET /api/v1/public/agent/jobs/JOB_ID</code> and the same token to read its status and result. Reviews use the registered jobs in Agent reviews. To run a report you own, send <code>{"review":"saved-report","reportId":"REPORT_ID","page":1}</code>. Use the ID from the saved report’s URL. An optional signed <code>agent.review.completed</code> webhook contains the job ID.</p>
+<h2>Start an Agent job</h2><pre>POST /api/v1/public/agent/jobs
+Content-Type: application/json
+Idempotency-Key: YOUR_UNIQUE_OPERATION_KEY
+
+{"job":"plan-van-routes"}</pre>
+<p>On Custom, the same token starts agent work: <code>plan-van-routes</code>, <code>take-slow-stock-steps</code>, <code>fix-product-data</code>, <code>sort-new-products</code>, <code>retire-discontinued-products</code>, <code>warn-before-expiry</code>, <code>add-landed-costs</code>, <code>book-repeat-pallet-pickups</code>, <code>prepare-export-papers</code>, or <code>run-playbook</code> with <code>"playbook":"PLAYBOOK_ID"</code>. Each job runs through its own settings, job mode and limits. Work that always needs a person, such as paying a supplier, refunds, price changes or write-offs, comes back as <code>waiting_for_person</code> and waits in Needs you. Pause, Watch only and the first 14 days hold the job. Resending the same Idempotency-Key returns the first result. A token can start 30 jobs an hour. Signed <code>agent.job.completed</code>, <code>agent.job.held</code> and <code>agent.job.failed</code> webhooks carry the job ID, its status and what waits.</p>
 <h2>Read stock</h2><pre>GET /api/v1/public/inventory?limit=200</pre><p>The response contains <code>data</code> with <code>skuId</code>, <code>code</code>, <code>name</code>, <code>locationId</code>, <code>location</code>, and <code>onHand</code>. Request up to 500 positions per page. Pass the returned <code>nextCursor</code> as <code>cursor</code> until it is null. Preserve the cursor as returned; do not construct it.</p>
 <h2>Receive physical stock</h2><pre>POST /api/v1/public/commands/inventory/receive
 Content-Type: application/json

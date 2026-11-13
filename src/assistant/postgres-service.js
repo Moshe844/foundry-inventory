@@ -179,6 +179,14 @@ async function salesActivity(database,ctx,timeframe){
   return {answer,rows,columns:['measure','value'],scope:{from:period.from,to:period.to,financialBasis:'posting_date',orderBasis:'order_date'},handoff:{href:'/orders',label:'Review customer orders'}};
 }
 
+// Job 153: the page that lists exactly what a business fact counted.
+function businessFactHref(key,fact){
+  if(key==='customerOrders'&&fact?.periods?.current)return '/orders?'+new URLSearchParams({from:fact.periods.current.from,to:fact.periods.current.to});
+  if(key.startsWith('postedFinancials')&&fact?.from&&fact?.to)return '/accounting/reports/profit-and-loss?'+new URLSearchParams({from:fact.from,to:fact.to});
+  if(key==='lastBusinessCheck')return '/needs-you';
+  return null;
+}
+
 async function lookup(database,ctx,request,options={}) {
   const permissions=require('../actions/permissions'),required=require('../actions/financial-visibility').readPermissions[request.view];
   if(required){
@@ -190,7 +198,10 @@ async function lookup(database,ctx,request,options={}) {
   const collection=kind&&require('../web/postgres-record-destinations').RECORDS[kind]?.collection;
   // A collection remains discoverable when its result has no record links.
   // It is navigation metadata, never a record fact or an execution grant.
-  return collection&&!result.handoff?{...result,handoff:{...collection}}:result;
+  // Job 153: a list that can search opens on the same words the read searched.
+  const search=trimOrNull(request.search),searchable=['/orders','/customers','/inventory','/inventory/table','/purchasing'];
+  const filtered=collection&&search&&searchable.includes(collection.href)?{href:collection.href+'?'+new URLSearchParams({q:search}),label:collection.label}:collection;
+  return collection&&!result.handoff?{...result,handoff:{...filtered}}:result;
 }
 
 async function lookupRecords(database,ctx,request,options={}) {
@@ -649,6 +660,8 @@ async function lookupRecords(database,ctx,request,options={}) {
     if(options.nativeFacts)return {status:'ANSWERED',readMode:'canonical_facts_v1',
       answer:'Current recorded business facts; compared periods and financial availability are explicit in each record.',
       rows:Object.entries(evidence).map(([id,fact])=>({id,...fact})),columns:['id'],
+      sources:Object.entries(evidence).map(([id,fact])=>businessFactHref(id,fact)&&{kind:'page',href:businessFactHref(id,fact),
+        label:{customerOrders:'Customer orders this month',postedFinancialsCurrent:'Profit and loss this month',postedFinancialsPriorComparable:'Profit and loss, previous comparable period',lastBusinessCheck:'Needs you'}[id]||id}).filter(Boolean),
       reason:null};
     let explained;
     try{explained=await evidenceAnswers.answer(options.provider,options.question||'',evidence,'business',await require('./postgres-answer-preferences').read(database,ctx));}
@@ -657,17 +670,20 @@ async function lookupRecords(database,ctx,request,options={}) {
         rows:[],columns:[],reason:'unavailable'};}
     const rows=explained.evidenceKeys.map((key)=>{
       const fact=evidence[key];
-      if(key==='customerOrders')return {measure:'Customer orders',value:`${fact.currentCount} this month; ${fact.priorComparableCount} in the comparable previous period; ${fact.openCount} open`};
-      if(key==='lastBusinessCheck')return {measure:'Last business check',value:fact.at?`${fact.at}${fact.paused?' · paused':''}`:'Not run yet'};
+      // Job 153: each figure links to the records it counted, filtered the same way.
+      if(key==='customerOrders')return {measure:'Customer orders',value:`${fact.currentCount} this month; ${fact.priorComparableCount} in the comparable previous period; ${fact.openCount} open`,
+        href:businessFactHref(key,fact)};
+      if(key==='lastBusinessCheck')return {measure:'Last business check',value:fact.at?`${fact.at}${fact.paused?' · paused':''}`:'Not run yet',href:businessFactHref(key,fact)};
       if(key==='availability')return {measure:'Financial analysis',value:fact.postedFinancialAnalysis};
       if(key.startsWith('postedFinancials'))return {measure:key==='postedFinancialsCurrent'?'Posted financials · this month':'Posted financials · previous comparable period',
         revenueMinor:fact.revenueMinor,netIncomeMinor:fact.netIncomeMinor,currency:fact.currency,
-        value:`Revenue ${pricing.formatMinor(fact.revenueMinor,fact.currency)}; net income ${pricing.formatMinor(fact.netIncomeMinor,fact.currency)}`};
+        value:`Revenue ${pricing.formatMinor(fact.revenueMinor,fact.currency)}; net income ${pricing.formatMinor(fact.netIncomeMinor,fact.currency)}`,
+        href:businessFactHref(key,fact)};
       return null;
     }).filter(Boolean);
     const keys=new Set(explained.evidenceKeys);
     const handoff=keys.has('customerOrders')&&!['postedFinancialsCurrent','postedFinancialsPriorComparable'].some((key)=>keys.has(key))
-      ?{href:'/orders',label:'Review customer orders'}
+      ?{href:businessFactHref('customerOrders',evidence.customerOrders),label:'Review customer orders'}
       :keys.has('postedFinancialsCurrent')||keys.has('postedFinancialsPriorComparable')
           ?{href:'/money',label:'Review financial records'}:null;
     return {status:explained.supported?'ANSWERED':'CLARIFY',answer:explained.answer,
@@ -1845,7 +1861,10 @@ async function storeInteraction(database,ctx,message,intent,result,id=newId('pga
   const storedIntent={...intent,...(result.carryForward||{}),...(ctx.conversationId?{chatId:ctx.conversationId}:{}),...(ctx.goalId?{parentGoalId:ctx.goalId}:{}),presentation:{columns:result.columns || [],
     columnLabels:result.columnLabels||{},choices:result.choices || [],handoff:result.handoff || null,
     reason:result.reason||null,awaitingField:result.awaitingField||null,emailFlow:result.emailFlow||null,
-    researchViews:result.researchViews||[],chartAmounts:result.chartAmounts||null}};
+    researchViews:result.researchViews||[],chartAmounts:result.chartAmounts||null,
+    // Job 153: the filtered list and the records this answer read.
+    // A page opened or a general explanation has no records behind it.
+    sources:intent?.intent==='navigation'||result.general?[]:require('./answer-sources').collect(result)}};
   await database.query(`INSERT INTO stockchief_runtime.assistant_interactions
     (id,workspace_id,actor_user_id,message,intent,answer,evidence,status)
     VALUES($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8)`,[id,ctx.workspaceId,ctx.actorId,message,JSON.stringify(storedIntent),
@@ -2171,9 +2190,10 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
       agentPolicy.requireJob(tier,job,'draft');
       throw new ValidationError('This step needs its own confirmation. Review the individual action to proceed.');
     }
+    let taughtRule=false;
     if(job && tier!==undefined){
       const trained=operation==='automatic'&&agentPolicy.allowance(agentAccount.plan,job)==='trained'&&await require('../autopilot/draft-authority').trained(client,ctx.workspaceId,contract.name,proposal.payload);
-      agentPolicy.requireJob(tier,job,operation,{trained});
+      agentPolicy.requireJob(tier,job,operation,{trained});taughtRule=trained;
     }
     if(automatic && agentAccount.plan && agentPolicy.usesAgentTerms(agentAccount) && agentPolicy.needsPerson(contract.name,proposal.payload,agentAccount))
       throw new ValidationError('This step needs its own confirmation. Review the individual action to proceed.');
@@ -2220,6 +2240,14 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
       SET status='EXECUTED',result=$3::jsonb,executed_at=now() WHERE workspace_id=$1 AND id=$2 AND status='PENDING'
       RETURNING *`,[ctx.workspaceId,id,JSON.stringify(result)]);
     if(!changed.rows.length)throw new InvariantError('That prepared change was updated by another request.','proposal_changed');
+    // Job 181: the activity log records what allowed each completed agent action.
+    if(job||automatic)await require('../autopilot/agent-activity').completed(client,ctx,{proposal,capability:contract.name,job,automatic,
+      missionPlanId,routineAuthority,trained:taughtRule,account:agentAccount});
+    // Job 201: a change a routine or approved plan carried out counts toward
+    // StockChief's usual day, with its money when it has any.
+    if(automatic)await require('../autopilot/circuit-breaker').note(client,ctx.workspaceId,{key:'proposal:'+id,
+      kind:require('../autopilot/circuit-breaker').kindOf(proposal.action_type),reference:proposal.summary,
+      amountMinor:approvalRequest?.amountMinor??null,currency:approvalRequest?.currency??null});
     return {...changed.rows[0],replayed:false};
   },{isolation:'SERIALIZABLE',retrySafe:true});
   await require('./postgres-business-memory').rememberProposal(database,ctx,committed).catch((error)=>

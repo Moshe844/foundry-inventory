@@ -184,11 +184,9 @@ function byAuthority(request,limits){
   return (a,b)=>{const x=authority(a,request.kind,limits),y=authority(b,request.kind,limits);
     return (x?0:1)-(y?0:1)||(x&&y?x.amountMinor-y.amountMinor:0)||String(a.name).localeCompare(String(b.name))||String(a.id).localeCompare(String(b.id));};
 }
-function route(request,{people:team,limits,rules,held,deputy}){
+function route(request,{people:team,limits,rules,held}){
   const owner=team.find(p=>p.role==='owner');
-  if(request.signed?.length)return second(request,{people:team,limits,rules,deputy});
-  if(deputy&&(!KINDS[request.kind].money||request.amountMinor!=null)&&eligible(deputy,request,limits))
-    return {person:deputy,reason:deputy.name+' is covering approvals during your vacation.',vacation:true};
+  if(request.signed?.length)return second(request,{people:team,limits,rules});
   if(!held){
     const rule=ruleFor(request,rules),named=rule&&team.find(p=>p.id===rule.user_id);
     if(named&&eligible(named,request,limits))return {person:named,reason:'Your rule: '+describeRule(rule,named.name)+'.',rule:rule.id};
@@ -200,12 +198,11 @@ function route(request,{people:team,limits,rules,held,deputy}){
 }
 // Job 205: after one approval, the next person who can approve it and has not.
 // A second approval is required, so it is sent even while routing is held.
-function second(request,{people:team,limits,rules,deputy}){
+function second(request,{people:team,limits,rules}){
   const twoPerson=require('./two-person-approval'),done=new Set(request.signed.map(p=>p.account_id)),names=request.signed.map(p=>p.name).join(' and ');
   const owner=team.find(p=>p.role==='owner');
   if(request.signed.length>=2)return owner?{person:owner,reason:names+' approved it. Approve it to post it.'}:{person:null,reason:names+' approved it.'};
   const free=p=>!done.has(p.account_id)&&twoPerson.canSign(p,request,limits),lead='Needs a second approval: '+names+' approved it. ';
-  if(deputy&&free(deputy))return {person:deputy,reason:lead+deputy.name+' is covering approvals during your vacation.',vacation:true};
   const rule=ruleFor(request,rules),named=rule&&team.find(p=>p.id===rule.user_id);
   if(named&&free(named))return {person:named,reason:lead+'Your rule: '+describeRule(rule,named.name)+'.'};
   const staff=team.filter(p=>p.role!=='owner'&&free(p)).sort(byAuthority(request,limits));
@@ -220,13 +217,14 @@ async function holdReason(db,workspaceId,state){
 }
 async function desk(db,workspaceId,{state=null}={}){
   state=state||await policy.accountState(db,workspaceId);
-  const [list,team,saved,held,deputy]=await Promise.all([requests(db,workspaceId),people(db,workspaceId),settings(db,workspaceId),holdReason(db,workspaceId,state),
-    require('./vacation-deputy').activeDeputy(db,workspaceId,state)]);
-  const context={people:team,limits:saved.limits,rules:saved.rules,held,deputy};
+  const vacation=require('./vacation-deputy');
+  const [list,team,saved,held,cover]=await Promise.all([requests(db,workspaceId),people(db,workspaceId),settings(db,workspaceId),holdReason(db,workspaceId,state),vacation.coverage(db,workspaceId,state)]);
+  const context={people:team,limits:saved.limits,rules:saved.rules,held};
   const approved=await require('./two-person-approval').approvals(db,workspaceId,list),threshold=await require('../purchasing/dual-approval').setting(db,workspaceId);
   for(const r of list)if(r.source==='purchase'&&threshold.amount_minor!=null&&(r.amountMinor==null||r.currency!==threshold.currency||r.amountMinor>Number(threshold.amount_minor)))r.twoPeople=true;
   for(const r of list)if(approved.has(r.key)){r.twoPeople=true;r.signed=approved.get(r.key).people;}
-  return {state,held,people:team,...saved,rows:list.map(r=>({...r,...route(r,context)}))};
+  // Job 202: while the owner is away, what waits for them goes to the deputy.
+  return {state,held,cover,people:team,...saved,rows:list.map(r=>vacation.delegate({...r,...route(r,context)},cover,context))};
 }
 
 // Needs you: the approvals routed to this person. Below Pro (job 176 is not
@@ -237,7 +235,7 @@ async function inbox(db,workspaceId,actorId){
   if(!policy.usesAgentTerms(state))return [];
   const groups=require('./approval-groups');
   const [{rows,held},grouping]=await Promise.all([desk(db,workspaceId,{state}),groups.held(db,workspaceId,state)]);
-  return rows.filter(r=>r.person?.id===actorId).map(r=>item(r,{held:Boolean(held)&&!r.vacation&&!r.signed?.length,group:grouping?null:groups.groupFor(r)}));
+  return rows.filter(r=>r.person?.id===actorId).map(r=>item(r,{held:Boolean(held)&&!r.signed?.length&&!r.covering,group:grouping?null:groups.groupFor(r)}));
 }
 function item(r,{held=false,group=null}={}){
   const amount=format(r);
@@ -245,9 +243,11 @@ function item(r,{held=false,group=null}={}){
     happened:held?'Waiting for your approval.':(r.person?.role==='owner'?'':'Sent to you. ')+r.reason,
     why:KINDS[r.kind].label+(amount?' · '+amount:'')+'. '+(r.twoPeople?'Two people must approve it. ':'')+'Nothing changes until it is approved.',
     recommendation:'Open it, check the details, then approve or decline.',href:r.href,actionLabel:'Review',
-    sourceId:'approval-'+r.key,createdAt:r.at,timeLabel:'Waiting since',at:r.at,
+    // Anyone it is passed on to (job 172) must be allowed to decide and to see it (job 203).
+    requiredPermissions:[r.permission,r.readPermission].filter(Boolean),
+    sourceId:(r.covering?'vacation-'+r.id:'approval-'+r.key),createdAt:r.at,timeLabel:'Waiting since',at:r.at,
     ...(r.amountMinor==null?{}:{moneyValue:r.amountMinor,moneyCurrency:r.currency}),
-    approvalRequest:{key:r.key,kind:r.kind,source:r.source,id:r.id,twoPeople:Boolean(r.twoPeople),group}};
+    approvalRequest:{key:r.key,kind:r.kind,source:r.source,id:r.id,twoPeople:Boolean(r.twoPeople),group,...(r.covering?{covering:true}:{})}};
 }
 
 // The routine keeps a record of where each approval went, and audits changes.
@@ -268,7 +268,9 @@ async function run(db,workspaceId){
       WHERE ${ASSIGNED}.user_id IS DISTINCT FROM EXCLUDED.user_id OR ${ASSIGNED}.reason IS DISTINCT FROM EXCLUDED.reason RETURNING 1`,[workspaceId,r.key,r.person.id,r.reason]);
     if(!changed.rowCount)continue;
     routed++;
-    await audit.record(db,{workspaceId,actorId:null},{action:'Approval sent to '+r.person.name,reference:r.title.slice(0,200),
+    // A vacation deputy's approvals are audited by the vacation routine (job 202).
+    if(r.covering)continue;
+    await audit.record(db,{workspaceId,actorId:null},{action:'Approval sent to a team member',reference:r.title.slice(0,200),
       before:prior?{person:team.find(p=>p.id===prior.user_id)?.name||'A former member',why:prior.reason}:{},after:{person:r.person.name,why:r.reason,kind:KINDS[r.kind].label,amount:format(r)}});
   }
   if(current.size)await db.query(`DELETE FROM ${ASSIGNED} WHERE workspace_id=$1 AND request_key=ANY($2::text[])`,[workspaceId,[...current.keys()]]);
@@ -393,4 +395,4 @@ async function review(db,ctx){
   return {summary:'Each waiting approval goes to one person who can approve it: your routing rules first, then the team member with the lowest approval limit that covers it, then you. Set rules and limits on the approval routing page.',
     rows:d.rows.map(r=>({Approval:r.title,Kind:KINDS[r.kind].label,Amount:format(r)||'',Reviewer:r.person?.name||'Nobody yet',Reason:r.reason,link:r.href}))};
 }
-module.exports={JOB,KINDS,ACTIONS,LIMIT_KINDS,path,requests,people,settings,eligible,covers,route,desk,inbox,item,run,saveRule,saveLimit,assertLimit,proposalRequest,screen,review,describeRule,canApproveKind,holdReason};
+module.exports={KINDS,ACTIONS,LIMIT_KINDS,path,requests,people,settings,eligible,covers,route,desk,inbox,item,run,saveRule,saveLimit,assertLimit,proposalRequest,screen,review,describeRule,canApproveKind,holdReason};

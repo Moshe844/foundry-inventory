@@ -226,6 +226,7 @@ async function job(job,database){
 
 async function failedJob(database,job,error){
     if(job.kind==='agent.slack.answer.v1')return require('../connections/agent-slack').recover(database,job);
+    if(job.kind==='agent.chat.answer.v1')return require('../connections/agent-chat').recover(database,job);
     if(job.kind==='import.discover-filed-document.v1')return require('../documents/agent-document-discovery').fail(database,job,error.message);
     if(job.kind==='import.read-shipping-document.v1')return require('../documents/agent-shipping-document-reader').fail(database,job,error.message);
     if(job.kind==='import.variant-sheet.v1')return require('../imports/agent-exact-variant-import').fail(database,job,error.message);

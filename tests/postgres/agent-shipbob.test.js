@@ -57,25 +57,24 @@ test('ShipBob sandbox order approval, network recovery, split tracking and match
   const results=await provider.dashboard(db,ctx);assert.equal(results.orders[0].provider_order_id,'20');
   assert.equal(results.orders[0].shipments[0].tracking,'TEST-A');assert.equal(results.orders[0].shipments[1].tracking,null);
   assert.equal(results.stock[0].on_hand,15);assert.equal(results.stock[0].fulfillable,12);assert.equal(await f.balance(),before);
+  // The warehouse rule is a job 186 route: Growth cannot let it send on its own.
   await assert.rejects(provider.configureRule(db,ctx,{action:'enable',locationId:f.location.id}),e=>e.code==='entitlement_required');
   await plan('pro');
-  await assert.rejects(provider.configureRule(db,ctx,{action:'enable',locationId:f.location.id}),/14-day/);
-  await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[owner.accountId]);
-  await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
   await provider.configureRule(db,ctx,{action:'enable',locationId:f.location.id});
   const next=await workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'SHIP',fulfillmentLocationId:f.location.id,
     idempotencyKey:'auto-shipbob',lines:[{skuId:f.item.skuIds[0],quantity:2,unitPriceMinor:120}]});
   await workflows.confirmSalesOrder(db,ctx,next.salesOrderId,{idempotencyKey:'confirmed-auto-shipbob'});
-  await db.transaction(provider.schedule);await db.transaction(provider.schedule);
-  const pending=await db.query("SELECT payload FROM stockchief_runtime.jobs WHERE kind='shipbob.sandbox-order' AND workspace_id=$1",[ctx.workspaceId]);
-  assert.equal(pending.rowCount,1);
-  const job={workspaceId:ctx.workspaceId,payload:pending.rows[0].payload};
+  const routes=require('../../src/connections/agent-3pl-orders');
+  assert.equal((await routes.run(db,ctx.workspaceId,{transport})).drafted,1,'The first 14 days only draft.');assert.equal(posts,1);
+  await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[owner.accountId]);
+  await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
   await plan('growth');
-  await assert.rejects(provider.runJob(db,job,transport),e=>e.code==='entitlement_required');assert.equal(posts,1);
+  assert.equal((await routes.run(db,ctx.workspaceId,{transport})).sent,0);assert.equal(posts,1);
   await plan('pro');remote=null;
-  await provider.runJob(db,job,transport);assert.equal(posts,2);
+  assert.equal((await routes.run(db,ctx.workspaceId,{transport})).sent,1);assert.equal(posts,2);
+  assert.equal((await routes.run(db,ctx.workspaceId,{transport})).sent,0,'A replay sends nothing.');assert.equal(posts,2);
   await provider.configureRule(db,ctx,{action:'disable'});
-  await assert.rejects(provider.runJob(db,job,transport),/rule/);assert.equal(posts,2);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM stockchief_runtime.agent_3pl_routes WHERE workspace_id=$1 AND enabled',[ctx.workspaceId])).rows[0].n,0);
   await plan('starter');
   assert.equal((await provider.dashboard(db,ctx)).stock.length,0);
   await provider.disconnect(db,ctx);

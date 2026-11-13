@@ -167,6 +167,8 @@ async function runtimeSweep(job,client,options={}){
   await require('../assistant/postgres-credit-maintenance').reconcile(client,{olderThan:new Date(now-30*60_000).toISOString()});
   await require('../commercial/ai-spending-notifications').sweep(client);
   await require('../reports/postgres-scheduling').enqueueDue(client,at);
+  // Job 156: the daily briefing at each business's chosen time.
+  await require('../autopilot/briefing-email').enqueueDue(client,at);
   await require('../custody/postgres-billing').enqueueDue(client);
   await require('../payments/postgres-provenance').queueMissing(scopedDatabase(client));
   const staleImportAt=new Date(now-15*60_000).toISOString();
@@ -397,7 +399,8 @@ async function runtimeSweep(job,client,options={}){
     if(scheduled.created)scheduledMissionResumes+=1;}
   await require('../autopilot/playbooks').schedule(client);
   await require('../reports/agent-inventory-rollup').schedule(client);
-  await require('../connections/postgres-shipbob-sandbox').schedule(client);
+  // Job 186: each inventory with a 3PL route, every five minutes.
+  await require('../connections/agent-3pl-orders').schedule(client);
   await require('../connections/agent-partner-stock-reads').schedule(client);
   await require('../connections/postgres-orderful-test').schedule(client);
   const scheduledWorkflowChecks=await require('./postgres-workflow-ownership').scheduleDue(client,now);
@@ -426,8 +429,15 @@ async function autopilotEvaluate(job,client){
   if(cycle.skipped)return {...cycle,cycleId,cycleStartedAt};
   if(!job.payload.afterSkuId){
     await require('../autopilot/circuit-breaker').refresh(client,job.workspaceId);
+    await require('../autopilot/circuit-breaker').prune(client,job.workspaceId);
     await require('./agent-count-tasks').runSchedules(client,job.workspaceId);
     await require('../sales/recurring-orders').schedule(client,job.workspaceId);
+    // Job 180: yesterday's team summary, before the notices so it opens and emails in this check.
+    await require('../autopilot/team-summary').deliver(client,job.workspaceId);
+    // Job 204: yesterday's "what I did" digest, likewise before the notices.
+    await require('../autopilot/agent-work-digest').deliver(client,job.workspaceId);
+    // Job 50: tell sales about waited-for stock now reserved, before the alert check sends it.
+    await require('../sales/agent-stock-ready-staff').refresh(client,job.workspaceId);
     await require('../autopilot/operational-notices').refresh(client,job.workspaceId);
     await require('../pricing/agent-supplier-price-updates').schedule(client,job.workspaceId,cycleId);
     await require('../forecasting/agent-slow-stock-steps').schedule(client,job.workspaceId,cycleId);
@@ -441,7 +451,13 @@ async function autopilotEvaluate(job,client){
     await require('../shipping/agent-labels').schedule(client,job.workspaceId,cycleId);
     await require('../shipping/agent-return-labels').schedule(client,job.workspaceId,cycleId);
     await require('../shipping/agent-parcel-watch').schedule(client,job.workspaceId,cycleId);
+    // Job 39: read the carrier's tracking for followed ocean and air shipments.
+    await require('../purchasing/inbound-freight-arrivals').schedule(client,job.workspaceId,cycleId);
     await require('../shipping/agent-carrier-claims').schedule(client,job.workspaceId,cycleId);
+    // Jobs 66 and 70: repeat pallet pickups and international paperwork for packed shipments.
+    await require('../shipping/agent-freight-routine').schedule(client,job.workspaceId,cycleId);
+    await require('../shipping/agent-van-route-routine').schedule(client,job.workspaceId,cycleId);
+    await require('../shipping/agent-export-paper-routine').schedule(client,job.workspaceId,cycleId);
     await require('../transfers/agent-transfer-balancing').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-freight-combine').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
     await require('../purchasing/agent-rfq-competition').enqueue(scopedDatabase(client),job.workspaceId,cycleId);
@@ -491,7 +507,7 @@ async function providerEffect(job,database,options={},providers=defaultProviders
   require('./agent-return-refund-protocol').assertJob(effect,job.kind);
   const capability={'shipping.label.purchase':'shipping.labels','mail.reply.send':'communications.send_approved',
     'mail.outbound.send':'communications.send_approved','payment.request.create':'payments.customer',
-    'payment.refund.create':'payments.customer','accounting.journal.export':'accounting.post_connected','commerce.position.publish':'connections.commerce'}[effect.kind];
+    'payment.refund.create':'payments.customer','accounting.journal.export':'accounting.post_connected','accounting.document.export':'accounting.post_connected','commerce.position.publish':'connections.commerce'}[effect.kind];
   if(capability&&effect.status==='PENDING'){
     const scope=await entitlements.ownerScopeForWorkspace(database,job.workspaceId);
     await entitlements.assertCapability(database,scope,capability);
@@ -537,6 +553,10 @@ async function providerEffect(job,database,options={},providers=defaultProviders
     provider:options.accountingProviderResolver?options.accountingProviderResolver(effect.provider):providers.get(effect.provider),
     credentials:options.accountingCredentials,
   });
+  // Job 184: an invoice or bill sent to QuickBooks or Xero.
+  if(effect.kind==='accounting.document.export')return require('../accounting/agent-accounting-documents').executeEffect(database,job.workspaceId,effectId,{
+    provider:options.accountingProviderResolver?options.accountingProviderResolver(effect.provider):undefined,credentials:options.accountingCredentials,
+  });
   if(effect.kind==='commerce.position.publish')return require('../connections/postgres-commerce-sync').execute(database,job.workspaceId,effectId,{providers});
   throw Object.assign(new Error(`No provider-effect handler is registered for ${effect.kind}.`),
     {code:'provider_effect_handler_missing',retryable:false});
@@ -579,6 +599,12 @@ async function systemEmail(job,database,options={}){
     !await require('../reports/postgres-scheduling').emailStillWanted(database,job.workspaceId,job.id,message.to,job.payload.reportRevision)){
     return {skipped:'This scheduled report delivery was cancelled.'};
   }
+  if(job.payload.messageType==='scheduled_report'&&job.idempotencyKey?.startsWith('roi-report-email:')&&job.payload.includesCosts!==false){
+    const allowed=await require('../reports/agent-roi-report').costRecipients(database,job.workspaceId);
+    if(!recipientAddresses.length||recipientAddresses.some(address=>!allowed.has(address.toLowerCase()))){
+      return {skipped:'The recipient no longer has access to the financial figures in this report.'};
+    }
+  }
   if(!receipt.retry_safe){
     await database.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
       VALUES($1,$2,$3,'EMAIL_DELIVERY_RECONCILIATION_REQUIRED',$4::jsonb)
@@ -602,6 +628,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.supplier_direct.dispatch.v1':external((job,database)=>require('../purchasing/agent-direct-shipments').process(job,database)),
   'agent.supplier_direct.orders.v1':external((job,database)=>require('../purchasing/direct-shipment-routines').process(job,database)),
   'agent.slack.answer.v1':external((job,database)=>require('../connections/agent-slack').process(job,database,{provider:options.aiProvider}),'reading'),
+  'agent.chat.answer.v1':external((job,database)=>require('../connections/agent-chat').process(job,database,{provider:options.aiProvider}),'reading'),
   'assistant.run-goal':external(async(job,database)=>{
     const ctx={workspaceId:job.workspaceId,actorId:job.payload.actorId};
     const goal=await require('../assistant/postgres-goal-store').get(database,ctx,job.payload.goalId);
@@ -676,6 +703,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.shipping-labels.v1':external((job,database)=>require('../shipping/agent-labels').run(database,job,{providerResolver:options.shippingProviderResolver})),
   'agent.return-labels.v1':external((job,database)=>require('../shipping/agent-return-labels').run(database,job,{providerResolver:options.shippingProviderResolver})),
   'agent.parcel-watch.v1':external((job,database)=>require('../shipping/agent-parcel-watch').run(database,job,{providerResolver:options.shippingProviderResolver})),
+  'agent.inbound-freight-tracking.v1':external((job,database)=>require('../purchasing/inbound-freight-arrivals').run(database,job,{provider:options.freightTrackingProvider})),
   'agent.carrier-claim-follow-up.v1':external((job,database)=>require('../shipping/agent-carrier-claims').followUp(database,job,options.carrierClaimProvider)),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-shelf-photo.v1':external((job,database)=>require('../warehouse/agent-shelf-photos').run(job,database,{provider:options.aiProvider}),'reading'),
@@ -683,7 +711,15 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'import.read-shipping-document.v1':external((job,database)=>require('../documents/agent-shipping-document-reader').run(job,database),'reading'),
   'import.read-contract.v1':external((job,database)=>require('../documents/agent-contract-reader').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.read-sop.v1':external((job,database)=>require('../documents/agent-sop-sources').run(job,database,{provider:options.aiProvider}),'reading'),
+  // Job 212: each clause of a read procedure becomes a rule for the owner to confirm, or is kept for people.
+  'agent.sop-rules.v1':external(async(job,database)=>{
+    const sop=require('../documents/agent-sop-sources');
+    try{return await sop.runFollow(job,database,{provider:options.aiProvider});}
+    catch(error){if(![400,402,403,404].includes(error.status))throw error;await sop.followStopped(database,job,error);return {held:true,reason:error.message};}
+  },'reading'),
   'ask.read-voice-note.v1':external((job,database)=>require('../assistant/ask-voice').run(job,database,{transcriber:options.audioTranscriber}),'reading'),
+  'import.voice-paperwork.v1':external((job,database)=>require('../documents/agent-voice-paperwork').run(job,database,
+    {provider:options.aiProvider,transcriber:options.audioTranscriber}),'reading'),
   'import.read-voice-receipt.v1':external((job,database)=>require('../documents/agent-voice-receiving').run(job,database,
     {provider:options.aiProvider,transcriber:options.audioTranscriber}),'reading'),
   'import.analyse-handwriting.v1':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
@@ -737,20 +773,27 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
     try{return await require('../connections/postgres-shipbob-sandbox').runJob(database,job,options.shipbobFetch);}
     catch(error){if(!error.retryable&&[400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}
   }),
+  // Job 186: orders go to the 3PL that runs their warehouse; its shipping, tracking and stock come back.
+  'fulfillment.3pl-orders.v1':external((job,database)=>require('../connections/agent-3pl-orders').run(database,job.workspaceId,{transport:options.thirdPartyFetch||options.shipbobFetch})),
   'shipbob.sandbox-stock':external(async(job,database)=>{
     try{return await require('../connections/agent-partner-stock-reads').run(database,job,options.shipbobFetch);}
     catch(error){if(error.retryable||[400,402,403,404].includes(error.status))await require('../connections/agent-partner-stock-reads').noteIssue(database,job,error);if(!error.retryable&&[400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}
   }),
   'agent.playbook':external(async(job,database)=>{
-    try{return await require('../autopilot/playbooks').run(database,{workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.id,job.payload.key);}
+    try{return await require('../autopilot/playbooks').run(database,{workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.id,job.payload.key,{scheduled:true});}
     catch(error){if([400,402,403,404].includes(error.status))return {held:true,reason:error.message};throw error;}
   }),
   'mail.customer-order':external((job,database)=>require('../sales/postgres-email-order').onArrival(database,job.workspaceId,job.payload.messageId)),
   'mail.customer-repeat-order.v1':external((job,database)=>require('../sales/agent-repeat-orders').fromEmail(database,job.workspaceId,job.payload.messageId)),
   'mail.customer-statement.v1':external((job,database)=>require('../accounting/agent-statement-requests').fromEmail(database,job.workspaceId,job.payload.messageId)),
   'mail.customer-question.v1':external((job,database)=>require('../sales/agent-customer-questions').fromEmail(database,job.workspaceId,job.payload.messageId)),
+  // Job 187: a reply StockChief wrote is sent on its own, kept for a person or held.
+  'mail.agent-reply.v1':external((job,database)=>require('../connections/agent-mail-replies').fromDraft(database,job.workspaceId,job.payload.messageId)),
+  // Job 184: open invoices and bills go to the connected books.
+  'agent.accounting-documents.v1':external((job,database)=>require('../accounting/agent-accounting-documents').run(database,job.workspaceId)),
   'mail.customer-quote.v1':external((job,database)=>require('../sales/agent-quote-requests').fromEmail(database,job.workspaceId,job.payload.messageId)),
   'mail.customer-return.v1':external((job,database)=>require('../sales/agent-customer-return-emails').onArrival(database,job.workspaceId,job.payload.messageId)),
+  'customer.text-order.v1':external((job,database)=>require('../sales/agent-text-orders').process(database,job.workspaceId,job.payload.id,{send:options.textSender})),
   'customer.order-page.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId)),
   'customer.preorder.v1':external((job,database)=>require('../sales/agent-customer-order-pages').onRequest(database,job.workspaceId,job.payload.requestId,job.payload.ownerId,{preorder:true})),
   'customer.preorder-arrival.v1':external((job,database)=>require('../sales/agent-customer-order-pages').settlePreorders(database,job.workspaceId,{receiptId:job.payload.receiptId})),
@@ -774,6 +817,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'reports.month-end-stock.v1':external((job,database)=>require('../reports/agent-month-end-stock').run(database,job.workspaceId,job.payload)),
   'reports.change-digest.v1':external((job,database)=>require('../reports/agent-change-explanations').run(database,job.workspaceId,job.payload)),
   'reports.board-pack.v1':external((job,database)=>require('../reports/agent-board-pack').run(database,job.workspaceId,job.payload)),
+  'reports.supplier-review-packs.v1':external((job,database)=>require('../purchasing/agent-supplier-review-packs').run(database,job.workspaceId,job.payload)),
+  'reports.year-end-pack.v1':external((job,database)=>require('../accounting/agent-year-end-pack').run(database,job.workspaceId,job.payload)),
   'channel.price-check.v1':external((job,database)=>require('../pricing/agent-channel-price-checks').run(database,job.workspaceId)),
   'purchase-order.supplier-document-amendment.v1':external((job,database)=>require('../purchasing/po-amendment-document').onDocument(database,job.workspaceId,job.payload.documentId)),
   'mail.supplier-unavailability.v1':external((job,database)=>require('../purchasing/supplier-unavailability-mail').onArrival(database,job.workspaceId,job.payload)),
@@ -853,8 +898,15 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   }),
   'agent.channel-buffer.publish.v1':external(async(job,database)=>{const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);require('./agent-commerce-protocol').assertJob(effect,job.kind);if(effect.status==='CANCELLED')return {cancelledBeforeDelivery:true};return providerEffect(job,database,options,providers);}),
   'provider.commerce-recovery.v1':external((job,database)=>require('../connections/agent-channel-recovery').run(database,job,{providers})),
+  'channel.buffer-plans.v1':external((job,database)=>require('../connections/agent-channel-buffer-plans').run(database,job.workspaceId,{
+    connectorId:job.payload?.connectorId||null,after:job.payload?.after??null,revision:job.payload?.revision??null,scanId:job.payload?.scanId||job.id}),'maintenance'),
+  'channel.sync-fixes.v1':external((job,database)=>require('../connections/agent-channel-sync-fixes').run(database,job.workspaceId,{providers,...(options.publicOrigin?{publicOrigin:options.publicOrigin}:{})})),
   'agent.shipping.carrier-claim.v1':external((job,database)=>require('../shipping/agent-carrier-claims').submit(database,job,options.carrierClaimProvider)),
   'agent.shipping.freight-pickup.v1':external((job,database)=>require('../shipping/agent-freight-pickups').dispatch(database,job)),
+  'agent.api_job':external((job,database)=>require('../connections/agent-api-jobs').execute(job,database)),
+  'agent.shipping.van-route-routine.v1':external((job,database)=>require('../shipping/agent-van-route-routine').run(database,job)),
+  'agent.shipping.freight-routine.v1':external((job,database)=>require('../shipping/agent-freight-routine').run(database,job)),
+  'agent.shipping.export-papers.v1':external((job,database)=>require('../shipping/agent-export-paper-routine').run(database,job)),
   'provider.commerce-verify':external((job,database)=>require('../connections/postgres-commerce-sync').verifyDelivery(database,job.workspaceId,job.payload.effectId,{providers})),
   'agent.mail.supplier_benefit_claim.v1':external(async(job,database)=>{
     const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);require('./agent-mail-protocol').assertJob(effect,job.kind);
@@ -883,6 +935,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.approval-links':external((job,database)=>require('../autopilot/approval-links').run(database,job.workspaceId)),
   // Job 173: one text or push, sent once. Tests pass fake senders.
   'agent.alert-message':external((job,database)=>require('../autopilot/alert-phones').process(database,job,{sms:options.smsSender,push:options.pushSender})),
+  'agent.briefing-delivery':external((job,database)=>require('../autopilot/briefing-email').run(database,job.workspaceId,job.payload)),
   'agent.supplier-claims':external(async(job,database)=>{
     const result=await require('../purchasing/agent-supplier-claims').run(database,job.workspaceId,job.payload);
     // After the last claim page, follow sent claims: replies, settlements and reminders.

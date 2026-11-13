@@ -60,8 +60,12 @@ function createPostgresInventoryRouter(database) {
       layoutOnboardingEntry:{...res.locals.globalOnboardingEntry,state}});
   };
   router.get('/inventory',asyncRoute(renderList));
-  router.get('/inventory/overview',asyncRoute(async(req,res)=>res.page('inventory/position',{title:'Stock overview',nav:'inventory',room:true,postgresNative:true,
-    ...(await presenters.inventoryPosition(database,req.ctx.workspaceId))})));
+  router.get('/inventory/overview',asyncRoute(async(req,res)=>{
+    // Job 203: stock value is a valuation, shown only to people who see accounting.
+    const position=await presenters.inventoryPosition(database,req.ctx.workspaceId),valueHidden=!permissions.can(req.user,permissions.VIEW_ACCOUNTING);
+    return res.page('inventory/position',{title:'Stock overview',nav:'inventory',room:true,postgresNative:true,...position,
+      ...(valueHidden?{stockValue:null,valueHidden:true}:{})});
+  }));
   router.get('/inventory/table',asyncRoute(renderList));
   router.get('/inventory/variant-products',requirePermission(permissions.VIEW,'see products'),asyncRoute(async(req,res)=>res.json({products:await require('../../domain/postgres-variant-data').products(database,req.ctx.workspaceId,req.query)})));
   router.get('/inventory/:id/variants/data',requirePermission(permissions.VIEW,'see variants'),asyncRoute(async(req,res)=>res.json(await require('../../domain/postgres-variant-data').load(database,req.ctx.workspaceId,req.params.id,req.query))));
@@ -167,7 +171,9 @@ function createPostgresInventoryRouter(database) {
     const kitAvailability=kitCounts.length?Object.fromEntries(await require('../../domain/postgres-kit-availability').read(database,req.ctx.workspaceId,kitCounts.map(k=>k.kit_sku_id))):{};
     const finding=req.query.finding?(await database.query("SELECT id,title,concise_summary,recommendation FROM attention_items WHERE workspace_id=$1 AND id=$2 AND item_id=$3 AND status='OPEN'",[req.ctx.workspaceId,String(req.query.finding).slice(0,160),req.params.id])).rows[0]||null:null;
     const lowSkuIds=detail.skus.length>1?(await require('../../reports/postgres-low-stock-badges').forSkus(database,req.ctx.workspaceId,detail.skus.map(s=>s.id))).map(r=>r.sku_id):[];
-    return res.page('inventory/item',{productSourceFacts:req.user.role==='owner'?await require('../../documents/agent-product-source').forItem(database,req.ctx,req.params.id):[],replacementGuidance:await require('../../catalog/agent-product-retirements').guidance(database,req.ctx.workspaceId,req.params.id),canRetire:req.user.role==='owner'&&Number(detail.item.is_active)?await require('../../catalog/agent-retirement-work').canRetire(database,req.ctx.workspaceId,detail.skus):null,mergeNotes:await require('../../catalog/agent-catalog-fixes').merged(database,req.ctx.workspaceId,req.params.id),classNotes:await require('../../catalog/agent-product-classification').notes(database,req.ctx.workspaceId,req.params.id),finding,productView,lowSkuIds,variantStates,variantSuppliers,variantStockLocations,variantStockSnapshots,stockPlaces,backTo:{href:'/inventory',label:'Stock'},title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
+    // Job 123: what 3PL and consignment partners counted, beside the product's own stock.
+    const partnerStock=req.user.role==='owner'?await require('../../autopilot/partner-stock').forItem(database,req.ctx,detail.skus.map(s=>s.id)):[];
+    return res.page('inventory/item',{partnerStock,productSourceFacts:req.user.role==='owner'?await require('../../documents/agent-product-source').forItem(database,req.ctx,req.params.id):[],replacementGuidance:await require('../../catalog/agent-product-retirements').guidance(database,req.ctx.workspaceId,req.params.id),canRetire:req.user.role==='owner'&&Number(detail.item.is_active)?await require('../../catalog/agent-retirement-work').canRetire(database,req.ctx.workspaceId,detail.skus):null,mergeNotes:await require('../../catalog/agent-catalog-fixes').merged(database,req.ctx.workspaceId,req.params.id),classNotes:await require('../../catalog/agent-product-classification').notes(database,req.ctx.workspaceId,req.params.id),finding,productView,lowSkuIds,variantStates,variantSuppliers,variantStockLocations,variantStockSnapshots,stockPlaces,backTo:{href:'/inventory',label:'Stock'},title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
       purchasingLines,commitments:[],outlook:[],canViewCosts,canViewMargins,canOperate:permissions.can(req.user,permissions.OPERATE),
       canEstablishCost:['owner','accountant'].includes(req.user.role)&&permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       importedDetails:canViewCosts?importedDetails:[],importedGroups:require('../presentation/imported-details').group(canViewCosts?importedDetails:[],detail.skus),detailsVersion:require('../../domain/catalog-identity').detailsVersion(detail.item),

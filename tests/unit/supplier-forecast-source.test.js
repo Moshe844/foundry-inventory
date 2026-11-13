@@ -1,4 +1,14 @@
 'use strict';
-const test=require('node:test'),assert=require('node:assert/strict'),{project}=require('../../src/purchasing/supplier-forecast-source');
-test('supplier projections leave missing or short order history unknown instead of inventing demand',()=>{for(const [first,days]of [[null,0],['2026-10-26',2],['2026-08-17',1]]){const p=project('2026-11-09',Array(12).fill('2'),first,days);assert.equal(p.total,null);assert(p.forecast.every(w=>w.quantity===null));}});
-test('twelve forecast periods exclude the partial first period and conserve exact six-decimal totals',()=>{const p=project('2026-11-09',['999','1',...Array(10).fill('0')],'2026-08-17',2);assert.equal(p.observedWeeks,11);assert.equal(p.total,'1.090909');assert.equal(p.forecast[0].from,'2026-11-09');assert.equal(p.forecast[11].to,'2027-01-31');const units=p.forecast.reduce((n,w)=>{const [a,b='']=w.quantity.split('.');return n+BigInt(a)*1000000n+BigInt(b.padEnd(6,'0'));},0n);assert.equal(units,1090909n);});
+const test=require('node:test'),assert=require('node:assert/strict'),{weeks,monday}=require('../../src/purchasing/supplier-forecast-source');
+test('a fitted forecast shape becomes twelve seven-day weeks from the preparation day',()=>{
+ const plan=weeks({kind:'flat',rate:2},'2026-11-11');
+ assert.equal(plan.length,12);assert.deepEqual(plan[0],{from:'2026-11-11',to:'2026-11-17',quantity:14});assert.equal(plan[11].to,'2027-02-02');
+ assert(plan.every(w=>w.quantity===14));
+ const weekday=weeks({kind:'weekday',rate:1,factors:[0,1,1,1,1,1,2]},'2026-11-09');assert(weekday.every(w=>w.quantity===7),'a weekday pattern sums to the same week');
+});
+test('a product without a forecast stays unknown instead of inventing demand',()=>{
+ const plan=weeks(null,'2026-11-11');assert.equal(plan.length,12);assert(plan.every(w=>w.quantity===null));
+});
+test('a week is counted from its Monday',()=>{
+ assert.equal(monday('2026-11-11'),'2026-11-09');assert.equal(monday('2026-11-09'),'2026-11-09');assert.equal(monday('2026-11-15'),'2026-11-09');
+});

@@ -240,9 +240,11 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
     const quotes=(await review('compare-quotes')).rows;
     assert.deepEqual(quotes.map(r=>[r.Supplier,r['Supplier unit price']]),[['Alternative','$1.25'],['Fixture parts','$1.50']]);
     const page=await browser.get('/autopilot/reviews/demand-scenario').query({filter:code,change:20}).expect(200);
-    assert.match(page.text,/Scenario 30-day sales/);assert.match(page.text,/1\.2<\/td>/);
+    assert.match(page.text,/Sales in 30 days/);assert.match(page.text,/If sales go up 20%/);
     const asked=await require('../../src/assistant/postgres-capability-registry').registry.get('read.agent_review').prepare(null,db,ctx,'What happens if sales grow 20%?',{agentJob:'demand-scenario',search:code,demandChangePercent:20});
-    assert.equal(asked.rows.find(r=>r.Warehouse==='Dispatch')['Scenario 30-day sales'],1.2);
+    // Job 149 compares today's 30 days of sales with the what-if case: "now → what if".
+    const sales=/^([\d.]+) → ([\d.]+)$/.exec(asked.rows.find(r=>r.SKU===code)['Sales in 30 days']);
+    assert.ok(sales&&Number(sales[1])>0,JSON.stringify(asked.rows));assert.equal(Number(sales[2]),Math.round(Number(sales[1])*1.2*100)/100);
     assert.ok(asked.sources[0].href.includes('change=20'));
     const scenario=(await review('demand-scenario',{change:20})).rows.find(r=>r.Warehouse==='Dispatch');
     assert.equal(scenario['Baseline 30-day sales'],1);assert.equal(scenario['Scenario 30-day sales'],1.2);
@@ -342,7 +344,9 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
     const line=(await forSupplier()).rows[0];assert.equal(Number(line.Ordered),4);assert.equal(Number(line['Received by close']),1);
     const packed=await binary(downloadPack()).expect(200);
     const library=await import('pdfjs-dist/legacy/build/pdf.mjs'),loading=library.getDocument({data:new Uint8Array(packed.body)});
-    const doc=await loading.promise,content=(await (await doc.getPage(1)).getTextContent()).items.map(i=>i.str).join(' ');
+    // The pack opens with the supplier summary, then the order lines.
+    const doc=await loading.promise;let content='';
+    for(let i=1;i<=doc.numPages;i++)content+=(await (await doc.getPage(i)).getTextContent()).items.map(i=>i.str).join(' ')+' ';
     assert.ok(content.includes(line.Order));assert.ok(content.includes('Alternative'));assert.ok(content.includes('$1.25'));
     assert.doesNotMatch(content,/Fixture parts/);await loading.destroy();
     const quarter=priorQuarter.end.slice(0,4)+'-Q'+Math.ceil(Number(priorQuarter.end.slice(5,7))/3);

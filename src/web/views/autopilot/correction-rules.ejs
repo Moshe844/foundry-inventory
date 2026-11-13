@@ -1,0 +1,30 @@
+<% const s=screen; %>
+<div class="page-head"><div class="titles"><h1>Rules suggested by your repeated fixes</h1>
+<p>When you make the same fix <%= s.times %> or more times in <%= s.days %> days, StockChief suggests the rule that would make it unnecessary, worked out from those fixes. Accepting saves it as one of your rules.</p></div></div>
+
+<% if(s.shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. You can accept a suggestion after <%= helpers.dateTime(s.shadowEndsAt) %>.</p><% } %>
+
+<section class="card section" id="suggestions"><h2>Suggested rules</h2>
+<% if(!s.suggestions.length){ %><p class="cell-sub" data-corrections-empty>No repeated fixes right now. StockChief looks at stock corrections, changes to draft purchase orders, stock moves and reorder suggestions you declined.</p><% } %>
+<% s.suggestions.forEach(function(r){ %>
+<article class="section" id="<%= r.anchor %>" data-correction-rule="<%= r.pattern %>">
+  <h3><%= r.rule %></h3>
+  <p><%= r.evidence %></p>
+  <h4>What it would have done</h4>
+  <%- include('rule-test',{test:r.test}) %>
+  <div class="form-actions">
+    <% if(r.pattern==='stock-count'){ %>
+      <a class="btn btn--primary" href="<%= r.link %>">Choose who counts and when</a>
+    <% }else if(!r.shadow){ %>
+      <form method="post" action="/autopilot/learning/corrections/accept"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="pattern" value="<%= r.pattern %>"><input type="hidden" name="scope" value="<%= r.scope %>">
+        <button class="btn btn--primary">Accept this rule</button></form>
+    <% } %>
+    <form method="post" action="/autopilot/learning/corrections/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="pattern" value="<%= r.pattern %>"><input type="hidden" name="scope" value="<%= r.scope %>">
+      <button class="btn btn--ghost">Not now</button></form>
+  </div>
+</article>
+<% }) %>
+</section>
+<p class="cell-sub">Accepted rules are listed in <a href="/what-you-told-me">What you’ve told me</a> and count toward your plan’s rules. Price changes are never suggested: changing a selling price or accepting a supplier’s new price always needs a person.</p>

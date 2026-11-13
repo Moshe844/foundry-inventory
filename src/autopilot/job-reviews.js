@@ -33,7 +33,7 @@ const definitions=[
   require('../sales/agent-ship-from').definition,
   require('../operations/agent-annual-stocktakes').definition,
   require('../connections/agent-channel-buffers').definition,
-  require('../connections/agent-channel-recovery').definition,
+  require('../connections/agent-channel-sync-fixes').definition,
   require('../connections/agent-slack').definition,
   ...require('../sales/agent-order-reservations').definitions,
   require('../purchasing/agent-supplier-rfqs').definition,
@@ -57,6 +57,8 @@ const definitions=[
   require('../onboarding/agent-migration-review').definition,
   require('../sales/agent-quote-followups').definition,
   require('../sales/agent-customer-questions').definition,
+  require('../connections/agent-mail-replies').definition,
+  require('../accounting/agent-accounting-documents').definition,
   require('../sales/agent-quote-requests').definition,
   require('../warehouse/agent-putaway').definition,
   require('../accounting/postgres-landed-costs').definition,
@@ -79,12 +81,15 @@ const definitions=[
   require('../purchasing/agent-receiving-documents').definition,
   require('../sales/agent-customer-pricing').definition,
   require('./agent-work-digest').definition,
+  require('./agent-activity').definition,
   require('../pricing/channel-price-review').definition,
   require('./repeated-corrections').definition,
   require('../sales/recurring-orders').definition,
   ...require('../sales/agent-customer-orders').definitions,
   require('../actions/financial-visibility').definition,
   ...require('./automation-opportunities').definitions,
+  require('./correction-rules').definition,
+  require('./rule-rehearsal').definition,
   {id:13,key:'kit-capacity',label:'Kits you can build now',filterLabel:'Kit SKU',readPage:require('../purchasing/agent-kit-reorders').review},
   require('../forecasting/warehouse-slotting').definition,
   {id:15,key:'monthly-product-classes',label:'Review monthly ABC product classes',filterLabel:'Product code, name or class',readPage:require('../forecasting/monthly-product-classes').review},
@@ -97,11 +102,14 @@ const definitions=[
   require('./vacation-deputy').definition,
   require('./circuit-breaker').definition,
   ...require('./partner-habits').definitions,
+  require('./plain-rules').definition,
   ...require('../operations/agent-count-tasks').definitions,
   require('../operations/agent-staff-tasks').definition,
   ...require('../accounting/agent-report-packs').definitions,
   ...require('./activity-watches').definitions,
   ...require('./daily-briefs').definitions,
+  require('../reports/agent-report-email').definition,
+  require('./team-summary').definition,
   require('./stock-alerts').definition,
   require('../connections/agent-channel-alerts').definition,
   ...require('../forecasting/agent-service-levels').definitions,
@@ -196,6 +204,8 @@ function firstSuggestion(def,rows){
   if(def.id===97)return rows.slice(0,1).map(row=>({Suggestion:row.Suggestion}));
   // Build counts are answers, so Starter sees every kit and warehouse on the page.
   if(def.id===13)return rows.slice(0,100).map(row=>({Suggestion:suggestions[13](row)}));
+  // Job 182: Starter sees a suggested fix for every channel sync problem.
+  if(def.id===182)return rows.slice(0,100).map(row=>({Suggestion:row.Problem+' '+row.Suggestion,link:row.link}));
   const describe=suggestions[def.id];
   if(!describe)return [];
   return rows.slice(0,1).map(row=>({Suggestion:describe(row)}));
@@ -237,7 +247,9 @@ async function run(db,ctx,key,options={}){
       ...(result.negotiationForm?{negotiationForm:result.negotiationForm}:{}),
       ...(result.recurringForm?{recurringForm:result.recurringForm}:{}),
       ...(result.mapForm?{mapForm:result.mapForm}:{}),
+      ...(result.syncFixForm?{syncFixForm:result.syncFixForm}:{}),
       ...(result.undoForm?{undoForm:result.undoForm}:{}),
+      ...(result.activity?{activity:result.activity}:{}),
       ...(result.bankMatchForm?{bankMatchForm:result.bankMatchForm}:{}),
       ...(result.reminderForm?{reminderForm:result.reminderForm}:{}),
       ...(result.arrivedStockForm?{arrivedStockForm:result.arrivedStockForm}:{}),
@@ -250,6 +262,8 @@ async function run(db,ctx,key,options={}){
       ...(result.returnLabelForm?{returnLabelForm:result.returnLabelForm}:{}),
       ...(result.customerStatementForm?{customerStatementForm:result.customerStatementForm}:{}),
       ...(result.customerQuestionForm?{customerQuestionForm:result.customerQuestionForm}:{}),
+      ...(result.mailReplyForm?{mailReplyForm:result.mailReplyForm}:{}),
+      ...(result.accountingDocumentsForm?{accountingDocumentsForm:result.accountingDocumentsForm}:{}),
       ...(result.quoteRequestForm?{quoteRequestForm:result.quoteRequestForm}:{}),
       ...(result.quoteFollowupDefaults?{quoteFollowupDefaults:result.quoteFollowupDefaults}:{}),
       ...(result.creditForm?{creditForm:result.creditForm}:{}),

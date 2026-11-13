@@ -1,8 +1,30 @@
-<h1>My report and approval preferences</h1>
-<form method="post" action="/reports/my-preferences">
-  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= current.revision %>">
-  <% for(const [key,label] of [['report_period','Default report dates'],['download_format','Preferred report download'],['inbox_sort','Order of decisions in Needs you']]){ %>
-  <label><%= label %><select name="<%= key %>"><% for(const [value,title] of Object.entries(choices[key])){ %><option value="<%= value %>" <%= current[key]===value?'selected':'' %>><%= title %></option><% } %></select></label>
-  <% } %><button class="btn btn--primary">Save my preferences</button>
-</form>
+<header class="rm-head">
+  <h1>My report and approval preferences</h1>
+  <p>These are yours alone in this inventory. StockChief also learns from what you choose: pick the same thing three times in a row and it becomes your preference. A choice you make on a page always wins there.</p>
+</header>
+<section class="rm-panel" data-preference-list>
+  <h2>What StockChief remembers</h2>
+  <ul class="rm-list">
+    <% for(const row of rows){ %><li class="list-row" data-preference="<%= row.key %>" data-preference-source="<%= row.source %>">
+      <span><strong><%= row.label %></strong><small><%= row.text %> · <%= row.source %></small></span>
+      <% if(row.source!=='Standard'){ %><form method="post" action="/reports/my-preferences/reset">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="preference" value="<%= row.key %>">
+        <button class="rm-btn rm-btn--ghost">Reset</button></form><% } %>
+    </li><% } %>
+  </ul>
+  <% if(rows.some(row=>row.source!=='Standard')){ %><form method="post" action="/reports/my-preferences/reset">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="preference" value="all">
+    <button class="rm-btn rm-btn--ghost">Reset everything to the standard</button></form><% } %>
+</section>
+<section class="rm-panel">
+  <h2>Change them</h2>
+  <form method="post" action="/reports/my-preferences" class="rm-form">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= current.revision %>">
+    <% for(const row of rows){ %>
+    <label class="rm-field"><span><%= row.label %></span><select class="select" name="<%= row.key %>"><% for(const [value,title] of Object.entries(choices[row.key])){ %><option value="<%= value %>" <%= row.value===value?'selected':'' %>><%= title %></option><% } %></select></label>
+    <% if(row.key==='approval_channel'){ %><p class="rm-sub"><%= ownerChannels.length?'Approvals go out by '+ownerChannels.map(c=>({email:'email',sms:'text',push:'push'})[c]).join(', ').replace(/, ([^,]*)$/,' and $1')+', as the owner chose. You can keep yours to one of these.':'The owner has not chosen how approvals are sent yet.' %></p><% } %>
+    <% } %>
+    <button class="rm-button">Save my preferences</button>
+  </form>
+</section>
 <p><a href="/reports">Reports</a> · <a href="/needs-you/all">Needs you</a></p>

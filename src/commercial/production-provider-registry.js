@@ -11,6 +11,7 @@ const classification=Object.freeze({
  // The speech transport consumes the one-use, database-funded duration hold.
  'ai/providers/openai-transcription.js':'METERED',
  'documents/agent-voice-receiving.js':'METERED',
+ 'documents/agent-voice-paperwork.js':'METERED',
  // The data-only Ask interpreter rejects providers that are not host-branded
  // by the native relay, which owns reservations and exact cost settlement.
  'assistant/ask-language.js':'METERED',
@@ -35,7 +36,10 @@ const classification=Object.freeze({
  'commercial/model.js':'METERED',
  'commercial/stripe-billing.js':'PLATFORM_BILLING_RECONCILED',
  'connections/postgres-reply-drafting.js':'METERED',
- 'connections/agent-slack.js':'METERED',
+ // Job 188: chat answers use the commercial model wrapper, and every reply is
+ // sent inside its registered Slack, Teams or WhatsApp operation.
+ 'connections/chat-answers.js':'METERED',
+ 'connections/chat-providers.js':'METERED',
  'connections/providers/common.js':'METERED',
  // The self-hosted transport is invoked by common.jsonRequest through providerFetch.
  'connections/providers/store-network.js':'METERED',
@@ -52,7 +56,8 @@ const classification=Object.freeze({
  'lib/postal-lookup.js':'METERED',
  'manager/operating-instructions.js':'NOT_PG_ENABLED',
  'manager/postgres-operating-instructions.js':'METERED',
- // The durable alert worker records each SMS and Web Push submission before dispatch.
+ // Texts, push (job 173) and WhatsApp answers (job 188) go through the
+ // server's own Twilio account and push keys, like the system email sender.
  'notifications/alert-providers.js':'METERED_INTERNAL_COST',
  'operations/email.js':'METERED_INTERNAL_COST',
  'operations/monitoring.js':'NOT_PG_ENABLED',

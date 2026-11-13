@@ -34,13 +34,13 @@ async function yearEnd(db,ctx,{today,filter,page=1,download=false}){
       WHERE ${worksheets} AND l.applied_at IS NOT NULL) AS n`,bounds);
   const counts=download?(await db.query(`SELECT (r.approved_at AT TIME ZONE $4)::date::text AS day,r.payload->'location'->>'name' AS location,
     r.payload->>'reference' AS reference,l->>'code' AS sku,l->'before'->>'physical' AS before,l->>'quantity' AS counted,
-    l->>'delta' AS difference,r.payload->>'currency' AS currency,l->>'costDeltaMinor' AS value,u.name AS approver
+    l->>'delta' AS difference,r.payload->>'currency' AS currency,l->>'costDeltaMinor' AS value,u.name AS approver,'Count review' AS source
     FROM physical_count_reviews r CROSS JOIN LATERAL jsonb_array_elements(r.payload->'lines') AS l
     LEFT JOIN users u ON u.workspace_id=r.workspace_id AND u.id=r.approved_by_user_id
     WHERE ${during}
     UNION ALL
     SELECT (w.completed_at AT TIME ZONE $4)::date::text,loc.name,w.title,s.code,l.before_quantity::text,l.counted_quantity::text,
-      (l.counted_quantity-l.before_quantity)::text,settings.base_currency,l.cost_delta_minor::text,u.name
+      (l.counted_quantity-l.before_quantity)::text,settings.base_currency,l.cost_delta_minor::text,u.name,'Count worksheet'
     FROM warehouse_count_campaigns w JOIN warehouse_count_campaign_lines l ON l.workspace_id=w.workspace_id AND l.campaign_id=w.id
     JOIN locations loc ON loc.workspace_id=l.workspace_id AND loc.id=l.location_id
     JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id
@@ -52,12 +52,39 @@ async function yearEnd(db,ctx,{today,filter,page=1,download=false}){
   const rows=listed.map(b=>({Currency:b.currency,Account:b.system_key==='INVENTORY_ASSET'?'Stock on books':'Stock in transit',
     SKU:b.code||'Unassigned ledger entries','Closing value':money.format(b.value,b.currency),
     link:'/accounting/reports/general-ledger?'+new URLSearchParams({to:span.end})}));
+  const settings=(await db.query('SELECT enabled,accounting_start_date,base_currency,costing_method FROM accounting_settings WHERE workspace_id=$1',[ctx.workspaceId])).rows[0]||null;
+  const method=METHODS[settings?.costing_method]||'Not set';
+  const base=settings?.base_currency||'USD';
   const details=counts.map(c=>({Date:c.day,Location:c.location,Reference:c.reference||'',SKU:c.sku,Before:c.before,Counted:c.counted,
-    Difference:c.difference,Currency:c.currency||'','Change in value':c.currency&&c.value!=null?money.format(c.value,c.currency):'','Approved by':c.approver||'Former team member'}));
+    Difference:c.difference,Currency:c.currency||'','Change in value':c.currency&&c.value!=null?money.format(c.value,c.currency):'',
+    'Approved by':c.approver||'Former team member',Source:c.source}));
   const amount=(minor,currency)=>Number(money.fromMinor(money.integer(minor,'Stock valuation',{signed:true}),currency));
-  return {span,rows,counts:details,values:listed.map(b=>amount(b.value,b.currency)),countValues:counts.map(c=>c.currency&&c.value!=null?amount(c.value,c.currency):null),
-    more:!download&&balances.length>100,summary:'Posted stock valuation at '+span.end+' and '+total.rows[0].n+' approved count lines from '+span.start+' through '+span.end+'. The workbook includes the supporting count lines.'};
+  const result={span,rows,counts:details,values:listed.map(b=>amount(b.value,b.currency)),
+    countValues:counts.map(c=>c.currency&&c.value!=null?amount(c.value,c.currency):null),method,
+    more:!download&&balances.length>100,summary:'Posted stock valuation at '+span.end+' ('+method.toLowerCase()+') and '+total.rows[0].n+' approved count lines from '+span.start+' through '+span.end+'. The workbook includes the supporting count lines.'};
+  if(!download)return result;
+  // The rest of the accountant's pack: the year's roll-forward, write-downs and signed-off stocktakes.
+  const year=await require('../reports/agent-month-end-stock').compute(db,ctx.workspaceId,{start:span.start,end:span.end});
+  const rollForward=(year.currencies||[]).map(c=>({currency:c.currency,...Object.fromEntries(Object.entries(c.totals).map(([k,v])=>[k,amount(String(v),c.currency)])),
+    booksClosing:amount(String(c.books.closing),c.currency),booksTransit:amount(String(c.books.transit),c.currency),difference:amount(String(c.difference.closing),c.currency),
+    locations:c.locations.map(p=>({name:p.name,opening:amount(String(p.opening),c.currency),receipts:amount(String(p.receipts),c.currency),cogs:amount(String(p.cogs),c.currency),
+      adjustments:amount(String(p.adjustments),c.currency),writeoffs:amount(String(p.writeoffs),c.currency),transfers:amount(String(p.transfers),c.currency),
+      other:amount(String(p.other),c.currency),closing:amount(String(p.closing),c.currency)}))}));
+  const writeDowns=(await db.query(`SELECT w.posting_date AS day,s.code AS sku,l.name AS location,w.quantity_units::text AS quantity,w.currency,
+      w.before_value_minor::text AS before,w.after_value_minor::text AS after,w.evidence_reference AS evidence,u.name AS approver
+    FROM accounting_inventory_write_downs w JOIN skus s ON s.workspace_id=w.workspace_id AND s.id=w.sku_id JOIN locations l ON l.workspace_id=w.workspace_id AND l.id=w.location_id
+    LEFT JOIN users u ON u.workspace_id=w.workspace_id AND u.id=w.approved_by
+    WHERE w.workspace_id=$1 AND w.posting_date BETWEEN $2 AND $3 ORDER BY w.posting_date,w.id`,[ctx.workspaceId,span.start,span.end])).rows
+    .map(w=>({date:w.day,sku:w.sku,location:w.location,quantity:Number(w.quantity),currency:w.currency,before:amount(w.before,w.currency),after:amount(w.after,w.currency),
+      writtenDown:amount(String(BigInt(w.before)-BigInt(w.after)),w.currency),evidence:w.evidence,approver:w.approver||'Former team member'}));
+  const stocktakes=(await db.query(`SELECT title,(signed_off_at AT TIME ZONE $4)::date::text AS day,signoff FROM stockchief_runtime.agent_annual_stocktakes
+    WHERE workspace_id=$1 AND status='SIGNED_OFF' AND signed_off_at >= $2::timestamptz AND signed_off_at < $3::timestamptz ORDER BY signed_off_at,id`,[...bounds,zone])).rows
+    .map(s=>({title:s.title,date:s.day,positions:Number(s.signoff?.positions||0),differences:Number(s.signoff?.differences||0),value:amount(String(s.signoff?.value_difference||0),base)}));
+  const pending=Number((await db.query(`SELECT count(*)::int AS n FROM physical_count_reviews WHERE workspace_id=$1 AND status='PENDING' AND created_at < $2::timestamptz`,[ctx.workspaceId,bounds[2]])).rows[0].n);
+  return {...result,base,accounting:{enabled:Boolean(Number(settings?.enabled)),start:settings?.accounting_start_date||null,problem:year.problem||null},
+    business:(await require('../operations/postgres-company-profile').get(db,ctx.workspaceId)).legalName,rollForward,writeDowns,stocktakes,pending};
 }
+const METHODS={WEIGHTED_AVERAGE:'Weighted average cost',FIFO:'First in, first out (FIFO)',SPECIFIC_IDENTIFICATION:'Specific identification'};
 const definitions=[
   {id:159,key:'board-pack',label:'Board or investor pack',filterLabel:'Closing month (YYYY-MM)',readPage:(...args)=>require('../reports/agent-board-pack').readPage(...args)},
   {id:164,key:'quarterly-supplier-pack',label:'Quarterly pack for a supplier',filterLabel:'Exact supplier name or ID',readPage:require('../purchasing/agent-supplier-pack').report},

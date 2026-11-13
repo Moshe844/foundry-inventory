@@ -1,0 +1,100 @@
+<h1>Stock at partners</h1>
+<p>Counts from your 3PLs and consignment partners, kept as they reported them and compared with what StockChief’s records held at that time. Partner counts never change your stock or what you own. When a partner counts fewer units, plans count on the lower number.</p>
+
+<% if(issuedFeed){ %>
+  <section class="card"><div class="card-body">
+    <h2>Private feed link</h2>
+    <p class="notice">Give this link to the partner’s system. It replaces any older link for this location.</p>
+    <label>Feed link<input readonly value="<%= origin+issuedFeed.path %>"></label>
+    <p>Their system sends a POST with JSON such as <code>{"reference":"count-2026-11-13","countedAt":"2026-11-13T09:00:00Z","complete":true,"lines":[{"sku":"ABC-1","quantity":40,"available":38}]}</code>, or CSV with SKU and Quantity columns and <code>?reference=…&amp;countedAt=…</code> on the link. Sending the same reference again changes nothing.</p>
+  </div></section>
+<% } %>
+
+<section class="card" id="partners"><div class="card-body">
+  <h2>Partner locations</h2>
+  <% if(!partners.length){ %><p>No partner locations yet. Add the location a 3PL or consignment partner holds below.</p><% } %>
+  <% for(const p of partners){ %>
+    <section>
+      <h3><%= p.location_name %> · <%= p.partner %></h3>
+      <p><%= p.kindLabel %> · <%= p.source==='shipbob'?'Counts from ShipBob readings':'Counts from a feed link or uploaded file' %> ·
+        allowed difference <%= p.tolerance %> · <%= p.lastCount?'last count '+p.lastCount:'no counts yet' %><%= p.differences?' · '+p.differences+' differ':'' %></p>
+      <% if(p.source==='feed'){ %>
+        <form method="post" action="/autopilot/partner-stock/<%= p.location_id %>/feed" class="form-stack">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <label><input type="checkbox" name="confirmed" value="yes" required> Create a private feed link and replace any older one.</label>
+          <button class="btn"><%= p.token_issued_at?'Replace feed link':'Create feed link' %></button>
+        </form>
+        <% if(p.token_issued_at){ %>
+          <form method="post" action="/autopilot/partner-stock/<%= p.location_id %>/feed/stop"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Revoke feed link</button></form>
+        <% } %>
+        <details><summary>Upload the partner’s stock file</summary>
+          <form method="post" action="/autopilot/partner-stock/<%= p.location_id %>/upload" enctype="multipart/form-data" class="form-stack">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <label>Stock file (CSV or spreadsheet with SKU and Quantity columns)<input type="file" name="counts" required></label>
+            <label>When the partner counted<input type="datetime-local" name="observedAt" required></label>
+            <label><input type="checkbox" name="complete" value="yes"> The file lists every product they hold. Products left out count as none.</label>
+            <label><input type="checkbox" name="confirmed" value="yes" required> This is the partner’s own count.</label>
+            <button class="btn">Record counts</button>
+          </form>
+        </details>
+      <% } %>
+      <details><summary>Change or remove</summary>
+        <form method="post" action="/autopilot/partner-stock" class="form-stack">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="locationId" value="<%= p.location_id %>">
+          <input type="hidden" name="revision" value="<%= p.revision %>">
+          <input type="hidden" name="kind" value="<%= p.kind %>"><input type="hidden" name="source" value="<%= p.source %>">
+          <label>Partner name<input name="partner" maxlength="150" required value="<%= p.partner %>"></label>
+          <label>Allowed difference (units)<input name="tolerance" inputmode="decimal" value="<%= p.tolerance %>"></label>
+          <label><input type="checkbox" name="confirmed" value="yes" required> Confirm this change.</label>
+          <button class="btn">Save</button> <button class="btn" name="remove" value="yes">Remove partner location</button>
+        </form>
+      </details>
+    </section>
+  <% } %>
+</div></section>
+
+<section class="card"><div class="card-body">
+  <h2>Add a partner location</h2>
+  <% if(!places.length){ %><p>Every eligible location is already set up. A 3PL needs one of your warehouse locations; a consignment partner uses its agreement’s partner location.</p><% }else{ %>
+    <form method="post" action="/autopilot/partner-stock" class="form-stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="0">
+      <label>Location<select name="locationId" required><% for(const l of places){ %><option value="<%= l.id %>"><%= l.name %><%= l.agreement_number?' · consignment '+l.agreement_number:'' %></option><% } %></select></label>
+      <label>Partner type<select name="kind" required><% for(const [key,label] of Object.entries(kinds)){ %><option value="<%= key %>"><%= label %></option><% } %></select></label>
+      <label>How counts arrive<select name="source" required><option value="feed">Feed link or uploaded file</option><% if(shipbobConnected){ %><option value="shipbob">ShipBob readings</option><% } %></select></label>
+      <label>Partner name<input name="partner" maxlength="150" required></label>
+      <label>Allowed difference (units)<input name="tolerance" inputmode="decimal" value="0"></label>
+      <label><input type="checkbox" name="confirmed" value="yes" required> This partner holds the stock at this location.</label>
+      <button class="btn btn--primary">Add partner location</button>
+    </form>
+  <% } %>
+</div></section>
+
+<section class="card" id="differences"><div class="card-body">
+  <h2>Differences</h2>
+  <% if(!differences.length){ %><p>No differences. Partner counts agree with your records within the allowed difference.</p><% }else{ %>
+    <div class="table-wrap"><table class="table"><thead><tr><th>Product</th><th>Partner</th><th>They counted</th><th>Your records</th><th>Difference</th><th>Counted</th><th>What to do</th></tr></thead><tbody>
+      <% for(const d of differences){ %><tr>
+        <td><a href="/inventory/<%= d.item_id %>"><%= d.code %></a> · <%= d.item_name %></td>
+        <td><%= d.partner %> · <%= d.location_name %></td>
+        <td><%= d.reported %><%= d.available!=null?' ('+d.available+' available)':'' %></td><td><%= d.expected %></td><td><%= d.gap %></td><td><%= d.observed %></td>
+        <td><% if(d.status==='EXPLAINED'){ %>Explained: <%= d.explained_note %><% }else{ %>
+          <form method="post" action="/autopilot/partner-stock/<%= d.location_id %>/explain" class="form-stack">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="skuId" value="<%= d.sku_id %>"><input type="hidden" name="reportId" value="<%= d.report_id %>">
+            <label>What you checked<input name="note" maxlength="1000" required></label>
+            <label><input type="checkbox" name="confirmed" value="yes" required> Keep my records as they are.</label>
+            <button class="btn">Save note</button>
+          </form>
+          <a href="/inventory/<%= d.item_id %>">Count or adjust on the product</a><% } %></td>
+      </tr><% } %>
+    </tbody></table></div>
+    <% if(moreDifferences){ %><p>Showing the latest 100 differences.</p><% } %>
+  <% } %>
+</div></section>
+
+<section class="card"><div class="card-body">
+  <h2>Recent counts</h2>
+  <% if(!reports.length){ %><p>No partner counts yet.</p><% }else{ %><ul>
+    <% for(const r of reports){ %><li><%= r.location_name %> · <%= r.source==='shipbob'?'ShipBob reading':r.source==='api'?'Feed link':'Uploaded file' %> · <%= r.lines %> <%= r.lines===1?'product':'products' %> · counted <%= r.observed %></li><% } %>
+  </ul><% } %>
+</div></section>

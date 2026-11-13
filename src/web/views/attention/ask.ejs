@@ -90,7 +90,7 @@
 <div class="sc-chat-workspace" <%- locals.autoSend?'data-ask-auto-send':'' %>><aside class="sc-chat-history" aria-label="Conversation history"><h2>Conversations</h2><% if((locals.recentRequests||[]).length>3){ %><label class="ask-filter"><span class="visually-hidden">Find a conversation</span><input class="input" type="search" data-chat-filter placeholder="Find a conversation" autocomplete="off"></label><% } %><div class="ask-chats" data-chat-list><% for(const group of (locals.chatGroups||[])){ %><section data-chat-group><h3><%= group.label %></h3><% for(const chat of group.rows){ %><%- include('chat-row',{chat}) %><% } %></section><% } %><p class="ask-chats__none" data-chat-none hidden>No conversation matches.</p></div><a href="/ask/history" class="ask-all">All conversations</a><details class="sc-ai-details"><summary>AI credits</summary><%- include('../partials/ai-spending-status') %></details><% if (currentUser && ['owner','manager','staff'].includes(currentUser.role)) { %><p class="sc-feedback"><a href="/autopilot/misses">Report a wrong answer or missing requirement</a></p><% } %>
 
 </aside>
-<div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>"><header class="rm-chat__bar"><h1 class="rm-chat__title">Ask StockChief</h1><div class="rm-chat__new"><% if(locals.currentChat){ %><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/chats/<%= encodeURIComponent(currentChat.chat_id) %>/download" download>Download</a><% } %><a class="rm-btn rm-btn--ghost rm-btn--sm sc-chat-history-link" href="/ask/history">Conversations</a><form method="post" action="/ask/new"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">New conversation</button></form></div></header>
+<div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>"><header class="rm-chat__bar"><h1 class="rm-chat__title">Ask StockChief</h1><div class="rm-chat__new"><% if(locals.currentChat){ %><%- include('ask-download',{base:'/ask/chats/'+encodeURIComponent(currentChat.chat_id)+'/download',formats:[['pdf','PDF'],['xlsx','Excel'],['csv','CSV'],['','Text']]}) %><% } %><a class="rm-btn rm-btn--ghost rm-btn--sm sc-chat-history-link" href="/ask/history">Conversations</a><form method="post" action="/ask/new"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">New conversation</button></form></div></header>
 <% const allowanceNotice=locals.codexPilot?.enabled&&!locals.codexPilot.funded?locals.codexPilot.lockMessage:null; %>
 <p class="notice notice--warn" role="status" data-ask-health<% if(!allowanceNotice){ %> hidden<% } %>><% if(allowanceNotice){ %>Model-backed Ask requests are paused. <%= allowanceNotice %> Stock lookups and page navigation are available.<% } %></p>
 <div class="sc-chat-scroll" data-chat-scroll data-navigation-scroll id="chat-messages" role="log" aria-label="Conversation" aria-live="polite">
@@ -370,6 +370,7 @@
           </details></div>
         <% } %>
 
+        <%- include('answer-sources',{sources:result.sources||[],skip:(hasRows?result.rows.slice(0,60).map(function(row){return row.href;}):[]).concat(result.handoff?[result.handoff.href]:[])}) %>
         <div class="ask-foot"><% if (result.handoff) { %><a class="ask-foot__link" href="<%= result.handoff.href %>"><%= result.handoff.label %> <span aria-hidden="true">→</span></a><% } %><%- include('answer-actions',{answerText:said,question:turn.message,interactionId:goal.id,downloadable:(locals.downloadableAnswers||[]).includes(goal.id)}) %></div>
         <% const conversational = result.plan && ['small_talk', 'conversation_recap', 'general_knowledge', 'undo', 'action_clarification', 'navigation'].includes(result.plan.intent); %>
         <% if ((result.supported || result.isAction) && !conversational && !result.emailProposal) { %>
@@ -407,6 +408,7 @@
           <details class="rm-said__text" dir="auto"><summary><%= saidText.slice(0, 220) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= helpers.figures(saidText, locals.protectedNames || []) %></p></details>
         <% } else if (saidText) { %><p class="rm-said__text" dir="auto" style="white-space:pre-line"><%= helpers.figures(saidText, locals.protectedNames || []) %></p><% } %>
         <%- include('answer-actions',{answerText:saidText,question:turn.message,interactionId:goal.id,downloadable:(locals.downloadableAnswers||[]).includes(goal.id)}) %>
+        <%- include('answer-sources',{sources:goal.sources||[]}) %>
         <p class="rm-said__meta">
           <% if(goal.statusLabel!=='Answered'){ %><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><% } %>
           <% if (goal.resultHref) { %><a href="<%= goal.resultHref %>"><%= goal.resultLabel || 'Open' %> →</a><% } %>

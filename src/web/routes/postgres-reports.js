@@ -103,36 +103,51 @@ async function sendExport(database,req,res,actor,definition,name){
   res.set('Cache-Control','private, no-store');return res.send(output);
 }
 function createPostgresReportsRouter(database){
-  const router=express.Router();router.use('/reports',requireAuth,asyncRoute(async(req,res,next)=>{res.locals.reportBusinessTimeZone=(await require('../../lib/business-time').forWorkspace(database,req.ctx.workspaceId)).timeZone;res.locals.reportActionKey=require('../../lib/util').newId('report-action');res.locals.reportRelativePeriods=require('../../reports/relative-dates').periods;next();}));
+  const router=express.Router();router.use('/reports',requireAuth,asyncRoute(async(req,res,next)=>{res.locals.reportBusinessTimeZone=(await require('../../lib/business-time').forWorkspace(database,req.ctx.workspaceId)).timeZone;res.locals.reportActionKey=require('../../lib/util').newId('report-action');res.locals.reportRelativePeriods=require('../../reports/relative-dates').periods;
+    // Job 155: who scheduled emails go to, on the Agent terms.
+    if(req.method==='GET')res.locals.reportEmail=await require('../../reports/agent-report-email').formLocals(database,req.ctx);next();}));
+  // Job 214: a Custom manager's preferred hour starts each new delivery schedule.
+  router.use('/reports',asyncRoute(async(req,res,next)=>{res.locals.reportPreferredHour=(await require('../../reports/manager-presentation').personal(database,req.ctx))?.report_hour??null;next();}));
   router.get('/reports',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
-    const prefs=require('../../reports/manager-presentation'),managerView=await prefs.personal(database,req.ctx),query=await prefs.dateQuery(database,req.ctx,req.query,managerView);
+    const prefs=require('../../reports/manager-presentation');await prefs.notePeriod(database,req.ctx,req.query);
+    const managerView=await prefs.personal(database,req.ctx),query=await prefs.dateQuery(database,req.ctx,req.query,managerView);
     const datasets=registry.list(actor),saved=await reports.list(database,req.ctx,actor),business=require('../../reports/business-reports'),businessContext=await business.context(database,req.ctx,query,{coverage:true}),businessCards=await business.cards(database,req.ctx,actor,query);
     return res.page('reports/index',{title:'Reports',nav:'accounting',backTo:{href:'/',label:'Home'},datasets,saved,businessContext,businessCards,managerView,
       compositions:composed.dimensions(actor)});
   }));
   router.get('/reports/my-preferences',asyncRoute(async(req,res)=>{
     const prefs=require('../../reports/manager-presentation');
+    const locals={title:'My report and approval preferences',nav:'accounting',backTo:{href:'/reports',label:'Reports'}};
+    // Below Custom, and on older terms, this page names the plan and offers billing with a
+    // 402: the required click test checks exactly this for an older-terms account.
     try{
-      const current=await prefs.personal(database,req.ctx,{required:true});
-      return res.page('reports/manager-preferences',{title:'My report and approval preferences',nav:'accounting',current,choices:prefs.choices});
+      return res.page('reports/manager-preferences',{...locals,...await prefs.page(database,req.ctx)});
     }catch(error){if(error.code!=='entitlement_required')throw error;
-      res.status(402);return res.page('autopilot/locked',{title:'My report and approval preferences',nav:'accounting',message:error.message});}
+      res.status(402);return res.page('autopilot/locked',{...locals,message:error.message});}
   }));
   router.post('/reports/my-preferences',asyncRoute(async(req,res)=>{
     await require('../../reports/manager-presentation').save(database,req.ctx,req.body);
+    req.flash('success','Your preferences are saved.');
     res.redirect(303,'/reports/my-preferences');
   }));
-  router.get('/reports/business/:key',asyncRoute(async(req,res)=>{
-    const actor=await actorFor(database,req.ctx),managerView=await managerPreferences.personal(database,req.ctx);
-    const query=await managerPreferences.dateQuery(database,req.ctx,req.query,managerView);
-    const report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,query);
-    const totals=report.definition.current?null:await reports.totals(database,req.ctx,actor,{...report.result.config,compare:'previous_period'});
-    const profitBreakdown=req.params.key==='profit'?await require('../../accounting/postgres-reports').profitAndLoss(database,req.ctx.workspaceId,{from:report.context.from,to:report.context.to}).catch(()=>null):null;
-    return res.page('reports/business',{profitBreakdown,title:report.definition.title,nav:'accounting',room:true,report,totals,managerView});
+  router.post('/reports/my-preferences/reset',asyncRoute(async(req,res)=>{
+    await require('../../reports/manager-presentation').reset(database,req.ctx,req.body);
+    req.flash('success',req.body.preference==='all'?'Every preference is back to the standard.':'That preference is back to the standard.');
+    res.redirect(303,'/reports/my-preferences');
   }));
-  router.get('/reports/business/:key/customize',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query);req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:report.result.config,schedule:req.query.weekly==='1'?{frequency:'weekly',hour:8,minute:0,weekday:1,timeZone:res.locals.reportBusinessTimeZone,recipient:actor.email}:null};await saveDraftSession(req);return res.redirect(303,'/reports/builder?draft=1');}));
-  router.get('/reports/business/:key/export.csv',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query);if(await reports.countAtMost(database,req.ctx,actor,report.result.config,100000)>100000)throw new ValidationError('This export has more than 100,000 rows. Narrow the dates or filters before exporting.');res.set('Content-Type','text/csv; charset=utf-8');res.set('Content-Disposition','attachment; filename="stockchief-'+report.definition.key+'.csv"');res.set('Cache-Control','private, no-store');let offset=0,started=false;do{const part=await reports.run(database,req.ctx,actor,report.result.config,{limit:1001,offset});await require('../../reports/business-reports').enrich(database,req.ctx,report.definition.key,part);if(!started){res.write(reportExports.csvHeader(part));started=true;}res.write(reportExports.csvRows(part));offset+=part.rows.length;if(!part.hasMore)break;if(offset>=100000)break;}while(!res.destroyed);return res.end();}));
+  // Job 214: a Custom manager's report pages open on their dates and rows, and
+  // the dates and rows they pick themselves teach those preferences.
+  async function managerQuery(req){
+    const prefs=require('../../reports/manager-presentation');
+    await prefs.notePeriod(database,req.ctx,req.query);
+    if(req.query.picked==='view'&&['items','variants'].includes(req.query.view))await prefs.note(database,req.ctx,'report_view',req.query.view);
+    const view=await prefs.personal(database,req.ctx),query=await prefs.dateQuery(database,req.ctx,req.query,view);
+    return view&&view.report_view!=='default'&&query.view===undefined&&['sellers','stock-value'].includes(req.params.key)?{...query,view:view.report_view}:query;
+  }
+  router.get('/reports/business/:key',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),managerView=await managerPreferences.personal(database,req.ctx),query=await managerQuery(req),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,query),totals=report.definition.current?null:await reports.totals(database,req.ctx,actor,{...report.result.config,compare:'previous_period'}),profitBreakdown=req.params.key==='profit'?await require('../../accounting/postgres-reports').profitAndLoss(database,req.ctx.workspaceId,{from:report.context.from,to:report.context.to}).catch(()=>null):null;return res.page('reports/business',{profitBreakdown,title:report.definition.title,nav:'accounting',room:true,report,totals,managerView});}));
+  router.get('/reports/business/:key/customize',asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query);req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:report.result.config,schedule:req.query.weekly==='1'?{frequency:'weekly',hour:res.locals.reportPreferredHour??8,minute:0,weekday:1,timeZone:res.locals.reportBusinessTimeZone,recipient:actor.email}:null};await saveDraftSession(req);return res.redirect(303,'/reports/builder?draft=1');}));
+  router.get('/reports/business/:key/export.csv',asyncRoute(async(req,res)=>{await require('../../reports/manager-presentation').note(database,req.ctx,'download_format','csv');const actor=await actorFor(database,req.ctx),report=await require('../../reports/business-reports').run(database,req.ctx,actor,req.params.key,req.query);if(await reports.countAtMost(database,req.ctx,actor,report.result.config,100000)>100000)throw new ValidationError('This export has more than 100,000 rows. Narrow the dates or filters before exporting.');res.set('Content-Type','text/csv; charset=utf-8');res.set('Content-Disposition','attachment; filename="stockchief-'+report.definition.key+'.csv"');res.set('Cache-Control','private, no-store');let offset=0,started=false;do{const part=await reports.run(database,req.ctx,actor,report.result.config,{limit:1001,offset});await require('../../reports/business-reports').enrich(database,req.ctx,report.definition.key,part);if(!started){res.write(reportExports.csvHeader(part));started=true;}res.write(reportExports.csvRows(part));offset+=part.rows.length;if(!part.hasMore)break;if(offset>=100000)break;}while(!res.destroyed);return res.end();}));
   router.get('/reports/business/:key/export.:format',asyncRoute(async(req,res)=>{
     if(!['pdf','xlsx'].includes(req.params.format))throw new ValidationError('That export format is unavailable.');
     const actor=await actorFor(database,req.ctx),managerView=await managerPreferences.personal(database,req.ctx,{required:true});
@@ -193,12 +208,21 @@ function createPostgresReportsRouter(database){
     const description=String(req.body.q||'').trim();
     if(!description||description.length>1800)throw new ValidationError('Describe the report in 1 to 1,800 characters.');
     const previous=req.session.reportDraft?.workspaceId===req.ctx.workspaceId?req.session.reportDraft.definition:null;
-    const result=await require('../../assistant/postgres-service').buildReportDefinition(database,req.ctx,description,{provider:req.app.locals.aiProvider,priorReport:previous,acceptReport:async reportConfig=>{
+    // Job 154: a sentence StockChief cannot turn into a report is refused with
+    // sentences this person can build instead; nothing is saved or charged.
+    const refuse=async(message,status=422)=>{const building=require('../../reports/build-availability');
+      const examples=await building.examples(database,req.ctx,await actorFor(database,req.ctx));
+      return res.status(status).json({ok:false,creditsUsed:0,examples,message:String(message).replace(/\s*No AI credits will be used\.?\s*$/,'')+(examples.length?' For example: '+examples.map(example=>'“'+example+'”').join(', ')+'.':'')+' No AI credits were used. Nothing was saved.'});};
+    let result;
+    try{result=await require('../../assistant/postgres-service').buildReportDefinition(database,req.ctx,description,{provider:req.app.locals.aiProvider,priorReport:previous,acceptReport:async reportConfig=>{
       const actor=await actorFor(database,req.ctx),definition=await reports.assertWritableCapabilities(database,req.ctx,reportConfig,actor);
-      req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition,schedule:null};
+      req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition,schedule:null,sentence:description};
       await saveDraftSession(req);return definition;
-    }});
-    if(!result.reportConfig)return res.status(422).json({ok:false,creditsUsed:0,message:(result.answer||'What would you like this report to measure?')+' No AI credits were used.'});
+    }});}
+    catch(error){if(error.code!=='entitlement_required')throw error;
+      // A report that needs a source this plan does not include shows the lock, not an error page.
+      return refuse('That report needs records your plan does not include.',402);}
+    if(!result.reportConfig)return refuse(result.answer||'What would you like this report to measure?');
     const definition=result.reportConfig;
     req.flash('success',`Report ready. AI credits used: ${result.creditsUsed||0}.`);
     const url='/reports/builder?draft=1#report-manual';
@@ -220,7 +244,8 @@ function createPostgresReportsRouter(database){
       message:'This report dataset is unavailable to your account.'});
     const saved=req.query.saved?await reports.load(database,req.ctx,actor,String(req.query.saved)):null;
     return res.page('reports/builder',{title:saved?'Edit report':'Build a report',nav:'accounting',
-      datasets,dataset,saved,draft,draftSchedule,builderEntry,unavailableSources,startInEditor:Boolean(req.query.dataset),reportCurrency:await baseCurrency(database,req.ctx),reportBuildAvailability:await require('../../reports/build-availability').state(database,{provider:req.app.locals.aiProvider}),reportDescription:String(req.query.q||'').slice(0,1800)});
+      datasets,dataset,saved,draft,draftSchedule,builderEntry,unavailableSources,startInEditor:Boolean(req.query.dataset),
+      draftSentence:draft?String(req.session.reportDraft.sentence||'').slice(0,1800)||null:null,reportCurrency:await baseCurrency(database,req.ctx),reportBuildAvailability:await require('../../reports/build-availability').state(database,{provider:req.app.locals.aiProvider}),reportDescription:String(req.query.q||'').slice(0,1800)});
   }));
   router.post('/reports/preview',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
@@ -254,7 +279,7 @@ function createPostgresReportsRouter(database){
     const dimension=dimensions.find((entry)=>entry.key===(req.query.dimension||selection?.dimension))||dimensions[0];
     if(!dimension)throw new ValidationError('No governed shared identifiers are available to this account.');
     return res.page('reports/compose',{title:saved?'Edit combined report':'Combine datasets',
-      nav:'accounting',saved,draft,dimensions,dimension,
+      nav:'accounting',saved,draft,dimensions,dimension,draftSentence:draft?String(req.session.reportDraft.sentence||'').slice(0,1800)||null:null,
       draftSchedule:draft?req.session.reportDraft.schedule||null:null});
   }));
   router.get('/reports/run',asyncRoute(async(req,res)=>{
@@ -298,7 +323,9 @@ function createPostgresReportsRouter(database){
   router.post('/reports/save',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);permissions.assertCan(actor,permissions.VIEW,'save a report');
     const saved=await reports.save(database,req.ctx,actor,source(req.body),{
-      id:req.body.id||null,expectedRevision:req.body.expectedRevision??null,schedule:{frequency:req.body.frequency,hour:req.body.hour,minute:req.body.minute,weekday:req.body.weekday,timeZone:req.body.timeZone||res.locals.reportBusinessTimeZone,recipient:req.body.recipient||actor.email}});
+      id:req.body.id||null,expectedRevision:req.body.expectedRevision??null,schedule:{frequency:req.body.frequency,hour:req.body.hour,minute:req.body.minute,weekday:req.body.weekday,timeZone:req.body.timeZone||res.locals.reportBusinessTimeZone,recipient:req.body.recipient||actor.email,
+        ...(req.body.recipientsShown?{recipientsShown:true,recipients:req.body.recipients,attach:req.body.attach}:{})}});
+    if(['daily','weekly'].includes(req.body.frequency))await require('../../reports/manager-presentation').note(database,req.ctx,'report_hour',String(Number(req.body.hour)));
     req.flash('success','Report saved.');return res.redirect(303,`/reports/saved/${saved.id}`);
   }));
   for(const [path,action]of [['send-now','send_now'],['pause','pause'],['resume','resume'],['delete','delete']])router.post('/reports/saved/:id/'+path,asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx);if(action==='delete'&&req.body.confirmed!=='yes')throw new ValidationError('Confirm deletion of this saved report.');const result=await require('../../reports/postgres-delivery-controls').change(database,req.ctx,actor,req.params.id,{...req.body,action});req.flash('success',action==='send_now'?(result.replayed?'That exact delivery is already queued or recorded.':'Report delivery queued to your account email.'):action==='delete'?'Saved report deleted; delivery history retained.':action==='pause'?'Future report delivery paused.':'Report delivery resumed.');if(result.alreadySending)req.flash('info',result.alreadySending+' email delivery is already in progress and may finish.');res.redirect(303,action==='delete'?'/reports':'/reports/saved/'+req.params.id);}));
@@ -319,6 +346,7 @@ function createPostgresReportsRouter(database){
   router.get('/reports/saved/:id/export.:format',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
     const saved=await reports.load(database,req.ctx,actor,req.params.id);
+    if(Object.hasOwn(EXPORT_TYPES,req.params.format))await require('../../reports/manager-presentation').note(database,req.ctx,'download_format',req.params.format);
     return sendExport(database,req,res,actor,saved.definition,`stockchief-report-${saved.id}`);
   }));
   router.post('/reports/export.:format',asyncRoute(async(req,res)=>{
