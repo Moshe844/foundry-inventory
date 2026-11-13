@@ -44,6 +44,7 @@ const SENT='The email was sent and cannot be recalled.';
 // `record` finds its record; otherwise `fix` is the correction path and
 // `outside` marks effects that cannot be recalled.
 const SOURCES=[
+ {job:189,actions:['Agent job run for your other system'],why:'Your other system started it through the StockChief API.',rule:'Your API token with agent job access',page:'/settings/connections?section=developers',fix:'Open the job’s own page to correct what it did, or revoke the token.'},
  {job:4,actions:['Saved automatic daily cycle-count plan'],why:'Shelves were due a count by value, movement and their last count.',rule:'Your daily cycle-count plan',page:'/autopilot/daily-cycle-counts',fix:'Change or drop the plan before counting starts.'},
  {job:9,actions:['Slow stock step taken on its own'],why:'Stock sat unsold longer than your slow stock rule allows.',rule:'Your slow stock limit',page:'/autopilot/slow-stock',undo:'slowStock'},
  {job:11,actions:['Stock records moved to the bin where the stock was found'],when:'automatic',why:'A scan found the stock in another bin than recorded.',rule:'Your routine bin correction limit',page:'/warehouse/bin-corrections',undo:'binCorrection'},

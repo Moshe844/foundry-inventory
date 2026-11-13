@@ -388,4 +388,4 @@ async function inbox(db,workspaceId){
   happened:row.po_number?'StockChief planned a container order and drafted the PO.':'StockChief stopped planning this container.',why:row.last_issue||row.reason||'Review the planned lines, fill and value.',
   recommendation:'Review the container plan.',href:'/autopilot/container-orders/'+row.id,actionLabel:'Review container order',sourceId:'container-order:'+row.id,at:row.created_at||row.next_check_at,createdAt:row.created_at||row.next_check_at}));
 }
-module.exports={save,prepare,teach,undo,onRule,schedule,screen,inbox,calculate,facts,current,rule,order,kind,action};
+module.exports={terms,save,prepare,teach,undo,onRule,schedule,screen,inbox,calculate,facts,current,rule,order,kind,action};

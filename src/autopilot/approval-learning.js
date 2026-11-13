@@ -1,166 +1,123 @@
 'use strict';
 // Job 208: learns from your approvals and stops asking about what you always OK.
 //
-// This is the one place that notices a run of identical approvals. A routine
-// is identical when StockChief prepared the same kind of work in the same
-// scope: the same customer or supplier, currency and kind of change (the
-// "training" scope every taught routine already carries), or released orders
-// at the same warehouse for pick releases (job 56). A run is the newest
-// approvals in that scope back to the last time you said no or changed the
-// draft; five in a row is a run. Work StockChief did on its own does not count.
+// This is the one place that notices a run of identical approvals, for every
+// job your plan lets StockChief do alone once it is taught. Each trained job
+// has an adapter (./learning-adapters) that reads that job's own approvals and
+// "no"s and saves its teaching through the job's own rule or example path, so
+// the job's own limits, rule allowance and audit apply.
+//
+// A routine is the same kind of work in the same scope: the same customer or
+// supplier and currency for a draft routine, the same warehouse for releases
+// and waves, the same product and route for transfers, and so on. A run is the
+// newest approvals in that scope back to the last time you said no, undid it or
+// changed it; five in a row is a run. Approvals of anything on the "always
+// needs a person" list never count, and work StockChief did on its own never
+// counts.
 //
 // StockChief then offers to stop asking: it shows the run and what the rule
-// would have done with your past approvals (job 210), and you confirm once.
-// Confirming saves that routine's taught rule, the same rule you can teach on
-// an example's page, so the rule counts against your rule allowance, and from
-// then on StockChief does that routine alone inside the rule and every other
-// check it runs each time.
-//
-// It only offers where a taught rule is what stops the asking: jobs your plan
-// lets StockChief do alone after it is taught. It never offers when:
-//  - you chose Ask me first or Watch only for that job;
-//  - any approval in the run is on the "always needs a person" list;
+// would have done with your past answers (job 210), and you confirm once.
+// It never offers when:
+//  - your plan does not train that job (it is drafted, or done alone already);
+//  - you chose Ask me first or Watch only for that job, or Watch only for the
+//    whole inventory, or StockChief is still in its first 14 days;
 //  - the routine already has a rule (it never raises a limit on its own);
-//  - the run's amount is in a different currency from your own limit.
-// The rule's amount is the largest amount you approved in the run, and never
-// more than your own limits (your plan's per-order purchase limit, or the
-// amount over which two people must approve).
+//  - the rule would go past your own limits.
+// "Keep asking" holds until a new run of approvals after the ones you saw.
 const policy=require('../commercial/agent-plan');
-const money=require('../domain/currency');
-const draft=require('./draft-authority');
+const registry=require('./learning-adapters');
+const {day,num}=require('./learning-adapters/common');
 const {has}=require('../db/schema-installed');
 const {ValidationError}=require('../domain/errors');
 
-const JOB=208,RUN=5,DAYS=90,path='/autopilot/learning/approvals';
-const DECISIONS='stockchief_runtime.agent_learning_decisions';
-// Owner-typed orders start from a person's request rather than a prepared
-// routine, and a first-time customer or new address always needs a person.
-const SKIPPED=new Set(['sales_order.create']);
-const PURCHASES=new Set(['purchase_order.reorder_drafts','purchasing.select_supplier']);
-const anchor=(action,key)=>'routine-'+require('node:crypto').createHash('sha256').update(action+'|'+key).digest('hex').slice(0,16);
-const day=value=>new Date(value).toISOString().slice(0,10);
+const JOB=208,RUN=5,DAYS=90,ROWS=20,path='/autopilot/learning/approvals';
+const DECISIONS='stockchief_runtime.agent_learning_decisions',ACCEPTED='Stopped asking about a routine you always approved';
+const anchor=(kind,key)=>'routine-'+require('node:crypto').createHash('sha256').update(kind+'|'+key).digest('hex').slice(0,16);
+const scoped=c=>({query:(...args)=>c.query(...args),transaction:fn=>fn(c)});
 
-// The newest approvals per routine scope, back to the last "no".
-async function runs(db,workspaceId,actions){
-  const decided=await has(db,DECISIONS);
-  return (await db.query(`WITH decided AS (
-      SELECT p.id,p.action_type,p.payload#>>'{training,key}' AS key,p.payload#>>'{training,currency}' AS currency,
-        (p.payload#>>'{training,amountMinor}')::numeric AS amount,p.payload#>>'{training,label}' AS label,p.payload,p.created_at,
-        p.status='CANCELLED' AS declined
-      FROM stockchief_runtime.assistant_action_proposals p
-      WHERE p.workspace_id=$1 AND p.action_type=ANY($2::text[]) AND p.payload#>>'{training,key}' IS NOT NULL AND p.status IN ('EXECUTED','CANCELLED')
-        AND p.created_at>=now()-make_interval(days=>$3)
-        AND (p.status='CANCELLED' OR (p.result->>'replayed' IS DISTINCT FROM 'true' AND p.result->>'automatic' IS DISTINCT FROM 'true'
-          AND p.result#>>'{executionAuthority,kind}' IS DISTINCT FROM 'standing_job_rule'))
-        ${decided?`AND NOT EXISTS(SELECT 1 FROM ${DECISIONS} d WHERE d.workspace_id=p.workspace_id AND d.job_id=208
-          AND d.kind=p.action_type AND d.scope_key=p.payload#>>'{training,key}' AND p.created_at<=d.through)`:''}
-    ), counted AS (
-      SELECT d.*,count(*) FILTER(WHERE declined) OVER(PARTITION BY action_type,key ORDER BY created_at DESC,id DESC ROWS UNBOUNDED PRECEDING) AS noes
-      FROM decided d
-    )
-    SELECT action_type,key,min(currency) AS currency,count(*)::int AS run,max(amount)::text AS maximum,min(created_at) AS first,max(created_at) AS last,
-      (array_agg(id ORDER BY created_at DESC,id DESC))[1] AS latest_id,(array_agg(label ORDER BY created_at DESC,id DESC))[1] AS label,
-      (array_agg(id ORDER BY created_at DESC,id DESC))[1:50] AS ids,(array_agg(payload ORDER BY created_at DESC,id DESC))[1:50] AS payloads,
-      count(DISTINCT currency)::int AS currencies
-    FROM counted c WHERE noes=0
-      AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.agent_draft_rules r WHERE r.workspace_id=$1 AND r.action_type=c.action_type AND r.scope_key=c.key)
-    GROUP BY action_type,key HAVING count(*)>=$4 ORDER BY max(created_at) DESC LIMIT 100`,
-  [workspaceId,actions,DAYS,RUN])).rows;
+// The owner's earlier answers: nothing up to the newest approval they saw counts again.
+async function answered(db,workspaceId){
+  if(!await has(db,DECISIONS))return new Map();
+  return new Map((await db.query(`SELECT kind,scope_key,through FROM ${DECISIONS} WHERE workspace_id=$1 AND job_id=208`,[workspaceId])).rows
+    .map(r=>[r.kind+'\u0000'+r.scope_key,new Date(r.through)]));
 }
 
-// The owner's own limit for this routine's amount, or why there is none to use.
-async function ownerLimit(db,workspaceId,state,action,currency){
-  if(PURCHASES.has(action)){
-    const cap=policy.purchaseLimits(state);
-    if(!cap)return {stop:'Your plan has no agreed automatic purchase limit.'};
-    if(cap.currency!==currency)return {stop:'These orders are in '+currency+', and your purchase limit is in '+cap.currency+'.'};
-    return {minor:money.toMinor(String(cap.perOrder),cap.currency),label:'your per-order purchase limit'};
+// Runs of five or more identical approvals, newest first, per scope.
+function runsOf(adapter,rows,decided){
+  const groups=new Map();
+  for(const r of rows){
+    const kind=r.kind||adapter.kind,key=kind+'\u0000'+r.scope;
+    if(!groups.has(key))groups.set(key,{kind,scope:r.scope,job:r.job??adapter.jobs[0],all:[],through:decided.get(key)});
+    groups.get(key).all.push(r);
   }
-  if(action==='landed_cost.apply'){
-    const rule=await require('../purchasing/dual-approval').setting(db,workspaceId);
-    if(rule?.amount_minor!=null){
-      if(rule.currency!==currency)return {stop:'Two people approve amounts in other currencies than '+rule.currency+'.'};
-      return {minor:Number(rule.amount_minor),label:'the amount over which two people must approve'};
+  const runs=[];
+  for(const g of groups.values()){
+    g.all.sort((a,b)=>b.at-a.at||(String(b.id)>String(a.id)?1:-1));
+    const rows=[];let variant;
+    for(const r of g.all){
+      if(g.through&&r.at<=g.through)break;
+      if(r.declined)break;
+      if(r.needsPerson)continue;
+      const v=r.variant??null;
+      if(variant===undefined)variant=v;else if(v!==variant)break;
+      rows.push(r);
     }
+    if(rows.length>=RUN)runs.push({...g,rows,latest:rows[0],first:rows.at(-1),variant});
   }
-  return {};
+  return runs;
 }
 
-// Pick releases (job 56) keep their own approvals: each release a person
-// approved at a warehouse, and each one discarded or undone.
-const RELEASES='stockchief_runtime.agent_pick_releases',RELEASE_RULES='stockchief_runtime.agent_pick_release_rules',RELEASE='warehouse.release_orders';
-async function releaseRuns(db,workspaceId){
-  if(!await has(db,RELEASES))return [];
-  const decided=await has(db,DECISIONS);
-  return (await db.query(`WITH decided AS (
-      SELECT r.id,r.location_id,coalesce(r.released_at,r.created_at) AS at,jsonb_array_length(coalesce(r.plan->'orders','[]'::jsonb)) AS orders,
-        r.status IN ('DISCARDED','UNDONE') AS declined
-      FROM ${RELEASES} r WHERE r.workspace_id=$1 AND r.created_at>=now()-make_interval(days=>$2)
-        AND ((r.status='RELEASED' AND r.authorization_kind='INDIVIDUAL') OR r.status IN ('DISCARDED','UNDONE'))
-        ${decided?`AND NOT EXISTS(SELECT 1 FROM ${DECISIONS} d WHERE d.workspace_id=r.workspace_id AND d.job_id=208 AND d.kind='${RELEASE}'
-          AND d.scope_key=r.location_id AND coalesce(r.released_at,r.created_at)<=d.through)`:''}
-    ), counted AS (
-      SELECT d.*,count(*) FILTER(WHERE declined) OVER(PARTITION BY location_id ORDER BY at DESC,id DESC ROWS UNBOUNDED PRECEDING) AS noes FROM decided d
-    )
-    SELECT c.location_id,l.name AS location,count(*)::int AS run,min(c.at) AS first,max(c.at) AS last,(array_agg(c.id ORDER BY c.at DESC,c.id DESC))[1] AS latest_id,
-      (array_agg(c.orders ORDER BY c.at DESC,c.id DESC))[1] AS latest_orders,array_agg(c.id ORDER BY c.at DESC,c.id DESC) AS ids,
-      jsonb_agg(jsonb_build_object('at',c.at,'orders',c.orders) ORDER BY c.at) AS examples
-    FROM counted c JOIN locations l ON l.workspace_id=$1 AND l.id=c.location_id AND l.is_active=1
-    WHERE c.noes=0 AND NOT EXISTS(SELECT 1 FROM ${RELEASE_RULES} x WHERE x.workspace_id=$1 AND x.location_id=c.location_id AND x.enabled AND x.automatic)
-    GROUP BY c.location_id,l.name HAVING count(*)>=$3 ORDER BY max(c.at) DESC LIMIT 50`,[workspaceId,DAYS,RUN])).rows;
+// Job 210: what the rule would have done with the answers in this scope.
+function replay(offer,run){
+  const counted=new Set(run.rows.map(r=>r.id)),limit=num(offer.limitValue);
+  const decide=r=>r.declined?'Asked you (you said no or changed it then)':r.needsPerson?'Asked you: this always needs a person':
+    (r.variant??null)!==run.variant?'Asked you: a different choice from this routine':limit!==null&&num(r.value)!==null&&num(r.value)>limit?'Asked you: over the rule’s limit':'Done it on its own';
+  const answers=run.all,done=answers.filter(r=>decide(r)==='Done it on its own').length,noes=answers.filter(r=>r.declined).length,people=answers.filter(r=>!r.declined&&r.needsPerson).length;
+  return {title:offer.label+' on its own',tested:true,more:answers.length>ROWS,
+    summary:'You approved this '+run.rows.length+' times in a row since '+day(run.first.at)+'. Of the '+answers.length+' answers in this scope in the last '+DAYS+' days, it would have done '+done+
+      ' on its own'+(people?', still asked you about '+people+' that always need a person':'')+(noes?', and asked you about the '+noes+' you said no to or changed':'')+'.',
+    rows:answers.slice(0,ROWS).reverse().map(r=>({When:day(r.at),'Would have':decide(r),'What happened':r.declined?'You said no, undid or changed it':counted.has(r.id)?'You approved it':'You approved it earlier'}))};
 }
-async function releaseOffers(db,ctx,state){
-  const release=require('../warehouse/agent-pick-release');
-  if(policy.allowance(state.plan,release.JOB)!=='trained'||await require('./job-modes').restriction(db,ctx.workspaceId,release.JOB,true))return [];
-  const found=[];
-  for(const r of await releaseRuns(db,ctx.workspaceId)){
-    const prior=await release.read(db,ctx.workspaceId,r.location_id);
-    // The owner's own batch size stays; otherwise the latest release's size.
-    const batch=prior?.enabled?Number(prior.batch_orders):Math.min(Math.max(Number(r.latest_orders)||1,1),release.MAX_BATCH);
-    const label='Release ready orders at '+r.location;
-    found.push({source:'release',anchor:anchor(RELEASE,r.location_id),action:RELEASE,job:release.JOB,key:r.location_id,label,run:r.run,first:day(r.first),last:r.last,
-      latestId:r.latest_id,ids:r.ids,currency:null,maximumMinor:0,maximum:batch+' orders at a time',runMaximum:Math.max(...r.examples.map(e=>Number(e.orders)))+' orders',capped:null,
-      example:release.href,test:{sections:[{title:label+' on its own',tested:true,more:false,
-        summary:'You released orders at '+r.location+' '+r.run+' times in a row without discarding or undoing one. It would have released each of those batches on its own, '+batch+' orders at a time.',
-        rows:r.examples.slice(-20).map(e=>({When:day(e.at),'Would have':'Released '+e.orders+(Number(e.orders)===1?' order':' orders')+' on its own','What happened':'You released them'}))}]}});
-  }
-  return found;
+async function rehearse(db,ctx,adapter,offer){
+  const run=offer.run_;
+  return adapter.rehearse?adapter.rehearse(db,ctx,offer,run):replay(offer,run);
+}
+
+async function watchOnly(db,workspaceId){
+  return (await db.query('SELECT mode FROM workspace_autopilot WHERE workspace_id=$1',[workspaceId])).rows[0]?.mode==='OBSERVE';
 }
 
 // Offers to stop asking, newest first. Each comes with its past-data test.
-async function offers(db,ctx,{test=true}={}){
+async function offers(db,ctx,{test=true,only=null}={}){
   const state=await policy.requireWorkspaceJob(db,ctx.workspaceId,JOB,'automatic');
-  if(state.shadow)return [];
-  const modes=require('./job-modes'),actions=[...draft.jobs.keys()].filter(a=>!SKIPPED.has(a)&&draft.eligible(state.plan,a)&&
-    policy.allowance(state.plan,draft.jobs.get(a))==='trained');
-  const found=await releaseOffers(db,ctx,state);
-  if(!actions.length)return found;
-  for(const r of await runs(db,ctx.workspaceId,actions)){
-    const job=draft.jobs.get(r.action_type);
-    if(r.currencies!==1||!/^[A-Z]{3}$/.test(String(r.currency||'')))continue;
-    if(await modes.restriction(db,ctx.workspaceId,job,true))continue;
-    if(r.payloads.some(p=>policy.needsPerson(r.action_type,p,state)))continue;
-    if(r.action_type==='sales_order.repeat'&&(await Promise.all(r.payloads.slice(0,RUN).map(p=>policy.customerOrderNeedsPerson(db,ctx.workspaceId,r.action_type,p,null,state)))).some(Boolean))continue;
-    const runMaximum=Number(r.maximum);
-    if(!Number.isSafeInteger(runMaximum)||runMaximum<=0)continue;
-    const limit=await ownerLimit(db,ctx.workspaceId,state,r.action_type,r.currency);
-    if(limit.stop)continue;
-    const maximum=limit.minor!=null?Math.min(runMaximum,limit.minor):runMaximum;
-    if(maximum<=0)continue;
-    const settings=await draft.settings(db,ctx,r.latest_id,money.fromMinor(maximum,r.currency));
-    if(!settings?.canTeach||settings.rule)continue;
-    const label=r.label||settings.bound.label;
-    const offer={source:'routine',anchor:anchor(r.action_type,r.key),action:r.action_type,job,key:r.key,label,run:r.run,first:day(r.first),last:r.last,latestId:r.latest_id,
-      ids:r.ids,currency:r.currency,maximumMinor:maximum,maximum:money.format(maximum,r.currency),runMaximum:money.format(runMaximum,r.currency),
-      capped:maximum<runMaximum?limit.label:null,example:'/actions/'+r.latest_id};
-    if(test)offer.test={sections:[await require('./rule-rehearsal').routine(db,ctx,{action:r.action_type,key:r.key,currency:r.currency,maximumMinor:maximum,latestId:r.latest_id,label})]};
-    found.push(offer);
+  if(state.shadow||await watchOnly(db,ctx.workspaceId))return [];
+  const modes=require('./job-modes'),decided=await answered(db,ctx.workspaceId),found=[];
+  for(const adapter of registry.adapters){
+    if(only&&adapter.kind!==only)continue;
+    const jobs=[];
+    for(const job of adapter.jobs)if(policy.allowance(state.plan,job)==='trained'&&!await modes.restriction(db,ctx.workspaceId,job,true))jobs.push(job);
+    if(!jobs.length)continue;
+    let ready=true;for(const table of adapter.tables||[])if(!await has(db,table)){ready=false;break;}
+    if(!ready)continue;
+    for(const run of runsOf(adapter,await adapter.history(db,ctx,{days:DAYS,state,jobs}),decided)){
+      if(!jobs.includes(run.job))continue;
+      // A record the job itself would refuse (a stopped page, a changed
+      // supplier) means no offer; it never stops the other offers.
+      let o;
+      try{o=await adapter.offer(db,ctx,{state,run});}catch(error){if(![400,402,403,404,409,422].includes(error?.status))throw error;o=null;}
+      if(!o)continue;
+      const offer={...o,source:adapter.kind,anchor:anchor(run.kind,run.scope),action:run.kind,job:run.job,key:run.scope,run:run.rows.length,
+        first:day(run.first.at),last:run.latest.at,latestId:run.latest.id,ids:run.rows.map(r=>r.id),example:o.href,
+        maximum:o.maximum||o.limit,runMaximum:o.runMaximum||null,capped:o.capped||null};
+      Object.defineProperty(offer,'run_',{value:run});
+      if(test)offer.test={sections:[await rehearse(db,ctx,adapter,offer)]};
+      found.push(offer);
+    }
   }
-  return found;
+  return found.sort((a,b)=>b.last-a.last);
 }
 
 async function owner(db,ctx){return require('./job-reviews').ownerState(db,ctx);}
-const scoped=c=>({query:(...args)=>c.query(...args),transaction:fn=>fn(c)});
 // The owner's answer, up to the newest approval they saw.
 async function decide(c,ctx,offer,decision,rule){
   if(!await has(c,DECISIONS))return;
@@ -169,66 +126,78 @@ async function decide(c,ctx,offer,decision,rule){
       rule_reference=EXCLUDED.rule_reference,decided_by=EXCLUDED.decided_by,decided_at=clock_timestamp()`,
   [ctx.workspaceId,offer.action,offer.key,decision,offer.last,rule,ctx.actorId]);
 }
+// A repeated confirmation finds the answer it already saved.
+async function alreadyAccepted(c,ctx,latestId){
+  if(!await has(c,DECISIONS))return null;
+  return (await c.query(`SELECT d.kind,e.after_state->>'routine' AS routine FROM ${DECISIONS} d
+    LEFT JOIN LATERAL (SELECT after_state FROM security_event_history e WHERE e.workspace_id=d.workspace_id AND e.action=$3 AND e.reference=d.rule_reference
+      ORDER BY e.created_at DESC LIMIT 1) e ON true
+    WHERE d.workspace_id=$1 AND d.job_id=208 AND d.decision='accepted' AND d.rule_reference=$2 LIMIT 1`,[ctx.workspaceId,latestId,ACCEPTED])).rows[0]||null;
+}
 
-// The owner confirms once: the offer becomes the routine's taught rule.
+// The owner confirms once: the offer becomes that job's own taught rule.
 async function confirm(db,ctx,input={}){
-  const latestId=String(input.latestId||''),maximum=String(input.maximum||'');
-  if(!latestId||!/^\d+$/.test(maximum))throw new ValidationError('Review the offer before confirming it.');
+  const latestId=String(input.latestId||''),token=String(input.maximum??''),only=input.source?String(input.source):null;
+  if(!latestId||latestId.length>300||!/^[A-Za-z0-9._:-]{1,80}$/.test(token))throw new ValidationError('Review the offer before confirming it.');
+  if(only&&!registry.adapters.some(a=>a.kind===only))throw new ValidationError('Review the offer before confirming it.');
   return db.transaction(async c=>{
     const s=scoped(c);await owner(s,ctx);
     await policy.requireWorkspaceJob(s,ctx.workspaceId,JOB,'automatic');
-    const offer=(await offers(s,ctx,{test:false})).find(o=>o.latestId===latestId);
+    const offer=(await offers(s,ctx,{test:false,only})).find(o=>o.latestId===latestId);
     if(!offer){
-      // A repeated confirmation finds the rule it already saved.
-      const p=(await c.query('SELECT action_type,payload FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,latestId])).rows[0];
-      if(p?.payload?.training?.key&&(await c.query('SELECT 1 FROM stockchief_runtime.agent_draft_rules WHERE workspace_id=$1 AND action_type=$2 AND scope_key=$3',
-        [ctx.workspaceId,p.action_type,p.payload.training.key])).rowCount)return {replayed:true,label:p.payload.training.label};
-      if(!p&&await has(c,RELEASES)&&(await c.query(`SELECT 1 FROM ${RELEASES} r JOIN ${RELEASE_RULES} x ON x.workspace_id=r.workspace_id AND x.location_id=r.location_id
-        WHERE r.workspace_id=$1 AND r.id=$2 AND x.enabled AND x.automatic`,[ctx.workspaceId,latestId])).rowCount)return {replayed:true,label:'these releases'};
+      const prior=await alreadyAccepted(c,ctx,latestId);
+      if(prior)return {replayed:true,label:prior.routine||'this routine'};
       throw new ValidationError('This offer changed since you saw it. Review it again before StockChief stops asking.');
     }
-    if(Number(maximum)!==offer.maximumMinor)throw new ValidationError('The amount changed since you saw it. Review the offer again.');
-    if(offer.source==='release'){
-      await require('../warehouse/agent-pick-release').teach(s,ctx,latestId);
-      await decide(c,ctx,offer,'accepted',latestId);
-      await require('../operations/postgres-security-audit').record(c,ctx,{action:'Stopped asking about a routine you always approved',reference:latestId,
-        after:{job:offer.job,routine:offer.label,approvals:offer.run,since:offer.first,batch:offer.maximum,examples:offer.ids.slice(0,20)}});
-      return {replayed:false,label:offer.label.charAt(0).toLowerCase()+offer.label.slice(1),maximum:offer.maximum};
-    }
-    const test=await require('./rule-rehearsal').routine(s,ctx,{action:offer.action,key:offer.key,currency:offer.currency,maximumMinor:offer.maximumMinor,latestId,label:offer.label});
-    await draft.save(s,ctx,latestId,{mode:'save',maximum:money.fromMinor(offer.maximumMinor,offer.currency),revision:0});
+    if(token!==offer.token)throw new ValidationError('The amount changed since you saw it. Review the offer again.');
+    const adapter=registry.adapters.find(a=>a.kind===offer.source),test=await rehearse(s,ctx,adapter,offer);
+    await adapter.teach(s,ctx,offer);
     await decide(c,ctx,offer,'accepted',latestId);
-    await require('../operations/postgres-security-audit').record(c,ctx,{action:'Stopped asking about a routine you always approved',reference:latestId,
-      after:{job:offer.job,routine:offer.label,approvals:offer.run,since:offer.first,maximum:offer.maximum,limitedBy:offer.capped,examples:offer.ids.slice(0,20),test:test.summary}});
-    return {replayed:false,label:offer.label,maximum:offer.maximum};
+    await require('../operations/postgres-security-audit').record(c,ctx,{action:ACCEPTED,reference:latestId,
+      after:{job:offer.job,routine:offer.label,approvals:offer.run,since:offer.first,limit:offer.limit,limitedBy:offer.capped,examples:offer.ids.slice(0,20),test:test.summary}});
+    return {replayed:false,label:offer.label,limit:offer.limit};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
 // "Keep asking": the offer stays away until a new run of approvals.
 async function dismiss(db,ctx,input={}){
-  const latestId=String(input.latestId||'');
+  const latestId=String(input.latestId||''),only=input.source&&registry.adapters.some(a=>a.kind===String(input.source))?String(input.source):null;
   return db.transaction(async c=>{
     const s=scoped(c);await owner(s,ctx);
     if(!await has(s,DECISIONS))throw new ValidationError('This inventory is being upgraded. Try again in a few minutes.');
-    const offer=(await offers(s,ctx,{test:false})).find(o=>o.latestId===latestId);
+    const offer=(await offers(s,ctx,{test:false,only})).find(o=>o.latestId===latestId);
     if(!offer)return {replayed:true};
     await decide(c,ctx,offer,'declined',null);
-    await require('../operations/postgres-security-audit').record(c,ctx,{action:'Kept asking about a routine',reference:latestId,after:{routine:offer.label,approvals:offer.run}});
+    await require('../operations/postgres-security-audit').record(c,ctx,{action:'Kept asking about a routine',reference:latestId,after:{job:offer.job,routine:offer.label,approvals:offer.run}});
     return {replayed:false,label:offer.label};
   },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+
+// Other jobs keep their rules on their own pages; this lists what was learned
+// here from your approvals, with the limit you confirmed.
+async function learnedElsewhere(db,workspaceId){
+  if(!await has(db,DECISIONS))return [];
+  return (await db.query(`SELECT e.after_state->>'routine' AS routine,e.after_state->>'limit' AS lim,e.after_state->>'job' AS job,d.decided_at FROM ${DECISIONS} d
+    JOIN LATERAL (SELECT after_state FROM security_event_history e WHERE e.workspace_id=d.workspace_id AND e.action=$2 AND e.reference=d.rule_reference
+      ORDER BY e.created_at DESC LIMIT 1) e ON true
+    WHERE d.workspace_id=$1 AND d.job_id=208 AND d.decision='accepted' AND d.kind LIKE 'job:%' ORDER BY d.decided_at DESC LIMIT 50`,[workspaceId,ACCEPTED])).rows
+    .map(r=>({label:r.routine,job:Number(r.job)||null,limit:r.lim?r.lim.charAt(0).toUpperCase()+r.lim.slice(1):'Learned '+day(r.decided_at),since:day(r.decided_at)}));
 }
 
 // The page: offers to stop asking, and the routines it already learned.
 async function page(db,ctx){
   await owner(db,ctx);
-  const state=await policy.requireWorkspaceJob(db,ctx.workspaceId,JOB,'automatic');
-  const learned=(await db.query(`SELECT r.scope_label,r.currency,r.maximum_minor,r.action_type FROM stockchief_runtime.agent_draft_rules r
+  const state=await policy.requireWorkspaceJob(db,ctx.workspaceId,JOB,'automatic'),money=require('../domain/currency');
+  const learned=(await db.query(`SELECT r.scope_label,r.currency,r.maximum_minor FROM stockchief_runtime.agent_draft_rules r
     WHERE r.workspace_id=$1 ORDER BY r.scope_label,r.action_type LIMIT 50`,[ctx.workspaceId])).rows
     .map(r=>({label:r.scope_label,limit:'Up to '+money.format(r.maximum_minor,r.currency)}));
-  if(await has(db,RELEASE_RULES))learned.push(...(await db.query(`SELECT l.name,x.batch_orders FROM ${RELEASE_RULES} x JOIN locations l ON l.workspace_id=x.workspace_id AND l.id=x.location_id
+  const releases='stockchief_runtime.agent_pick_release_rules';
+  if(await has(db,releases))learned.push(...(await db.query(`SELECT l.name,x.batch_orders FROM ${releases} x JOIN locations l ON l.workspace_id=x.workspace_id AND l.id=x.location_id
     WHERE x.workspace_id=$1 AND x.enabled AND x.automatic ORDER BY l.name LIMIT 50`,[ctx.workspaceId])).rows.map(r=>({label:'Release ready orders at '+r.name,limit:r.batch_orders+' orders at a time'})));
+  learned.push(...await learnedElsewhere(db,ctx.workspaceId));
   const routineOff=!state.shadow&&!(await require('./postgres-service').getState(db,ctx.workspaceId)).canAutomate;
-  return {shadow:Boolean(state.shadow),shadowEndsAt:state.shadowEndsAt,routineOff,run:RUN,days:DAYS,offers:await offers(db,ctx),learned};
+  const watching=!state.shadow&&await watchOnly(db,ctx.workspaceId);
+  return {shadow:Boolean(state.shadow),shadowEndsAt:state.shadowEndsAt,routineOff,watching,run:RUN,days:DAYS,offers:await offers(db,ctx),learned};
 }
 
 // Needs you: one notice per offer, while it stands. Read by the notices refresh.
@@ -240,4 +209,4 @@ async function notices(db,workspaceId,account){
   return (await offers(db,{workspaceId,actorId:ownerId},{test:false})).map(o=>({kind:'Learning',ref:o.action+':'+o.key,link:path}));
 }
 
-module.exports={JOB,RUN,DAYS,path,offers,ownerLimit,confirm,dismiss,page,notices};
+module.exports={JOB,RUN,DAYS,path,offers,runsOf,learnedElsewhere,ownerLimit:registry.ownerLimit,confirm,dismiss,page,notices};

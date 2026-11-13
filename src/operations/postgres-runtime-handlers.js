@@ -902,6 +902,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'channel.sync-fixes.v1':external((job,database)=>require('../connections/agent-channel-sync-fixes').run(database,job.workspaceId,{providers,...(options.publicOrigin?{publicOrigin:options.publicOrigin}:{})})),
   'agent.shipping.carrier-claim.v1':external((job,database)=>require('../shipping/agent-carrier-claims').submit(database,job,options.carrierClaimProvider)),
   'agent.shipping.freight-pickup.v1':external((job,database)=>require('../shipping/agent-freight-pickups').dispatch(database,job)),
+  'agent.api_job':external((job,database)=>require('../connections/agent-api-jobs').execute(job,database)),
   'agent.shipping.van-route-routine.v1':external((job,database)=>require('../shipping/agent-van-route-routine').run(database,job)),
   'agent.shipping.freight-routine.v1':external((job,database)=>require('../shipping/agent-freight-routine').run(database,job)),
   'agent.shipping.export-papers.v1':external((job,database)=>require('../shipping/agent-export-paper-routine').run(database,job)),

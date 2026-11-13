@@ -64,6 +64,7 @@ async function start(db,auth,body,key){
   await authorize(db,auth.workspaceId,auth.clientId);
   const result=await require('./postgres-public-api').executeCommand(db,auth,{idempotencyKey:key,commandType:kind,body:input},async(c,operationKey)=>{
     const actorId=await authorize(c,auth.workspaceId,auth.clientId);
+    await require('./agent-api-jobs').limit(c,auth);
     let reportRevision;
     if(input.reportId){
       const ctx={workspaceId:auth.workspaceId,actorId};
@@ -106,4 +107,4 @@ async function execute(job,db){
   return completed;
 }
 
-module.exports={start,status,execute,check,available,issuer,eventType,kind};
+module.exports={start,status,execute,check,available,issuer,authorize,eventType,kind};

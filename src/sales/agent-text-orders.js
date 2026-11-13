@@ -328,6 +328,11 @@ async function reply(db,workspaceId,id,{send}={}){
     if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,JOB,'draft'))return null;
     const body=row.status==='CONFIRMED'?'Thank you. Order '+row.order_number+' is confirmed: '+money.format(Number(row.total_minor),row.currency)+'. We will let you know when it ships.':
       'Thank you, we received your order. We will confirm it shortly.';
+    const scope=await require('../commercial/entitlements').ownerScopeForWorkspace(c,workspaceId);
+    await require('../commercial/control-service').recordCost(c,scope,{
+      provider:'twilio',operation:'customer_text_order_reply',unit:'submission',quantity:1,
+      idempotencyKey:'customer-text-order-reply:'+id,detail:{channel:row.channel}
+    });
     await c.query(`UPDATE ${texts} SET reply_status='SENDING',reply_body=$3 WHERE workspace_id=$1 AND id=$2`,[workspaceId,id,body]);
     return {row,body};
   });
