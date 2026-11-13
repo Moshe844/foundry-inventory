@@ -34,7 +34,7 @@ const assessed=`WITH active AS MATERIALIZED (
   ), supplied AS (
     SELECT si.supplier_id,lower(btrim(si.supplier_sku)) AS code FROM supplier_items si JOIN active a ON a.id=si.sku_id
     WHERE si.workspace_id=$1 AND si.is_active=1 AND btrim(coalesce(si.supplier_sku,''))<>'' GROUP BY 1,2 HAVING count(DISTINCT si.sku_id)>1
-  ), duplicated AS (
+  ), duplicated AS MATERIALIZED (
     SELECT a.id FROM active a JOIN named n ON n.same_key=a.same_key
     UNION SELECT si.sku_id FROM supplier_items si JOIN supplied d ON d.supplier_id=si.supplier_id AND d.code=lower(btrim(si.supplier_sku))
       WHERE si.workspace_id=$1 AND si.is_active=1
@@ -51,18 +51,19 @@ const assessed=`WITH active AS MATERIALIZED (
     WHERE b.workspace_id=$1 AND b.on_hand>0
       AND NOT EXISTS(SELECT 1 FROM movements m WHERE m.workspace_id=b.workspace_id AND m.sku_id=b.sku_id AND m.location_id=b.location_id
         AND (m.operation='adjust' OR m.reason_code='file_physical_count') AND stockchief_movement_instant(m.occurred_at)>=now()-interval '365 days')
-  ), checks AS (
+  ), checks AS MATERIALIZED (
     SELECT a.*,coalesce(a.code=btrim(a.code) AND a.code ~ '${SAFE}' AND a.same_code=1,false) AS code_ok,
       coalesce(length(btrim(a.barcode))>0 AND a.same_barcode=1,false) AS barcode_ok,
       EXISTS(SELECT 1 FROM sku_purchase_costs p WHERE p.workspace_id=$1 AND p.sku_id=a.id) AS cost_ok,
       coalesce(a.weight_grams>0,false) AS weight_ok,
-      NOT EXISTS(SELECT 1 FROM duplicated d WHERE d.id=a.id) AS unique_ok,
+      d.id IS NULL AS unique_ok,
       EXISTS(SELECT 1 FROM supplier_items si JOIN suppliers v ON v.workspace_id=si.workspace_id AND v.id=si.supplier_id AND v.status='active'
         WHERE si.workspace_id=$1 AND si.sku_id=a.id AND si.is_active=1) AS supplier_ok,
       EXISTS(SELECT 1 FROM reorder_policies r WHERE r.workspace_id=$1 AND r.sku_id=a.id AND r.reorder_point IS NOT NULL) AS reorder_ok,
       z.sku_id IS NULL AS stock_ok,
       un.sku_id IS NULL AS counted_ok
     FROM active a
+    LEFT JOIN duplicated d ON d.id=a.id
     LEFT JOIN below_zero z ON z.sku_id=a.id
     LEFT JOIN uncounted un ON un.sku_id=a.id
   ), scores AS (SELECT c.*,${CHECKS.map(c=>'c.'+c.key+'::int').join('+')} AS passed FROM checks c)`;
