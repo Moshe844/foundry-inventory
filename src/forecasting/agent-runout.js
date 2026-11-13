@@ -282,24 +282,26 @@ async function page(db,ctx,{number=1}={}){
 
 // Needs you: items that run out before their next delivery, ranked by the
 // gross margin lost until it arrives.
-async function inbox(db,workspaceId){
+async function inbox(db,workspaceId,actor=null){
+  // Job 203: gross margin is for people who see accounting.
+  const margins=!actor||require('../actions/permissions').can(actor,require('../actions/permissions').VIEW_ACCOUNTING);
   if(!await installed.has(db,estimates)||!await plan(db,workspaceId))return [];
   const rows=(await db.query(`SELECT e.*,e.runout_date::text AS runout,e.next_delivery_date::text AS delivery,s.code,i.name FROM ${estimates} e
     JOIN skus s ON s.workspace_id=e.workspace_id AND s.id=e.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
     WHERE e.workspace_id=$1 AND e.before_delivery ORDER BY e.lost_margin_minor DESC NULLS LAST,e.runout_date,s.code LIMIT $2`,[workspaceId,INBOX_ITEMS+1])).rows;
   const total=rows.length>INBOX_ITEMS?Number((await db.query(`SELECT count(*)::int AS n FROM ${estimates} WHERE workspace_id=$1 AND before_delivery`,[workspaceId])).rows[0].n):rows.length;
   const items=rows.slice(0,INBOX_ITEMS).map(r=>{
-    const lost=r.lost_margin_minor==null?null:Number(r.lost_margin_minor),orders=Number(r.orders_affected);
+    const lost=r.lost_margin_minor==null||!margins?null:Number(r.lost_margin_minor),orders=Number(r.orders_affected);
     return {kind:'inventory',importance:'Important',priority:lost==null?52:53,title:r.code+' runs out before its next delivery',
       happened:r.reason,
-      why:(lost==null?'Its selling price or cost is not recorded, so the cost is unknown.':'About '+money.format(lost,r.currency)+' of gross margin is lost before the delivery ('+
+      why:(!margins?'':lost==null?'Its selling price or cost is not recorded, so the cost is unknown.':'About '+money.format(lost,r.currency)+' of gross margin is lost before the delivery ('+
         money.format(Number(r.daily_margin_minor),r.currency)+' a day for '+r.days_short+' day'+(Number(r.days_short)===1?'':'s')+').')+
         (orders?' '+orders+' open customer order'+(orders===1?' waits':'s wait')+' for it.':''),
       recommendation:'Order more now, or ask the supplier to deliver sooner.',href:href+'#'+encodeURIComponent(r.code),actionLabel:'See when stock runs out',
       sourceId:'runout:'+r.sku_id,moneyValue:lost,moneyCurrency:lost==null?null:r.currency,at:r.updated_at,createdAt:r.updated_at};
   });
   if(total>INBOX_ITEMS)items.push({kind:'inventory',importance:'Important',priority:51,grouped:true,title:'More items run out before their next delivery',
-    happened:(total-INBOX_ITEMS)+' more item'+(total-INBOX_ITEMS===1?'':'s')+' will run out before stock arrives.',why:'They cost less than the ones above.',
+    happened:(total-INBOX_ITEMS)+' more item'+(total-INBOX_ITEMS===1?'':'s')+' will run out before stock arrives.',why:margins?'They cost less than the ones above.':'They come after the ones above.',
     recommendation:'Review the full list.',href,actionLabel:'See when stock runs out',sourceId:'runout-more',at:rows[0].updated_at,createdAt:rows[0].updated_at});
   return items;
 }

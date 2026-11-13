@@ -25,6 +25,10 @@ async function assignments(db,workspaceId){
   // Passing to the next reviewer (job 172) waits in the first 14 days, pause,
   // Watch only and Ask me first; the request then stays with the first reviewer.
   const held=policy.permits(state.plan,172,'automatic')?await policy.stopped(db,workspaceId,state,'alert.escalation',true):'plan';
+  // Job 202: while the owner is away, the deputy gives the second signature
+  // the owner would, unless they gave the first.
+  const cover=await require('../autopilot/vacation-deputy').coverage(db,workspaceId,state);
+  const deputy=cover&&people.find(p=>p.id===cover.deputyId&&p.role!=='owner'&&p.warehouse_location_ids===null);
   for(const o of orders){
     const digest=dual.digestFor(rule,o),signed=o.signatures.filter(s=>s.digest===digest);
     const current=signed.filter(s=>people.some(p=>p.id===s.actor&&p.account_id===s.account&&dual.eligible(p,o.currency,Number(s.amount))));
@@ -41,7 +45,12 @@ async function assignments(db,workspaceId){
         reason=(index?'The previous reviewer’s response window passed. ':'')+'The '+money.format(first.amount,o.currency)+' order needs a second signature.';
       }else reason='A second eligible person is needed. Review team purchase permissions and approval limits.';
     }
-    if(next)rows.push({actor:next.id,reviewer:next.name,order:o.po_number,id:o.id,reason,at:first?.at||o.signatures.at(-1).at});
+    let covering=false;
+    if(first&&next?.role==='owner'&&deputy&&deputy.account_id!==first.account&&permissions.can(deputy,permissions.VIEW_PURCHASING)
+      &&permissions.can(deputy,permissions.APPROVE_PO)&&dual.eligible(deputy,o.currency,Number(first.amount))){
+      next=deputy;covering=true;reason=cover.ownerName+' is away until '+cover.through+'. The '+money.format(first.amount,o.currency)+' order needs a second signature from you.';
+    }
+    if(next)rows.push({actor:next.id,reviewer:next.name,order:o.po_number,id:o.id,reason,at:first?.at||o.signatures.at(-1).at,covering});
   }
   return rows;
 }

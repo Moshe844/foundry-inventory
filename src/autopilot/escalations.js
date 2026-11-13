@@ -64,12 +64,20 @@ function chain(item,people){
   const covers=p=>item.amount_minor==null||!item.currency||p.po_approval_limit_minor==null&&p.warehouse_location_ids==null||
     p.po_approval_currency===item.currency&&Number(item.amount_minor)<=Number(p.po_approval_limit_minor);
   const limit=p=>p.po_approval_limit_minor==null?Number.MAX_SAFE_INTEGER:Number(p.po_approval_limit_minor);
-  const helpers=people.filter(p=>!p.is_owner&&p.role!=='owner'&&permissions.can(p,item.permission)&&covers(p))
+  // Job 203: every permission the item needs, such as seeing its costs.
+  const allowed=p=>String(item.permission).split(',').every(name=>permissions.can(p,name));
+  const helpers=people.filter(p=>!p.is_owner&&p.role!=='owner'&&allowed(p)&&covers(p))
     .sort((a,b)=>Number(permissions.can(a,permissions.ADMIN))-Number(permissions.can(b,permissions.ADMIN))||
       (item.amount_minor==null?0:limit(a)-limit(b))||String(a.name).localeCompare(String(b.name))||String(a.id).localeCompare(String(b.id)));
   return owner?[...helpers,owner]:helpers;
 }
 
+// Every permission an approval needs, kept as one list. A list too long to
+// keep goes only to people who can administer the inventory.
+function needed(list){
+  const names=[...new Set((list||[]).map(String).filter(Boolean))],joined=names.join(',');
+  return !names.length?permissions.VIEW:joined.length<=60?joined:permissions.ADMIN;
+}
 // The permission an alert needs, from its job and kind.
 function alertPermission(job,kind){
   if(job===168)return /invoice|bill/i.test(kind)?permissions.VIEW_ACCOUNTING:/purchase/i.test(kind)?permissions.VIEW_PURCHASING:permissions.VIEW_SALES;
@@ -102,7 +110,7 @@ async function currentItems(database,workspaceId,owner,state){
     if(d.kind!=='approval'||!d.href||d.ownerOnly||source.startsWith('escalation:')||source.startsWith('po-signature-'))continue;
     const amount=Number.isSafeInteger(d.moneyValue)&&/^[A-Z]{3}$/.test(d.moneyCurrency||'')?d.moneyValue:null;
     items.push({key:'approval:'+hash([source,d.href]),source:'APPROVAL',job_id:null,title:String(d.title||'An approval').slice(0,300),href:String(d.href).slice(0,500),
-      permission:String((d.requiredPermissions||[])[0]||permissions.VIEW).slice(0,60),amount_minor:amount,currency:amount==null?null:d.moneyCurrency,
+      permission:needed(d.requiredPermissions),amount_minor:amount,currency:amount==null?null:d.moneyCurrency,
       opened_at:d.createdAt&&!Number.isNaN(Date.parse(d.createdAt))?new Date(d.createdAt).toISOString():null});
   }
   return items;
@@ -271,7 +279,7 @@ async function inbox(db,workspaceId,actorId){
   if(!rows.length)return [];
   const state=await policy.accountState(db,workspaceId);if(!alone(state))return [];
   const window=await windowHours(db,workspaceId),owner=await currentOwner(db,workspaceId),mine=owner?.id===actorId;
-  return rows.map(r=>({kind:'approval',requiredPermissions:[r.permission],importance:mine?'Urgent':'Important',priority:mine?93:89,
+  return rows.map(r=>({kind:'approval',requiredPermissions:String(r.permission).split(','),importance:mine?'Urgent':'Important',priority:mine?93:89,
     title:(mine?'Nobody answered: ':'Passed to you: ')+r.title.split('. ')[0],
     happened:r.title+(window?' Nobody answered it within '+hours(window)+(mine?', so it is back with you.':', so StockChief passed it to you.'):''),
     why:'The owner asked StockChief to pass alerts and approvals on when nobody answers.',

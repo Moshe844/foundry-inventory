@@ -66,8 +66,8 @@
 
 <% if (excess.length) { %>
   <section class="owner-planning section" id="excess" aria-labelledby="planning-excess-title">
-    <div class="owner-outcomes__head"><h2 id="planning-excess-title">Money tied up in stock</h2><span><%= excess.length %></span></div>
-    <div class="rm-told"><% excess.forEach(row => { %><div class="rm-told__row"><span class="rm-told__t"><a class="rm-u" href="/inventory/<%= row.item_id %>"><%= row.displayName %></a><small><%= row.location_name %> · <%= row.onHand %> on hand · <%= row.daysOfSupply === null ? 'no measured demand' : Math.round(row.daysOfSupply) + ' days of supply' %></small></span><span class="rm-told__m"><%= row.excessUnits %> excess · <%= money(row.excessValueMinor) %></span></div><% }) %></div>
+    <div class="owner-outcomes__head"><h2 id="planning-excess-title"><%= seesCosts ? 'Money tied up in stock' : 'More stock than needed' %></h2><span><%= excess.length %></span></div>
+    <div class="rm-told"><% excess.forEach(row => { %><div class="rm-told__row"><span class="rm-told__t"><a class="rm-u" href="/inventory/<%= row.item_id %>"><%= row.displayName %></a><small><%= row.location_name %> · <%= row.onHand %> on hand · <%= row.daysOfSupply === null ? 'no measured demand' : Math.round(row.daysOfSupply) + ' days of supply' %></small></span><span class="rm-told__m"><%= row.excessUnits %> excess<% if (seesCosts) { %> · <%= money(row.excessValueMinor) %><% } %></span></div><% }) %></div>
   </section>
 <% } %>
 
@@ -82,4 +82,4 @@
   </div><div class="rm-choices"><button class="rm-btn" type="submit">Save planning goals</button></div></form><% } else { %><p>Only an owner or administrator can change planning goals.</p><% } %>
 </div></details>
 
-<details class="owner-manual section" id="accuracy"><summary><span><strong>How reliable have forecasts been?</strong><small><%= accuracy.summary %></small></span><span class="owner-manual__cue">See evidence <%- helpers.icon('chevron', { size: 15 }) %></span></summary><div class="owner-manual__body"><p>Comparable forecasts: <strong><%= accuracy.comparable %></strong><% if (accuracy.comparable) { %> · average absolute error: <strong><%= helpers.unitCount(accuracy.meanAbsoluteError,'unit') %></strong> · average bias: <strong><%= accuracy.bias %></strong><% } %></p><p>Inventory at recorded cost: <strong><%= money(heldMinor) %></strong>.</p></div></details>
+<details class="owner-manual section" id="accuracy"><summary><span><strong>How reliable have forecasts been?</strong><small><%= accuracy.summary %></small></span><span class="owner-manual__cue">See evidence <%- helpers.icon('chevron', { size: 15 }) %></span></summary><div class="owner-manual__body"><p>Comparable forecasts: <strong><%= accuracy.comparable %></strong><% if (accuracy.comparable) { %> · average absolute error: <strong><%= helpers.unitCount(accuracy.meanAbsoluteError,'unit') %></strong> · average bias: <strong><%= accuracy.bias %></strong><% } %></p><p><% if (heldMinor !== null) { %>Inventory at recorded cost: <strong><%= money(heldMinor) %></strong>.<% } %></p></div></details>

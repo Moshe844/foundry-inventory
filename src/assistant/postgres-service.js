@@ -2220,6 +2220,11 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
       SET status='EXECUTED',result=$3::jsonb,executed_at=now() WHERE workspace_id=$1 AND id=$2 AND status='PENDING'
       RETURNING *`,[ctx.workspaceId,id,JSON.stringify(result)]);
     if(!changed.rows.length)throw new InvariantError('That prepared change was updated by another request.','proposal_changed');
+    // Job 201: a change a routine or approved plan carried out counts toward
+    // StockChief's usual day, with its money when it has any.
+    if(automatic)await require('../autopilot/circuit-breaker').note(client,ctx.workspaceId,{key:'proposal:'+id,
+      kind:require('../autopilot/circuit-breaker').kindOf(proposal.action_type),reference:proposal.summary,
+      amountMinor:approvalRequest?.amountMinor??null,currency:approvalRequest?.currency??null});
     return {...changed.rows[0],replayed:false};
   },{isolation:'SERIALIZABLE',retrySafe:true});
   await require('./postgres-business-memory').rememberProposal(database,ctx,committed).catch((error)=>

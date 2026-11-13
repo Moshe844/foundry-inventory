@@ -217,12 +217,14 @@ async function holdReason(db,workspaceId,state){
 }
 async function desk(db,workspaceId,{state=null}={}){
   state=state||await policy.accountState(db,workspaceId);
-  const [list,team,saved,held]=await Promise.all([requests(db,workspaceId),people(db,workspaceId),settings(db,workspaceId),holdReason(db,workspaceId,state)]);
+  const vacation=require('./vacation-deputy');
+  const [list,team,saved,held,cover]=await Promise.all([requests(db,workspaceId),people(db,workspaceId),settings(db,workspaceId),holdReason(db,workspaceId,state),vacation.coverage(db,workspaceId,state)]);
   const context={people:team,limits:saved.limits,rules:saved.rules,held};
   const approved=await require('./two-person-approval').approvals(db,workspaceId,list),threshold=await require('../purchasing/dual-approval').setting(db,workspaceId);
   for(const r of list)if(r.source==='purchase'&&threshold.amount_minor!=null&&(r.amountMinor==null||r.currency!==threshold.currency||r.amountMinor>Number(threshold.amount_minor)))r.twoPeople=true;
   for(const r of list)if(approved.has(r.key)){r.twoPeople=true;r.signed=approved.get(r.key).people;}
-  return {state,held,people:team,...saved,rows:list.map(r=>({...r,...route(r,context)}))};
+  // Job 202: while the owner is away, what waits for them goes to the deputy.
+  return {state,held,cover,people:team,...saved,rows:list.map(r=>vacation.delegate({...r,...route(r,context)},cover,context))};
 }
 
 // Needs you: the approvals routed to this person. Below Pro (job 176 is not
@@ -233,7 +235,7 @@ async function inbox(db,workspaceId,actorId){
   if(!policy.usesAgentTerms(state))return [];
   const groups=require('./approval-groups');
   const [{rows,held},grouping]=await Promise.all([desk(db,workspaceId,{state}),groups.held(db,workspaceId,state)]);
-  return rows.filter(r=>r.person?.id===actorId).map(r=>item(r,{held:Boolean(held)&&!r.signed?.length,group:grouping?null:groups.groupFor(r)}));
+  return rows.filter(r=>r.person?.id===actorId).map(r=>item(r,{held:Boolean(held)&&!r.signed?.length&&!r.covering,group:grouping?null:groups.groupFor(r)}));
 }
 function item(r,{held=false,group=null}={}){
   const amount=format(r);
@@ -241,9 +243,11 @@ function item(r,{held=false,group=null}={}){
     happened:held?'Waiting for your approval.':(r.person?.role==='owner'?'':'Sent to you. ')+r.reason,
     why:KINDS[r.kind].label+(amount?' · '+amount:'')+'. '+(r.twoPeople?'Two people must approve it. ':'')+'Nothing changes until it is approved.',
     recommendation:'Open it, check the details, then approve or decline.',href:r.href,actionLabel:'Review',
-    sourceId:'approval-'+r.key,createdAt:r.at,timeLabel:'Waiting since',at:r.at,
+    // Anyone it is passed on to (job 172) must be allowed to decide and to see it (job 203).
+    requiredPermissions:[r.permission,r.readPermission].filter(Boolean),
+    sourceId:(r.covering?'vacation-'+r.id:'approval-'+r.key),createdAt:r.at,timeLabel:'Waiting since',at:r.at,
     ...(r.amountMinor==null?{}:{moneyValue:r.amountMinor,moneyCurrency:r.currency}),
-    approvalRequest:{key:r.key,kind:r.kind,source:r.source,id:r.id,twoPeople:Boolean(r.twoPeople),group}};
+    approvalRequest:{key:r.key,kind:r.kind,source:r.source,id:r.id,twoPeople:Boolean(r.twoPeople),group,...(r.covering?{covering:true}:{})}};
 }
 
 // The routine keeps a record of where each approval went, and audits changes.
@@ -264,6 +268,8 @@ async function run(db,workspaceId){
       WHERE ${ASSIGNED}.user_id IS DISTINCT FROM EXCLUDED.user_id OR ${ASSIGNED}.reason IS DISTINCT FROM EXCLUDED.reason RETURNING 1`,[workspaceId,r.key,r.person.id,r.reason]);
     if(!changed.rowCount)continue;
     routed++;
+    // A vacation deputy's approvals are audited by the vacation routine (job 202).
+    if(r.covering)continue;
     await audit.record(db,{workspaceId,actorId:null},{action:'Approval sent to '+r.person.name,reference:r.title.slice(0,200),
       before:prior?{person:team.find(p=>p.id===prior.user_id)?.name||'A former member',why:prior.reason}:{},after:{person:r.person.name,why:r.reason,kind:KINDS[r.kind].label,amount:format(r)}});
   }

@@ -53,7 +53,12 @@ const JOBS={
   172:{action:'alert.escalation',name:'Unanswered alerts and approvals',module:'./escalations',needs474:true,own:true},
   // Job 180: the daily team summary is one alert per business day. Needs migration 485.
   180:{action:'report.team_summary',name:'Daily team summary',module:'./team-summary',needs485:true,
-    subject:(n,first)=>first.replace(/\.$/,''),intro:'What your team did, and what is late.'}
+    subject:(n,first)=>first.replace(/\.$/,''),intro:'What your team did, and what is late.'},
+  // Job 201: StockChief paused itself. Needs migration 500. This email reports
+  // the pause, so the pause does not hold it (always).
+  201:{action:'alert.circuit_breaker',name:'Unusual automatic activity',module:'./circuit-breaker',needs500:true,always:true,
+    subject:()=>'StockChief paused its automatic work',
+    intro:'StockChief paused all automatic work because today looks unusual. Nothing automatic runs until you review it and resume.'}
 };
 const plural=(n,one,many)=>n+' '+(Number(n)===1?one:many);
 const expected=error=>error instanceof DomainError&&[400,402,403,404,409,422].includes(error.status);
@@ -65,7 +70,8 @@ async function tracked(db){
   const later=await installed.has(db,'stockchief_runtime.agent_alert_settings','cost_rise_pct');
   const latest=later&&await installed.has(db,'stockchief_runtime.agent_escalations');
   const summaries=await installed.has(db,'stockchief_runtime.agent_team_summaries'),channels=await has480(db);
-  return Object.keys(JOBS).map(Number).filter(id=>(later||!JOBS[id].needs473)&&(latest||!JOBS[id].needs474)&&(summaries||!JOBS[id].needs485)&&(channels||!JOBS[id].needs480));
+  const breaker=await installed.has(db,'stockchief_runtime.agent_automatic_actions');
+  return Object.keys(JOBS).map(Number).filter(id=>(later||!JOBS[id].needs473)&&(latest||!JOBS[id].needs474)&&(summaries||!JOBS[id].needs485)&&(channels||!JOBS[id].needs480)&&(breaker||!JOBS[id].needs500));
 }
 // The alert job behind a review page, if any.
 const forKey=key=>Object.keys(JOBS).map(Number).find(id=>require(JOBS[id].module).key===key)||null;
@@ -145,7 +151,7 @@ async function deliver(c,workspaceId,account,{only=null,manual=false}={}){
       out[id]={emailed:0,note:text||null};
     };
     if(!pending.length){await note(null);continue;}
-    const stop=await policy.stopped(c,workspaceId,account,spec.action,!manual);
+    const stop=spec.always?null:await policy.stopped(c,workspaceId,account,spec.action,!manual);
     if(stop){await note('No email was sent. '+stop);continue;}
     const person=await currentOwner(c,workspaceId);
     if(!person||!EMAIL.test(person.email||'')){await note('Your account has no email address, so no email was sent.');continue;}
@@ -165,6 +171,16 @@ async function deliver(c,workspaceId,account,{only=null,manual=false}={}){
     out[id]={emailed:pending.length,communicationId:queued.communicationId};
   }
   return out;
+}
+
+// Emails one job's open alerts now, outside the routine check. Job 201 uses
+// it the moment StockChief pauses itself.
+async function raise(c,workspaceId,account,id){
+  if(!await installed.has(c,deliveries)||!(await tracked(c)).includes(id))return null;
+  await c.query(`INSERT INTO ${deliveries}(workspace_id,job_id,kind,reference,link)
+    SELECT n.workspace_id,n.job_id,n.kind,n.reference,n.link FROM stockchief_runtime.agent_operational_notices n
+    WHERE n.workspace_id=$1 AND n.job_id=$2 AND NOT n.resolved ON CONFLICT DO NOTHING`,[workspaceId,id]);
+  return (await deliver(c,workspaceId,account,{only:id}))[id]||null;
 }
 
 // Queues one alert email from the chosen mailbox and audits it. A refusal the
@@ -195,7 +211,7 @@ async function emailAuthority(db,workspaceId,grant){
   if(!JOBS[id])throw new ValidationError('This alert email is not recognised, so it was not sent.');
   const account=await policy.accountState(db,workspaceId);
   policy.requireJob(policy.usesAgentTerms(account)?account.plan:null,id,'automatic');
-  const stop=await policy.stopped(db,workspaceId,account,JOBS[id].action,grant.manual!==true);
+  const stop=JOBS[id].always?null:await policy.stopped(db,workspaceId,account,JOBS[id].action,grant.manual!==true);
   if(stop)throw new ValidationError(stop+' The alert email is held.');
   const setting=(await db.query(`SELECT email_connector_id FROM ${channels} WHERE workspace_id=$1 AND job_id=$2`,[workspaceId,id])).rows[0];
   if(!setting||setting.email_connector_id!==grant.connectorId)throw new ValidationError('The alert email settings changed, so this email was not sent.');
@@ -283,7 +299,7 @@ async function panel(db,ctx,raw){
     :`SELECT count(*) AS n FROM ${deliveries} WHERE workspace_id=$1 AND job_id=$2 AND email_batch IS NULL`,[ctx.workspaceId,id])).rows[0].n);
   const person=await currentOwner(db,ctx.workspaceId),boxes=await mailboxes(db,ctx.workspaceId);
   const chosen=setting?.email_connector_id?boxes.find(b=>b.id===setting.email_connector_id)||{id:setting.email_connector_id,name:'A mailbox that is no longer connected',missing:true}:null;
-  const stop=chosen?await policy.stopped(db,ctx.workspaceId,account,JOBS[id].action,true):null;
+  const stop=chosen&&!JOBS[id].always?await policy.stopped(db,ctx.workspaceId,account,JOBS[id].action,true):null;
   const ownerStop=stop?await policy.stopped(db,ctx.workspaceId,account,JOBS[id].action,false):null;
   return {job:id,action:'/autopilot/alerts/'+id,revision:setting?.revision||0,mailboxes:boxes,chosen,to:person?.email||null,
     lowStockUnits:id===166&&setting?.low_stock_units!=null?exact.canonical(String(setting.low_stock_units)):'',escalationHours:setting?.escalation_hours??'',
@@ -291,4 +307,4 @@ async function panel(db,ctx,raw){
     canSendNow:Boolean(chosen&&!chosen.missing&&waiting&&stop&&!ownerStop)};
 }
 
-module.exports={JOBS,track,deliver,queue,emailAuthority,configure,sendNow,panel,mailboxes,pathFor,forKey};
+module.exports={JOBS,track,deliver,raise,queue,emailAuthority,configure,sendNow,panel,mailboxes,pathFor,forKey};

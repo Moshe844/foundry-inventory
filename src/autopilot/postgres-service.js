@@ -82,7 +82,7 @@ async function pause(database,ctx,membership,reason){permissions.assertCan(membe
   await database.query(`UPDATE workspace_autopilot SET paused=1,paused_at=$2,paused_by_user_id=$3,
     paused_reason=$4,updated_at=$2 WHERE workspace_id=$1`,[ctx.workspaceId,at,ctx.actorId,String(reason||'').trim()||null]);
   return getState(database,ctx.workspaceId);}
-async function resume(database,ctx,membership){
+async function resume(database,ctx,membership,{note=''}={}){
   assertOperate(membership);
   return database.transaction(async c=>{
     await ensure(c,ctx.workspaceId);
@@ -92,6 +92,9 @@ async function resume(database,ctx,membership){
       const owner=(await c.query('SELECT role FROM users WHERE workspace_id=$1 AND id=$2 FOR SHARE',[ctx.workspaceId,ctx.actorId])).rows[0];
       assertAdmin(owner);
     }
+    // Job 201: a pause StockChief took itself is resumed with what was reviewed,
+    // read before the resume acknowledges today's activity.
+    await require('./circuit-breaker').resumed(c,ctx,current,{note});
     await c.query(`UPDATE workspace_autopilot SET paused=0,paused_at=NULL,paused_by_user_id=NULL,paused_reason=NULL,
       anomaly_acknowledged_at=CASE WHEN paused=1 AND paused_reason LIKE 'Unusual automatic activity%' THEN now() ELSE anomaly_acknowledged_at END,
       updated_at=$2 WHERE workspace_id=$1`,[ctx.workspaceId,nowIso()]);
@@ -780,8 +783,10 @@ async function run(database,ctx,options={}){const followThrough=await reconcileS
   const staffTasks=options.afterSkuId?{skipped:'planning_continuation'}:await require('../operations/agent-staff-tasks').run(database,ctx.workspaceId);
   // Job 176: record and audit where each waiting approval was sent.
   const approvalRouting=options.afterSkuId?{skipped:'planning_continuation'}:await require('./approval-desk').run(database,ctx.workspaceId);
+  // Job 202: record and audit each approval sent to a vacation deputy.
+  const vacationCoverage=options.afterSkuId?{skipped:'planning_continuation'}:await require('./vacation-deputy').record(database,ctx.workspaceId);
   return {planned:planned.created.length,executed,waiting:planned.created.length-executed,kitParts,customerReceipts,customerInvoices,invoiceReminders,customerCredits,customerCheckins,quoteFollowups,supplierForecasts,supplierBenefits,supplierDates,staleIncoming,purchaseFx,netMargins,channelPrices,monthEndStock,changeDigest,boardPacks,roiReports,stockHealth,serviceLevels,containerPlans,containerOrders,teamProcedures,channelCopy,blanketReleases,directShipments,supplierShutdowns,promotionStock,supplierInvoices,supplierInvoiceSources,supplierCreditNotes,supplierReturns,supplierDisputes,backupSupplierSwitches,channelRecovery,arrivedStock,arrivedPreorders,protectedStock,warehouseRouting,orderChecks,creditHolds,backorders,orderSplits,stockReadyUpdates,pickReleases,pickWaves,putawayInstructions,staffTasks,channelFixes,channelBuffers,
-    approvalRouting,considered:planned.considered.length,followThrough,partial:planned.partial,refreshRequested:planned.refreshRequested,planningRevision:planned.planningRevision,nextAfterSkuId:planned.nextAfterSkuId,processedSkus:planned.processedSkus};}
+    approvalRouting,vacationCoverage,considered:planned.considered.length,followThrough,partial:planned.partial,refreshRequested:planned.refreshRequested,planningRevision:planned.planningRevision,nextAfterSkuId:planned.nextAfterSkuId,processedSkus:planned.processedSkus};}
 async function approve(database,ctx,membership,id,{destinationLocationId=null}={}){assertOperate(membership);
  if(destinationLocationId)await database.transaction(async client=>{const work=(await client.query('SELECT * FROM work_items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];if(!work)throw new NotFoundError('That prepared work is not in this inventory.');const action=parse(work.recommended_action,{});if(work.execution_status!=='WAITING_FOR_APPROVAL'||action.type!=='purchase'||action.quantityScope!=='workspace'||action.destinationLocationId)throw new ValidationError('This work is not waiting for a receiving-location choice.');const place=(await client.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL',[ctx.workspaceId,destinationLocationId])).rows[0];if(!place)throw new ValidationError('Choose an active receiving location in this inventory.');await client.query('UPDATE work_items SET recommended_action=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify({...action,destinationLocationId:place.id,destinationLocationName:place.name})]);await client.query("INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at) VALUES($1,$2,$3,'receiving_location_selected',$4,$5,$6)",[newId('wievt'),ctx.workspaceId,id,JSON.stringify({locationId:place.id}),ctx.actorId,nowIso()]);},{isolation:'SERIALIZABLE',retrySafe:true});
  return execute(database,ctx,id,{approvedBy:ctx.actorId});}
