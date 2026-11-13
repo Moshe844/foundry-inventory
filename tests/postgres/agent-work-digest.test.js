@@ -28,7 +28,8 @@ test('daily agent work offers safe one-tap undo and refuses changed, physical an
    await assert.rejects(digest.report(db,ctx),e=>e.code==='entitlement_required');await assert.rejects(digest.undo(db,ctx,quote.id),e=>e.code==='entitlement_required');
    await browser.get('/autopilot/reviews/daily-work').expect(402);continue;
   }
-  const result=await reviews.run(db,ctx,'daily-work');assert.equal(result.rows.length,4);assert.equal(result.undoForm.entries.length,4);
+  // The four prepared changes, and the import columns StockChief mapped on its own (job 133), which has nothing to undo.
+  const result=await reviews.run(db,ctx,'daily-work');assert.equal(result.rows.length,5);assert.ok(result.rows.some(r=>r.Action==='Import columns mapped by StockChief'));assert.equal(result.undoForm.entries.length,4);
   const page=await browser.get('/autopilot/reviews/daily-work').expect(200);assert.equal((page.text.match(/>Undo this change</g)||[]).length,4);
  }
  await subscribe('growth');const page=await browser.get('/autopilot/reviews/daily-work').expect(200),post={_csrf:f.csrf(page.text),day:today};
@@ -57,8 +58,8 @@ test('daily agent work offers safe one-tap undo and refuses changed, physical an
  await assert.rejects(digest.undo(db,ctx,started.id),/Production has later work/);assert.equal(await f.balance(),8);
  const clock=require('../../src/lib/business-time'),day=require('../../src/accounting/customer-money').addDays(today,-1),zone=(await clock.forWorkspace(db,ctx.workspaceId)).timeZone;
  await db.query('UPDATE stockchief_runtime.assistant_action_proposals SET executed_at=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,quote.id,new Date(Date.parse(clock.dayBoundary(day,zone))+12*3600000).toISOString()]);
- const brief=require('../../src/autopilot/daily-briefs'),account=await require('../../src/commercial/agent-plan').accountState(db,ctx.workspaceId);
- await brief.deliver(db,ctx.workspaceId,account);await brief.deliver(db,ctx.workspaceId,account);
+ // The worker writes yesterday's digest once; a replay writes nothing new.
+ assert.equal((await digest.deliver(db,ctx.workspaceId)).day,day);assert.deepEqual(await digest.deliver(db,ctx.workspaceId),{replayed:true,day});
  const notices=require('../../src/autopilot/operational-notices');await notices.refresh(db,ctx.workspaceId);
  const notice=(await notices.inbox(db,ctx.workspaceId,ctx.actorId)).find(n=>n.sourceId==='agent-notice-204');assert(notice);assert(notice.href.endsWith(day));
  assert.equal((await reviews.run(db,ctx,'daily-work',{filter:day})).rows[0].Status,'Undone');

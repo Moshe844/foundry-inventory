@@ -86,6 +86,8 @@ function createPostgresPublicApi(database){
     return res.status(execution.replayed?200:201).json(execution);
   }));
   router.get('/audit',route('audit:read',async(auth,req,res)=>{
+    // Job 181 on Custom: ?view=agent-activity reads everything StockChief did, why and what allowed it.
+    if(req.query.view==='agent-activity')return res.json(await require('../../autopilot/agent-activity').api(database,auth,req.query));
     await require('../../commercial/agent-history').requireApi(database,auth);
     const result=await require('../../operations/postgres-audit').page(database,auth.workspaceId,req.query,100);
     const data=result.rows.map(row=>({at:row.at,who:row.who,action:row.action,product:row.product,variant:row.variant,sku:row.sku,

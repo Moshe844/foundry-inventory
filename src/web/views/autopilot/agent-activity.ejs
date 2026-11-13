@@ -1,0 +1,18 @@
+<% const a=result.activity; %>
+<% if(a.download){ %><p><% if(a.exportAllowed){ %><a class="btn" download href="<%= a.download %>">Export CSV</a><% }else{ %><span class="hint">Pro and Custom can export the log.</span><% } %> <a href="/audit">Audit trail</a></p><% } %>
+<% if(!a.entries.length){ %><div class="quiet-note">StockChief did nothing here in this period.</div><% }else{ %>
+<section class="card" data-activity-log><div class="card-body"><div class="stack">
+<% for(const e of a.entries){ %><article class="list-row" id="<%= e.anchor %>"><div class="stack-sm">
+  <strong><%= e.what %></strong>
+  <p class="muted"><%= e.when %><% if(e.jobTitle){ %> · <%= e.jobTitle %><% } %> <span class="badge <%= e.status==='Undone'?'badge--muted':'badge--ok' %>"><%= e.status %></span></p>
+  <p><span class="muted">Why:</span> <%= e.why %></p>
+  <p><span class="muted">Allowed by:</span> <%= e.allowedBy %></p>
+  <% if(e.evidence){ %><p class="muted">Recorded: <%= e.evidence %></p><% } %>
+  <p><a href="<%= e.link %>">Open the record</a> · <a href="<%= e.trail %>">Audit trail</a></p>
+  <% if(e.undo){ %><form method="post" action="<%= a.day?'/autopilot/undo/'+encodeURIComponent(e.id):a.undoAction %>" class="stack-sm">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="origin" value="<%= e.origin %>">
+    <% if(a.day){ %><input type="hidden" name="day" value="<%= a.day %>"><% }else{ %><input type="hidden" name="id" value="<%= e.id %>"><input type="hidden" name="returnTo" value="<%= a.returnTo %>"><% } %>
+    <p class="hint"><%= e.undo.what %></p><p><button class="btn">Undo this change</button></p>
+  </form><% }else{ %><p class="hint"><%= e.correction %></p><% } %>
+</div></article><% } %>
+</div></div></section><% } %>

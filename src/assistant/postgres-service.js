@@ -2167,9 +2167,10 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
       agentPolicy.requireJob(tier,job,'draft');
       throw new ValidationError('This step needs its own confirmation. Review the individual action to proceed.');
     }
+    let taughtRule=false;
     if(job && tier!==undefined){
       const trained=operation==='automatic'&&agentPolicy.allowance(agentAccount.plan,job)==='trained'&&await require('../autopilot/draft-authority').trained(client,ctx.workspaceId,contract.name,proposal.payload);
-      agentPolicy.requireJob(tier,job,operation,{trained});
+      agentPolicy.requireJob(tier,job,operation,{trained});taughtRule=trained;
     }
     if(automatic && agentAccount.plan && agentPolicy.usesAgentTerms(agentAccount) && agentPolicy.needsPerson(contract.name,proposal.payload,agentAccount))
       throw new ValidationError('This step needs its own confirmation. Review the individual action to proceed.');
@@ -2211,6 +2212,9 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
       SET status='EXECUTED',result=$3::jsonb,executed_at=now() WHERE workspace_id=$1 AND id=$2 AND status='PENDING'
       RETURNING *`,[ctx.workspaceId,id,JSON.stringify(result)]);
     if(!changed.rows.length)throw new InvariantError('That prepared change was updated by another request.','proposal_changed');
+    // Job 181: the activity log records what allowed each completed agent action.
+    if(job||automatic)await require('../autopilot/agent-activity').completed(client,ctx,{proposal,capability:contract.name,job,automatic,
+      missionPlanId,routineAuthority,trained:taughtRule,account:agentAccount});
     return {...changed.rows[0],replayed:false};
   },{isolation:'SERIALIZABLE',retrySafe:true});
   await require('./postgres-business-memory').rememberProposal(database,ctx,committed).catch((error)=>

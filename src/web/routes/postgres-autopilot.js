@@ -1461,8 +1461,21 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   router.post('/autopilot/undo/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
     const day=String(req.body.day||'');if(day)require('../../lib/business-time').dayBoundary(day,'UTC');
-    await require('../../autopilot/agent-work-digest').undo(database,req.ctx,req.params.id);
+    const done=await require('../../autopilot/agent-work-digest').undo(database,req.ctx,req.params.id,{origin:String(req.body.origin||'action')});
+    req.flash('success',done.replayed?'That was already undone.':'Undone.');
     res.redirect(303,'/autopilot/reviews/daily-work'+(day?'?'+new URLSearchParams({filter:day}):''));
+  }));
+  // Job 181: undo from the activity log, and the log as a spreadsheet (Pro and Custom).
+  const activityLog=require('../../autopilot/agent-activity');
+  router.post('/autopilot/activity/undo',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const done=await activityLog.undo(database,req.ctx,{origin:req.body.origin,id:req.body.id});
+    req.flash('success',done.replayed?'That was already undone.':'Undone.');
+    const back=String(req.body.returnTo||'');
+    res.redirect(303,back.startsWith(activityLog.path)&&!back.includes('//')?back:activityLog.path);
+  }));
+  router.get(activityLog.path+'/download',requireAuth,owner,asyncRoute(async(req,res)=>{
+    if(await olderTerms(req))return res.redirect(303,activityLog.path);
+    await activityLog.download(database,req.ctx,res,{filter:req.query.filter});
   }));
   const requests=require('../../purchasing/agent-purchase-requests');
   const budgets=require('../../purchasing/agent-budgets');
