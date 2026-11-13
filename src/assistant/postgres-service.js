@@ -2192,6 +2192,11 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
     require('../actions/permissions').assertCan(actor,contract.permission,contract.name);
     if(contract.ownerOnly&&actor.role!=='owner')throw new ValidationError(
       'Only this inventory’s owner can approve this change.');
+    // Job 176: a person's approval limit for refunds, write-offs and landed costs.
+    const approvalRequest=await require('../autopilot/approval-desk').proposalRequest(client,ctx.workspaceId,proposal);
+    if(approvalRequest)await require('../autopilot/approval-desk').assertLimit(client,ctx,approvalRequest);
+    // Job 205: over the owner's amount, two people must have approved it.
+    if(approvalRequest)await require('../autopilot/two-person-approval').assertProposal(client,ctx,proposal,approvalRequest);
     if(contract.commercialCapability)await entitlements.assertCapability(client,
       await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),contract.commercialCapability);
     for(const capability of contract.additionalCommercialCapabilities||[])await entitlements.assertCapability(client,

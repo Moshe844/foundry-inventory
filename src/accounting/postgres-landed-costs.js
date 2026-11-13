@@ -160,6 +160,8 @@ async function applyInTransaction(db,ctx,p,{routine=null}={}){
  }
  const fresh=await preview(db,ctx,p.recordId,{lock:true});if(fresh.fingerprint!==p.fingerprint)throw new ValidationError('The receipt cost, available goods, source expense or allocation changed. Review a fresh stock-cost approval.');
  if(hash(training(fresh.source))!==hash(p.training))throw new ValidationError('The additional-cost amount or taught scope differs from its recorded source. Review a fresh approval.');
+ // Job 205: over the owner's amount, two people approve the posting, whichever path posts it.
+ await require('../autopilot/two-person-approval').assertLandedCost(db,ctx,p);
  for(const [index,charge] of fresh.source.charges.entries())await db.query('UPDATE landed_cost_charges SET source_journal_line_id=$3 WHERE workspace_id=$1 AND id=$2 AND source_journal_line_id IS NULL',[ctx.workspaceId,fresh.document.charges[index].id,charge.sourceJournalLineId]);
  const ledger=require('./postgres-ledger'),lines=[];
  for(const a of fresh.source.allocations)if(a.amountMinor)lines.push({accountKey:'INVENTORY_ASSET',debitMinor:a.amountMinor,itemId:a.itemId,skuId:a.skuId,locationId:a.locationId,memo:'Received-goods cost '+doc.document_number});

@@ -196,6 +196,13 @@ function createPostgresProjectionsRouter(database){
     if(problems.length)req.flash('error',problems.length.toLocaleString()+(problems.length===1?' decision':' decisions')+' could not be approved: '+[...new Set(problems)].slice(0,2).join(' '));
     return res.redirect(303,back);
   }));
+  router.post('/needs-you/groups',requireAuth,asyncRoute(async(req,res)=>{
+    const r=await require('../../autopilot/approval-groups').decide(database,req.ctx,req.body),verb=r.action==='decline'?'declined':'approved';
+    if(r.done.length)req.flash('success',r.done.length+(r.done.length===1?' approval ':' approvals ')+verb+'. Each was checked on its own.');
+    if(r.failed.length)req.flash('error',r.failed.length+(r.failed.length===1?' was':' were')+' not '+verb+' and still wait'+(r.failed.length===1?'s':'')+' for you. '+[...new Set(r.failed.map(f=>f.request.title+': '+f.reason))].slice(0,3).join(' '));
+    if(!r.done.length&&!r.failed.length)req.flash('info','Those approvals are no longer waiting for you.');
+    return res.redirect(303,'/needs-you');
+  }));
   router.get('/needs-you/findings',requireAuth,requirePermission(permissions.VIEW,'review inventory findings'),asyncRoute(async(req,res)=>{const size=require('../presentation/pagination').pageSize(req),found=await require('../../projections/postgres-attention-inbox').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});return res.page('manager/inventory-findings',{title:'Inventory findings',nav:'attention',...found,pager:require('../presentation/pagination').pager(req,{page:found.page,size,total:found.total,shown:found.rows.length})});}));
   router.get(['/needs-you','/needs-you/all'],requireAuth,asyncRoute(async(req,res)=>{
     const [items,failures,briefDate,managerView]=await Promise.all([projections.needs(database,req.ctx.workspaceId,req.ctx.actorId),
@@ -206,6 +213,8 @@ function createPostgresProjectionsRouter(database){
     items.coverageErrors=[];
     return res.page('manager/needs-you-overview',
       {title:'Needs you',nav:'attention',room:true,suppressBack:true,
+        // Job 174: similar approvals, approved or declined in one tap.
+        approvalGroups:require('../../autopilot/approval-groups').fromItems(items),approvalGroupToken:newId('needsgroup'),
         inbox:items,failures,briefDate,managerView,showAllDecisions:req.path==='/needs-you/all',desk:require('../needs-you-presentation').present(items,{sort:managerView?.inbox_sort,...req.query},managerView?.inbox_sort),at:zeroBasedIndex(req.query.at)});
   }));
   router.get('/activity',requireAuth,asyncRoute(async(req,res)=>{

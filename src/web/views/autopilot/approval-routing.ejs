@@ -1,0 +1,35 @@
+<% const m=model,routable=m.people.filter(p=>p.routable); %>
+<header class="rm-head"><a href="/autopilot/reviews">← Agent reviews</a>
+<h1>Who approves what</h1>
+<p>Each waiting approval goes to one person: your rules first, then the team member with the lowest limit that covers it, then you.</p></header>
+<% if(m.held){ %><p class="notice notice--warn"><%= m.held %> Until then, every approval stays with you.</p><% } %>
+<section class="rm-panel" data-approval-desk><div class="rm-panel__body"><h2>Waiting now</h2>
+<% if(m.rows.length){ %><div class="table-wrap"><table class="table"><thead><tr><th>Approval</th><th>Amount</th><th>Goes to</th><th>Why</th></tr></thead><tbody>
+<% for(const r of m.rows){ %><tr><td><a href="<%= r.href %>"><%= r.title %></a><br><small><%= r.kind %></small></td><td><%= r.amount %></td><td><%= r.person %></td><td><%= r.reason %></td></tr><% } %>
+</tbody></table></div><% }else{ %><p>Nothing is waiting for approval.</p><% } %>
+</div></section>
+<section class="rm-panel" data-approval-rules><div class="rm-panel__body"><h2>Your rules</h2>
+<% if(m.rules.length){ %><div class="table-wrap"><table class="table"><thead><tr><th>Rule</th><th><span class="visually-hidden">Remove</span></th></tr></thead><tbody><% for(const r of m.rules){ %><tr><td><%= r.text %>.</td><td>
+<form method="post" action="<%= m.path %>/rules"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="remove" value="<%= r.id %>"><button class="btn btn--sm">Remove</button></form></td></tr><% } %></tbody></table></div>
+<% }else{ %><p>No rules yet. For example: refunds over $500 go to Sarah, not you.</p><% } %>
+<% if(routable.length){ %><form method="post" action="<%= m.path %>/rules" class="form-row">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label class="field"><span>Approvals</span><select class="select" name="kind" required><% for(const k of m.kinds){ %><option value="<%= k.key %>"><%= k.label %></option><% } %></select></label>
+<label class="field"><span>Over <small>optional</small></span><input name="amount" inputmode="decimal"></label>
+<label class="field"><span>Currency</span><input name="currency" maxlength="3" placeholder="USD"></label>
+<label class="field"><span>Go to</span><select class="select" name="userId" required><% for(const p of routable){ %><option value="<%= p.id %>"><%= p.name %></option><% } %></select></label>
+<button class="btn">Save rule</button></form><% }else{ %><p>Give a team member approval permission on the <a href="/settings?section=team#team-authority">Team page</a> to send approvals to them.</p><% } %>
+</div></section>
+<% if(m.people.length){ %><section class="rm-panel" data-approval-limits><div class="rm-panel__body"><h2>Team limits</h2>
+<p>A person approves only up to their limit. Purchase limits are on the <a href="/settings?section=team#team-authority">Team page</a>. To need two people over an amount, see <a href="/autopilot/reviews/purchase-approval-threshold">two-person approval</a>.</p>
+<div class="table-wrap"><table class="table"><thead><tr><th>Person</th><th>Can approve</th><th>Limits</th></tr></thead><tbody>
+<% for(const p of m.people){ %><tr><td><%= p.name %></td><td><%= p.approves %></td><td><%= p.limits %></td></tr><% } %>
+</tbody></table></div>
+<% if(routable.length){ %><form method="post" action="<%= m.path %>/limits" class="form-row">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label class="field"><span>Person</span><select class="select" name="userId" required><% for(const p of routable){ %><option value="<%= p.id %>"><%= p.name %></option><% } %></select></label>
+<label class="field"><span>Approvals</span><select class="select" name="kind" required><% for(const k of m.limitKinds){ %><option value="<%= k.key %>"><%= k.label %></option><% } %></select></label>
+<label class="field"><span>Up to <small>empty for any amount</small></span><input name="amount" inputmode="decimal"></label>
+<label class="field"><span>Currency</span><input name="currency" maxlength="3" placeholder="USD"></label>
+<button class="btn">Save limit</button></form><% } %>
+</div></section><% } %>

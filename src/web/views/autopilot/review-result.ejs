@@ -5,6 +5,7 @@
 <% if(result.openToBuyPath){ %><p><a class="btn" href="<%= result.openToBuyPath+(filter?'?month='+encodeURIComponent(filter):'') %>">Open monthly buying plans</a></p><% } %>
 <% if(result.cyclePlan){ %><p><a class="btn" href="/autopilot/daily-cycle-counts">Open daily cycle-count plans</a></p><% } %>
 <% if(result.transferArrivalLink){ %><p><a href="/transfers/arrival-follow-up">Review open receiving follow-ups</a></p><% } %>
+<% if(result.approvalRoutingPath){ %><p><a class="btn" href="<%= result.approvalRoutingPath %>">Set who approves what</a></p><% } %>
 <% if(result.backorderLink){ %><p><a class="btn" href="/autopilot/backorders">Open backorders</a></p><% } %>
 <% if(result.staleIncomingLink){ %><p><a class="btn" href="/autopilot/stale-incoming">Goods that will not arrive</a></p><% } %>
 <% if(result.stockSharingLink){ %><p><a class="btn" href="/autopilot/stock-sharing">Share scarce stock by your rules</a></p><% } %>
@@ -111,7 +112,7 @@
 <% if(result.purchaseThreshold){ const rule=result.purchaseThreshold; %><form method="post" action="/autopilot/purchase-approval-threshold">
 <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule.revision %>">
 <label>Currency <input required name="currency" minlength="3" maxlength="3" placeholder="USD" value="<%= rule.currency||'' %>"></label>
-<label>Purchase amount above which two people must sign <input name="amount" inputmode="decimal" value="<%= rule.amount %>"></label>
+<label>Amount above which two people must approve <input name="amount" inputmode="decimal" value="<%= rule.amount %>"></label>
 <label>Hours before passing an unanswered request to the next eligible reviewer <input type="number" min="1" max="720" name="escalationHours" value="<%= rule.escalation_hours %>" required></label>
 <p>Leave the amount empty to turn the rule off.</p><button class="btn">Save threshold</button></form><% } %>
 <% if(result.watchSettings){ const w=result.watchSettings; %><form method="post" action="/autopilot/alert-settings/<%= w.job %>">
