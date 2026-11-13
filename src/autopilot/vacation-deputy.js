@@ -172,9 +172,7 @@ async function handBack(db,ctx,input={}){
 
 // Needs you: the owner's hand-back once they are back. The deputy's approvals
 // themselves come from the approval desk, marked as covered for the owner.
-async function inbox(db,workspaceId,actorId){
-  const member=(await db.query('SELECT role FROM users WHERE workspace_id=$1 AND id=$2',[workspaceId,actorId])).rows[0];
-  if(member?.role!=='owner')return [];
+async function inbox(db,workspaceId){
   const state=await policy.accountState(db,workspaceId);
   if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,JOB,'automatic'))return [];
   const back=await handback(db,workspaceId);
