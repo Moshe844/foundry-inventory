@@ -1055,7 +1055,24 @@ function createPostgresAutopilotRouter(database,options={}){
   for(const [path,method,message]of [['freeze','freeze','Stock locations frozen. The assigned blind count lists are ready.'],['recheck','recheck','The rechecked worksheet is ready for a new individual owner approval.'],['reassign','reassign','Remaining physical counts reassigned. Earlier counts keep their original counter.'],['signoff','signoff','Stocktake signed off. Its stock freeze has been released.'],['stop','stop','Stocktake stopped and freeze released. Completed adjustments remain posted.']])router.post('/autopilot/annual-stocktakes/:id/'+path,requireAuth,owner,asyncRoute(async(req,res)=>{await annual[method](database,req.ctx,req.params.id,req.body);req.flash('success',message);res.redirect(303,'/autopilot/annual-stocktakes/'+req.params.id);}));
   const buffers=require('../../connections/agent-channel-buffers');
   const bufferPage=async(req,res,input={})=>res.page('autopilot/channel-buffers',{title:'Channel stock buffers',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'},...await buffers.page(database,req.ctx,{...req.query,...input})});
-  router.get('/autopilot/channel-buffers',requireAuth,owner,asyncRoute((req,res)=>bufferPage(req,res,{positionId:req.query.position})));
+  router.get('/autopilot/channel-buffers',requireAuth,owner,asyncRoute(async(req,res)=>{
+    // An account still on its older terms sees the plan card.
+    const state=await policy.accountState(database,req.ctx.workspaceId);
+    if(!policy.usesAgentTerms(state))return res.page('autopilot/agent-plan-locked',{title:'Channel stock buffers',nav:'autopilot',tier:'Growth',
+      reviewTerms:policy.permits(state.plan,183,'draft'),backTo:{href:'/autopilot/reviews',label:'Agent reviews'}});
+    return bufferPage(req,res,{positionId:req.query.position});
+  }));
+  // Job 183: the owner's rule per channel, and the buffers StockChief worked out.
+  const bufferPlans=require('../../connections/agent-channel-buffer-plans');
+  router.post('/autopilot/channel-buffers/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const r=await bufferPlans.saveRule(database,req.ctx,req.body);
+    req.flash('success',r.stopped?'StockChief stopped setting buffers on this channel. Buffers already set stay until you change them.':'Rule saved. StockChief works out the buffers now.');
+    res.redirect(303,'/autopilot/channel-buffers#buffer-rules');
+  }));
+  for(const [step,done] of [['approve','Buffer set.'],['dismiss','Buffer dismissed.'],['undo','Buffer undone. The buffer before it is back.']])
+    router.post('/autopilot/channel-buffer-plans/:id/'+step,requireAuth,owner,asyncRoute(async(req,res)=>{
+      await bufferPlans[step](database,req.ctx,req.params.id);req.flash('success',done);res.redirect(303,'/autopilot/channel-buffers#buffer-plans');
+    }));
   router.get('/autopilot/channel-buffer-reviews/:id',requireAuth,owner,asyncRoute((req,res)=>bufferPage(req,res,{reviewId:req.params.id})));
   router.post('/autopilot/channel-buffers/batch',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await buffers.configureBatch(database,req.ctx,req.body);req.flash('success','Saved '+r.changed+' of '+r.count+' exact product buffers together. Identical settings share one saved-rule slot.');res.redirect(303,'/autopilot/channel-buffers');}));
   router.post('/autopilot/channel-buffers/:id/settings',requireAuth,owner,asyncRoute(async(req,res)=>{await buffers.configure(database,req.ctx,req.params.id,req.body);req.flash('success',req.body.stop==='yes'?'Buffer removed. Ordinary channel synchronization may publish more units.':'Channel buffer saved. Every provider update rechecks current stock, plan and authority.');res.redirect(303,'/autopilot/channel-buffers?'+new URLSearchParams({position:req.params.id}));}));
