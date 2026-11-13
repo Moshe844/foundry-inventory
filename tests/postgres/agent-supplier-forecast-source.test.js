@@ -1,12 +1,46 @@
 'use strict';process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
-test('supplier forecast sources use selected owned stock and completed confirmed-order days on the exact eligible plans',{timeout:240000},async t=>{
- const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx}=f,source=require('../../src/purchasing/supplier-forecast-source'),{addDays}=require('../../src/accounting/customer-money');await f.subscribe('growth');const today=await require('../../src/lib/business-time').today(db,ctx.workspaceId),mailbox=randomUUID(),sku=f.item.skuIds[0];await db.query("UPDATE suppliers SET email='planner@example.test' WHERE workspace_id=$1 AND id='fixture-supplier'",[ctx.workspaceId]);
- await db.query(`INSERT INTO workspace_connectors(id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,setup_status,authorized_by_user_id,provider_account_id,created_at,updated_at) VALUES($1,$2,$1,'Supplier forecast mailbox','gmail','[]','{}','connected','["MAIL_SEND"]','CONNECTED',$3,'forecast-test-account',now(),now())`,[mailbox,ctx.workspaceId,ctx.actorId]);
- const custody=require('../../src/custody/postgres-service'),agreement=await custody.create(db,ctx,{kind:'CONSIGN_IN',supplierId:'fixture-supplier',inspectionParentLocationId:f.location.id,startDate:today,dueDate:today,requestKey:randomUUID(),lines:[{skuId:sku,quantity:2,unitCostMinor:150,unitPriceMinor:200}]});await custody.operate(db,ctx,agreement.id,'receive_consigned',{confirmed:'yes',requestKey:randomUUID(),lineId:agreement.lines[0].id,quantity:2});
+// Job 36: what a key supplier is shown. Only that supplier's own active
+// products, owned stock (supplier-owned consignment stays out), and twelve
+// weeks from the same demand forecasting job 144 uses.
+test('a supplier forecast holds only that supplier’s products, our owned stock and twelve weeks of the demand forecast',{timeout:300000},async t=>{
+ const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx}=f,source=require('../../src/purchasing/supplier-forecast-source'),forecast=require('../../src/forecasting/agent-demand-forecast');
+ const {addDays}=require('../../src/accounting/customer-money'),today=await require('../../src/lib/business-time').today(db,ctx.workspaceId),sku=f.item.skuIds[0],at=new Date().toISOString();
+ await db.query("UPDATE suppliers SET email='planner@example.test' WHERE workspace_id=$1 AND id='fixture-supplier'",[ctx.workspaceId]);
+ const catalog=require('../../src/domain/postgres-catalog-service'),fresh=await catalog.createItem(db,ctx,{name:'New product with no history',baseCode:'NEW-'+randomUUID().slice(0,6),trackingMode:'quantity'});
+ const other=await catalog.createItem(db,ctx,{name:'Bought elsewhere',baseCode:'ELSE-'+randomUUID().slice(0,6),trackingMode:'quantity'}),dropped=await catalog.createItem(db,ctx,{name:'No longer bought',baseCode:'OLD-'+randomUUID().slice(0,6),trackingMode:'quantity'});
+ await db.query("INSERT INTO suppliers(id,workspace_id,name,status,currency,created_at,updated_at) VALUES('other-supplier',$1,'Other supplier','active','USD',$2,$2)",[ctx.workspaceId,at]);
+ const link=(supplier,skuId,active=1)=>db.query(`INSERT INTO supplier_items(id,workspace_id,supplier_id,sku_id,is_active,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$6)
+  ON CONFLICT(workspace_id,supplier_id,sku_id) DO UPDATE SET is_active=EXCLUDED.is_active`,[randomUUID(),ctx.workspaceId,supplier,skuId,active,at]);
+ await link('fixture-supplier',sku);await link('fixture-supplier',fresh.skuIds[0]);await link('fixture-supplier',dropped.skuIds[0],0);await link('other-supplier',other.skuIds[0]);
+ // Supplier-owned consignment stock is not ours.
+ const custody=require('../../src/custody/postgres-service'),agreement=await custody.create(db,ctx,{kind:'CONSIGN_IN',supplierId:'fixture-supplier',inspectionParentLocationId:f.location.id,startDate:today,dueDate:today,requestKey:randomUUID(),lines:[{skuId:sku,quantity:2,unitCostMinor:150,unitPriceMinor:200}]});
+ await custody.operate(db,ctx,agreement.id,'receive_consigned',{confirmed:'yes',requestKey:randomUUID(),lineId:agreement.lines[0].id,quantity:2});
+ // Eight weeks of confirmed orders, two a week; a draft and a cancelled order do not count.
  const order=async(date,quantity=2,{confirm=true}={})=>{const o=await f.workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'PICKUP',orderDate:date,currency:'USD',idempotencyKey:randomUUID(),lines:[{skuId:sku,quantity,unitPriceMinor:1200}]});if(confirm)await f.workflows.confirmSalesOrder(db,ctx,o.salesOrderId,{idempotencyKey:randomUUID()});return o;};
- for(let week=0;week<12;week++)await order(addDays(today,-84+week*7));await order(addDays(today,-35),999,{confirm:false});await order(today,77);await order(addDays(today,1),88);const cancelled=await order(addDays(today,-21),66);await f.workflows.cancelSalesOrder(db,ctx,cancelled.salesOrderId,{idempotencyKey:randomUUID()});
- const extra=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'New supplier product with no history',baseCode:'NO-HISTORY-'+randomUUID().slice(0,6),trackingMode:'quantity'}),input={supplierId:'fixture-supplier',skuIds:[sku,extra.skuIds[0]],connectorId:mailbox},stock=await f.balance(),journals=Number((await db.query('SELECT count(*) n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n);
- for(const tier of ['starter','growth','pro','enterprise']){await f.subscribe(tier);if(tier==='starter'){await assert.rejects(source.snapshot(db,ctx,input),e=>e.code==='entitlement_required');continue;}const p=await source.snapshot(db,ctx,input),row=p.rows.find(r=>r.skuId===sku),unknown=p.rows.find(r=>r.skuId===extra.skuIds[0]);assert.equal(row.onHand,'4','Supplier-owned consignment is not presented as our stock');assert.equal(row.total,'24');assert.equal(row.observedWeeks,11);assert(row.forecast.every(w=>w.quantity==='2'));assert.equal(unknown.total,null);assert(unknown.forecast.every(w=>w.quantity===null));assert.equal(p.recipient,'planner@example.test');assert.equal(p.historyThrough,addDays(today,-1));assert.equal(p.rows.length,2);}
- await f.subscribe('growth');await assert.rejects(source.snapshot(db,ctx,{...input,skuIds:[randomUUID()]}),/active products from this inventory/);await assert.rejects(source.snapshot(db,ctx,{...input,skuIds:[sku,sku]}),/distinct products/);await db.query("UPDATE users SET role='clerk' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);await assert.rejects(source.snapshot(db,ctx,input),/Only the inventory owner/);assert.equal(await f.balance(),stock);assert.equal(Number((await db.query('SELECT count(*) n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),journals);
+ for(let day=56;day>=2;day-=3)await order(addDays(today,-day));
+ await order(addDays(today,-10),999,{confirm:false});const cancelled=await order(addDays(today,-7),66);await f.workflows.cancelSalesOrder(db,ctx,cancelled.salesOrderId,{idempotencyKey:randomUUID()});
+ const stock=await f.balance(),list=await source.products(db,ctx.workspaceId,'fixture-supplier');
+ assert.deepEqual(list.map(p=>p.id).sort(),[sku,fresh.skuIds[0]].sort(),'Only this supplier’s active products');
+ // The same fit job 144 makes from the same recorded sales.
+ const from=await forecast.historyStart(db,ctx.workspaceId,today),sales=await forecast.demand(db,ctx.workspaceId,[sku],{from,today}),fitted=forecast.fit(forecast.daysOf(sales.get(sku),today));
+ assert(fitted.shape,'Eight weeks of orders are enough to forecast');
+ await assert.rejects(source.access(db,ctx),e=>e.code==='agent_plan_required'||e.code==='entitlement_required');
+ for(const tier of ['starter','growth','pro','enterprise']){
+  await f.subscribe(tier);
+  if(tier==='starter'){await assert.rejects(source.access(db,ctx),e=>e.code==='entitlement_required');continue;}
+  await source.access(db,ctx);
+  const supplier=(await db.query("SELECT id,name,email FROM suppliers WHERE id='fixture-supplier'")).rows[0],p=await source.snapshot(db,ctx,supplier,list);
+  const row=p.rows.find(r=>r.skuId===sku),unknown=p.rows.find(r=>r.skuId===fresh.skuIds[0]);
+  assert.equal(p.rows.length,2);assert(!p.rows.some(r=>[other.skuIds[0],dropped.skuIds[0]].includes(r.skuId)));
+  assert.equal(row.onHand,'4','Consignment stock is not presented as ours');
+  assert.equal(row.weeks.length,12);assert.equal(row.weeks[0].from,today);assert.equal(row.weeks[11].to,addDays(today,83));
+  assert.deepEqual(row.weeks.map(w=>w.quantity),Array.from({length:12},(_,i)=>forecast.units(fitted.shape,addDays(today,i*7),7)));
+  assert.equal(row.total,Math.round(row.weeks.reduce((n,w)=>n+w.quantity,0)*100)/100);assert.equal(row.method,fitted.label);
+  assert.equal(unknown.total,null);assert(unknown.weeks.every(w=>w.quantity===null));assert.equal(unknown.method,null);
+  assert.equal(p.recipient,'planner@example.test');assert.equal(p.weekStart,source.monday(today));assert.equal(p.historyThrough,addDays(today,-1));
+  assert.equal(JSON.stringify(p).includes('1200'),false,'No prices');assert.equal(JSON.stringify(p).includes('Receiver'),false,'No customers');
+ }
+ await db.query("UPDATE users SET role='clerk' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);await assert.rejects(source.access(db,ctx),/Only the inventory owner/);
+ assert.equal(await f.balance(),stock,'Reading the forecast changes no stock');
 });

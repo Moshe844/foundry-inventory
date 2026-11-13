@@ -428,6 +428,8 @@ async function autopilotEvaluate(job,client){
     await require('../sales/recurring-orders').schedule(client,job.workspaceId);
     // Job 180: yesterday's team summary, before the notices so it opens and emails in this check.
     await require('../autopilot/team-summary').deliver(client,job.workspaceId);
+    // Job 50: tell sales about waited-for stock now reserved, before the alert check sends it.
+    await require('../sales/agent-stock-ready-staff').refresh(client,job.workspaceId);
     await require('../autopilot/operational-notices').refresh(client,job.workspaceId);
     await require('../pricing/agent-supplier-price-updates').schedule(client,job.workspaceId,cycleId);
     await require('../forecasting/agent-slow-stock-steps').schedule(client,job.workspaceId,cycleId);

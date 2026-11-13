@@ -1,38 +1,59 @@
-<h1><%= saved?'Review supplier stock forecast':'Supplier stock forecasts' %></h1>
-<p>Share only the products you choose with one supplier. Recorded stock and estimated demand are separate. This does not place an order or change stock.</p>
-<% if(shadow){ %><p class="notice">StockChief is in the first 14-day watch period. You can prepare a preview; agent sending waits until that period ends.</p><% } %>
-<% if(locked){ %><section class="card"><h2><span class="badge">Growth</span> Supplier forecasts</h2><p>Upgrade to Growth to prepare and individually approve supplier forecasts, or Pro to authorize weekly sharing.</p><a class="btn" href="/billing">Upgrade</a></section>
-<% }else if(saved){const p=saved.snapshot; %>
-<section class="card"><h2><%= p.supplierName %></h2><p>To: <strong><%= p.recipient %></strong></p><p>Prepared <%= p.preparedAt %> · <%= p.timeZone %></p>
-<p>Owned stock on hand at active sites. Supplier-owned stock is excluded. Reservations and commitments are not subtracted. These numbers are a snapshot at the preparation time.</p>
-<div class="table-scroll"><table><thead><tr><th>Product</th><th>Recorded stock</th><th>Next 12 weeks: estimated demand</th></tr></thead><tbody>
-<% for(const row of p.rows){ %><tr><td><%= row.name %><small style="display:block"><%= row.sku %></small></td><td><%= row.onHand %> <%= row.unit %><%= row.needsReview?' · Review negative stock':'' %></td><td><%= row.total===null?'Unknown — more order history needed':row.total+' '+row.unit %></td></tr><% } %>
+<% const base='/autopilot/supplier-forecasts',stamp=v=>helpers.dateTime(v); %>
+<div class="page-head"><div class="titles"><h1>Supplier forecasts</h1>
+<p>Each week StockChief sends your key suppliers your stock and a 12-week forecast of the products you buy from them, from your mailbox. Only that supplier’s own products are in it. No prices, costs or customers.</p></div></div>
+
+<% if(locals.upgrading){ %><p class="notice notice--info">Supplier forecasts are being upgraded. Check back shortly.</p><% }else{ %>
+<% if(paused){ %><p class="notice notice--warn">StockChief is paused. It prepares and sends nothing until you resume it.</p>
+<% }else if(shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It prepares the forecasts and sends nothing.</p>
+<% }else if(who.mode==='watch'){ %><p class="notice notice--info"><%= who.reason %> It keeps the forecasts and sends nothing.</p>
+<% }else if(who.mode==='ask'){ %><p class="notice notice--info">StockChief keeps each forecast ready. You press send.<% if(alone){ %> <a href="/autopilot/job-modes">Change this job’s mode</a><% } %></p>
+<% }else{ %><p class="notice notice--ok">StockChief sends each forecast on its own. You check the first one to each supplier.</p><% } %>
+<% if(sender.problem){ %><p class="notice notice--warn"><%= sender.reason %></p><% } %>
+
+<% if(chosen){ const p=chosen.snapshot; %>
+<section class="card section" id="forecast"><h2><%= p.supplierName %> · week of <%= chosen.week_start %></h2>
+<p class="cell-sub">To <strong><%= chosen.recipient||'no email on file' %></strong> · prepared <%= stamp(p.preparedAt) %></p>
+<div class="table-scroll"><table><thead><tr><th>Product</th><th>Stock on hand</th><th>Next 12 weeks</th></tr></thead><tbody>
+<% p.rows.forEach(row=>{ %><tr><td><%= row.name %><small style="display:block"><%= row.sku %></small></td><td><%= row.onHand %> <%= row.unit %><%= row.needsReview?' · includes a negative stock record':'' %></td>
+<td><%= row.total===null?'Not enough sales history yet':row.total+' '+row.unit %><% if(row.method){ %><small style="display:block"><%= row.method %></small><% } %></td></tr><% }) %>
 </tbody></table></div>
-<p>Estimates use average confirmed order demand in complete seven-day periods, with at least eight complete periods and two order dates. They do not predict promotions, seasonality or recent changes.</p>
-<details><summary>Read the exact email and weekly estimates</summary><p>Subject: <%= words.subject %></p><div style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.6"><%= words.body %></div></details>
-<% if(message){ %><p><strong><%= ({QUEUED:'Waiting to send',SENDING:'Sending',SENT:'Mailbox confirmed sending',FAILED:'Needs delivery review',PREPARED:'Ready for review'})[message.status]||'Review delivery' %></strong></p><% if(message.error_message){ %><p><%= message.error_message %></p><% } %><p><a href="/messages/supplier/<%= message.id %>">Review email delivery</a></p>
-<% }else{ %><form method="post" action="/autopilot/supplier-forecasts/<%= saved.id %>/send" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedFingerprint" value="<%= saved.source_fingerprint %>">
-<label><input type="checkbox" name="confirmed" value="yes" required> I confirm this supplier, recipient and the exact selected products in this email.</label>
-<% if(p.rows.some(row=>row.needsReview)){ %><label><input type="checkbox" name="negativeConfirmed" value="yes" required> I reviewed the negative stock positions and confirm sharing this recorded snapshot.</label><% } %>
-<button class="btn" <%= shadow?'disabled':'' %>>Send this forecast</button></form><% } %>
+<% if(chosenWords){ %><details><summary>Read the exact email</summary><p>Subject: <%= chosenWords.subject %></p><div style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.6"><%= chosenWords.body %></div></details><% } %>
+<% const v=chosen.view||{}; if(v.label){ %><p><span class="badge badge--<%= v.tone %>"><%= v.label %></span> <%= v.detail||'' %></p><% } %>
+<% if((v.send||v.retry)&&!paused&&who.mode!=='watch'){ %><form method="post" action="<%= base %>/<%= chosen.id %>/send"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="fingerprint" value="<%= chosen.source_fingerprint %>"><button class="btn btn--primary"><%= v.retry?'Send again':'Send this forecast' %></button></form><% } %>
+<p><a href="<%= base %>">All supplier forecasts</a></p>
 </section>
-<section class="card"><h2>Weekly sharing</h2>
-<% if(!canSchedule){ %><p><span class="badge">Pro</span> Weekly supplier forecast sending needs Pro or Custom. On Growth, approve each email individually. <a class="btn" href="/billing">Upgrade</a></p>
-<% }else{const rule=rules.find(rule=>rule.supplier_id===p.supplierId); %><p>Authorize only this supplier, mailbox and these products. StockChief prepares a fresh snapshot each week. Changed recipients, products, units or mailbox accounts stop the send for review. At most one forecast is sent per supplier per calendar week.</p>
-<form method="post" action="/autopilot/supplier-forecasts/<%= saved.id %>/schedule" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedFingerprint" value="<%= saved.source_fingerprint %>"><input type="hidden" name="revision" value="<%= rule?.revision||0 %>">
-<label class="rm-field"><span>First weekly sending date</span><input type="date" name="firstSendOn" min="<%= today %>" value="<%= today %>" required></label>
-<label><input type="checkbox" name="confirmed" value="yes" required> I authorize weekly sharing with this exact supplier, mailbox and selected products.</label><button class="btn" <%= shadow||p.rows.some(row=>row.needsReview)?'disabled':'' %>>Authorize weekly sharing</button></form><% } %></section>
-<p><a href="/autopilot/supplier-forecasts">Prepare another forecast</a></p>
-<% }else{ %>
-<section class="card"><h2>Prepare a preview</h2>
-<form method="get" class="form-stack"><label class="rm-field"><span>Find a supplier</span><input name="q" value="<%= q %>"></label><button class="btn">Search suppliers</button></form>
-<% if(moreSuppliers){ %><p>Showing 50 matching suppliers. Refine the search to find yours.</p><% } %>
-<% if(!mailboxes.length){ %><p><a href="/connections">Connect a Gmail or Microsoft 365 sending mailbox</a> before preparing a shareable forecast.</p><% } %>
-<form method="post" action="/autopilot/supplier-forecasts/preview" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= requestKey %>">
-<div class="rm-field"><label for="forecast-supplier">Supplier</label><select id="forecast-supplier" name="supplierId" required><option value="">Choose a supplier</option><% for(const supplier of suppliers){ %><option value="<%= supplier.id %>"><%= supplier.name %> · <%= supplier.email||'Add an email first' %></option><% } %></select></div>
-<div class="rm-field"><label for="forecast-mailbox">Sending mailbox</label><select id="forecast-mailbox" name="connectorId" required><option value="">Choose a mailbox</option><% for(const box of mailboxes){ %><option value="<%= box.id %>"><%= box.display_name %></option><% } %></select></div>
-<label class="rm-field"><span>Exact SKU codes, one per line</span><textarea name="codes" rows="6" required placeholder="Enter up to 250 codes"></textarea></label><button class="btn" <%= !mailboxes.length?'disabled':'' %>>Preview supplier forecast</button></form></section>
 <% } %>
-<% if(rules.length){ %><section class="card"><h2>Weekly sharing rules</h2><p>Showing the latest <%= rules.length %> rules. Stopping a rule also blocks its queued automatic emails before provider delivery.</p>
-<% for(const rule of rules){ %><div class="card-body"><h3><%= rule.name %></h3><p><%= rule.enabled?'Next sending date: '+rule.next_due_on:'Stopped' %></p><% if(rule.problem){ %><p><%= rule.problem %></p><% } %><% if(rule.enabled){ %><form method="post" action="/autopilot/supplier-forecast-rules/<%= rule.id %>/stop"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= rule.revision %>"><button class="btn">Stop weekly sharing with <%= rule.name %></button></form><% } %></div><% } %>
-</section><% } %>
+
+<section class="card section" id="this-week"><h2>This week · from <%= week %></h2>
+<% if(!reports.length){ %><p class="cell-sub"><%= rules.length?'Nothing prepared yet this week. StockChief prepares them at its next check, or prepare them now.':'Choose a key supplier below to start.' %></p><% }else{ %>
+<ul class="rm-list"><% reports.forEach(r=>{ %><li class="list-row"><span><strong><%= r.snapshot.supplierName %></strong> <span class="badge badge--<%= r.view.tone %>"><%= r.view.label %></span>
+<small><%= r.snapshot.rows.length %> product<%= r.snapshot.rows.length===1?'':'s' %><%= r.queued_at&&r.status==='QUEUED'?' · '+stamp(r.queued_at):'' %></small>
+<% if(r.view.detail){ %><small><%= r.view.detail %></small><% } %></span>
+<span class="sc-row-actions"><a class="btn btn--ghost btn--sm" href="<%= base %>/<%= r.id %>">Open</a>
+<% if((r.view.send||r.view.retry)&&!paused&&who.mode!=='watch'){ %><form method="post" action="<%= base %>/<%= r.id %>/send"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="fingerprint" value="<%= r.source_fingerprint %>"><button class="btn btn--primary btn--sm"><%= r.view.retry?'Send again':'Send' %></button></form><% } %></span></li><% }) %></ul>
+<% } %>
+<% if(waiting>1&&!paused&&who.mode!=='watch'){ %><form method="post" action="<%= base %>/send-all"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary">Send all <%= waiting %> ready forecasts</button></form><% } %>
+<% if(rules.length&&!paused){ %><form method="post" action="<%= base %>/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost">Prepare this week’s forecasts now</button></form><% } %>
+</section>
+
+<section class="card section" id="key-suppliers"><h2>Key suppliers</h2>
+<% if(!rules.length){ %><p class="cell-sub">No key suppliers yet.</p><% }else{ %>
+<ul class="rm-list"><% rules.forEach(r=>{ %><li class="list-row"><span><strong><%= r.name %></strong><small><%= r.email||'No email on file' %></small></span>
+<span class="sc-row-actions"><form method="post" action="<%= base %>/key/<%= r.id %>/remove"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= r.revision %>"><button class="btn btn--ghost btn--sm" aria-label="Stop weekly forecasts to <%= r.name %>">Stop</button></form></span></li><% }) %></ul>
+<% } %>
+<form method="get" action="<%= base %>" class="form-stack"><label class="rm-field"><span>Find a supplier</span><input name="q" value="<%= q %>" maxlength="120"></label><button class="btn">Search suppliers</button></form>
+<% if(moreSuppliers){ %><p class="cell-sub">Showing 50 suppliers. Search to find yours.</p><% } %>
+<% if(suppliers.length){ %><form method="post" action="<%= base %>/key" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label class="rm-field"><span>Add a key supplier</span><select name="supplierId" aria-label="Add a key supplier" required><% suppliers.forEach(s=>{ %><option value="<%= s.id %>"><%= s.name %><%= s.email?'':' · no email yet' %></option><% }) %></select></label>
+<button class="btn btn--primary">Add key supplier</button></form><% } %>
+<p class="cell-sub">Each key supplier counts as one of your saved rules. Their forecast goes to the email on their supplier record.</p>
+</section>
+
+<section class="card section" id="forecast-mailbox"><h2>Sending mailbox</h2>
+<% if(!sender.boxes.length){ %><p class="cell-sub">No mailbox is connected. <a href="/connections">Connect your mailbox</a></p>
+<% }else{ %><p class="cell-sub"><%= sender.box?'Forecasts are sent from '+(sender.box.display_name||sender.box.provider_account_name)+'.':'Choose the mailbox forecasts are sent from.' %></p>
+<% if(sender.boxes.length>1||!sender.box){ %><form method="post" action="<%= base %>/mailbox" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= setting?.revision||0 %>">
+<label class="rm-field"><span>Mailbox</span><select name="connectorId" aria-label="Mailbox"><% sender.boxes.forEach(b=>{ %><option value="<%= b.id %>" <%= sender.box&&sender.box.id===b.id?'selected':'' %>><%= b.display_name||b.provider_account_name %></option><% }) %></select></label>
+<button class="btn btn--primary">Save mailbox</button></form><% } %><% } %>
+</section>
+<% } %>

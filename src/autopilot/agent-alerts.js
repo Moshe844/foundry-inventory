@@ -60,7 +60,11 @@ const JOBS={
     subject:(n,first)=>first.replace(/\.$/,''),intro:'What your team did, and what is late.'},
   // Job 175, needs migration 490: approval links to the person who has each
   // approval, sent by approval-links.js.
-  175:{action:'approval.link',name:'Approvals waiting for you',module:'./approval-links',needs490:true,own:true}
+  175:{action:'approval.link',name:'Approvals waiting for you',module:'./approval-links',needs490:true,own:true},
+  // Job 50, needs migration 507: tells the people who handle a customer that a
+  // waited-for item is back in stock, by agent-stock-ready-staff.js. It only
+  // sends where the plan does the job alone (Pro and Custom).
+  50:{action:'sales_order.notify_stock_ready',name:'Waited-for stock back in stock',module:'../sales/agent-stock-ready-staff',needs507:true,own:true,staff:true}
 };
 const plural=(n,one,many)=>n+' '+(Number(n)===1?one:many);
 const expected=error=>error instanceof DomainError&&[400,402,403,404,409,422].includes(error.status);
@@ -73,7 +77,8 @@ async function tracked(db){
   const latest=later&&await installed.has(db,'stockchief_runtime.agent_escalations');
   const summaries=await installed.has(db,'stockchief_runtime.agent_team_summaries'),channels=await has480(db);
   const links=latest&&await installed.has(db,'stockchief_runtime.agent_approval_links');
-  return Object.keys(JOBS).map(Number).filter(id=>(later||!JOBS[id].needs473)&&(latest||!JOBS[id].needs474)&&(summaries||!JOBS[id].needs485)&&(channels||!JOBS[id].needs480)&&(links||!JOBS[id].needs490));
+  const staff=links&&await installed.has(db,'stockchief_runtime.agent_stock_ready_staff');
+  return Object.keys(JOBS).map(Number).filter(id=>(later||!JOBS[id].needs473)&&(latest||!JOBS[id].needs474)&&(summaries||!JOBS[id].needs485)&&(channels||!JOBS[id].needs480)&&(links||!JOBS[id].needs490)&&(staff||!JOBS[id].needs507));
 }
 // Texts and push need migration 490.
 const phoneColumns=db=>installed.has(db,channels,'sms');
@@ -124,7 +129,7 @@ async function track(db,workspaceId,account){
       SELECT n.workspace_id,n.job_id,n.kind,n.reference,n.link FROM stockchief_runtime.agent_operational_notices n
       WHERE n.workspace_id=$1 AND n.job_id=ANY($2::int[]) AND NOT n.resolved AND NOT EXISTS(SELECT 1 FROM ${deliveries} d
         WHERE d.workspace_id=n.workspace_id AND d.job_id=n.job_id AND d.kind=n.kind AND d.reference=n.reference AND d.link=n.link)
-      ON CONFLICT DO NOTHING RETURNING job_id`,[workspaceId,await tracked(c)])).rows;
+      ON CONFLICT DO NOTHING RETURNING job_id`,[workspaceId,(await tracked(c)).filter(id=>!JOBS[id].own)])).rows;
     // The daily team summary (job 180) is audited when it is written, so a new
     // day's summary does not count as an alert change here.
     if([...raised,...cleared].some(r=>Number(r.job_id)!==180)){
@@ -309,7 +314,7 @@ async function configure(database,ctx,raw,input={}){
         if(sms&&!prior?.sms&&!available.sms)throw new ValidationError('Text messages are not set up on this StockChief server yet.');
         if(push&&!prior?.push&&!available.push)throw new ValidationError('Push is not set up on this StockChief server yet.');
         // The owner gets these alerts; passed-on items and approvals go to whoever has them.
-        if(![172,175].includes(id)){
+        if(![172,175,50].includes(id)){
           const mine=await require('./alert-phones').contact(c,ctx.workspaceId,ctx.actorId);
           if(sms&&!prior?.sms&&!mine.verified)throw new ValidationError('Add and confirm your mobile number on Your phone and devices first.');
           if(push&&!prior?.push&&!mine.devices.length)throw new ValidationError('Turn on push on one of your devices first, on Your phone and devices.');
@@ -365,6 +370,8 @@ async function panel(db,ctx,raw){
   const id=job(raw);
   if(!await installed.has(db,channels)||!(await tracked(db)).includes(id))return null;
   const account=await policy.accountState(db,ctx.workspaceId);
+  // Telling sales (job 50) goes out only where the plan does the job alone.
+  if(JOBS[id].staff&&!(policy.usesAgentTerms(account)&&policy.permits(account.plan,id,'automatic')))return null;
   const setting=(await db.query(`SELECT a.*,m.status AS last_status FROM ${channels} a
     LEFT JOIN customer_communications m ON m.workspace_id=a.workspace_id AND m.id=a.last_communication_id
     WHERE a.workspace_id=$1 AND a.job_id=$2`,[ctx.workspaceId,id])).rows[0]||null;
@@ -383,7 +390,7 @@ async function panel(db,ctx,raw){
     lowStockUnits:id===166&&setting?.low_stock_units!=null?exact.canonical(String(setting.low_stock_units)):'',escalationHours:setting?.escalation_hours??'',
     waiting,note:setting?.email_note||null,stop,lastStatus:setting?.last_status||null,lastAt:setting?.last_emailed_at||null,
     phones:Boolean(phones),sms,push,smsReady:providers.sms,pushReady:providers.push,phoneNote:phones?setting?.phone_note||null:null,
-    ownPhone:mine?.verified?mine.ending:null,ownDevices:mine?mine.devices.length:0,toWhoever:[172,175].includes(id),devicesPath:require('./alert-phones').path,
+    ownPhone:mine?.verified?mine.ending:null,ownDevices:mine?mine.devices.length:0,toWhoever:[172,175,50].includes(id),devicesPath:require('./alert-phones').path,
     canSendNow:Boolean(any&&waiting&&stop&&!ownerStop)};
 }
 

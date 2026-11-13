@@ -1,7 +1,9 @@
-<% const a=alerts, sent=a.lastStatus==='SENT'?'sent':a.lastStatus==='FAILED'?'could not be sent':a.lastStatus?'on its way':null, sending=(a.chosen&&!a.chosen.missing)||a.sms||a.push, noun=a.job===172||a.job===175?'item':'alert'; %>
+<% const a=alerts, sent=a.lastStatus==='SENT'?'sent':a.lastStatus==='FAILED'?'could not be sent':a.lastStatus?'on its way':null, sending=(a.chosen&&!a.chosen.missing)||a.sms||a.push, noun=[50,172,175].includes(a.job)?'item':'alert'; %>
 <section class="card card-body stack" data-alert-delivery="<%= a.job %>">
   <% if(a.job===172){ %><h2>When nobody answers</h2>
   <p>The next person sees it in Needs you<% if(a.chosen&&!a.chosen.missing){ %> and gets an email from <%= a.chosen.name %><% } %><% if(a.sms||a.push){ %>, and <%= [a.sms&&'a text',a.push&&'a push'].filter(Boolean).join(' and ') %> if they set those up<% } %>.</p>
+  <% }else if(a.job===50){ %><h2>How sales hear about it</h2>
+  <p>The person who handles the customer sees each waited-for item in Needs you<% if(sending){ %>, and gets <%= [a.chosen&&!a.chosen.missing&&'an email from '+a.chosen.name,a.sms&&'a text',a.push&&'a push'].filter(Boolean).join(' and ') %><% if(a.sms||a.push){ %> if they set those up<% } %><% } %>. Each item goes out once.</p>
   <% }else if(a.job===175){ %><h2>How approvals reach people</h2>
   <p>Each approval waiting in someone’s Needs you is sent to them once<% if(sending){ %> by <%= [a.chosen&&!a.chosen.missing&&'email from '+a.chosen.name,a.sms&&'text',a.push&&'push'].filter(Boolean).join(', ') %><% } %>, with its own link. Opening the link approves nothing: they sign in, check it and tap once.</p>
   <% }else{ %><h2>How you get these alerts</h2>
@@ -14,13 +16,13 @@
   <% if(sending&&a.waiting){ %><p><%= a.waiting===1?'1 open '+noun+' is':a.waiting+' open '+noun+'s are' %> not sent yet.</p><% } %>
   <% if(sent){ %><p>Last email <%= sent %> · <%= helpers.dateTime(a.lastAt) %></p><% } %>
   <% if(a.canSendNow){ %><form method="post" action="<%= a.action %>/send"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <button class="btn btn--primary"><%= a.job===175?'Send the waiting links now':a.sms||a.push?'Send the waiting alerts now':'Email the waiting alerts now' %></button></form><% } %>
+    <button class="btn btn--primary"><%= a.job===175?'Send the waiting links now':a.job===50?'Send the waiting updates now':a.sms||a.push?'Send the waiting alerts now':'Email the waiting alerts now' %></button></form><% } %>
   <form method="post" action="<%= a.action %>" class="form-stack">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= a.revision %>">
     <label>Email
       <select name="mailbox">
         <option value="">No email<%= a.job===175?'':', in the app only' %></option>
-        <% for(const box of a.mailboxes){ %><option value="<%= box.id %>"<%= a.chosen&&a.chosen.id===box.id?' selected':'' %>><%= a.job===172||a.job===175?'Email them from ':'Email me from ' %><%= box.name %></option><% } %>
+        <% for(const box of a.mailboxes){ %><option value="<%= box.id %>"<%= a.chosen&&a.chosen.id===box.id?' selected':'' %>><%= a.toWhoever?'Email them from ':'Email me from ' %><%= box.name %></option><% } %>
       </select>
     </label>
     <% if(!a.mailboxes.length){ %><p class="hint">Connect a mailbox in <a href="/settings/connections">Connections</a> to send these by email too.</p><% } %>
@@ -42,6 +44,6 @@
       </label>
       <p class="hint">Leave it empty to be told only when those products run out. Products with a reorder point use it.</p>
     <% } %>
-    <p><button class="btn">Save <%= a.job===175?'approval':'alert' %> settings</button></p>
+    <p><button class="btn">Save <%= a.job===175?'approval':a.job===50?'sales update':'alert' %> settings</button></p>
   </form>
 </section>

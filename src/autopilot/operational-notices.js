@@ -105,6 +105,9 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   // Job 180 needs migration 485 (its summaries and notice job number).
   const teamSummary=require('./team-summary'),teamSummaries=policy.permits(account.plan,180,'automatic')&&await require('../db/schema-installed').has(db,teamSummary.table);
   const watchRules=await require('./watch-rules').candidates(db);
+  // Job 50: orders with a waited-for item now reserved and no customer update
+  // for it. One update per line needs migration 507; before it, per order.
+  const stockReady=require('../sales/agent-stock-ready'),stockLines=await require('../db/schema-installed').has(db,'stockchief_runtime.agent_stock_ready_lines');
   const watched=[];
   // Jobs 170 and 171 need migration 473 (their settings and sources).
   for(const [job,d] of Object.entries(require('./activity-watches').spec))
@@ -112,10 +115,8 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   const watchQueries=watched.map(([job,d])=>' UNION ALL SELECT '+job+',"Alert",reference,link,$3::date FROM ('+d.sql+') observed').join('');
   // Job 87's channel price checks run through the worker (agent-channel-price-checks.js).
   const candidates='SELECT 168 AS job,"Type" AS kind,"Reference" AS ref,link,"Due"::date AS due FROM ('+overdue.sql+') x'+
-    (policy.permits(account.plan,50,'suggest')?` UNION ALL SELECT 50,'Stock ready',o.order_number,'/autopilot/reviews/stock-ready-updates',$3::date FROM sales_orders o
-     WHERE o.workspace_id=$1 AND o.status='CONFIRMED'
-      AND EXISTS(SELECT 1 FROM sales_order_events e WHERE e.workspace_id=o.workspace_id AND e.sales_order_id=o.id AND e.event_type='confirmed' AND e.detail::jsonb->>'status'='BACKORDERED')
-      AND NOT EXISTS(SELECT 1 FROM customer_communications m WHERE m.workspace_id=o.workspace_id AND m.stock_ready_order_id=o.id AND m.status IN ('QUEUED','SENT'))`:'')+
+    (policy.permits(account.plan,50,'suggest')?` UNION ALL SELECT DISTINCT 50,'Stock ready',waited.order_number,'/autopilot/reviews/stock-ready-updates',$3::date FROM (`+
+      stockReady.readyLines()+' AND '+stockReady.unnoticed(stockLines)+`) waited`:'')+
     (policy.permits(account.plan,204,'automatic')?` UNION ALL SELECT 204,'Daily work',d.report_date,'/autopilot/reviews/daily-work?filter='||d.report_date,d.report_date::date
      FROM workspace_daily_digests d WHERE d.workspace_id=$1 AND d.summary::jsonb->>'format'='agent-brief' AND (d.summary::jsonb->>'actions')::int>0
       AND d.report_date=(SELECT max(report_date) FROM workspace_daily_digests WHERE workspace_id=$1 AND summary::jsonb->>'format'='agent-brief')`:'')+
