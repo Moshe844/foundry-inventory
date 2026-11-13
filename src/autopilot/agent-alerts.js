@@ -54,9 +54,9 @@ const JOBS={
     intro:'StockChief noticed activity that looks unusual. Nothing was blocked.'},
   // Needs migration 474. It sends its own emails (escalations.js deliver).
   172:{action:'alert.escalation',name:'Unanswered alerts and approvals',module:'./escalations',needs474:true,own:true},
-  // Job 175, needs migration 490: approval links to the person who has each
+  // Job 175 needs the approval-links table.
   // approval, sent by approval-links.js.
-  175:{action:'approval.link',name:'Approvals waiting for you',module:'./approval-links',needs490:true,own:true}
+  175:{action:'approval.link',name:'Approvals waiting for you',module:'./approval-links',needsLinks:true,own:true}
 };
 const plural=(n,one,many)=>n+' '+(Number(n)===1?one:many);
 const expected=error=>error instanceof DomainError&&[400,402,403,404,409,422].includes(error.status);
@@ -69,9 +69,9 @@ async function tracked(db){
   const latest=later&&await installed.has(db,'stockchief_runtime.agent_escalations');
   const channelAlerts=await supportsChannelAlerts(db);
   const links=latest&&await installed.has(db,'stockchief_runtime.agent_approval_links');
-  return Object.keys(JOBS).map(Number).filter(id=>(id!==169||channelAlerts)&&(later||!JOBS[id].needs473)&&(latest||!JOBS[id].needs474)&&(links||!JOBS[id].needs490));
+  return Object.keys(JOBS).map(Number).filter(id=>(id!==169||channelAlerts)&&(later||!JOBS[id].needs473)&&(latest||!JOBS[id].needs474)&&(links||!JOBS[id].needsLinks));
 }
-// Texts and push need migration 490.
+// Texts and push need the added channel columns.
 const phoneColumns=db=>installed.has(db,channels,'sms');
 // The alert job behind a review page, if any.
 const forKey=key=>Object.keys(JOBS).map(Number).find(id=>require(JOBS[id].module).key===key)||null;
