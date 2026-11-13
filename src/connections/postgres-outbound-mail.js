@@ -226,6 +226,8 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
       if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='expiry_warning')await require('../operations/agent-expiry-warnings').emailAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='agent_alert')await require('../autopilot/agent-alerts').emailAuthority(client,workspaceId,input.standingAuthority);
+      if(input.standingAuthority?.kind==='scheduled_report')await require('../reports/agent-report-email').authority(client,workspaceId,input.standingAuthority);
+      if(input.standingAuthority?.kind==='agent_briefing')await require('../autopilot/briefing-email').emailAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='fx_alert')await require('../purchasing/agent-purchase-fx').emailAuthority(client,workspaceId,input.standingAuthority);
       if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(client,workspaceId,input.standingAuthority.workId,input.standingAuthority);
       return {message,connection};
@@ -238,6 +240,7 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
         if(input.standingAuthority?.kind==='stock_threshold')await require('../manager/stock-rule-notifications').assertSendAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='expiry_warning')await require('../operations/agent-expiry-warnings').emailAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='agent_alert')await require('../autopilot/agent-alerts').emailAuthority(database,workspaceId,input.standingAuthority);
+        if(input.standingAuthority?.kind==='agent_briefing')await require('../autopilot/briefing-email').emailAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='fx_alert')await require('../purchasing/agent-purchase-fx').emailAuthority(database,workspaceId,input.standingAuthority);
         if(options.beforeSend)await options.beforeSend({effect,message:loaded.message,connection:loaded.connection});
         if(input.standingAuthority?.kind==='purchase_followup')await require('../purchasing/postgres-supplier-followups').assertSendAuthority(database,workspaceId,input.standingAuthority.workId,input.standingAuthority);
@@ -250,7 +253,9 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
         const attachments=input.standingAuthority?.kind==='supplier_claim'?await require('../purchasing/agent-supplier-claims').attachments(database,workspaceId,input.standingAuthority)
           :input.standingAuthority?.kind==='customer_statement'?await require('../accounting/agent-customer-statements').attachments(database,workspaceId,input.standingAuthority)
           :input.standingAuthority?.kind==='supplier_review_pack'?await require('../purchasing/agent-supplier-review-packs').attachments(database,workspaceId,input.standingAuthority)
-          :input.standingAuthority?.kind==='accountant_pack'?await require('../accounting/agent-year-end-pack').attachments(database,workspaceId,input.standingAuthority):undefined;
+          :input.standingAuthority?.kind==='accountant_pack'?await require('../accounting/agent-year-end-pack').attachments(database,workspaceId,input.standingAuthority)
+          // Job 155: the report file is made fresh after its authority passes again.
+          :input.standingAuthority?.kind==='scheduled_report'?await require('../reports/agent-report-email').attachments(database,workspaceId,input.standingAuthority):undefined;
         if(input.standingAuthority?.kind==='customer_statement')await require('../accounting/agent-customer-statements').authority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='customer_answer')await require('../sales/agent-customer-questions').authority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='invoice_reminder')await require('../accounting/agent-invoice-reminders').sendAuthority(database,workspaceId,input.standingAuthority);

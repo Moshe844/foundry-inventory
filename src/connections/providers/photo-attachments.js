@@ -5,8 +5,8 @@ function validate(value){
  if(value===undefined)return [];
  if(!Array.isArray(value)||value.length>3)throw new ValidationError('Choose up to three delivery photo copies.');
  return value.map(p=>{
-  // Delivery photos (job 46), statement and supplier pack PDFs (jobs 81, 164)
-  // and the accountant's year-end workbook (job 165).
+  // Delivery photos (job 46), statement and supplier pack PDFs (jobs 81, 164),
+  // the accountant's year-end workbook (job 165) and one report file (job 155).
   const pdf=p?.contentType==='application/pdf',workbook=p?.contentType===XLSX,document=pdf||workbook;
   if(!p||!Buffer.isBuffer(p.content)||!p.content.length||p.content.length>(document?2097152:614400)||!['image/jpeg','image/png','application/pdf',XLSX].includes(p.contentType)||!/^[-a-zA-Z0-9_.]{1,120}$/.test(p.filename)||pdf&&p.content.subarray(0,5).toString()!=='%PDF-'
     ||workbook&&(p.content.length<4||p.content.readUInt32LE(0)!==0x04034b50||!/\.xlsx$/.test(p.filename)))
