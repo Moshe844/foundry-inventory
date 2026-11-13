@@ -37,6 +37,8 @@ const {newId}=require('../lib/util');
 
 const JOB=175,ACTION='approval.link',key='approval-links',path='/autopilot/reviews/'+key,label='Approve from email or phone';
 const links='stockchief_runtime.agent_approval_links',channels='stockchief_runtime.agent_alert_channels';
+// A channel a manager chose not to use for approvals is marked, not sent.
+const BY_PREFERENCE='not-wanted';
 const DAYS=14,MAX_PEOPLE=25,MAX_SEND=200,PER_MESSAGE=3,EMAIL=/^[^\s@]+@[^\s@]+\.[^\s@]+$/,ID=/^[A-Za-z0-9_-]{32,64}$/;
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0,40);
 const tx=(db,fn)=>db.transaction(fn,{isolation:'SERIALIZABLE',retrySafe:true});
@@ -229,9 +231,17 @@ async function deliver(c,workspaceId,account,setting,{manual=false}={}){
   const people=await team(c,workspaceId),owner=people.find(p=>p.is_owner);
   const box=emailWanted?(await alerts.mailboxes(c,workspaceId)).find(b=>b.id===setting.email_connector_id):null;
   const emailProblems=new Set(),phoneProblems=new Set();let last=null;
+  // Job 214: a Custom manager may keep approvals to one of the owner's channels.
+  const preferred=await require('../reports/manager-presentation').approvalChannelFor(c,workspaceId,account);
   for(const userId of [...new Set(rows.map(r=>r.user_id))]){
     const person=people.find(p=>p.id===userId),mine=rows.filter(r=>r.user_id===userId);
     if(!person)continue;
+    const only=want.includes(preferred.get(userId))?preferred.get(userId):null;
+    for(const ch of want.filter(x=>only&&x!==only)){
+      const skipped=mine.filter(r=>!r[ch+'_batch']);
+      if(skipped.length)await c.query(`UPDATE ${links} SET ${ch}_batch=$2${ch==='email'?',email_communication_id=$2':''} WHERE id=ANY($1::text[])`,[skipped.map(r=>r.id),BY_PREFERENCE]);
+      for(const r of skipped)r[ch+'_batch']=BY_PREFERENCE;
+    }
     const list=mine.filter(r=>!r.email_batch);
     if(emailWanted&&list.length){
       if(!box)emailProblems.add('The chosen mailbox is disconnected, paused or cannot send. Reconnect it, or choose another. No email was sent.');
@@ -384,7 +394,7 @@ async function review(db,ctx,{page=1}){
     JOIN users u ON u.id=l.user_id LEFT JOIN users d ON d.id=l.decided_by WHERE l.workspace_id=$1
     ORDER BY (l.decided_at IS NULL AND l.closed_at IS NULL) DESC,coalesce(l.decided_at,l.created_at) DESC,l.id LIMIT 101 OFFSET $2`,[ctx.workspaceId,(page-1)*100])).rows;
   return {summary,more:rows.length>100,rows:rows.slice(0,100).map(r=>({Approval:r.title,For:r.person,
-    Sent:[r.email_batch&&'Email',r.sms_batch&&'Text',r.push_batch&&'Push'].filter(Boolean).join(', ')||'Not yet',
+    Sent:[r.email_batch&&r.email_batch!==BY_PREFERENCE&&'Email',r.sms_batch&&r.sms_batch!==BY_PREFERENCE&&'Text',r.push_batch&&r.push_batch!==BY_PREFERENCE&&'Push'].filter(Boolean).join(', ')||'Not yet',
     Status:r.decided_at?'Approved by '+(r.decider||'a former team member')+', '+local(r.decided_at):r.closed_at?'No longer waiting':r.expired?'Link expired':r.opened_at?'Opened, not approved yet':'Waiting',
     link:r.href}))};
 }

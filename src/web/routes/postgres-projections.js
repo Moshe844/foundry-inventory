@@ -205,17 +205,25 @@ function createPostgresProjectionsRouter(database){
   }));
   router.get('/needs-you/findings',requireAuth,requirePermission(permissions.VIEW,'review inventory findings'),asyncRoute(async(req,res)=>{const size=require('../presentation/pagination').pageSize(req),found=await require('../../projections/postgres-attention-inbox').page(database,req.ctx.workspaceId,{...req.query,pageSize:size});return res.page('manager/inventory-findings',{title:'Inventory findings',nav:'attention',...found,pager:require('../presentation/pagination').pager(req,{page:found.page,size,total:found.total,shown:found.rows.length})});}));
   router.get(['/needs-you','/needs-you/all'],requireAuth,asyncRoute(async(req,res)=>{
+    // Job 214: a Custom manager's own choices here teach their Needs you.
+    const prefs=require('../../reports/manager-presentation');
+    if(typeof req.query.sort==='string')await prefs.note(database,req.ctx,'inbox_sort',req.query.sort);
+    if(req.query.picked==='category'&&typeof req.query.category==='string')await prefs.note(database,req.ctx,'inbox_category',req.query.category);
+    if(typeof req.query.groups==='string')await prefs.note(database,req.ctx,'approval_grouping',req.query.groups);
     const [items,failures,briefDate,managerView]=await Promise.all([projections.needs(database,req.ctx.workspaceId,req.ctx.actorId),
       req.user.role==='owner'?projections.runtimeFailures(database,req.ctx.workspaceId):null,
       req.user.role==='owner'?require('../../autopilot/daily-briefs').latest(database,req.ctx):null,
-      require('../../reports/manager-presentation').personal(database,req.ctx)]);
+      prefs.personal(database,req.ctx)]);
     res.locals.attentionCount=items.length;
     items.coverageErrors=[];
+    const grouping=['grouped','one_by_one'].includes(req.query.groups)?req.query.groups:managerView?.approval_grouping||'grouped';
+    const defaultCategory=managerView?.inbox_category||'all',similar=require('../../autopilot/approval-groups').fromItems(items);
     return res.page('manager/needs-you-overview',
       {title:'Needs you',nav:'attention',room:true,suppressBack:true,
         // Job 174: similar approvals, approved or declined in one tap.
-        approvalGroups:require('../../autopilot/approval-groups').fromItems(items),approvalGroupToken:newId('needsgroup'),
-        inbox:items,failures,briefDate,managerView,showAllDecisions:req.path==='/needs-you/all',desk:require('../needs-you-presentation').present(items,{sort:managerView?.inbox_sort,...req.query},managerView?.inbox_sort),at:zeroBasedIndex(req.query.at)});
+        approvalGroups:grouping==='one_by_one'?[]:similar,approvalGroupToken:newId('needsgroup'),
+        groupedApprovals:similar.length,approvalGrouping:grouping,
+        inbox:items,failures,briefDate,managerView,showAllDecisions:req.path==='/needs-you/all',desk:require('../needs-you-presentation').present(items,{sort:managerView?.inbox_sort,category:defaultCategory,...req.query},managerView?.inbox_sort,defaultCategory),at:zeroBasedIndex(req.query.at)});
   }));
   router.get('/activity',requireAuth,asyncRoute(async(req,res)=>{
     const size=require('../presentation/pagination').pageSize(req),found=await activityPage(database,req.ctx.workspaceId,req.query,req.user.role==='owner',size);
