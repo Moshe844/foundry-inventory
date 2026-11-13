@@ -4,6 +4,8 @@
 // browser observations or authority checks.
 const KEY='_stockchiefDefinitions',PREFIX='#/'+KEY+'/',DEFAULTS='_stockchiefOperationDefaults',DATASETS='_stockchiefDatasetDefaults',INDEX='_stockchiefOperationIndexEncoding',SIGNATURES='_stockchiefSignatureIndexEncoding';
 const ROWS='_stockchiefOperationRows';
+const INITIAL_DEFINITIONS='_d';
+const INITIAL_PREFIX='#/'+INITIAL_DEFINITIONS+'/';
 function prefixGroups(names){
  const out=[];for(let i=0;i<names.length;){const first=names[i],family=typeof first==='string'&&first.includes('.')?first.slice(0,first.indexOf('.')+1):null;
   if(!family){out.push(first);i++;continue;}let end=i+1;while(end<names.length&&typeof names[end]==='string'&&names[end].startsWith(family))end++;
@@ -12,10 +14,11 @@ function prefixGroups(names){
  }return out;
 }
 function compact(value){
- if(!value||!Array.isArray(value.operations)||value.datasets!==undefined&&!Array.isArray(value.datasets)||[KEY,DEFAULTS,DATASETS,INDEX,SIGNATURES,ROWS].some(key=>Object.hasOwn(value,key)))return value;
- const occurrences=new Map(),referenceBytes=Buffer.byteLength(JSON.stringify({$ref:PREFIX+'d99999'}));let existingReference=false;
+ if(!value||!Array.isArray(value.operations)||value.datasets!==undefined&&!Array.isArray(value.datasets)||[KEY,INITIAL_DEFINITIONS,DEFAULTS,DATASETS,INDEX,SIGNATURES,ROWS].some(key=>Object.hasOwn(value,key)))return value;
+ const definitionsKey=value.indexComplete?INITIAL_DEFINITIONS:KEY,prefix=value.indexComplete?INITIAL_PREFIX:PREFIX;
+ const occurrences=new Map(),referenceBytes=Buffer.byteLength(JSON.stringify({$ref:prefix+'d99999'}));let existingReference=false;
  function count(v){if(!v||!['object','string'].includes(typeof v))return;const encoded=JSON.stringify(v);
-  if(typeof v.$ref==='string'&&v.$ref.startsWith(PREFIX))existingReference=true;
+  if(typeof v.$ref==='string'&&[PREFIX,INITIAL_PREFIX].some(candidate=>v.$ref.startsWith(candidate)))existingReference=true;
   if(Buffer.byteLength(encoded)>=referenceBytes+12){const entry=occurrences.get(encoded)||{value:v,count:0};entry.count++;occurrences.set(encoded,entry);}
   if(typeof v==='object')for(const child of Object.values(v))count(child);
  }
@@ -25,13 +28,13 @@ function compact(value){
   if(!v||!['object','string'].includes(typeof v))return v;const encoded=JSON.stringify(v);
   if(!root&&candidates.has(encoded)){let key=Object.keys(definitions).find(key=>JSON.stringify(definitions[key])===encoded);
    if(key===undefined){key='d'+Object.keys(definitions).length;definitions[key]=v;}
-   return {$ref:PREFIX+key};
+   return {$ref:prefix+key};
   }
   if(typeof v==='string')return v;
   return Array.isArray(v)?v.map(child=>visit(child)):Object.fromEntries(Object.entries(v).map(([key,child])=>[key,visit(child)]));
  }
  const result=visit(value,true);
- if(Object.keys(definitions).length)result[KEY]=definitions;
+ if(Object.keys(definitions).length)result[definitionsKey]=definitions;
  if(result.operations.length){
   const defaults={};
   for(const field of ['kind','required','authority','unavailable','fieldsBySignature','detailsByName']){
@@ -80,16 +83,17 @@ function compact(value){
  return Buffer.byteLength(JSON.stringify(result))<Buffer.byteLength(JSON.stringify(value))?result:value;
 }
 function expand(value){
- if(!value||![KEY,DEFAULTS,DATASETS,INDEX,SIGNATURES,ROWS].some(key=>Object.hasOwn(value,key)))return value;const definitions=value[KEY]||{};
+ if(!value||![KEY,INITIAL_DEFINITIONS,DEFAULTS,DATASETS,INDEX,SIGNATURES,ROWS].some(key=>Object.hasOwn(value,key)))return value;
  function visit(v){if(!v||typeof v!=='object')return v;
-  if(Object.keys(v).length===1&&typeof v.$ref==='string'&&v.$ref.startsWith(PREFIX)){
-   const key=v.$ref.slice(PREFIX.length);if(!Object.hasOwn(definitions,key))throw Error('INTERFACE_REFERENCE_UNAVAILABLE');
+  if(Object.keys(v).length===1&&typeof v.$ref==='string'&&(v.$ref.startsWith(PREFIX)||v.$ref.startsWith(INITIAL_PREFIX))){
+   const [definitions,prefix]=v.$ref.startsWith(INITIAL_PREFIX)?[value[INITIAL_DEFINITIONS]||{},INITIAL_PREFIX]:[value[KEY]||{},PREFIX];
+   const key=v.$ref.slice(prefix.length);if(!Object.hasOwn(definitions,key))throw Error('INTERFACE_REFERENCE_UNAVAILABLE');
    // Definitions are original subtrees, not rewritten references.
    return structuredClone(definitions[key]);
   }
   return Array.isArray(v)?v.map(visit):Object.fromEntries(Object.entries(v).map(([key,child])=>[key,visit(child)]));
  }
- const {[KEY]:ignored,[DEFAULTS]:defaults,[DATASETS]:datasetDefaults,[INDEX]:indexEncoding,[SIGNATURES]:signatureEncoding,[ROWS]:rowEncoding,...rest}=value;
+ const {[KEY]:ignored,[INITIAL_DEFINITIONS]:ignoredInitial,[DEFAULTS]:defaults,[DATASETS]:datasetDefaults,[INDEX]:indexEncoding,[SIGNATURES]:signatureEncoding,[ROWS]:rowEncoding,...rest}=value;
  if(rowEncoding){
   if(JSON.stringify(rowEncoding)!==JSON.stringify(['name','description','additionalFields']))throw Error('INVALID_INTERFACE_OPERATION_ROWS');
   rest.operations=rest.operations.map(row=>{

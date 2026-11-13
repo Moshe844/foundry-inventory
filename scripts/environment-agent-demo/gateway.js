@@ -8,14 +8,17 @@ const {FIELDS}=require('../../src/assistant/postgres-capability-registry');
 const {randomUUID}=require('node:crypto');
 const {nativeFieldName}=require('./contracts');
 
-function describe(c,{includeFieldChoices=false}={}){return {name:c.name,kind:c.kind,description:c.description,required:(c.required||[]).map(name=>nativeFieldName(c,name)),
+function describe(c,{deferReviewKeys=false}={}){return {name:c.name,kind:c.kind,description:c.description,required:(c.required||[]).map(name=>nativeFieldName(c,name)),
   ...(['mutation','policy'].includes(c.kind)&&c.authority?.mode==='explicit_approval'
     ?{invocation:{stage:'prepare_review',reviewRecord:'governed_proposal',
       execution:'separate_authenticated_approval',
       meaning:'Invoking this contract prepares or revisits a proposal for review. The described business effects require separate approval and canonical execution; the proposal is not a posted business record.'}}:{}),
   fields:Object.fromEntries(c.fields.map(name=>[nativeFieldName(c,name),{type:FIELDS[name]?.type||'string',...(FIELDS[name]?.type==='string'?{maxLength:FIELDS[name].maxLength||2000}:{}),description:c.agentHints?.[name]||FIELDS[nativeFieldName(c,name)]?.description||name,
    ...(c.argumentSchemas?.[name]?{jsonSchema:c.argumentSchemas[name]()}:
-     includeFieldChoices&&Array.isArray(FIELDS[name]?.enum)?{jsonSchema:{type:FIELDS[name].type,enum:FIELDS[name].enum}}:{})}])),
+     Array.isArray(FIELDS[name]?.enum)?{jsonSchema:deferReviewKeys&&name==='agentJob'
+       ?{type:FIELDS[name].type}
+       :{type:FIELDS[name].type,enum:FIELDS[name].enum},
+       ...(deferReviewKeys&&name==='agentJob'?{choicesByOperationName:true}:{})}:{})}])),
   authority:c.authority,unavailable:c.commercialUnavailable||[],
   ...(c.recordKind&&require('../../src/web/postgres-record-destinations').RECORDS[c.recordKind]?.collection
     ?{collection:require('../../src/web/postgres-record-destinations').RECORDS[c.recordKind].collection}:{})};}
@@ -49,7 +52,7 @@ function interfaceSnapshot(catalogue,actor,{search='',offset=0,names=[]}={}){
   required:(c.required||[]).map(name=>nativeFieldName(c,name)),detailsByName:true,unavailable:c.commercialUnavailable||[]}));
  const datasetDetails=d=>({...d,queryContract:require('../../src/reports/postgres-service').queryContract(d.name,actor)});
  const datasetPage=discoveryPage(matchedDatasets,offset,d=>({name:d.name,label:d.label,detailsByName:true}));
- const namedOperations=names.length?catalogue.list().filter(c=>names.includes(c.name)).map(c=>describe(c,{includeFieldChoices:true})):null;
+ const namedOperations=names.length?catalogue.list().filter(c=>names.includes(c.name)).map(c=>describe(c)):null;
  const namedDatasets=names.length?datasets.filter(d=>names.includes(d.name)).map(datasetDetails):null;
  return {operations:names.length?namedOperations:operationPage.page,
   total:names.length?namedOperations.length:all.length,nextOffset:names.length?null:operationPage.nextOffset,
@@ -73,7 +76,7 @@ function initialContractsSnapshot(catalogue,actor,{clock=null}={}){
       // from details merely omitted from the initial packet. This is generated
       // from fresh authorized contracts, never a page/route discovery boundary.
       const operationIndex=Object.fromEntries([...new Set(contracts.map(c=>c.kind))]
-        .map(kind=>[kind,contracts.filter(c=>c.kind===kind).map(c=>c.name)]));
+        .map(kind=>[kind,contracts.filter(c=>c.kind===kind).map(c=>c.name).sort()]));
       // Navigation contracts share a few argument/authority signatures. Keep
       // every signature available without repeating forty page descriptions
       // or making the agent buy a discovery round for an argument-free page.
@@ -85,7 +88,7 @@ function initialContractsSnapshot(catalogue,actor,{clock=null}={}){
       }
       const navigationSignatures=[...groupedNavigation.values()],recordCollections=collections(catalogue),groupedReads=new Map();
       for(const contract of contracts.filter(c=>c.kind==='read')){
-        const {required,fields,authority,unavailable}=describe(contract),signature={required,fields,authority,unavailable},key=JSON.stringify(signature);
+        const {required,fields,authority,unavailable}=describe(contract,{deferReviewKeys:true}),signature={required,fields,authority,unavailable},key=JSON.stringify(signature);
         if(!groupedReads.has(key))groupedReads.set(key,{names:[],...signature});groupedReads.get(key).names.push(contract.name);
       }
       const readSignatures=[...groupedReads.values()];
@@ -97,14 +100,10 @@ function initialContractsSnapshot(catalogue,actor,{clock=null}={}){
         datasetAccess:'Discover typed fields and filters by name. Extent includes full source totals.',
         coverage:'Discover missing details via environment_interfaces or browser.'});
       const size=()=>Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())));
-      const details=datasets.map((dataset,index)=>({index,fields:dataset.fields,bytes:Buffer.byteLength(JSON.stringify(dataset.fields))})).sort((a,b)=>a.bytes-b.bytes);
-      // Reserve a small part of the SAME packet budget for compact typed
-      // datasets, so long operation descriptions cannot starve every schema.
-      const indexBytes=size();
-      for(const detail of details){
-        datasetIndex[detail.index].fields=detail.fields;
-        if(size()-indexBytes>3000)delete datasetIndex[detail.index].fields;
-      }
+      const primaryDatasets=new Set(['suppliers','customers','payments']);
+      const details=datasets.map((dataset,index)=>({index,fields:dataset.fields,
+        primary:primaryDatasets.has(dataset.key),bytes:Buffer.byteLength(JSON.stringify(dataset.fields))}))
+        .sort((a,b)=>Number(b.primary)-Number(a.primary)||a.bytes-b.bytes);
       // All read inputs are already present in the seven or so shared
       // signatures. Include every authorized purpose before optional dataset details;
       // otherwise the longest, most complete readers disappear from the packet.
@@ -114,30 +113,11 @@ function initialContractsSnapshot(catalogue,actor,{clock=null}={}){
       for(const complete of readDetails)operations.push({name:complete.name,kind:complete.kind,
         description:complete.description,fieldsBySignature:true,detailsByName:true,
         ...(complete.collection?{collection:complete.collection}:{})});
-      // Include compact dataset schemas before oversized descriptions consume
-      // the entire packet. Selection depends on metadata size only, never the
-      // request, route or business domain. Every name remains discoverable.
-      for(const detail of details.filter(d=>!datasetIndex[d.index].fields)){
+      // Include ordinary directory and payment fields first, then the smallest
+      // schemas. The complete dataset name list supports exact-name discovery.
+      for(const detail of details){
         datasetIndex[detail.index].fields=detail.fields;
-        // Bound the actual lossless delivered initial packet.
-        if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>28000)delete datasetIndex[detail.index].fields;
-      }
-      // New operation names must not turn ordinary Ask requests into startup
-      // failures. Dataset details selected before the complete read surface
-      // are optional too: evict them if the final packet outgrows its budget.
-      // Keep every operation, read description/signature and dataset name.
-      // Full omitted dataset fields remain available through typed discovery.
-      for(const detail of [...details].sort((a,b)=>b.bytes-a.bytes)){
-        if(size()<=28000)break;
-        delete datasetIndex[detail.index].fields;
-      }
-      // Enumerated filter values are optional dataset detail as well. Their
-      // growth must not block startup after field schemas have been evicted.
-      // Keep every dataset name and every authorized read description/input;
-      // omitted filter values remain available through exact-name discovery.
-      for(const detail of datasets.map((d,index)=>({index,bytes:Buffer.byteLength(JSON.stringify(d.filterValues||{}))})).sort((a,b)=>b.bytes-a.bytes)){
-        if(size()<=28000)break;
-        delete datasetIndex[detail.index].filterValues;
+        if(size()>28000)delete datasetIndex[detail.index].fields;
       }
       // Typed field names let ordinary reads execute without another model
       // round. Enumerated value lists use only the remaining space; they are

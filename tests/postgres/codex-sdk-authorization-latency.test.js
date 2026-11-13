@@ -37,7 +37,14 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  assert.deepEqual(initial.readSignatures.flatMap(s=>s.names).sort(),readContracts.map(c=>c.name).sort(),'Every authorized read has upfront arguments, not only the descriptions that fit');
  for(const signature of initial.readSignatures)for(const name of signature.names){
   const complete=(await gateway.interfaces({names:[name]})).operations.find(c=>c.name===name);
-  for(const field of ['required','fields','authority','unavailable'])assert.deepEqual(signature[field],complete[field],name+' '+field);
+  for(const field of ['required','authority','unavailable'])assert.deepEqual(signature[field],complete[field],name+' '+field);
+  if(name==='read.agent_review'){
+   const {choicesByOperationName,...initialJob}=signature.fields.agentJob;
+   const {enum:keys,...jobSchema}=complete.fields.agentJob.jsonSchema;
+   assert.equal(choicesByOperationName,true);
+   assert.deepEqual(keys,require('../../src/autopilot/job-reviews').definitions.map(job=>job.key));
+   assert.deepEqual({...signature.fields,agentJob:initialJob},{...complete.fields,agentJob:{...complete.fields.agentJob,jsonSchema:jobSchema}});
+  }else assert.deepEqual(signature.fields,complete.fields,name+' fields');
  }
  assert(initial.readSignatures.some(s=>s.names.includes('read.payments')&&s.fields),'The recorded cash read retains its complete input contract');
  const navigation=full.catalogue.list().filter(c=>c.kind==='navigation');
