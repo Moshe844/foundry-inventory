@@ -110,6 +110,24 @@ test('only Custom can start an agent review by API and receive the signed comple
   assert.equal(scenarioJob.status,'COMPLETED');
   const scenarioResult=(await browser.get(base+'/'+scenario.jobId).set('Authorization',auth(other.token)).expect(200)).body;
   assert.match(scenarioResult.result.summary,/supplier lead time by 6 days/);
+
+  const reports=require('../../src/reports/postgres-service'),actor={role:'owner',email:'owner@example.test'};
+  const definition={dataset:'stock',title:'Inventory to reconcile',columns:['sku','on_hand'],sort:'sku'};
+  const report=await reports.save(db,ctx,actor,definition);
+  await submit(other.token,'missing-report-id','saved-report').expect(400);
+  await submit(other.token,'unknown-report','saved-report',{reportId:'report_unknown'}).expect(400);
+  await submit(other.token,'outside-page-range','saved-report',{reportId:report.id,page:10002}).expect(400);
+  const {body:savedJob}=await submit(other.token,'saved-current','saved-report',{reportId:report.id}).expect(202);
+  assert.equal((await submit(other.token,'saved-current','saved-report',{reportId:report.id}).expect(200)).body.jobId,savedJob.jobId);
+  assert.equal((await queue.processOne(db,handlers,{owner:'agent-review-test',kinds:['agent.api_review']})).status,'COMPLETED');
+  const reportOutput=(await browser.get(base+'/'+savedJob.jobId).set('Authorization',auth(other.token)).expect(200)).body.result;
+  assert.equal(reportOutput.summary,definition.title);
+  assert.ok(reportOutput.rows.length);
+  assert.ok(reportOutput.rows.every(r=>Object.hasOwn(r,'on_hand')));
+  const waiting=await submit(other.token,'report-before-edit','saved-report',{reportId:report.id}).expect(202);
+  await reports.save(db,ctx,actor,{...definition,title:'Updated stock'},{id:report.id,expectedRevision:Number(report.revision)});
+  assert.equal((await queue.processOne(db,handlers,{owner:'agent-review-test',kinds:['agent.api_review']})).status,'DEAD');
+  assert.equal((await browser.get(base+'/'+waiting.body.jobId).set('Authorization',auth(other.token)).expect(200)).body.status,'DEAD');
 });
 test('Custom managers keep their own report period, download format and decision order in each inventory',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,browser,subscribe}=f;
