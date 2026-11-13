@@ -39,3 +39,31 @@ test('migration 479 cancels identical waiting checks and keeps the oldest',{time
   await db.query(sql);
   assert.equal((await db.query(`SELECT count(*) FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND status='PENDING' AND payload->>'workId' IN ('wi_dupes','wi_other')`,[ctx.workspaceId])).rows[0].count,'2','running it again changes nothing');
 });
+
+test('supplier claim scheduling keeps one active scan and cleans up only unstarted duplicate roots',{timeout:240000},async t=>{
+  const {db,ctx}=await require('../helpers/agent-workflow-fixture').fixture(t);
+  const claims=require('../../src/purchasing/agent-supplier-claims');
+  const queue=require('../../src/operations/postgres-job-queue');
+  const kind='agent.supplier-claims';
+  const schedule=cycle=>db.transaction(c=>claims.schedule(c,ctx.workspaceId,cycle),{isolation:'SERIALIZABLE',retrySafe:true});
+  const [first,second]=await Promise.all([schedule('a'),schedule('b')]);
+  assert.equal(Number(first.created)+Number(second.created),1);
+  const root=(first.job||second.job).id;
+  const insert=async (cycle,extra={})=>(await queue.enqueue(db,{workspaceId:ctx.workspaceId,kind,
+    idempotencyKey:cycle,payload:{cycleId:cycle,...extra}})).job.id;
+  const duplicate=await insert('other-root');
+  const continuation=await insert('another-page',{afterId:'hold:example'});
+  const started=await insert('started');
+  await db.query("UPDATE stockchief_runtime.jobs SET status='RETRY',attempt_count=1 WHERE id=$1",[started]);
+  const sql=require('node:fs').readFileSync(require('node:path').join(__dirname,
+    '../../src/db/postgres-migrations/490-supplier-claim-scan-deduplication.sql'),'utf8');
+  await db.query(sql);
+  for(const id of [root,duplicate])assert.equal((await queue.get(db,id,ctx.workspaceId)).status,'CANCELLED');
+  assert.equal((await queue.get(db,continuation,ctx.workspaceId)).status,'PENDING');
+  assert.equal((await queue.get(db,started,ctx.workspaceId)).status,'RETRY');
+  assert.equal((await schedule('c')).created,false);
+  await db.query(sql);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM stockchief_runtime.job_events WHERE job_id=ANY($1::text[]) AND event_type='DUPLICATE_CANCELLED'",[[root,duplicate]])).rows[0].n,2);
+  await db.query("UPDATE stockchief_runtime.jobs SET status='COMPLETED' WHERE id=ANY($1::text[])",[[continuation,started]]);
+  assert.equal((await schedule('next-cycle')).created,true);
+});
