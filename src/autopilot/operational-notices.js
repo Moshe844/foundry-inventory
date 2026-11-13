@@ -91,6 +91,8 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   await require('../accounting/agent-cash-planning').preparePaymentChecks(db,workspaceId,account,today);
   // Job 166 needs migration 459 (its notice job number and alert levels).
   const stockAlerts=await require('../db/schema-installed').has(db,'stockchief_runtime.agent_alert_channels');
+  // Job 180 needs migration 485 (its summaries and notice job number).
+  const teamSummary=require('./team-summary'),teamSummaries=policy.permits(account.plan,180,'automatic')&&await require('../db/schema-installed').has(db,teamSummary.table);
   const watchRules=await require('./watch-rules').candidates(db);
   const watched=require('./activity-watches').spec;
   const watchQueries=Object.entries(watched).filter(([job])=>policy.permits(account.plan,Number(job),'automatic'))
@@ -117,6 +119,8 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
           AND r.action_type=p.action_type AND r.scope_key=p.payload#>>'{training,key}'))`+
     watchRules+
     (stockAlerts?' UNION ALL SELECT 166,kind,ref,link,$3::date FROM ('+require('./stock-alerts').sql+') low':'')+
+    (teamSummaries?` UNION ALL SELECT 180,'Team summary',s.report_date::text,'${teamSummary.path}?filter='||s.report_date::text,s.report_date FROM ${teamSummary.table} s
+      WHERE s.workspace_id=$1 AND s.report_date=(SELECT max(report_date) FROM ${teamSummary.table} WHERE workspace_id=$1)`:'')+
     (includeTransfers?' UNION ALL '+transferArrivals.candidates('$4'):'')+
     (monitors.has(110)?' UNION ALL '+purchaseBudgets.overBudgetNotices:'')+
     (monitors.has(80)?' UNION ALL '+orderCredit.notices:'')+
@@ -249,6 +253,9 @@ async function inbox(db,workspaceId,actorId=null){
     if(Number(r.job_id)===209)return {kind:'inventory',grouped:true,importance:'Important',priority:65,title:'Repeated corrections suggest a count rule',
       happened:r.n+' product and warehouse combination'+(r.n===1?' has':'s have')+' repeated corrections.',why:'At least three non-opening stock corrections were recorded in the last 30 days.',
       recommendation:'Review a recurring blind count before teaching a new rule.',href:'/autopilot/reviews/repeated-corrections',actionLabel:'Review suggested rule',sourceId:'agent-notice-209'};
+    if(Number(r.job_id)===180)return {kind:'inventory',grouped:true,importance:'Information',priority:45,title:'Your daily team summary',
+      happened:'The summary for '+r.due+' is ready.',why:'Who did what that day, and what is late now, from the recorded work.',
+      recommendation:'Read it and follow up on anything late.',href:require('./team-summary').path+'?filter='+encodeURIComponent(r.due),actionLabel:'Read team summary',sourceId:'agent-notice-180'};
     if(Number(r.job_id)===204)return {kind:'inventory',grouped:true,importance:'Information',priority:35,title:'Your daily record of StockChief work',
       happened:'Completed agent work is ready to review.',why:'The daily briefing recorded completed actions for '+r.due+'.',
       recommendation:'Review completed work and available undo actions.',href:'/autopilot/reviews/daily-work?filter='+encodeURIComponent(r.due),actionLabel:'View completed work',sourceId:'agent-notice-204'};

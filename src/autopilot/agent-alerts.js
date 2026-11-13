@@ -36,7 +36,10 @@ const JOBS={
   167:{action:'alert.watch_rule',name:'Watch rules',module:'./watch-rules',
     subject:(n,first)=>n===1?'Watch rule: '+first.split(' (')[0]:n+' watch rule alerts',intro:'Your watch rules found something.'},
   168:{action:'alert.overdue',name:'Late orders, shipments and invoices',module:'./overdue-alerts',
-    subject:(n,first)=>n===1?'Overdue: '+first.split(' (')[0]:n+' overdue orders, shipments or invoices',intro:'StockChief found work that is past its date.'}
+    subject:(n,first)=>n===1?'Overdue: '+first.split(' (')[0]:n+' overdue orders, shipments or invoices',intro:'StockChief found work that is past its date.'},
+  // Job 180: the daily team summary is one alert per business day.
+  180:{action:'report.team_summary',name:'Daily team summary',module:'./team-summary',
+    subject:(n,first)=>first.replace(/\.$/,''),intro:'What your team did, and what is late.'}
 };
 const plural=(n,one,many)=>n+' '+(Number(n)===1?one:many);
 const expected=error=>error instanceof DomainError&&[400,402,403,404,409,422].includes(error.status);
@@ -77,11 +80,13 @@ async function track(db,workspaceId,account){
         AND n.kind=d.kind AND n.reference=d.reference AND n.link=d.link AND NOT n.resolved) RETURNING job_id`,[workspaceId])).rows;
     const raised=(await c.query(`INSERT INTO ${deliveries}(workspace_id,job_id,kind,reference,link)
       SELECT n.workspace_id,n.job_id,n.kind,n.reference,n.link FROM stockchief_runtime.agent_operational_notices n
-      WHERE n.workspace_id=$1 AND n.job_id IN (166,167,168) AND NOT n.resolved AND NOT EXISTS(SELECT 1 FROM ${deliveries} d
+      WHERE n.workspace_id=$1 AND n.job_id IN (166,167,168,180) AND NOT n.resolved AND NOT EXISTS(SELECT 1 FROM ${deliveries} d
         WHERE d.workspace_id=n.workspace_id AND d.job_id=n.job_id AND d.kind=n.kind AND d.reference=n.reference AND d.link=n.link)
       ON CONFLICT DO NOTHING RETURNING job_id`,[workspaceId])).rows;
-    if(raised.length||cleared.length){
-      const count=rows=>{const out={};for(const r of rows)out[r.job_id]=(out[r.job_id]||0)+1;return out;};
+    // The daily team summary (job 180) is audited when it is written, so a new
+    // day's summary does not count as an alert change here.
+    if([...raised,...cleared].some(r=>Number(r.job_id)!==180)){
+      const count=rows=>{const out={};for(const r of rows)if(Number(r.job_id)!==180)out[r.job_id]=(out[r.job_id]||0)+1;return out;};
       const person=await currentOwner(c,workspaceId);
       await audit.record(c,{workspaceId,actorId:person?.id||null},{action:'Alerts updated',after:{opened:count(raised),cleared:count(cleared)}});
     }

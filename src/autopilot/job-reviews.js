@@ -100,6 +100,7 @@ const definitions=[
   ...require('../accounting/agent-report-packs').definitions,
   ...require('./activity-watches').definitions,
   ...require('./daily-briefs').definitions,
+  require('./team-summary').definition,
   require('./stock-alerts').definition,
   ...require('../forecasting/agent-service-levels').definitions,
   require('./watch-rules').definition,

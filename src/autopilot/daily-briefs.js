@@ -66,7 +66,6 @@ async function report(db,ctx,{filter,team,page}){
   return {rows,more:false,summary};
 }
 const definitions=[
-  {id:156,key:'daily-briefing',label:'Daily briefing',filterLabel:'Business date (YYYY-MM-DD)',readPage:(db,ctx,o)=>report(db,ctx,{...o,team:false})},
-  {id:180,key:'daily-team-summary',label:'Daily team activity and overdue work',filterLabel:'Business date (YYYY-MM-DD)',readPage:(db,ctx,o)=>report(db,ctx,{...o,team:true})}
+  {id:156,key:'daily-briefing',label:'Daily briefing',filterLabel:'Business date (YYYY-MM-DD)',readPage:(db,ctx,o)=>report(db,ctx,{...o,team:false})}
 ];
 module.exports={deliver,latest,definitions};
