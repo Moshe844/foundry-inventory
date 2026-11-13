@@ -130,3 +130,44 @@ test('job 208: trained jobs learn from a run of approvals through their own teac
   }
  }
 });
+
+// A job taught by a completed manual example: balancing transfers (job 118,
+// trained on Growth). The newest approved request is the example the job's own
+// rule page requires, and the rule never goes past it.
+test('job 208: balancing transfers learn from approved requests through the job’s own example rule',{timeout:300000},async t=>{
+ const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:20}),{db,ctx,subscribe}=f;
+ const learning=require('../../src/autopilot/approval-learning'),balancing=require('../../src/transfers/agent-transfer-balancing');
+ const assistant=require('../../src/assistant/postgres-service'),autonomy=require('../../src/autopilot/postgres-service');
+ await subscribe('growth');await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
+ const ws=ctx.workspaceId,sku=f.item.skuIds[0],code=(await db.query('SELECT code FROM skus WHERE id=$1',[sku])).rows[0].code;
+ const destination=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Balancing destination',kind:'warehouse'});
+ for(const [place,target] of [[f.location.id,7],[destination.id,8]])await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,safety_stock,source,created_at,updated_at)
+   VALUES($1,$2,$3,$4,$5,$5,0,'manual',now()::text,now()::text) ON CONFLICT DO NOTHING`,[randomUUID(),ws,sku,place,target]);
+ const p=await assistant.prepareAction(db,ctx,'Prepare this exact balance request',{action:balancing.action,sku:code,fromLocation:f.location.name,toLocation:destination.name});
+ const done=await assistant.executeProposal(db,ctx,p.proposal.id);
+ const real=(await db.query('SELECT * FROM stockchief_runtime.assistant_action_proposals WHERE id=$1',[p.proposal.id])).rows[0];
+ // Earlier approvals of the same request on the same route, then a "no" before them.
+ const copy=(minutes,status='EXECUTED')=>db.query(`INSERT INTO stockchief_runtime.assistant_action_proposals(id,workspace_id,actor_user_id,action_type,payload,summary,source_message,status,idempotency_key,result,created_at,executed_at)
+   VALUES($1,$2,$3,$4,$5,'Balance','Balance',$6,$1,$7,now()-make_interval(mins=>$8),now()-make_interval(mins=>$8))`,
+  [randomUUID(),ws,ctx.actorId,balancing.action,JSON.stringify(real.payload),status,JSON.stringify(status==='EXECUTED'?real.result:{}),minutes]);
+ await copy(100,'CANCELLED');for(const m of [90,80,70])await copy(m);
+ const ours=async()=>(await learning.offers(db,ctx)).filter(o=>o.source==='job:118');
+ assert.equal((await ours()).length,0,'Four approvals after a no are not a run');
+ await copy(60);
+ const [offer]=await ours();assert(offer,'Five approvals in a row make an offer');
+ assert.equal(offer.latestId,p.proposal.id);assert.equal(offer.limit,'up to '+real.payload.quantity+' stocking units a request');
+ assert.match(offer.test.sections[0].summary,/You approved this 5 times in a row/);
+ // Pro balances alone without training; Starter only suggests.
+ await subscribe('pro');assert.equal((await ours()).length,0);await subscribe('growth');
+ assert.equal(await balancing.trained(db,ws,real.payload),false,'Before the rule, Growth asks');
+ await learning.confirm(db,ctx,{latestId:offer.latestId,source:offer.source,maximum:offer.token});
+ const rule=(await db.query('SELECT maximum_quantity::text,taught_proposal_id,authorized_by FROM stockchief_runtime.agent_transfer_balance_rules WHERE workspace_id=$1',[ws])).rows;
+ assert.deepEqual(rule,[{maximum_quantity:String(Number(real.payload.quantity)),taught_proposal_id:p.proposal.id,authorized_by:ctx.actorId}]);
+ assert.equal((await db.query("SELECT count(*)::int n FROM security_event_history WHERE workspace_id=$1 AND action='Authorized a bounded stock balancing rule'",[ws])).rows[0].n,1,'The job’s own audit');
+ assert.equal(await balancing.trained(db,ws,real.payload),false,'Routine work off still asks');
+ await autonomy.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+ assert.equal(await balancing.trained(db,ws,real.payload),true,'Growth now balances this route alone');
+ assert.equal(await balancing.trained(db,ws,{...real.payload,quantity:String(Number(real.payload.quantity)+1)}),false,'Above the learned quantity it still asks');
+ assert.equal((await learning.confirm(db,ctx,{latestId:offer.latestId,source:offer.source,maximum:offer.token})).replayed,true);
+ assert.equal(done.status||'EXECUTED','EXECUTED');
+});
