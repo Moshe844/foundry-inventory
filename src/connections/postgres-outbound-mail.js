@@ -262,7 +262,13 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
           // Job 155: the report file is made fresh after its authority passes again.
           :input.standingAuthority?.kind==='scheduled_report'?await require('../reports/agent-report-email').attachments(database,workspaceId,input.standingAuthority):undefined;
         if(input.standingAuthority?.kind==='customer_statement')await require('../accounting/agent-customer-statements').authority(database,workspaceId,input.standingAuthority);
-        if(input.standingAuthority?.kind==='customer_answer')await require('../sales/agent-customer-questions').authority(database,workspaceId,input.standingAuthority);
+        let reply=null;
+        if(input.standingAuthority?.kind==='customer_answer'){
+          await require('../sales/agent-customer-questions').authority(database,workspaceId,input.standingAuthority);
+          reply=(await database.query(`SELECT external_message_id,external_thread_id,internet_message_id FROM connection_email_messages
+            WHERE workspace_id=$1 AND id=$2 AND connector_id=$3`,
+          [workspaceId,input.standingAuthority.messageId,input.connectorId])).rows[0];
+        }
         if(input.standingAuthority?.kind==='invoice_reminder')await require('../accounting/agent-invoice-reminders').sendAuthority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='stock_ready_notice')await require('../sales/agent-stock-ready').authority(database,workspaceId,input.standingAuthority);
         if(input.standingAuthority?.kind==='order_split_notice')await require('../sales/agent-order-splits').noticeAuthority(database,workspaceId,input.standingAuthority);
@@ -280,7 +286,8 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
           recipient:loaded.message.recipient,subject:loaded.message.subject,body:loaded.message.body,
           ...(verifySentFrom?{verifySentFrom}:{}),...(attachments?.length?{attachments}:{}),
           // Job 72: an answer from the mailbox that received the question stays in its thread.
-          ...(input.standingAuthority?.kind==='customer_answer'&&input.standingAuthority.threadId&&input.standingAuthority.connectorId===input.connectorId?{externalThreadId:input.standingAuthority.threadId}:{})},idempotencyKey:effect.idempotencyKey});};
+          ...(reply?{externalThreadId:reply.external_thread_id,inReplyTo:reply.internet_message_id,
+            externalReplyToMessageId:reply.external_message_id}:{})},idempotencyKey:effect.idempotencyKey});};
         const accepted=input.standingAuthority?.kind==='supplier_direct_purchase'?await database.transaction(async c=>{
           await require('../purchasing/direct-shipment-mail').authority(c,workspaceId,input.standingAuthority,{lock:true});
           return send();

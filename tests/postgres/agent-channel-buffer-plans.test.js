@@ -33,7 +33,7 @@ test('channel buffers are drafted on Growth and set alone on Pro and Custom from
   await sell(4);await sell(1,true);
 
   // StockChief works the buffer out from sales elsewhere on the busiest day and the channel's lag.
-  const [rec]=await plans.recommend(db,ws,{connector_id:f.connectorId,authorized_by:ctx.actorId});
+  const {recommendations:[rec]}=await plans.recommend(db,ws,{connector_id:f.connectorId,authorized_by:ctx.actorId});
   assert.equal(rec.units,2);
   assert.deepEqual({...rec.basis},{checkMinutes:720,deliveryMinutes:0,lagMinutes:720,busiestDay:4,soldElsewhere:4,days:28},'The channel’s own order is not counted.');
 
@@ -135,4 +135,47 @@ test('channel buffers are drafted on Growth and set alone on Pro and Custom from
     await tab.screenshot({path:require('node:path').join(folder,'channel-buffer-plans-'+name+'.png'),fullPage:true});
     await tab.close();
   }
+});
+
+test('a channel scan reaches all 800 product mappings and rechecks changed rules before the next page',{timeout:300000},async t=>{
+  const f=await require('../helpers/agent-buffer-fixture').fixture(t,'growth'),{db,ctx}=f,ws=ctx.workspaceId;
+  const plans=require('../../src/connections/agent-channel-buffer-plans');
+  const jobs=require('../../src/operations/postgres-job-queue');
+  const handlers=require('../../src/operations/postgres-runtime-handlers').create(f.providers);
+  const processPage=()=>jobs.processOne(db,{[plans.KIND]:handlers[plans.KIND]},{owner:'channel-buffer-volume'});
+  await db.query(`INSERT INTO items(id,workspace_id,name,tracking_mode,created_at,updated_at)
+    SELECT 'volume-item-'||n,$1,'Volume product '||n,'quantity',now()::text,now()::text FROM generate_series(1,799)n`,[ws]);
+  await db.query(`INSERT INTO skus(id,workspace_id,item_id,code,created_at)
+    SELECT 'volume-sku-'||n,$1,'volume-item-'||n,'VOLUME-'||n,now()::text FROM generate_series(1,799)n`,[ws]);
+  await db.query(`INSERT INTO connection_commerce_positions(id,workspace_id,connector_id,provider_account_id,provider_type,sku_id,location_id,
+    external_id,external_location_id,field,mode,authorized_by_user_id)
+    SELECT 'z-volume-position-'||lpad(n::text,3,'0'),$1,$2,'synthetic-buffer-merchant','shopify','volume-sku-'||n,$3,
+      'volume-variant-'||n,'buffer-room','quantity','outbound',$4 FROM generate_series(1,799)n`,
+    [ws,f.connectorId,f.location.id,ctx.actorId]);
+  await db.query(`INSERT INTO connection_mappings(id,workspace_id,connector_id,entity_type,external_id,foundry_record_id,confidence,created_at,updated_at)
+    SELECT 'volume-map-'||n,$1,$2,'sku','volume-variant-'||n,'volume-sku-'||n,'exact',now()::text,now()::text FROM generate_series(1,799)n`,
+    [ws,f.connectorId]);
+  await db.query("UPDATE workspace_connectors SET expected_interval_minutes=720 WHERE id=$1",[f.connectorId]);
+  const order=await f.workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'PICKUP',
+    fulfillmentLocationId:f.location.id,idempotencyKey:randomUUID(),lines:[{skuId:'volume-sku-799',quantity:4,unitPriceMinor:1000}]});
+  await f.workflows.confirmSalesOrder(db,ctx,order.salesOrderId,{idempotencyKey:randomUUID()});
+  const input={connectorId:f.connectorId,maxUnits:'5'};
+  const pending=async()=>Number((await db.query(`SELECT count(*) FROM stockchief_runtime.agent_channel_buffer_plans
+    WHERE workspace_id=$1 AND position_id='z-volume-position-799' AND status='DRAFT'`,[ws])).rows[0].count);
+  const lastChecked=async()=>(await db.query(`SELECT last_checked_at FROM stockchief_runtime.agent_channel_buffer_rules
+    WHERE workspace_id=$1 AND connector_id=$2`,[ws,f.connectorId])).rows[0].last_checked_at;
+  await plans.saveRule(db,ctx,input);
+  assert.equal((await processPage()).result.skipped,500);
+  assert.equal(await lastChecked(),null);
+  assert.equal(await pending(),0);
+  await plans.saveRule(db,ctx,{...input,revision:'1',maxUnits:'6'});
+  assert.equal((await processPage()).result.drafted,0,'The first continuation belongs to the old rule.');
+  assert.equal((await processPage()).result.skipped,500);
+  assert.equal(await pending(),0);
+  const final=await processPage();
+  assert.equal(final.result.skipped,299);
+  assert.equal(final.result.drafted,1);
+  assert.equal(await pending(),1);
+  assert.ok(await lastChecked());
+  assert.equal(await processPage(),null);
 });

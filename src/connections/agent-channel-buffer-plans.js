@@ -1,6 +1,6 @@
 'use strict';
 
-// Job 183: sets stock buffers per channel so you never oversell. Growth drafts
+// Job 183: sets stock buffers per channel to reduce overselling. Growth drafts
 // the buffers; Pro and Custom set them on their own within the owner's rules.
 //
 // A buffer keeps whole units, or a share of the stock, back from what one
@@ -62,14 +62,17 @@ async function lag(db,workspaceId,connectorId){
 }
 
 // The buffer StockChief would keep for each product on one channel.
-async function recommend(db,workspaceId,rule){
+async function recommend(db,workspaceId,rule,{after=null}={}){
   const positions=(await db.query(`SELECT p.*,s.code,l.name AS location,to_jsonb(b) AS buffer
     FROM connection_commerce_positions p JOIN skus s ON s.workspace_id=p.workspace_id AND s.id=p.sku_id
     JOIN locations l ON l.workspace_id=p.workspace_id AND l.id=p.location_id
     LEFT JOIN stockchief_runtime.agent_channel_buffers b ON b.workspace_id=p.workspace_id AND b.position_id=p.id
     WHERE p.workspace_id=$1 AND p.connector_id=$2 AND p.field='quantity' AND p.mode IN ('outbound','two_way')
-    ORDER BY s.code,l.name,p.id LIMIT ${PER_RULE}`,[workspaceId,rule.connector_id])).rows;
-  if(!positions.length)return [];
+      AND ($3::text IS NULL OR p.id COLLATE "C">$3 COLLATE "C")
+    ORDER BY p.id COLLATE "C" LIMIT ${PER_RULE+1}`,[workspaceId,rule.connector_id,after])).rows;
+  if(!positions.length)return {recommendations:[],next:null};
+  const hasNext=positions.length>PER_RULE;
+  if(hasNext)positions.pop();
   const timing=await lag(db,workspaceId,rule.connector_id),today=await require('../lib/business-time').today(db,workspaceId);
   // Customer orders from each warehouse, by day, that did not come from this channel.
   const sold=(await db.query(`WITH daily AS (
@@ -92,7 +95,7 @@ async function recommend(db,workspaceId,rule){
     const units=Math.max(1,Math.ceil(busiest*timing.lagMinutes/1440));
     out.push({...base,units,basis:{...timing,busiestDay:busiest,soldElsewhere:Number(s.total),days:WINDOW}});
   }
-  return out;
+  return {recommendations:out,next:hasNext?positions.at(-1).id:null};
 }
 const explain=b=>'Sold up to '+b.busiestDay+' a day elsewhere in the last '+b.days+' days; the channel can be '+b.lagMinutes+' minutes behind (checks every '+
   b.checkMinutes+' minutes'+(b.deliveryMinutes?', updates take about '+b.deliveryMinutes:'')+').';
@@ -140,21 +143,28 @@ async function decide(c,ctx,rule,rec,{automatic,stop}){
 }
 
 // Worker: work out buffers for every channel with an enabled rule.
-async function run(database,workspaceId,{connectorId=null}={}){
+async function run(database,workspaceId,{connectorId=null,after=null,revision=null,scanId=null}={}){
   if(!await ready(database))return {skipped:'not_installed'};
   const state=await policy.accountState(database,workspaceId);
   if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,JOB,'draft'))return {skipped:'plan'};
   const automatic=policy.permits(state.plan,JOB,'automatic'),out={applied:0,drafted:0,held:0,unchanged:0,skipped:0};
   for(const rule of (await database.query(`SELECT * FROM ${RULES} WHERE workspace_id=$1 AND enabled AND ($2::text IS NULL OR connector_id=$2) ORDER BY connector_id`,[workspaceId,connectorId])).rows){
+    if(revision!==null&&rule.revision!==revision)continue;
     const ctx={workspaceId,actorId:rule.authorized_by};
     try{await buffers.owner(database,ctx,{lock:false});}catch(error){if(!expected(error))throw error;out.skipped++;continue;}
-    const recs=await recommend(database,workspaceId,rule);
+    const {recommendations,next}=await recommend(database,workspaceId,rule,{after});
     await tx(database,async c=>{
       // A rule changed or stopped meanwhile is worked out again on its next run.
       if(!(await c.query(`SELECT 1 FROM ${RULES} WHERE workspace_id=$1 AND connector_id=$2 AND revision=$3 AND enabled FOR UPDATE`,[workspaceId,rule.connector_id,rule.revision])).rowCount)return;
       const stop=automatic&&rule.automatic?await automaticStop(c,workspaceId,await policy.accountState(c,workspaceId)):null;
-      for(const rec of recs){if(rec.skip){out.skipped++;continue;}out[await decide(c,ctx,rule,rec,{automatic,stop})]++;}
-      await c.query(`UPDATE ${RULES} SET last_checked_at=clock_timestamp() WHERE workspace_id=$1 AND connector_id=$2`,[workspaceId,rule.connector_id]);
+      for(const rec of recommendations){if(rec.skip){out.skipped++;continue;}out[await decide(c,ctx,rule,rec,{automatic,stop})]++;}
+      if(next){
+        const scan=scanId||'daily:'+await require('../lib/business-time').today(c,workspaceId);
+        await jobs.enqueue(scoped(c),{workspaceId,kind:KIND,idempotencyKey:'channel-buffer-page:'+scan+':'+rule.connector_id+':'+rule.revision+':'+next,
+          payload:{connectorId:rule.connector_id,after:next,revision:rule.revision,scanId:scan},priority:50,maxAttempts:3});
+      }else{
+        await c.query(`UPDATE ${RULES} SET last_checked_at=clock_timestamp() WHERE workspace_id=$1 AND connector_id=$2`,[workspaceId,rule.connector_id]);
+      }
     });
   }
   return out;
@@ -195,7 +205,8 @@ async function saveRule(database,ctx,input={}){
         revision=r.revision+1,updated_at=clock_timestamp()`,[ctx.workspaceId,connector.id,Number(text),automatic,ctx.actorId]);
     await audit.record(c,ctx,{action:'Channel buffer rule saved',reference:connector.id,before:prior?{maxUnits:prior.max_units,automatic:prior.automatic,enabled:prior.enabled}:{},
       after:{maxUnits:Number(text),automatic}});
-    await jobs.enqueue(scoped(c),{workspaceId:ctx.workspaceId,kind:KIND,idempotencyKey:'channel-buffer-plans:rule:'+newId('rule'),payload:{connectorId:connector.id},priority:55,maxAttempts:3});
+    await jobs.enqueue(scoped(c),{workspaceId:ctx.workspaceId,kind:KIND,idempotencyKey:'channel-buffer-plans:rule:'+newId('rule'),
+      payload:{connectorId:connector.id,revision:prior?prior.revision+1:1},priority:55,maxAttempts:3});
     return {saved:true};
   });
 }
@@ -278,7 +289,7 @@ async function inbox(db,workspaceId){
   if(!r.n)return [];
   return [{kind:'sales',grouped:true,importance:'Needs You',priority:74,title:r.n+' channel stock '+(r.n===1?'buffer waits':'buffers wait')+' for your approval',
     happened:r.held?r.held+' '+(r.held===1?'is':'are')+' over your limit or could not be set on its own.':'StockChief worked them out from sales elsewhere and how far behind each channel can be.',
-    why:'A buffer keeps a few units back from a channel so it cannot sell stock that is already gone.',recommendation:'Approve the buffers, or dismiss them.',
+    why:'A buffer holds units back from a channel to reduce overselling while stock updates catch up.',recommendation:'Approve the buffers, or dismiss them.',
     href:href+'#buffer-plans',actionLabel:'Review buffers',sourceId:'channel-buffer-plans',createdAt:r.at,at:r.at}];
 }
 

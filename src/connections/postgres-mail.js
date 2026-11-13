@@ -511,7 +511,8 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){const
     const providerCredentials=await providerService.loadProviderCredentials(database,connection,provider);
     providerCalled=true;const result=await require('../commercial/operations').run(database,workspaceId,{capability:'communications.send_approved',
       key:effect.idempotencyKey,provider:effect.provider,operation:'reply_email',unit:'message'},async()=>{const accepted=await provider.send({credentials:providerCredentials,message:{id:outbox.id,recipient:outbox.recipient,
-      subject:outbox.subject,body:outbox.body,externalThreadId:message.external_thread_id},idempotencyKey:effect.idempotencyKey});if(!accepted||typeof accepted.externalMessageId!=='string'||!accepted.externalMessageId.trim())throw Object.assign(new Error('The mailbox provider did not confirm an acceptance identity.'),{code:'email_provider_acceptance_unverified'});return accepted;});
+      subject:outbox.subject,body:outbox.body,externalThreadId:message.external_thread_id,
+      inReplyTo:message.internet_message_id,externalReplyToMessageId:message.external_message_id},idempotencyKey:effect.idempotencyKey});if(!accepted||typeof accepted.externalMessageId!=='string'||!accepted.externalMessageId.trim())throw Object.assign(new Error('The mailbox provider did not confirm an acceptance identity.'),{code:'email_provider_acceptance_unverified'});return accepted;});
     await providerEffects.succeed(database,workspaceId,effectId,effect.claimToken,{providerReference:{messageId:result.externalMessageId||null},
       result:{externalMessageId:result.externalMessageId||null,externalThreadId:result.externalThreadId||null},apply:async(client)=>{const at=nowIso();
       await client.query(`UPDATE stockchief_runtime.email_reply_outbox SET status='SENT',provider_message_id=$2,

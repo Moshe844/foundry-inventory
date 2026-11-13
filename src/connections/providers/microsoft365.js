@@ -236,6 +236,21 @@ async function findSent({credentials,id,recipient,since}) {
 
 async function send({ credentials, message }) {
   const attachments=require('./photo-attachments').graph(message.attachments);
+  if(message.externalReplyToMessageId&&!attachments.length){
+    const path='/me/messages/'+encodeURIComponent(message.externalReplyToMessageId);
+    const original=(await graph(credentials,path+'?$select=id,conversationId,from,replyTo')).body;
+    const recipient=String(message.recipient).toLowerCase();
+    const from=original.from?.emailAddress?.address?.toLowerCase();
+    const replyTo=(original.replyTo||[]).map(row=>row.emailAddress?.address?.toLowerCase());
+    if(!original.id||!original.conversationId||from!==recipient||replyTo.some(address=>address!==recipient)||
+      message.externalThreadId&&original.conversationId!==message.externalThreadId)
+      throw new ValidationError('Review the original Outlook email and its reply address before sending.');
+    await graph(credentials,path+'/reply',{method:'POST',body:JSON.stringify({message:{
+      subject:message.subject,body:{contentType:'Text',content:message.body},
+      toRecipients:[{emailAddress:{address:message.recipient}}]
+    }})});
+    return {externalMessageId:`m365:${message.id}`,externalThreadId:original.conversationId};
+  }
   await graph(credentials, '/me/sendMail', { method: 'POST', body: JSON.stringify({ message: {
     subject: message.subject, body: { contentType: 'Text', content: message.body },
     ...(attachments.length?{attachments}:{}),

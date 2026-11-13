@@ -898,7 +898,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   }),
   'agent.channel-buffer.publish.v1':external(async(job,database)=>{const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);require('./agent-commerce-protocol').assertJob(effect,job.kind);if(effect.status==='CANCELLED')return {cancelledBeforeDelivery:true};return providerEffect(job,database,options,providers);}),
   'provider.commerce-recovery.v1':external((job,database)=>require('../connections/agent-channel-recovery').run(database,job,{providers})),
-  'channel.buffer-plans.v1':external((job,database)=>require('../connections/agent-channel-buffer-plans').run(database,job.workspaceId,{connectorId:job.payload?.connectorId||null}),'maintenance'),
+  'channel.buffer-plans.v1':external((job,database)=>require('../connections/agent-channel-buffer-plans').run(database,job.workspaceId,{
+    connectorId:job.payload?.connectorId||null,after:job.payload?.after??null,revision:job.payload?.revision??null,scanId:job.payload?.scanId||job.id}),'maintenance'),
   'channel.sync-fixes.v1':external((job,database)=>require('../connections/agent-channel-sync-fixes').run(database,job.workspaceId,{providers,...(options.publicOrigin?{publicOrigin:options.publicOrigin}:{})})),
   'agent.shipping.carrier-claim.v1':external((job,database)=>require('../shipping/agent-carrier-claims').submit(database,job,options.carrierClaimProvider)),
   'agent.shipping.freight-pickup.v1':external((job,database)=>require('../shipping/agent-freight-pickups').dispatch(database,job)),
