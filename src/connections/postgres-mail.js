@@ -145,7 +145,9 @@ async function capture(database,connection,message,{metadataOnlyReason=message.s
       WHERE workspace_id=$1 AND id=$2`,[connection.workspace_id,previousAside.id,id,at]);
     await saveAttachments(client,connection.workspace_id,id,attachments,at);
     if(match.kind==='supplier'&&!attachments.length)await require('../purchasing/agent-supplier-invoice-intake').queueEmailBody(client,connection.workspace_id,id,message.bodyText||message.body);
-    if(category==='order'&&match.kind==='customer'&&!attachments.length){
+    // Job 73: a customer asking for a quote is read as a quote request, not an order.
+    const quoteRequest=match.kind==='customer'&&require('../sales/quote-request').isRequest(message.subject,message.bodyText||message.body);
+    if(category==='order'&&match.kind==='customer'&&!attachments.length&&!quoteRequest){
       const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)};
       await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:'mail.customer-order',idempotencyKey:'customer-order:'+id,payload:{messageId:id},priority:55,maxAttempts:3});
     }
@@ -167,6 +169,16 @@ async function capture(database,connection,message,{metadataOnlyReason=message.s
         const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)};
         await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:require('../accounting/agent-statement-requests').kind,idempotencyKey:'customer-statement-email:'+id,payload:{messageId:id},priority:55,maxAttempts:3});
       }
+    }
+    if(quoteRequest)await require('../sales/agent-quote-requests').queue(client,connection.workspace_id,{id});
+    // Job 72: a customer asking about stock, a delivery date or their order.
+    // Mail another job reads is left to that job.
+    if(match.kind==='customer'){
+      const text=message.bodyText||message.body;
+      await require('../sales/agent-customer-questions').queue(client,connection.workspace_id,{id,subject:message.subject,body:text,
+        skip:quoteRequest||category==='order'||require('../sales/postgres-email-order').isOrderEnvelope(message.subject,text,attachments.length>0)||
+          require('../sales/agent-repeat-orders').isEmailRequest(message.subject,text)||Boolean(require('../accounting/statement-request').read(message.subject,text))||
+          require('../sales/customer-return-email-source').isReturnSubject(message.subject)});
     }
     if(match.kind==='customer'&&!attachments.length&&require('../sales/customer-return-email-source').isReturnSubject(message.subject)){
       const policy=require('../commercial/agent-plan'),state=await policy.accountState(client,connection.workspace_id);

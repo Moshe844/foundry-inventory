@@ -475,7 +475,7 @@ async function checkRuleLimit(client,ctx,changes,additional=0) {
   const before=keys.size;
   for(const change of changes) apply(ctx.workspaceId,change);
   const extraRules=(await require('../commercial/agent-rule-quota').configuredSources(client))
-    .filter(([table])=>table==='agent_approval_routes'||table==='agent_staff_task_rules')
+    .filter(([table])=>['agent_approval_routes','agent_staff_task_rules','agent_customer_answer_rules','agent_quote_settings'].includes(table))
     .map(([table,predicate])=>`+(SELECT count(*) FROM stockchief_runtime.${table} WHERE workspace_id IN(SELECT id FROM owned) AND ${predicate})`).join('');
   const configured=await client.query(`WITH owned AS MATERIALIZED (SELECT id FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL)
     SELECT (SELECT count(*) FROM stockchief_runtime.agent_draft_rules WHERE workspace_id IN(SELECT id FROM owned))

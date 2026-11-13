@@ -1,0 +1,13 @@
+<% const qf=result.customerQuestionForm; %>
+<% if(qf.training){ %>
+<section class="card section" data-customer-answer-rules><h2>What StockChief answers on its own</h2>
+<p>Teach it which questions to answer without asking you, for one customer or every customer. Sending an answer it wrote also teaches it that customer and those questions.</p>
+<% if(qf.rules.length){ %><ul class="rm-list">
+<% for(const r of qf.rules){ %><li class="list-row"><span><strong><%= r.who %></strong><small><%= r.about %></small></span>
+<form method="post" action="/autopilot/customer-questions/rules/<%= encodeURIComponent(r.id) %>/remove"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm">Remove</button></form></li><% } %>
+</ul><% }else{ %><p>No rules yet. Every answer waits for your approval.</p><% } %>
+<form method="post" action="/autopilot/customer-questions/rules" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label class="rm-field"><span>Exact customer name or email</span><small>Leave empty for every customer.</small><input name="customer" maxlength="150"></label>
+<fieldset class="rm-field"><legend>Answer on its own about</legend><% for(const t of qf.topics){ %><label><input type="checkbox" name="topics" value="<%= t.value %>"> <%= t.label %></label><% } %></fieldset>
+<button class="btn btn--primary">Save rule</button></form></section>
+<% } %>

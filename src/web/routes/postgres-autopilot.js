@@ -1673,6 +1673,41 @@ function createPostgresAutopilotRouter(database,options={}){
     return res.redirect(303,checkinPath);
   }));
   const quoteFollowups=require('../../sales/agent-quote-followups');
+  // Job 74: the owner's default follow-up delay for emailed quotes.
+  router.post('/autopilot/quote-followups/defaults',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await require('../../sales/agent-quote-requests').saveSettings(database,req.ctx,req.body,'followup_days');req.flash('success','Quote follow-up delay saved.');res.redirect(303,'/autopilot/reviews/quote-followups');
+  }));
+  // Job 73: quotes written from a customer's emailed request.
+  const quoteRequests=require('../../sales/agent-quote-requests');
+  router.post('/autopilot/quote-requests/settings',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await quoteRequests.saveSettings(database,req.ctx,req.body,'valid_days');req.flash('success','Quote validity saved.');res.redirect(303,'/autopilot/reviews/quote-requests');
+  }));
+  router.post('/autopilot/quote-requests/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await quoteRequests.dismiss(database,req.ctx,req.params.id);res.redirect(303,'/autopilot/reviews/quote-requests');
+  }));
+  // Job 72: answers to customer emails about stock, delivery and orders.
+  const customerQuestions=require('../../sales/agent-customer-questions'),questionsPath='/autopilot/reviews/customer-questions';
+  router.get('/autopilot/customer-questions/:id',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const locals={title:'Customer question',nav:'autopilot',backTo:{href:questionsPath,label:'Customer questions'}};
+    const state=await policy.accountState(database,req.ctx.workspaceId);
+    if(!policy.usesAgentTerms(state))return res.page('autopilot/agent-plan-locked',{...locals,tier:'Growth',reviewTerms:policy.permits(state.plan,72,'draft')});
+    return agentPage(req,res,'autopilot/customer-question',locals,()=>customerQuestions.page(database,req.ctx,req.params.id),402);
+  }));
+  router.post('/autopilot/customer-questions/rules',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await customerQuestions.saveRule(database,req.ctx,req.body);req.flash('success','Rule saved.');res.redirect(303,questionsPath);
+  }));
+  router.post('/autopilot/customer-questions/rules/:id/remove',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await customerQuestions.removeRule(database,req.ctx,req.params.id);res.redirect(303,questionsPath);
+  }));
+  router.post('/autopilot/customer-questions/:id/send',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const here='/autopilot/customer-questions/'+encodeURIComponent(req.params.id);
+    try{await customerQuestions.approve(database,req.ctx,req.params.id,req.body);req.flash('success','Answer queued. It counts as sent once your mailbox accepts it.');}
+    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+    res.redirect(303,here);
+  }));
+  router.post('/autopilot/customer-questions/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{
+    await customerQuestions.dismiss(database,req.ctx,req.params.id);res.redirect(303,questionsPath);
+  }));
   router.get('/autopilot/quote-followups/:id',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/quote-followup',{title:'Customer quote follow-up',nav:'autopilot'},()=>quoteFollowups.page(database,req.ctx,req.params.id),402)));
   router.post('/autopilot/quote-followups/:id/received',requireAuth,owner,asyncRoute(async(req,res)=>{await quoteFollowups.record(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/quote-followups/'+req.params.id);}));
   router.post('/autopilot/quote-followups/:id/schedule',requireAuth,owner,asyncRoute(async(req,res)=>{await quoteFollowups.configure(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/quote-followups/'+req.params.id);}));
