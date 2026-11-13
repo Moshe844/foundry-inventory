@@ -317,7 +317,9 @@ test('sales scenarios, partial supplier deliveries and competing quotations use 
     const line=(await forSupplier()).rows[0];assert.equal(Number(line.Ordered),4);assert.equal(Number(line['Received by close']),1);
     const packed=await binary(downloadPack()).expect(200);
     const library=await import('pdfjs-dist/legacy/build/pdf.mjs'),loading=library.getDocument({data:new Uint8Array(packed.body)});
-    const doc=await loading.promise,content=(await (await doc.getPage(1)).getTextContent()).items.map(i=>i.str).join(' ');
+    // The pack opens with the supplier summary, then the order lines.
+    const doc=await loading.promise;let content='';
+    for(let i=1;i<=doc.numPages;i++)content+=(await (await doc.getPage(i)).getTextContent()).items.map(i=>i.str).join(' ')+' ';
     assert.ok(content.includes(line.Order));assert.ok(content.includes('Alternative'));assert.ok(content.includes('$1.25'));
     assert.doesNotMatch(content,/Fixture parts/);await loading.destroy();
     await browser.get('/autopilot/reviews/quarterly-supplier-pack/download').expect(400);

@@ -765,6 +765,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'reports.month-end-stock.v1':external((job,database)=>require('../reports/agent-month-end-stock').run(database,job.workspaceId,job.payload)),
   'reports.change-digest.v1':external((job,database)=>require('../reports/agent-change-explanations').run(database,job.workspaceId,job.payload)),
   'reports.board-pack.v1':external((job,database)=>require('../reports/agent-board-pack').run(database,job.workspaceId,job.payload)),
+  'reports.supplier-review-packs.v1':external((job,database)=>require('../purchasing/agent-supplier-review-packs').run(database,job.workspaceId,job.payload)),
   'channel.price-check.v1':external((job,database)=>require('../pricing/agent-channel-price-checks').run(database,job.workspaceId)),
   'purchase-order.supplier-document-amendment.v1':external((job,database)=>require('../purchasing/po-amendment-document').onDocument(database,job.workspaceId,job.payload.documentId)),
   'mail.supplier-unavailability.v1':external((job,database)=>require('../purchasing/supplier-unavailability-mail').onArrival(database,job.workspaceId,job.payload)),

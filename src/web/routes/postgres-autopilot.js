@@ -850,6 +850,20 @@ function createPostgresAutopilotRouter(database,options={}){
   router.get(boardPack.href+'/packs/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const file=await boardPack.kept(database,req.ctx,req.params.id);
     res.set('Cache-Control','private, no-store').type('application/pdf').attachment(file.filename).send(file.body);}));
   router.post(boardPack.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,boardPack.href+'#kept-packs');}));
+  // Job 164 (Pro and Custom): each supplier's quarterly review pack, kept and sent.
+  const supplierPacks=require('../../purchasing/agent-supplier-review-packs');
+  const toPacks=(res,period,anchor='packs')=>res.redirect(303,supplierPacks.href+(period?'?'+new URLSearchParams({period:String(period)}):'')+'#'+anchor);
+  router.get(supplierPacks.href,requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,supplierPacks.JOB,'autopilot/supplier-review-packs',{title:'Supplier review packs',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>supplierPacks.page(database,req.ctx,req.query),402)));
+  router.post(supplierPacks.href+'/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierPacks.prepareNow(database,req.ctx);
+    req.flash('success',r.prepared?r.prepared+' pack'+(r.prepared===1?'':'s')+' prepared and kept.'+(r.more?' StockChief prepares the rest on its own.':''):'Every pack for this quarter is already prepared.');toPacks(res,r.period);}));
+  router.post(supplierPacks.href+'/packs/:id/send',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierPacks.send(database,req.ctx,req.params.id,req.body);
+    req.flash(r.changed?'error':'success',r.changed?'The figures changed since you opened this pack. Check the new pack, then send it.':r.replayed?'This pack was already sent.':'Pack sent to '+r.pack.supplier_name+'.');toPacks(res,r.pack.period);}));
+  router.post(supplierPacks.href+'/send-all',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierPacks.sendAll(database,req.ctx,req.body);
+    req.flash('success',r.sent+' pack'+(r.sent===1?'':'s')+' sent.'+(r.changed?' '+r.changed+' changed; check them and send again.':''));toPacks(res,req.body.period);}));
+  router.post(supplierPacks.href+'/mailbox',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierPacks.chooseMailbox(database,req.ctx,req.body);
+    req.flash('success',r.unchanged?'Your mailbox is unchanged.':'Supplier packs will be sent from this mailbox.');toPacks(res,null,'pack-mailbox');}));
+  router.get(supplierPacks.href+'/packs/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const file=await supplierPacks.kept(database,req.ctx,req.params.id);
+    res.set('Cache-Control','private, no-store').type('application/pdf').attachment(file.filename).send(file.body);}));
   router.post(monthEndStock.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,monthEndStock.href+'?'+new URLSearchParams({month:r.period})+'#month-end-flags');}));
   // Job 161: the monthly ROI report, made on its own after each month on every plan.
   const roiReport=require('../../reports/agent-roi-report');
