@@ -173,6 +173,17 @@ async function dismiss(db,ctx,input={}){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
+// Other jobs keep their rules on their own pages; this lists what was learned
+// here from your approvals, with the limit you confirmed.
+async function learnedElsewhere(db,workspaceId){
+  if(!await has(db,DECISIONS))return [];
+  return (await db.query(`SELECT e.after_state->>'routine' AS routine,e.after_state->>'limit' AS lim,e.after_state->>'job' AS job,d.decided_at FROM ${DECISIONS} d
+    JOIN LATERAL (SELECT after_state FROM security_event_history e WHERE e.workspace_id=d.workspace_id AND e.action=$2 AND e.reference=d.rule_reference
+      ORDER BY e.created_at DESC LIMIT 1) e ON true
+    WHERE d.workspace_id=$1 AND d.job_id=208 AND d.decision='accepted' AND d.kind LIKE 'job:%' ORDER BY d.decided_at DESC LIMIT 50`,[workspaceId,ACCEPTED])).rows
+    .map(r=>({label:r.routine,job:Number(r.job)||null,limit:r.lim?r.lim.charAt(0).toUpperCase()+r.lim.slice(1):'Learned '+day(r.decided_at),since:day(r.decided_at)}));
+}
+
 // The page: offers to stop asking, and the routines it already learned.
 async function page(db,ctx){
   await owner(db,ctx);
@@ -183,12 +194,7 @@ async function page(db,ctx){
   const releases='stockchief_runtime.agent_pick_release_rules';
   if(await has(db,releases))learned.push(...(await db.query(`SELECT l.name,x.batch_orders FROM ${releases} x JOIN locations l ON l.workspace_id=x.workspace_id AND l.id=x.location_id
     WHERE x.workspace_id=$1 AND x.enabled AND x.automatic ORDER BY l.name LIMIT 50`,[ctx.workspaceId])).rows.map(r=>({label:'Release ready orders at '+r.name,limit:r.batch_orders+' orders at a time'})));
-  // Other jobs keep their rules on their own pages; this lists what was learned here.
-  if(await has(db,DECISIONS))learned.push(...(await db.query(`SELECT e.after_state->>'routine' AS routine,e.after_state->>'limit' AS lim,d.decided_at FROM ${DECISIONS} d
-    JOIN LATERAL (SELECT after_state FROM security_event_history e WHERE e.workspace_id=d.workspace_id AND e.action=$2 AND e.reference=d.rule_reference
-      ORDER BY e.created_at DESC LIMIT 1) e ON true
-    WHERE d.workspace_id=$1 AND d.job_id=208 AND d.decision='accepted' AND d.kind LIKE 'job:%' ORDER BY d.decided_at DESC LIMIT 50`,[ctx.workspaceId,ACCEPTED])).rows
-    .map(r=>({label:r.routine,limit:r.lim?r.lim.charAt(0).toUpperCase()+r.lim.slice(1):'Learned '+day(r.decided_at),since:day(r.decided_at)})));
+  learned.push(...await learnedElsewhere(db,ctx.workspaceId));
   const routineOff=!state.shadow&&!(await require('./postgres-service').getState(db,ctx.workspaceId)).canAutomate;
   const watching=!state.shadow&&await watchOnly(db,ctx.workspaceId);
   return {shadow:Boolean(state.shadow),shadowEndsAt:state.shadowEndsAt,routineOff,watching,run:RUN,days:DAYS,offers:await offers(db,ctx),learned};
@@ -203,4 +209,4 @@ async function notices(db,workspaceId,account){
   return (await offers(db,{workspaceId,actorId:ownerId},{test:false})).map(o=>({kind:'Learning',ref:o.action+':'+o.key,link:path}));
 }
 
-module.exports={JOB,RUN,DAYS,path,offers,runsOf,ownerLimit:registry.ownerLimit,confirm,dismiss,page,notices};
+module.exports={JOB,RUN,DAYS,path,offers,runsOf,learnedElsewhere,ownerLimit:registry.ownerLimit,confirm,dismiss,page,notices};

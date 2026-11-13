@@ -53,7 +53,8 @@ async function learned(db,ctx){
   const state=await policy.accountState(db,ctx.workspaceId);
   return {rows:rows.slice(0,100).map(r=>({Routine:r.scope_label,Limit:money.format(r.maximum_minor,r.currency),
     Status:r.role==='owner'&&rules.eligible(state.plan,r.action_type)?'Approved rule saved':'Needs owner or plan review',
-    Revision:r.revision,link:require('./approval-learning').path+'#learned'})),more:rows.length>100,
+    Revision:r.revision,link:require('./approval-learning').path+'#learned'})).concat((await require('./approval-learning').learnedElsewhere(db,ctx.workspaceId))
+    .slice(0,Math.max(0,100-rows.length)).map(r=>({Routine:r.label,Limit:r.limit,Status:'Learned from your approvals on '+r.since,Revision:'',link:require('./approval-learning').path+'#learned'}))),more:rows.length>100,
     summary:'Completed approvals provide examples for an owner-taught rule. Each run checks the current plan, authority, scope and amount again.'};
 }
 const definitions=[{id:206,key:'automation-opportunities',label:'Monthly automation opportunities',readPage:review},
