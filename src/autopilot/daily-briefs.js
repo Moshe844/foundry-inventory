@@ -7,6 +7,22 @@ const installed=require('../db/schema-installed');
 const staffTasks=require('../operations/agent-staff-tasks');
 const {ValidationError}=require('../domain/errors');
 const verbs={receive:'Stock receipts',issue:'Stock issues',transfer:'Transfers',adjust:'Count adjustments'};
+const businessEvents=[
+  ['Purchase orders placed','/purchasing/orders'],
+  ['Customer orders confirmed','/orders'],
+  ['Customer shipments sent','/fulfilment']
+];
+
+async function businessActivity(db,bounds){
+  const {rows:[counts]}=await db.query(`SELECT
+    (SELECT count(*)::int FROM purchase_orders WHERE workspace_id=$1
+      AND ordered_at::timestamptz >= $2 AND ordered_at::timestamptz < $3) AS purchases,
+    (SELECT count(*)::int FROM sales_orders WHERE workspace_id=$1
+      AND confirmed_at::timestamptz >= $2 AND confirmed_at::timestamptz < $3) AS sales,
+    (SELECT count(*)::int FROM sales_shipments WHERE workspace_id=$1 AND customer_return_id IS NULL
+      AND shipped_at::timestamptz >= $2 AND shipped_at::timestamptz < $3) AS shipments`,bounds);
+  return [counts.purchases,counts.sales,counts.shipments];
+}
 
 async function staffActivity(db,bounds,asOf){
   const {rows}=await db.query(`WITH events AS (
@@ -29,7 +45,7 @@ async function deliver(db,workspaceId,account,now=new Date()){
   const team=policy.permits(account.plan,180,'automatic');
   const existing=(await db.query('SELECT summary::jsonb AS data FROM workspace_daily_digests WHERE workspace_id=$1 AND report_date=$2',[workspaceId,day])).rows[0]?.data;
   const tasks=team&&await installed.has(db,staffTasks.table);
-  if(existing?.format==='agent-brief'&&(!team||existing.team&&(!tasks||existing.staffTasks)))return;
+  if(existing?.format==='agent-brief'&&existing.business&&(!team||existing.team&&(!tasks||existing.staffTasks)))return;
   // Reconcile physical work first so a task finished just before midnight
   // appears on that day's summary even if its regular check has yet to run.
   if(tasks)await staffTasks.followUp(db,workspaceId);
@@ -58,15 +74,17 @@ async function deliver(db,workspaceId,account,now=new Date()){
     (SELECT count(*)::int FROM stockchief_runtime.agent_operational_notices WHERE workspace_id=$1 AND job_id=168 AND NOT resolved) AS overdue,
     (SELECT count(*)::int FROM work_items WHERE workspace_id=$1 AND execution_status='COMPLETED' AND verification_status='VERIFIED' AND completed_at::timestamptz>=$2 AND completed_at::timestamptz<$3) AS verified`,bounds)).rows[0];
   const totals={};for(const row of activity)totals[row.operation]=(totals[row.operation]||0)+row.n;
-  const data={format:'agent-brief',day,deliveredOn:calendarDate,asOf,totals,...sources,...(team?{team:activity}:{}),
+  const business=await businessActivity(db,bounds);
+  const data={format:'agent-brief',day,deliveredOn:calendarDate,asOf,totals,business,...sources,...(team?{team:activity}:{}),
     ...(tasks?{staffTasks:await staffActivity(db,bounds,asOf)}:{})};
   await db.query(`INSERT INTO workspace_daily_digests AS d(workspace_id,report_date,generated_at,summary) VALUES($1,$2,$3,$4)
     ON CONFLICT(workspace_id,report_date) DO UPDATE SET summary=CASE WHEN d.summary::jsonb->>'format'='agent-brief' THEN
-      (d.summary::jsonb
+      (d.summary::jsonb||jsonb_build_object('business',excluded.summary::jsonb->'business')
         ||CASE WHEN excluded.summary::jsonb ? 'team' THEN jsonb_build_object('team',excluded.summary::jsonb->'team') ELSE '{}'::jsonb END
         ||CASE WHEN excluded.summary::jsonb ? 'staffTasks' THEN jsonb_build_object('staffTasks',excluded.summary::jsonb->'staffTasks') ELSE '{}'::jsonb END)::text
       ELSE excluded.summary END
     WHERE d.summary::jsonb->>'format' IS DISTINCT FROM 'agent-brief'
+      OR NOT (d.summary::jsonb ? 'business')
       OR (NOT (d.summary::jsonb ? 'team') AND excluded.summary::jsonb ? 'team')
       OR (NOT (d.summary::jsonb ? 'staffTasks') AND excluded.summary::jsonb ? 'staffTasks')`,
     [workspaceId,day,data.asOf,JSON.stringify(data)]);
@@ -85,7 +103,7 @@ async function report(db,ctx,{filter,team,page}){
   if(!data)return {rows:[],more:false,summary:'A briefing appears here after the scheduled stock check for a completed day.'};
   const dates='from='+data.day+'&to='+data.day;
   const pending=[{Activity:'Owner approvals waiting',Count:data.approvals,link:'/needs-you'},{Activity:'Overdue orders, shipments and invoices',Count:data.overdue,link:'/autopilot/reviews/overdue-work'}];
-  const summary='Stock activity for '+data.day+'. Approvals and overdue records were counted when this briefing arrived on '+data.deliveredOn+'.';
+  const summary='Inventory activity for '+data.day+'. Approvals and overdue records were counted when this briefing arrived on '+data.deliveredOn+'.';
   if(team){
     const rows=(data.staffTasks||[]).map(r=>({'Team member':r.person,
       Activity:staffTasks.specs[r.kind].plural+(r.state==='late'?' overdue':' completed'),Count:r.n,
@@ -97,6 +115,7 @@ async function report(db,ctx,{filter,team,page}){
     return {rows:rows.slice((page-1)*100,page*100),more:rows.length>page*100,summary:summary+teamSummary};
   }
   const rows=Object.entries(data.totals).map(([k,n])=>({Activity:verbs[k],Count:n,link:'/activity?'+dates+'&operation='+k}));
+  if(data.business)businessEvents.forEach(([Activity,link],index)=>rows.push({Activity,Count:data.business[index],link}));
   rows.push({Activity:'Completed agent actions',Count:data.actions,link:'/activity'},{Activity:'Verified work items',Count:data.verified,link:'/autopilot'},...pending);
   return {rows,more:false,summary};
 }
