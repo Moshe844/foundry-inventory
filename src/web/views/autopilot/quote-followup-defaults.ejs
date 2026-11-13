@@ -1,0 +1,8 @@
+<% const fd=result.quoteFollowupDefaults; %>
+<% if(fd.available){ %>
+<section class="card section" data-quote-followup-defaults><h2>Follow up on every emailed quote</h2>
+<p>StockChief follows up once on each open quote this many days after your mailbox sent it, from the same mailbox. <%= fd.growth?'On Growth it sends on its own only for customers, products and amounts you taught it; the others wait for you in Needs you.':'Your lower saved limits still apply.' %></p>
+<form method="post" action="/autopilot/quote-followups/defaults" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= fd.revision %>">
+<label class="rm-field"><span>Days after the quote was emailed</span><small>Leave empty to schedule each follow-up yourself.</small><input name="days" type="number" min="1" max="365" inputmode="numeric" value="<%= fd.days %>"></label>
+<button class="btn btn--primary">Save</button></form></section>
+<% } %>

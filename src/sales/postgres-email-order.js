@@ -66,7 +66,8 @@ function keyValue(line){
 
 // Every line must be part of the order. A date, a note or a second instruction
 // must never silently become a quantity or disappear from the order.
-function parse(parts){
+// intro: another opening line that starts the list, such as a quote request (job 73).
+function parse(parts,{intro=null}={}){
   if(parts.join('\n').length>30000)throw uncertain();
   const out={reference:null,lines:[],pickup:false,shipTo:null,names:[]},codes=new Set();let ordered=false;
   const reference=value=>{
@@ -121,7 +122,7 @@ function parse(parts){
         continue;
       }
       if(/^sheet:\s/i.test(line)||greeting.test(line))continue;
-      if(orderIntro.test(line)){close();ordered=true;continue;}
+      if(orderIntro.test(line)||intro?.test(line)){close();ordered=true;continue;}
       const po=orderReference.exec(line);
       if(po){close();reference(po[1]);continue;}
       if(/^(?:customer pickup|pickup|pick up|we will collect)[.!]?$/i.test(line)){close();out.pickup=true;continue;}

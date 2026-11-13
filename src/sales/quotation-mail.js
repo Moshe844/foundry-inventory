@@ -12,7 +12,10 @@ function compose(p){
  return {subject:'Quotation '+p.quoteNumber,body:'Hello '+p.customerName+',\n\nHere is quotation '+p.quoteNumber+', valid through '+p.validUntil+'.'+(p.orderDate?'\nQuotation date: '+p.orderDate:'')+'\n\n'+lines.join('\n\n')+'\n\nSubtotal: '+money.format(p.pricing.subtotalMinor,p.pricing.currency)+'\nDiscount: '+money.format(p.pricing.discountMinor||0,p.pricing.currency)+(p.pricing.chargesMinor?'\nOther charges: '+money.format(p.pricing.chargesMinor,p.pricing.currency):'')+'\nTax: '+money.format(p.pricing.taxMinor||0,p.pricing.currency)+'\nTotal: '+money.format(p.pricing.totalMinor,p.pricing.currency)+' '+p.pricing.currency+'\nDelivery: '+(p.deliveryMethod==='SHIP'?'Ship to '+p.shipToAddress:'Customer pickup')+(p.neededBy?'\nRequested delivery date: '+p.neededBy:'')+'\n\nPlease reply if you would like to proceed or have any questions.\n\nThank you.'};
 }
 async function authority(db,workspaceId,p){
- if(p.kind!==kind||p.manualApproval!==true||p.automatic!==false)throw new ValidationError('Review and approve this quotation email individually.');
+ if(p.kind!==kind)throw new ValidationError('Review and approve this quotation email individually.');
+ // Job 73: a quote StockChief wrote alone from a customer's emailed request goes back to them alone.
+ if(p.automatic===true&&p.manualApproval===false)await require('./agent-quote-requests').shareAuthority(db,workspaceId,p);
+ else if(p.manualApproval!==true||p.automatic!==false)throw new ValidationError('Review and approve this quotation email individually.');
  const fresh=await facts(db,{workspaceId,actorId:p.actorId},p.recordId,p.connectorId);if(hash(fresh)!==hash(Object.fromEntries(Object.keys(fresh).map(k=>[k,p[k]]))))throw new ValidationError('The quotation, customer or mailbox changed. Preview the current email before sending.');
  const prior=await message(db,workspaceId,p.recordId),words=compose(fresh);if(prior&&(prior.recipient!==fresh.recipient||prior.connector_id!==fresh.connectorId||prior.subject!==words.subject||prior.body!==words.body))throw new ValidationError('An earlier quotation email uses different details. Review its delivery before sending another message.');return fresh;
 }

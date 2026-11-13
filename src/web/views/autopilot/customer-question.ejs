@@ -1,0 +1,22 @@
+<% const q=question; %>
+<h1>Question from <%= q.customer_name||q.sender %></h1>
+<p>About <%= q.about %> · <%= q.outcome %><%= q.automatic?' by StockChief':'' %></p>
+<% if(q.reason&&['HELD','WATCHED','DRAFTED'].includes(q.status)){ %><p class="notice" data-question-reason><%= q.reason %></p><% } %>
+<section class="card section"><h2>What they wrote</h2>
+<p>From <%= q.sender %><% if(q.email_subject){ %> · <%= q.email_subject %><% } %></p>
+<div style="white-space:pre-wrap;overflow-wrap:anywhere"><%= q.words %></div>
+<p><a href="/mail/<%= encodeURIComponent(q.message_id) %>">Open the email to reply yourself</a></p></section>
+<% if(q.answer_body){ %>
+<section class="card section" data-customer-answer><h2>The answer from your records</h2>
+<p>To: <strong><%= q.customer_email %></strong></p><p>Subject: <%= q.answer_subject %></p>
+<div style="white-space:pre-wrap;overflow-wrap:anywhere"><%= q.answer_body %></div>
+<% if(q.communication_id){ %><p><%= q.outcome %><%= q.message_error?' · '+q.message_error:'' %> · <a href="/messages/customer/<%= encodeURIComponent(q.communication_id) %>">Track this answer</a></p><% } %>
+<% if(canSend){ %>
+<% if(mailboxProblem){ %><p><%= mailboxProblem %></p><% }else{ %>
+<form method="post" action="/autopilot/customer-questions/<%= encodeURIComponent(q.message_id) %>/send" class="form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedFingerprint" value="<%= q.fingerprint %>">
+<p>Sends from <%= mailbox %>. StockChief checks the records again before it sends.</p>
+<label><input type="checkbox" name="confirmed" value="yes" required> I checked this answer and the recipient.</label>
+<button class="btn btn--primary">Send this answer</button></form><% } %>
+<% } %></section>
+<% } %>
+<% if(canDismiss){ %><form method="post" action="/autopilot/customer-questions/<%= encodeURIComponent(q.message_id) %>/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost">Dismiss</button></form><% } %>
