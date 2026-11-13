@@ -276,6 +276,7 @@ test('partner patterns and supplier negotiation drafts use dated evidence and cu
   const review=()=>reviews.run(db,ctx,key,{filter:vendor});
   const habits=()=>reviews.run(db,ctx,'partner-habits');
   await subscribe('starter');await assert.rejects(habits(),/Growth/);
+  await browser.get('/autopilot/reviews/partner-habits').expect(402);
   for(const tier of ['starter','growth']){
     await subscribe(tier);await browser.get(address).query({filter:vendor}).expect(402);
     await assert.rejects(service.prepare(db,ctx,{supplier:vendor}),/Pro/);
@@ -285,6 +286,8 @@ test('partner patterns and supplier negotiation drafts use dated evidence and cu
     const customer=result.find(r=>r.Type==='Customer'),supplier=result.find(r=>r.Type==='Supplier');
     assert.equal(customer.Pattern,'Orders about every 14 days');assert.equal(customer['Estimated next order'],day(-10));
     assert.equal(supplier.Pattern,'Delivers in about 7 days');
+    assert.equal(supplier['Late deliveries'],'2 of 3 dated deliveries');
+    assert.match((await browser.get('/autopilot/reviews/partner-habits').query({filter:vendor}).expect(200)).text,/2 of 3 dated deliveries/);
     await browser.get(supplier.link).expect(200);
   }
   await subscribe('pro');const old=(await review()).negotiationForm;

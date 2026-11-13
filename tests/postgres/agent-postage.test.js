@@ -94,7 +94,19 @@ test('unusual automatic spending or volume pauses the inventory until an owner r
   await auto.resume(db,ctx,{role:'owner'});await refresh();assert.equal((await auto.getState(db,ctx.workspaceId)).paused,false);
   await subscribe('pro');for(let i=0;i<3;i++)await commitment(0,1);
   await refresh();assert.match((await auto.getState(db,ctx.workspaceId)).pausedReason,/3 automatic actions/);
-  await subscribe('enterprise');assert.match((await browser.get(path).expect(200)).text,/Actions/);
+  await auto.resume(db,ctx,{role:'owner'});
+  await subscribe('enterprise');
+  const proposal=async(kind,replayed=false)=>{
+    const row=await require('../../src/assistant/postgres-service').createProposal(db,ctx,'Confirm recorded work',
+      'inventory.adjust',{skuId:f.item.skuIds[0],locationId:f.location.id,countedQuantity:1,reason:'Evidence fixture'},'Adjust stock');
+    await db.query(`UPDATE stockchief_runtime.assistant_action_proposals SET status='EXECUTED',executed_at=clock_timestamp(),
+      result=$3::jsonb WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,row.proposal.id,JSON.stringify({executionAuthority:{kind},replayed})]);
+  };
+  await proposal('manual');await proposal('standing_job_rule',true);await refresh();
+  assert.equal((await auto.getState(db,ctx.workspaceId)).paused,false);
+  for(let i=0;i<3;i++)await proposal('standing_job_rule');
+  await refresh();assert.match((await auto.getState(db,ctx.workspaceId)).pausedReason,/3 automatic actions/);
+  assert.match((await browser.get(path).expect(200)).text,/Actions/);
 });
 test('the carrier sees only eligible purchases after current-plan, per-label and delivery address checks',{timeout:240000},async t=>{
   const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:30}),{db,ctx,shipping,subscribe}=f;

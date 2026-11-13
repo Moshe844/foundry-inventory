@@ -20,6 +20,14 @@ async function observations(db,workspaceId){
     JOIN stockchief_runtime.provider_effects e ON e.workspace_id=t.workspace_id AND e.kind='shipping.label.purchase'
       AND e.payload->>'transactionId'=t.id AND e.payload->>'agentPostageScope'='automatic'
     WHERE t.workspace_id=$1 AND t.operation='PURCHASE' AND t.status='SUCCEEDED' AND t.completed_at::timestamptz BETWEEN $2 AND now()
+    UNION ALL SELECT a.executed_at,NULL::text,NULL::numeric
+    FROM stockchief_runtime.assistant_action_proposals a
+    WHERE a.workspace_id=$1 AND a.status='EXECUTED' AND a.executed_at BETWEEN $2 AND now()
+      AND a.result#>>'{executionAuthority,kind}'='standing_job_rule'
+      AND a.result->>'replayed' IS DISTINCT FROM 'true'
+      AND a.action_type<>'shipping.label'
+      AND NOT EXISTS(SELECT 1 FROM work_items w WHERE w.workspace_id=a.workspace_id AND w.proposal_id=a.id
+        AND w.source='postgres_autopilot' AND w.approval_requirement='NONE' AND w.execution_status IN ('COMPLETED','EXECUTING'))
   ), daily AS (
     SELECT (at AT TIME ZONE $3)::date AS day,'Count' AS metric,count(*)::numeric AS total FROM events
     WHERE at<$5 OR at>coalesce((SELECT anomaly_acknowledged_at FROM workspace_autopilot WHERE workspace_id=$1),'-infinity') GROUP BY 1
@@ -50,7 +58,7 @@ async function refresh(db,workspaceId){
 }
 const definition={id:201,key:'unusual-automatic-activity',label:'Review unusual automatic activity',read:async(db,ctx)=>{
   const rows=await observations(db,ctx.workspaceId);
-  return {summary:'Automatic purchase commitments, transfers and purchased labels are compared with the previous 28 days in your inventory’s time zone. A spike in count or same-currency spend pauses routine work once four active days establish a comparison.',
+  return {summary:'Automatic purchasing, transfers, postage and other completed work under standing rules are compared with the previous 28 days in your inventory’s time zone. A spike in count or same-currency committed spend pauses routine work once four active days establish a comparison.',
     rows:rows.map(r=>({Measure:r.metric==='Count'?'Actions':r.metric+' spend',Today:r.metric==='Count'?r.total:money.format(Number(r.total),r.metric),
       'Active comparison days':Number(r.days)}))};
 }};

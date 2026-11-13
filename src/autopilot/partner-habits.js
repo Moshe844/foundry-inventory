@@ -21,19 +21,22 @@ async function habits(db,ctx,{filter,page,today}){
   sales AS (SELECT customer_id,count(*) AS samples,max(day) AS latest,percentile_disc(0.5) WITHIN GROUP(ORDER BY gap) AS typical
     FROM gaps GROUP BY customer_id HAVING count(*)>=3), deliveries AS (${deliveries}),
   receipts AS (SELECT supplier_id,count(*) AS samples,max(received) AS latest,
-    percentile_disc(0.5) WITHIN GROUP(ORDER BY received-placed) AS typical FROM deliveries
+    percentile_disc(0.5) WITHIN GROUP(ORDER BY received-placed) AS typical,
+    count(*) FILTER(WHERE expected IS NOT NULL)::int AS promised,
+    count(*) FILTER(WHERE received>expected)::int AS late FROM deliveries
     WHERE placed<=received AND received<=$4::date GROUP BY supplier_id HAVING count(*)>=3),
   partners AS (
-    SELECT 'Customer' AS kind,c.id,c.name,s.samples,s.latest,s.typical,(s.latest+s.typical)::text AS expected FROM sales s
+    SELECT 'Customer' AS kind,c.id,c.name,s.samples,s.latest,s.typical,(s.latest+s.typical)::text AS expected,NULL::int AS promised,NULL::int AS late FROM sales s
     JOIN customers c ON c.workspace_id=$1 AND c.id=s.customer_id AND c.record_state='ACTIVE'
-    UNION ALL SELECT 'Supplier',s.id,s.name,r.samples,r.latest,r.typical,NULL FROM receipts r
+    UNION ALL SELECT 'Supplier',s.id,s.name,r.samples,r.latest,r.typical,NULL,r.promised,r.late FROM receipts r
     JOIN suppliers s ON s.workspace_id=$1 AND s.id=r.supplier_id AND s.status='active' WHERE ($2='' OR s.id=$2 OR lower(s.name)=lower($2))
-  ) SELECT kind,name,id,samples,latest::text,typical,expected FROM partners ORDER BY kind,name,id LIMIT 101 OFFSET $6`,
+  ) SELECT kind,name,id,samples,latest::text,typical,expected,promised,late FROM partners ORDER BY kind,name,id LIMIT 101 OFFSET $6`,
     [ctx.workspaceId,filter,timeZone,today,salesFrom,(page-1)*100]);
-  return {summary:'After three distinct ordering days or three completed warehouse deliveries, StockChief shows the middle observed interval. Customer dates are estimates. Supplier lead time runs from placement to final warehouse receipt.',
+  return {summary:'After three distinct ordering days or three completed warehouse deliveries, StockChief shows the middle observed interval. Customer dates are estimates. Supplier lead time runs from placement to final warehouse receipt. Late delivery counts use orders with a recorded promised date.',
     more:rows.length>100,rows:rows.slice(0,100).map(r=>({Partner:r.name,Type:r.kind,'Observed days or deliveries':Number(r.samples),
       'Last recorded':r.latest,Pattern:r.kind==='Customer'?'Orders about every '+r.typical+' days':'Delivers in about '+r.typical+' days',
-      'Estimated next order':r.expected,link:(r.kind==='Customer'?'/sales/customers/':'/suppliers/')+r.id}))};
+      'Estimated next order':r.expected||'—','Late deliveries':r.kind==='Customer'?'—':r.promised?r.late+' of '+r.promised+' dated deliveries':'No promised dates',
+      link:(r.kind==='Customer'?'/sales/customers/':'/suppliers/')+r.id}))};
 }
 // Job 94: the negotiation email and its facts come from negotiation-evidence.
 async function negotiation(db,ctx,filter){
