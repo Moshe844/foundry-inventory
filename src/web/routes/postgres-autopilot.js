@@ -714,7 +714,7 @@ function createPostgresAutopilotRouter(database,options={}){
     return reportPage(req,res,approvalLearning.JOB,'autopilot/approval-learning',{title:'Stop asking about routines',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},
       async()=>({screen:await approvalLearning.page(database,req.ctx)}),402);}));
   router.post(approvalLearning.path+'/confirm',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await approvalLearning.confirm(database,req.ctx,req.body);
-    req.flash('success',r.replayed?'StockChief already does this routine alone.':'StockChief will stop asking about '+r.label+' up to '+r.maximum+'.');res.redirect(303,approvalLearning.path+'#learned');}));
+    req.flash('success',r.replayed?'StockChief already does this routine alone.':'StockChief now does this alone: '+r.label+', '+r.limit+'.');res.redirect(303,approvalLearning.path+'#learned');}));
   router.post(approvalLearning.path+'/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await approvalLearning.dismiss(database,req.ctx,req.body);
     req.flash('success','StockChief will keep asking. It offers again only after another run of approvals.');res.redirect(303,approvalLearning.path);}));
   router.get(correctionRules.path,requireAuth,owner,asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');
