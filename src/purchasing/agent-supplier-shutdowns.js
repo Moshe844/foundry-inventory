@@ -21,10 +21,11 @@ async function access(c,ctx,{automatic=false}={}){
 async function get(c,ctx,id,lock=false){const row=(await c.query('SELECT * FROM stockchief_runtime.agent_supplier_shutdowns WHERE workspace_id=$1 AND id=$2'+(lock?' FOR UPDATE':''),[ctx.workspaceId,id])).rows[0];if(!row)throw new NotFoundError('That supplier shutdown is not in this inventory.');return row;}
 const profile=p=>hash({supplier:p.supplier,location:p.location,locationIds:p.locationIds,products:p.products});
 const warningText=facts=>facts.warnings.length?facts.warnings.map(w=>(w.sku?w.sku+': ':'')+w.reason).join(' ').slice(0,500):null;
-// The draft already prepared for this shutdown and not cancelled, if any.
+// The draft already prepared for this shutdown, if any. A cancelled draft
+// still counts: an undo is never silently replaced by a new order.
 async function prepared(c,ctx,shutdownId){
- return (await c.query(`SELECT p.purchase_order_id FROM stockchief_runtime.agent_supplier_shutdown_plans p JOIN purchase_orders o ON o.workspace_id=p.workspace_id AND o.id=p.purchase_order_id
-  WHERE p.workspace_id=$1 AND p.shutdown_id=$2 AND o.status<>'CANCELLED' ORDER BY p.purchase_created_at DESC LIMIT 1`,[ctx.workspaceId,shutdownId])).rows[0]?.purchase_order_id||null;
+ return (await c.query(`SELECT purchase_order_id FROM stockchief_runtime.agent_supplier_shutdown_plans
+  WHERE workspace_id=$1 AND shutdown_id=$2 AND purchase_order_id IS NOT NULL ORDER BY purchase_created_at DESC LIMIT 1`,[ctx.workspaceId,shutdownId])).rows[0]?.purchase_order_id||null;
 }
 async function write(c,ctx,project,p,{automatic=false}={}){
  const prior=(await c.query('SELECT id FROM stockchief_runtime.agent_supplier_shutdown_plans WHERE workspace_id=$1 AND shutdown_id=$2 AND source_fingerprint=$3',[ctx.workspaceId,project.id,p.sourceFingerprint])).rows[0];if(prior)return {id:prior.id,shutdownId:project.id,replayed:true};
@@ -75,7 +76,7 @@ async function configure(db,ctx,id,input){return db.transaction(async c=>{
  if(raw){
   if(!await installed.has(c,'stockchief_runtime.agent_supplier_shutdowns','maximum_minor'))throw new ValidationError('StockChief is being updated. Try again in a few minutes.');
   maximum=require('../domain/currency').toMinor(raw,facts.supplier.currency,{label:'The purchase draft limit'});if(!Number.isSafeInteger(maximum)||maximum<0)throw new ValidationError('Choose an exact limit in '+facts.supplier.currency+', zero or more.');
-  if(await prepared(c,ctx,id))throw new ValidationError('This shutdown already has its purchase draft. Review that order, or cancel it before StockChief prepares another.');
+  if(await prepared(c,ctx,id))throw new ValidationError('This shutdown already has its purchase draft. Review that order; for more stock, record the next notice separately.');
  }
  await require('../manager/postgres-operating-instructions').checkRuleLimit(c,ctx,[],p.enabled?0:1);
  await c.query('UPDATE stockchief_runtime.agent_supplier_shutdowns SET enabled=true,authorized_by=$3,authorized_profile_hash=$4,refresh_days=$5,revision=revision+1,next_check_at=clock_timestamp(),last_issue=NULL WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,ctx.actorId,profile(facts),Number(days)]);
@@ -86,13 +87,12 @@ async function configure(db,ctx,id,input){return db.transaction(async c=>{
 },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function purchaseWithin(c,ctx,planId,input,{automatic=false,knownFacts=null}={}){
  await access(c,ctx,{automatic});const run=(await c.query('SELECT * FROM stockchief_runtime.agent_supplier_shutdown_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,planId])).rows[0];if(!run)throw new NotFoundError('That shutdown plan is not in this inventory.');const p=await get(c,ctx,run.shutdown_id,true);
- const earlier=run.purchase_order_id?(await c.query('SELECT status FROM purchase_orders WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,run.purchase_order_id])).rows[0]:null;
- if(earlier&&earlier.status!=='CANCELLED')return {purchaseOrderId:run.purchase_order_id,replayed:true};
+ if(run.purchase_order_id)return {purchaseOrderId:run.purchase_order_id,replayed:true};
  const facts=knownFacts||await source.facts(c,ctx,p.scope);if(input.confirmed!=='yes'||input.sourceFingerprint!==run.source_fingerprint||facts.sourceFingerprint!==run.source_fingerprint)throw new ValidationError('Review this exact plan against the current stock, incoming orders and supplier terms before preparing a purchase draft.');
  if(automatic&&(!p.enabled||p.authorized_by!==ctx.actorId||profile(facts)!==p.authorized_profile_hash||p.maximum_minor==null||facts.calculated.totalMinor>Number(p.maximum_minor)))throw new ValidationError('This purchase draft is outside the owner’s current shutdown scope or limit.');
  if(facts.warnings.length)throw new ValidationError('Resolve the plan’s source warnings before preparing another purchase.');
  const rows=facts.calculated.rows.filter(r=>r.quantityUnits>0);if(!rows.length)throw new ValidationError('Recorded stock and timely incoming orders already cover this shutdown estimate.');
- const order=await require('../operations/postgres-business-workflows').createPurchaseOrderInTransaction(c,ctx,{supplierId:p.supplier_id,destinationLocationId:p.location_id,currency:facts.supplier.currency,idempotencyKey:'shutdown-purchase:'+run.id+(earlier?':after:'+run.purchase_order_id:''),lines:rows.map(r=>{const product=facts.products.find(s=>s.sku_id===r.skuId);return {skuId:r.skuId,quantityUnits:r.quantityUnits,quantityPurchaseUnits:r.purchaseUnits,unitsPerPurchaseUnit:product.units_per_purchase_unit,purchaseUnit:product.purchase_unit,unitCost:product.last_unit_cost};})});
+ const order=await require('../operations/postgres-business-workflows').createPurchaseOrderInTransaction(c,ctx,{supplierId:p.supplier_id,destinationLocationId:p.location_id,currency:facts.supplier.currency,idempotencyKey:'shutdown-purchase:'+run.id,lines:rows.map(r=>{const product=facts.products.find(s=>s.sku_id===r.skuId);return {skuId:r.skuId,quantityUnits:r.quantityUnits,quantityPurchaseUnits:r.purchaseUnits,unitsPerPurchaseUnit:product.units_per_purchase_unit,purchaseUnit:product.purchase_unit,unitCost:product.last_unit_cost};})});
  await c.query('UPDATE stockchief_runtime.agent_supplier_shutdown_plans SET purchase_order_id=$3,purchase_created_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,planId,order.purchaseOrderId]);
  await require('../operations/postgres-security-audit').record(c,ctx,{action:automatic?'Shutdown purchase draft prepared within the owner’s limit':'Reviewed shutdown purchase draft prepared',reference:planId,
   after:{purchaseOrderId:order.purchaseOrderId,sourceFingerprint:facts.sourceFingerprint,automatic,totalMinor:facts.calculated.totalMinor,approved:false,sent:false}});return order;

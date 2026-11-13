@@ -41,10 +41,11 @@ async function write(c,ctx,project,p,{automatic=false}={}){
  const id=newId('promotion-stock-plan');await c.query('INSERT INTO stockchief_runtime.agent_promotion_stock_plans(id,workspace_id,promotion_id,source_fingerprint,source_snapshot,automatic,created_by) VALUES($1,$2,$3,$4,$5,$6,$7)',[id,ctx.workspaceId,project.id,p.sourceFingerprint,p,automatic,ctx.actorId]);
  await require('../operations/postgres-security-audit').record(c,ctx,{action:'Promotion stock plan prepared',reference:id,after:{promotionId:project.id,sourceFingerprint:p.sourceFingerprint,automatic,totalMinor:p.calculated.totalMinor,warnings:p.warnings.length,purchaseCreated:false}});return {id,promotionId:project.id,replayed:false};
 }
-// The draft prepared for this promotion and not cancelled, if any.
+// The draft prepared for this promotion, if any. A cancelled draft still
+// counts: an undo is never silently replaced by a new order.
 async function prepared(c,ctx,promotionId){
- return (await c.query(`SELECT p.purchase_order_id FROM stockchief_runtime.agent_promotion_stock_plans p JOIN purchase_orders o ON o.workspace_id=p.workspace_id AND o.id=p.purchase_order_id
-  WHERE p.workspace_id=$1 AND p.promotion_id=$2 AND o.status<>'CANCELLED' ORDER BY p.purchase_created_at DESC LIMIT 1`,[ctx.workspaceId,promotionId])).rows[0]?.purchase_order_id||null;
+ return (await c.query(`SELECT purchase_order_id FROM stockchief_runtime.agent_promotion_stock_plans
+  WHERE workspace_id=$1 AND promotion_id=$2 AND purchase_order_id IS NOT NULL ORDER BY purchase_created_at DESC LIMIT 1`,[ctx.workspaceId,promotionId])).rows[0]?.purchase_order_id||null;
 }
 // Saves every reviewed supplier plan from one promotion preview.
 async function saveAll(db,ctx,input){
@@ -88,12 +89,12 @@ async function configure(db,ctx,id,input){return db.transaction(async c=>{
 },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function purchaseWithin(c,ctx,planId,input,{automatic=false,knownFacts=null}={}){
  await access(c,ctx,{automatic});const found=(await c.query('SELECT promotion_id FROM stockchief_runtime.agent_promotion_stock_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,planId])).rows[0];if(!found)throw new NotFoundError('That promotion plan is not in this inventory.');const p=await get(c,ctx,found.promotion_id,true),run=(await c.query('SELECT * FROM stockchief_runtime.agent_promotion_stock_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,planId])).rows[0];
- const previous=await prepared(c,ctx,p.id);if(previous)return {purchaseOrderId:previous,replayed:true};const earlier=run.purchase_order_id;
+ const previous=await prepared(c,ctx,p.id);if(previous)return {purchaseOrderId:previous,replayed:true};
  const facts=knownFacts||await source.facts(c,ctx,p.scope);if(input.confirmed!=='yes'||input.sourceFingerprint!==run.source_fingerprint||facts.sourceFingerprint!==run.source_fingerprint)throw new ValidationError('Review this exact plan against the current stock, incoming orders and supplier terms before preparing a purchase draft.');
  if(automatic&&(!p.enabled||p.authorized_by!==ctx.actorId||profile(facts)!==p.authorized_profile_hash||p.maximum_minor==null||facts.calculated.totalMinor>Number(p.maximum_minor)))throw new ValidationError('This purchase draft is outside the owner’s current promotion scope or maximum goods value.');
  if(facts.warnings.length)throw new ValidationError('Resolve the plan’s source warnings before preparing another purchase.');
  const rows=facts.calculated.rows.filter(r=>r.quantityUnits>0);if(!rows.length)throw new ValidationError('Recorded stock and timely incoming orders already cover this promotion estimate.');
- const order=await require('../operations/postgres-business-workflows').createPurchaseOrderInTransaction(c,ctx,{supplierId:p.supplier_id,destinationLocationId:p.location_id,currency:facts.supplier.currency,idempotencyKey:'promotion-purchase:'+run.id+(earlier?':after:'+earlier:''),lines:rows.map(r=>{const product=facts.products.find(s=>s.sku_id===r.skuId);return {skuId:r.skuId,quantityUnits:r.quantityUnits,quantityPurchaseUnits:r.purchaseUnits,unitsPerPurchaseUnit:product.units_per_purchase_unit,purchaseUnit:product.purchase_unit,unitCost:product.last_unit_cost};})});
+ const order=await require('../operations/postgres-business-workflows').createPurchaseOrderInTransaction(c,ctx,{supplierId:p.supplier_id,destinationLocationId:p.location_id,currency:facts.supplier.currency,idempotencyKey:'promotion-purchase:'+run.id,lines:rows.map(r=>{const product=facts.products.find(s=>s.sku_id===r.skuId);return {skuId:r.skuId,quantityUnits:r.quantityUnits,quantityPurchaseUnits:r.purchaseUnits,unitsPerPurchaseUnit:product.units_per_purchase_unit,purchaseUnit:product.purchase_unit,unitCost:product.last_unit_cost};})});
  await c.query('UPDATE stockchief_runtime.agent_promotion_stock_plans SET purchase_order_id=$3,purchase_created_at=clock_timestamp() WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,planId,order.purchaseOrderId]);
  if(p.enabled)await c.query('UPDATE stockchief_runtime.agent_promotion_stock SET enabled=false,revision=revision+1,next_check_at=NULL,last_issue=NULL WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,p.id]);
  await require('../operations/postgres-security-audit').record(c,ctx,{action:'Promotion purchase draft prepared',reference:planId,after:{purchaseOrderId:order.purchaseOrderId,sourceFingerprint:facts.sourceFingerprint,automatic,approved:false,sent:false}});return order;
@@ -116,7 +117,7 @@ async function page(db,ctx,id){
  const latest=rows[0]?(await db.query('SELECT * FROM stockchief_runtime.agent_promotion_stock_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,rows[0].id])).rows[0]:null;let fresh=null,problem=null;try{fresh=await source.facts(db,ctx,project.scope);}catch(error){if(![400,402,403,404,422].includes(error.status))throw error;problem=error.message;}
  const draft=(await db.query(`SELECT p.id AS plan_id,EXISTS(SELECT 1 FROM security_event_history h WHERE h.workspace_id=p.workspace_id AND h.reference=p.id AND h.after_state::jsonb->>'purchaseOrderId'=o.id AND h.after_state::jsonb->>'automatic'='true') AS automatic,o.id,o.po_number,o.status FROM stockchief_runtime.agent_promotion_stock_plans p JOIN purchase_orders o ON o.workspace_id=p.workspace_id AND o.id=p.purchase_order_id
   WHERE p.workspace_id=$1 AND p.promotion_id=$2 ORDER BY p.purchase_created_at DESC LIMIT 1`,[ctx.workspaceId,id])).rows[0]||null;
- return {project,latest,runs:rows,fresh,problem:problem||project.last_issue,plan:state.plan,shadow:state.shadow,draft,purchaseOrderId:draft&&draft.status!=='CANCELLED'?draft.id:null};
+ return {project,latest,runs:rows,fresh,problem:problem||project.last_issue,plan:state.plan,shadow:state.shadow,draft,purchaseOrderId:draft?.id||null};
 }
 async function list(db,ctx,{page=1}={}){
  await source.owner(db,ctx);page=Number(page);if(!Number.isSafeInteger(page)||page<1||page>1000000)throw new ValidationError('Choose a valid promotion-stock-plan page.');const state=await policy.accountState(db,ctx.workspaceId),locked=!policy.usesAgentTerms(state)||!policy.permits(state.plan,145,'suggest');

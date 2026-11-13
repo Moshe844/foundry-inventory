@@ -52,13 +52,12 @@ test('a recorded promotion drafts one purchase order per supplier: Pro reviews e
  const before=await f.purchases();
  const first=await service.purchase(db,ctx,saved[0].id,{confirmed:'yes',sourceFingerprint:preview.drafts[0].sourceFingerprint});
  assert.equal(await f.purchases(),before+1);
- // Undo cancels the unchanged draft; a reviewed draft can then be prepared again.
+ // Undo cancels the unchanged draft, and a repeated request never silently replaces it.
  assert.equal((await service.undo(db,ctx,saved[0].id)).replayed,false);
  assert.equal((await db.query('SELECT status FROM purchase_orders WHERE id=$1',[first.purchaseOrderId])).rows[0].status,'CANCELLED');
  assert.equal((await db.query("SELECT count(*)::int n FROM security_event_history WHERE workspace_id=$1 AND action='Promotion purchase draft undone'",[ctx.workspaceId])).rows[0].n,1);
  const again=await service.purchase(db,ctx,saved[0].id,{confirmed:'yes',sourceFingerprint:preview.drafts[0].sourceFingerprint});
- assert.notEqual(again.purchaseOrderId,first.purchaseOrderId);assert.equal((await db.query('SELECT status FROM purchase_orders WHERE id=$1',[again.purchaseOrderId])).rows[0].status,'DRAFT');
- assert.equal((await service.purchase(db,ctx,saved[0].id,{confirmed:'yes',sourceFingerprint:preview.drafts[0].sourceFingerprint})).purchaseOrderId,again.purchaseOrderId,'One live draft per promotion plan');
+ assert.deepEqual([again.purchaseOrderId,again.replayed],[first.purchaseOrderId,true],'An undone draft is not replaced');
  // Custom: the second supplier's draft is prepared alone, inside the owner's limit.
  await f.subscribe('enterprise');
  await service.configure(db,ctx,saved[1].promotionId,{revision:1,refreshDays:'1',maximumAmount:'24.00',confirmed:'yes',sourceFingerprint:preview.drafts[1].sourceFingerprint});
@@ -66,7 +65,7 @@ test('a recorded promotion drafts one purchase order per supplier: Pro reviews e
  const order=(await db.query('SELECT status,supplier_id FROM purchase_orders WHERE id=$1',[done.result.purchaseOrderId])).rows[0];
  assert.deepEqual([order.status,order.supplier_id],['DRAFT','coastal-supplier']);
  const page=await service.page(db,ctx,saved[1].promotionId);assert.equal(page.draft.automatic,true);assert.equal(page.project.enabled,false);
- assert.equal(await f.purchases(),before+3);assert.equal(await f.balance(),0);
+ assert.equal(await f.purchases(),before+2);assert.equal(await f.balance(),0);
 });
 
 test('phone and desktop: a recorded promotion is chosen, reviewed for both suppliers and saved together',{timeout:600000},async t=>{
