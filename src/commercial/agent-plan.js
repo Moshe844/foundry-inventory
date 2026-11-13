@@ -205,6 +205,7 @@ const actionJobs=new Map([
   ['report.stock_health',162],
   ['report.service_levels',163],
   ['report.supplier_review_pack',164],
+  ['report.year_end_pack',165],
   ['channel.price_check',87],
   ['inventory.correct_bin',11],
   ['customer_return.from_email',111],

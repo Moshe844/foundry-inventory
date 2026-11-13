@@ -864,6 +864,18 @@ function createPostgresAutopilotRouter(database,options={}){
     req.flash('success',r.unchanged?'Your mailbox is unchanged.':'Supplier packs will be sent from this mailbox.');toPacks(res,null,'pack-mailbox');}));
   router.get(supplierPacks.href+'/packs/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const file=await supplierPacks.kept(database,req.ctx,req.params.id);
     res.set('Cache-Control','private, no-store').type('application/pdf').attachment(file.filename).send(file.body);}));
+  // Job 165 (Growth and up): the year-end stocktake and valuation pack, kept and sent to the accountant.
+  const yearEndPack=require('../../accounting/agent-year-end-pack');
+  const toYearEnd=(res,anchor='year-end-packs')=>res.redirect(303,yearEndPack.href+'#'+anchor);
+  router.get(yearEndPack.href,requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,yearEndPack.JOB,'autopilot/year-end-pack',{title:'Year-end stock pack',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>yearEndPack.page(database,req.ctx,req.query),402)));
+  router.post(yearEndPack.href+'/settings',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await yearEndPack.configure(database,req.ctx,req.body);
+    req.flash('success',r.stopped?'The yearly pack is stopped.':r.unchanged?'Your settings are unchanged.':'Saved. StockChief makes and sends the pack after each year end.');toYearEnd(res,'year-end-settings');}));
+  router.post(yearEndPack.href+'/make',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await yearEndPack.makeNow(database,req.ctx,req.body);
+    req.flash('success',r.replayed?'This pack was already sent.':'Pack made and kept.');toYearEnd(res);}));
+  router.post(yearEndPack.href+'/packs/:id/send',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await yearEndPack.send(database,req.ctx,req.params.id,req.body);
+    req.flash(r.changed?'error':'success',r.changed?'The figures changed since you opened this pack. Check the new pack, then send it.':r.replayed?'This pack was already sent.':'Pack sent to '+r.pack.recipient+'.');toYearEnd(res);}));
+  router.get(yearEndPack.href+'/packs/:id',requireAuth,owner,asyncRoute(async(req,res)=>{const file=await yearEndPack.kept(database,req.ctx,req.params.id);
+    res.set('Cache-Control','private, no-store').type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').attachment(file.filename).send(file.body);}));
   router.post(monthEndStock.href+'/flags/:id/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await reportRuns.dismiss(database,req.ctx,req.params.id);req.flash('success','Marked as seen.');res.redirect(303,monthEndStock.href+'?'+new URLSearchParams({month:r.period})+'#month-end-flags');}));
   // Job 161: the monthly ROI report, made on its own after each month on every plan.
   const roiReport=require('../../reports/agent-roi-report');
