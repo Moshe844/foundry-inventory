@@ -303,7 +303,7 @@ const notes={
   pro:'Sets safety stock on its own without training inside your change limit from Keep reorder points up to date, and leaves settings you locked there alone. Bigger changes, and all changes during Ask me first, a pause, routine work off, Watch only or the first 14 days, come to you.',
   enterprise:'Sets safety stock on its own without training inside your change limit from Keep reorder points up to date, and leaves settings you locked there alone. Bigger changes, and all changes during Ask me first, a pause, routine work off, Watch only or the first 14 days, come to you.'},
  145:{common:'Plans stock from a recorded promotion or dates and extra demand you enter. It checks recent warehouse issues, existing orders and supplier pack sizes, then prepares one purchase draft per supplier. Each plan supports up to 250 whole-unit products and 50 owned stock locations.',
-  pro:'Reviews each supplier’s planned quantities with you before preparing its purchase draft.',
+  pro:'Reviews each supplier’s planned quantities with you before preparing its purchase draft. Automatic planning and draft preparation require Custom.',
   enterprise:'Prepares each supplier’s purchase draft without training within the goods-value limit you set. Purchase approval and sending use the usual controls.'},
  147:{common:'Plans stock for one or more suppliers from checked closure and next-delivery dates, recorded warehouse issues and dated incoming orders. Each plan supports up to 250 whole-unit products and 50 stock locations.',
   growth:'Suggests how much stock to order before the closure.',
