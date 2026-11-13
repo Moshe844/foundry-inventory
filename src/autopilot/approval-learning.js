@@ -101,7 +101,10 @@ async function offers(db,ctx,{test=true,only=null}={}){
     if(!ready)continue;
     for(const run of runsOf(adapter,await adapter.history(db,ctx,{days:DAYS,state,jobs}),decided)){
       if(!jobs.includes(run.job))continue;
-      const o=await adapter.offer(db,ctx,{state,run});
+      // A record the job itself would refuse (a stopped page, a changed
+      // supplier) means no offer; it never stops the other offers.
+      let o;
+      try{o=await adapter.offer(db,ctx,{state,run});}catch(error){if(![400,402,403,404,409,422].includes(error?.status))throw error;o=null;}
       if(!o)continue;
       const offer={...o,source:adapter.kind,anchor:anchor(run.kind,run.scope),action:run.kind,job:run.job,key:run.scope,run:run.rows.length,
         first:day(run.first.at),last:run.latest.at,latestId:run.latest.id,ids:run.rows.map(r=>r.id),example:o.href,
