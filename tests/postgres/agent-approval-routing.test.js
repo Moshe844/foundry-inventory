@@ -45,7 +45,8 @@ test('approvals of every kind go to the person whose role, access and limit cove
  // Starter and Growth: excluded. Nothing is routed and the plan lock shows.
  for(const tier of ['starter','growth']){
   await subscribe(tier);
-  for(const person of [owner,buyer,senior,lead,returns])assert.deepEqual(await routed(person),[],tier+' routes nothing');
+  for(const person of [buyer,senior,lead,returns])assert.deepEqual(await routed(person),[],tier+' routes nothing');
+  assert.deepEqual(await routed(owner),Object.values(keys).sort(),tier+': every approval is the owner’s (job 174).');
   assert.match((await browser.get(page).expect(402)).text,/Pro/);await browser.get(review).expect(402);
   await assert.rejects(desk.saveRule(db,ctx,{kind:'purchase',userId:senior.actorId}),e=>e.code==='entitlement_required');
   await assert.rejects(desk.saveLimit(db,ctx,{kind:'adjustment',userId:lead.actorId,amount:'5',currency:'USD'}),e=>e.code==='entitlement_required');
