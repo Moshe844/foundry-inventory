@@ -81,7 +81,7 @@ function handlingUnits(rows){
 
 function build(input){
   if(input?.confirmed!=='yes')throw new ValidationError('Confirm the measured freight and that this shipment is non-hazardous.');
-  if(input.nonHazardous!=='yes')throw new ValidationError('Confirm this shipment is non-hazardous. Book hazardous freight directly with the carrier.');
+  if(input.nonHazardous!=='yes')throw new ValidationError('Confirm this shipment is non-hazardous. Hazardous freight always needs a person to book it directly with the carrier.');
   if(!identifier.test(input.accountId))throw new ValidationError('Choose an active freight account from your ShipStation API connection.');
   const date=String(input.pickupDate||''),dateTime=new Date(date+'T00:00:00Z');
   if(!calendar.test(date)||!Number.isFinite(dateTime.getTime())||dateTime.toISOString().slice(0,10)!==date||
