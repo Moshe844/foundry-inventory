@@ -1319,21 +1319,23 @@ function createPostgresAutopilotRouter(database,options={}){
   router.post('/autopilot/supplier-benefits/:id/claims/:claimId',requireAuth,owner,asyncRoute(async(req,res)=>{
     await supplierBenefits.updateClaim(database,req.ctx,req.params.id,req.params.claimId,req.body);res.redirect(303,'/autopilot/supplier-benefits/'+req.params.id);
   }));
-  router.get('/autopilot/supplier-forecasts',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/supplier-forecast',{title:'Supplier stock forecast',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},()=>require('../../purchasing/agent-supplier-forecasts').page(database,req.ctx,{q:req.query.q}))));
-  router.post('/autopilot/supplier-forecasts/preview',requireAuth,owner,asyncRoute(async(req,res)=>{
-    const forecasts=require('../../purchasing/agent-supplier-forecasts'),skuIds=await forecasts.resolveCodes(database,req.ctx.workspaceId,req.body.codes);
-    const saved=await forecasts.preview(database,req.ctx,{supplierId:req.body.supplierId,connectorId:req.body.connectorId,skuIds,requestKey:req.body.requestKey});res.redirect(303,'/autopilot/supplier-forecasts/'+saved.id);
-  }));
-  router.get('/autopilot/supplier-forecasts/:id',requireAuth,owner,asyncRoute(async(req,res)=>agentPage(req,res,'autopilot/supplier-forecast',{title:'Review supplier forecast',nav:'autopilot',backTo:{href:'/autopilot/supplier-forecasts',label:'Supplier forecasts'}},()=>require('../../purchasing/agent-supplier-forecasts').page(database,req.ctx,{id:req.params.id}))));
-  router.post('/autopilot/supplier-forecasts/:id/send',requireAuth,owner,asyncRoute(async(req,res)=>{
-    await require('../../purchasing/agent-supplier-forecasts').send(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/supplier-forecasts/'+req.params.id);
-  }));
-  router.post('/autopilot/supplier-forecasts/:id/schedule',requireAuth,owner,asyncRoute(async(req,res)=>{
-    await require('../../purchasing/agent-supplier-forecasts').configure(database,req.ctx,req.params.id,req.body);res.redirect(303,'/autopilot/supplier-forecasts/'+req.params.id);
-  }));
-  router.post('/autopilot/supplier-forecast-rules/:id/stop',requireAuth,owner,asyncRoute(async(req,res)=>{
-    await require('../../purchasing/agent-supplier-forecasts').configure(database,req.ctx,null,{...req.body,ruleId:req.params.id,stop:'yes'});res.redirect(303,'/autopilot/supplier-forecasts');
-  }));
+  // Job 36: key suppliers get their stock and a 12-week forecast each week.
+  const supplierForecasts=require('../../purchasing/agent-supplier-forecasts'),forecastLocals=back=>({title:'Supplier forecasts',nav:'autopilot',backTo:back});
+  const toForecasts=(res,anchor='this-week',id=null)=>res.redirect(303,supplierForecasts.href+(id?'/'+encodeURIComponent(id):'')+'#'+anchor);
+  router.get(supplierForecasts.href,requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,supplierForecasts.JOB,'autopilot/supplier-forecast',forecastLocals({href:'/autopilot/reviews',label:'Agent reviews'}),()=>supplierForecasts.page(database,req.ctx,{q:req.query.q}),402)));
+  router.get(supplierForecasts.href+'/:id',requireAuth,owner,asyncRoute(async(req,res)=>reportPage(req,res,supplierForecasts.JOB,'autopilot/supplier-forecast',forecastLocals({href:supplierForecasts.href,label:'Supplier forecasts'}),()=>supplierForecasts.page(database,req.ctx,{id:req.params.id}),402)));
+  router.post(supplierForecasts.href+'/key',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierForecasts.addKey(database,req.ctx,req.body);
+    req.flash('success',r.unchanged?'This supplier is already a key supplier.':'Key supplier added. StockChief prepares their forecast at its next check.');toForecasts(res,'key-suppliers');}));
+  router.post(supplierForecasts.href+'/key/:id/remove',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierForecasts.removeKey(database,req.ctx,{...req.body,ruleId:req.params.id});
+    req.flash('success',r.unchanged?'Nothing changed.':'Weekly forecasts to this supplier are stopped.');toForecasts(res,'key-suppliers');}));
+  router.post(supplierForecasts.href+'/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierForecasts.prepareNow(database,req.ctx);
+    req.flash('success',r.prepared?r.prepared+' forecast'+(r.prepared===1?'':'s')+' prepared.'+(r.more?' StockChief prepares the rest on its own.':''):'Every forecast for this week is already sent.');toForecasts(res);}));
+  router.post(supplierForecasts.href+'/send-all',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierForecasts.sendAll(database,req.ctx);
+    req.flash('success',r.sent+' forecast'+(r.sent===1?'':'s')+' sent.'+(r.changed?' '+r.changed+' changed; check them and send again.':''));toForecasts(res);}));
+  router.post(supplierForecasts.href+'/mailbox',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierForecasts.chooseMailbox(database,req.ctx,req.body);
+    req.flash('success',r.unchanged?'Your mailbox is unchanged.':'Supplier forecasts will be sent from this mailbox.');toForecasts(res,'forecast-mailbox');}));
+  router.post(supplierForecasts.href+'/:id/send',requireAuth,owner,asyncRoute(async(req,res)=>{const r=await supplierForecasts.send(database,req.ctx,req.params.id,req.body);
+    req.flash(r.changed?'error':'success',r.changed?'The figures changed since you opened this forecast. Check the new one, then send it.':r.replayed?'This forecast was already sent.':'Forecast sent to '+r.report.recipient+'.');toForecasts(res,'forecast',r.report.id);}));
   router.post('/autopilot/return-labels/prepare',requireAuth,owner,asyncRoute(async(req,res)=>{
     const prepared=await assistant.prepareAction(database,req.ctx,'Send this purchased return label and its authorized instructions',{action:'customer_return.send_label',recordReference:req.body.returnReference,mailbox:req.body.connectorId});
     if(!prepared.proposal?.id)throw new ValidationError(prepared.answer||'Choose the exact authorized return and connected sending mailbox.');res.redirect(303,'/actions/'+prepared.proposal.id);
@@ -2006,7 +2008,7 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   router.post('/autopilot/alerts/:job/send',requireAuth,owner,asyncRoute(async(req,res)=>{
     const alerts=require('../../autopilot/agent-alerts'),sent=await alerts.sendNow(database,req.ctx,req.params.job);
-    req.flash('success',Number(req.params.job)===175?(sent.sent===1?'1 approval link is on its way.':sent.sent+' approval links are on their way.'):sent.sent===1?'1 alert is on its way to you.':sent.sent+' alerts are on their way to you.');
+    req.flash('success',Number(req.params.job)===175?(sent.sent===1?'1 approval link is on its way.':sent.sent+' approval links are on their way.'):Number(req.params.job)===50?(sent.sent===1?'1 update is on its way to your team.':sent.sent+' updates are on their way to your team.'):sent.sent===1?'1 alert is on its way to you.':sent.sent+' alerts are on their way to you.');
     res.redirect(303,alerts.pathFor(Number(req.params.job)));
   }));
   // Jobs 155 and 156: the mailbox, people and time, and sending a waiting email.
@@ -2030,6 +2032,11 @@ function createPostgresAutopilotRouter(database,options={}){
     const done=await require('../../autopilot/escalations').answerJob(database,req.ctx,req.body.entryId);
     req.flash('success',done.answered===1?'Thanks. Nobody else will be asked about it.':'Thanks. Nobody else will be asked about these '+done.answered+' alerts.');
     res.redirect(303,back(req,'/needs-you'));
+  }));
+  // Job 50: the person told about waited-for stock marks it seen.
+  router.post('/autopilot/stock-ready/staff/:id/seen',requireAuth,asyncRoute(async(req,res)=>{
+    await require('../../sales/agent-stock-ready-staff').seen(database,req.ctx,req.params.id);
+    req.flash('success','Marked as seen.');res.redirect(303,back(req,'/needs-you'));
   }));
   router.post('/autopilot/escalations/:id/answer',requireAuth,asyncRoute(async(req,res)=>{
     const escalations=require('../../autopilot/escalations');await escalations.answer(database,req.ctx,req.params.id);
