@@ -77,7 +77,7 @@ const SOURCES=[
  {job:68,actions:['Reserved arrived stock for accepted preorder'],why:'Stock arrived for a preorder the customer had accepted.',rule:'Your preorder routine',page:'/autopilot/preorders',fix:'Take it back from picking on Preorders until the box is packed.'},
  {job:69,actions:['Applied the carrier’s address formatting','Held a label for an address check'],why:'The carrier checked the delivery address.',rule:'Your address check routine',page:'/settings/shipping',fix:'Confirm or change the address on the shipment before the label is bought.'},
  {job:70,actions:['Export papers prepared on its own','Export papers held for a person'],why:'A packed shipment was leaving the country and needed its paperwork.',rule:'Your confirmed exporter and product trade facts',page:'/autopilot/export-papers',fix:'Stop the draft or confirm the missing facts on International paperwork. Nothing was filed or sent.'},
- {job:71,actions:['Van manifest published'],when:'automatic',why:'Packed local deliveries were ready for the vans.',rule:'Your van route routine',page:'/autopilot/van-routes',fix:'Stop or replan the manifest on Van routes.'},
+ {job:71,actions:['Van manifest published'],when:'automatic',why:'Packed local deliveries were ready for the vans.',rule:'Your fleet rule and its stop limit',page:'/autopilot/van-routes',undo:'vanRoute',fix:'Stop or replan the manifest on Van routes.'},
  {job:78,actions:['Prepared a private customer check-in'],why:'A customer was due a check-in by your rule.',rule:'Your routine customer check-ins',page:'/autopilot/customer-check-ins',fix:'It is a private draft. Edit or discard it on Customer check-ins.'},
  {job:85,actions:['StockChief checked net margins'],why:'Orders are checked against your net margin rule.',rule:'Your net margin rule',page:'/autopilot/net-contribution',none:true},
  {job:86,actions:['Clearance plan prepared on its own'],why:'Stock was slow and your clearance rule allows a plan.',rule:'Your clearance rule',page:'/autopilot/clearance-plans',fix:'Cancel the plan on Clearance plans before its prices change.'},
@@ -127,6 +127,7 @@ const SOURCES=[
  {job:178,actions:['Team procedure published to staff by StockChief'],why:'How your team works changed.',rule:'Your procedure updates setting',page:'/autopilot/team-procedures',fix:'Restore the earlier staff version on Team procedures.'},
  {job:184,actions:['Invoice or bill sent to the books by StockChief'],why:'An open invoice or bill matched its books entry and every link your books need.',rule:'Your invoice and bill sending for those books',page:'/autopilot/reviews/accounting-documents',outside:true,fix:'The books have it. Void or credit it in QuickBooks or Xero, and correct the invoice or bill in StockChief.'},
  {job:187,actions:['Mail reply sent by StockChief'],why:'A known customer or supplier wrote, and the reply needed no money, commitment or other person.',rule:'Your rules for replies sent on their own',page:'/autopilot/reviews/mail-replies',outside:true,fix:SENT},
+ {job:189,actions:['Agent job run for your other system'],why:'Your other system started it through the StockChief API.',rule:'Your API token with agent job access',page:'/settings/connections?section=developers',fix:'Open the job’s own page to correct what it did, or revoke the token.'},
  {job:190,actions:['Old system migration approved by StockChief','Inventory opened by StockChief after the migration matched'],why:'Your old system’s data matched after the move.',rule:'Your migration setting',page:'/autopilot/reviews/erp-migrations',fix:'Review the migration and correct records on their pages.'},
  {job:196,actions:['Original lot certificate linked'],when:'automatic',why:'A certificate in your mailbox matched a lot.',rule:'Your lot certificate mailbox scope',page:'/autopilot/lot-certificates',fix:'Withdraw the link on Lot certificates.'},
  {job:197,actions:['Compliance report produced on its own'],why:'Your compliance report schedule was due.',rule:'Your compliance report schedule',page:'/autopilot/compliance-reports',fix:'Discard the report and produce a new one.'},
@@ -568,6 +569,11 @@ const UNDO={
  category:{what:'Put back the earlier category or tags, if nobody changed them since.',check:status('stockchief_runtime.agent_product_classifications',{done:"t.status='UNDONE'",
    ready:`t.status='DONE' AND (t.kind<>'CATEGORY' OR EXISTS(SELECT 1 FROM catalogue_item_facts f WHERE f.workspace_id=t.workspace_id AND f.item_id=t.item_id AND f.category=t.applied->>'after'))`}),
   run:(c,ctx,id)=>require('../catalog/agent-product-classification').undo(scoped(c),ctx,id,confirmed)},
+ // Job 71: a route published on its own is stopped while every delivery on it is still packed.
+ vanRoute:{what:'Stop the route while every delivery on it is still at the depot.',check:status('stockchief_runtime.agent_van_routes',{done:"t.status='STOPPED'",
+   ready:`t.status='READY' AND t.automatic AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(t.facts->'stops') x
+    JOIN sales_shipments s ON s.workspace_id=t.workspace_id AND s.id=x->>'id' WHERE s.status<>'PACKED')`}),
+  run:(c,ctx,id)=>require('../shipping/agent-van-routes').undo(scoped(c),ctx,id)},
  // A batch of staff tasks is withdrawn only while every task in it is still waiting.
  staffTasks:{what:'Withdraw these tasks while nobody has done them.',
   check:async(db,ws,items)=>{
