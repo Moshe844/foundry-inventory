@@ -91,6 +91,13 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
   // (agent-channel-alerts.js), then kept open or cleared like the others.
   if(policy.permits(account.plan,169,'automatic'))args.push(JSON.stringify(await require('../connections/agent-channel-alerts').candidates(db,workspaceId)));
   const channelAlerts=policy.permits(account.plan,169,'automatic')?' UNION ALL SELECT 169,kind,ref,link,$3::date FROM jsonb_to_recordset($'+args.length+'::jsonb) AS channel(kind text,ref text,link text)':'';
+  // Job 208: routines the owner always approved, read in JS like job 169.
+  // Its notice job number arrives with migration 498, checked by notices().
+  const learned=await require('./approval-learning').notices(db,workspaceId,account);
+  if(learned.length)args.push(JSON.stringify(learned));
+  const learning=learned.length?' UNION ALL SELECT 208,kind,ref,link,$3::date FROM jsonb_to_recordset($'+args.length+'::jsonb) AS learned(kind text,ref text,link text)':'';
+  // Job 209: every kind of repeated fix, from records.
+  const corrections=policy.permits(account.plan,209,'automatic')?` UNION ALL SELECT 209,'Correction',reference,link,$3::date FROM (`+await require('./correction-rules').noticeSql(db)+`) corrections`:'';
   if(policy.permits(account.plan,3,'automatic'))await checkStockDiscrepancies(db,workspaceId,today);
   await require('../accounting/agent-cash-planning').preparePaymentChecks(db,workspaceId,account,today);
   // Job 166 needs migration 459 (its notice job number and alert levels).
@@ -112,7 +119,7 @@ async function refresh(db,workspaceId,{now=new Date()}={}){
     (policy.permits(account.plan,204,'automatic')?` UNION ALL SELECT 204,'Daily work',d.report_date,'/autopilot/reviews/daily-work?filter='||d.report_date,d.report_date::date
      FROM workspace_daily_digests d WHERE d.workspace_id=$1 AND d.summary::jsonb->>'format'='agent-brief' AND (d.summary::jsonb->>'actions')::int>0
       AND d.report_date=(SELECT max(report_date) FROM workspace_daily_digests WHERE workspace_id=$1 AND summary::jsonb->>'format'='agent-brief')`:'')+
-    (policy.permits(account.plan,209,'automatic')?` UNION ALL SELECT 209,'Correction',reference,link,$3::date FROM (`+require('./repeated-corrections').sql+`) corrections`:'')+
+    corrections+learning+
     (policy.permits(account.plan,21,'draft')?` UNION ALL SELECT 21,'Reorder change',c.id,'/planning/reorder-refresh',c.created_at::date
       FROM stockchief_runtime.agent_reorder_refresh_changes c WHERE c.workspace_id=$1 AND c.status='DRAFT'`:'')+
     ` UNION ALL SELECT 67,'Recurring order',r.id,'/autopilot/reviews/recurring-customer-orders',r.next_date
@@ -277,9 +284,12 @@ async function inbox(db,workspaceId,actorId=null){
     if(Number(r.job_id)===87)return {kind:'inventory',grouped:true,importance:'Important',priority:75,title:'Channel prices need review',
       happened:r.n+' recorded channel price'+(r.n===1?' needs':'s need')+' review.',why:'A comparison found a price difference, MAP issue or older provider observation.',
       recommendation:'Review the recorded prices and their check dates.',href:'/autopilot/reviews/channel-prices',actionLabel:'Review channel prices',sourceId:'agent-notice-87'};
-    if(Number(r.job_id)===209)return {kind:'inventory',grouped:true,importance:'Important',priority:65,title:'Repeated corrections suggest a count rule',
-      happened:r.n+' product and warehouse combination'+(r.n===1?' has':'s have')+' repeated corrections.',why:'At least three non-opening stock corrections were recorded in the last 30 days.',
-      recommendation:'Review a recurring blind count before teaching a new rule.',href:'/autopilot/reviews/repeated-corrections',actionLabel:'Review suggested rule',sourceId:'agent-notice-209'};
+    if(Number(r.job_id)===209)return {kind:'inventory',grouped:true,importance:'Important',priority:65,title:'Your repeated fixes suggest a new rule',
+      happened:r.n+' fix'+(r.n===1?' was':'es were')+' made again and again.',why:'The same stock correction, order change, move or declined reorder was recorded at least three times in the last 30 days.',
+      recommendation:'See what each rule would have done, then accept it or say not now.',href:require('./correction-rules').path,actionLabel:'Review suggested rules',sourceId:'agent-notice-209'};
+    if(Number(r.job_id)===208)return {kind:'inventory',grouped:true,importance:'Information',priority:50,title:'StockChief can stop asking about routines you always approve',
+      happened:r.n+' routine'+(r.n===1?' was':'s were')+' approved by you five times in a row without a change.',why:'Each one stays inside your limits and is not on the list that always needs a person.',
+      recommendation:'Confirm once to let StockChief do it alone, or keep being asked.',href:require('./approval-learning').path,actionLabel:'Review routines',sourceId:'agent-notice-208',ownerOnly:true};
     if(Number(r.job_id)===180)return {kind:'inventory',grouped:true,importance:'Information',priority:45,title:'Your daily team summary',
       happened:'The summary for '+r.due+' is ready.',why:'Who did what that day, and what is late now, from the recorded work.',
       recommendation:'Read it and follow up on anything late.',href:require('./team-summary').path+'?filter='+encodeURIComponent(r.due),actionLabel:'Read team summary',sourceId:'agent-notice-180'};
