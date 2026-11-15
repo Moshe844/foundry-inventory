@@ -59,14 +59,17 @@ async function currentPrice(queryable,workspaceId,skuId){
 // recorded cost of the stock on hand (where an import's unit cost goes when
 // the row also brings stock). A check that scores whether a cost is known
 // uses this, so it agrees with what the product page and margins show.
-const knownPurchaseCostSql=(skuId,workspaceId)=>`(EXISTS(SELECT 1 FROM sku_purchase_costs known_pc WHERE known_pc.workspace_id=${workspaceId} AND known_pc.sku_id=${skuId})
-    OR EXISTS(SELECT 1 FROM supplier_items known_si WHERE known_si.workspace_id=${workspaceId} AND known_si.sku_id=${skuId}
-      AND known_si.is_active=1 AND known_si.last_unit_cost IS NOT NULL)
-    OR EXISTS(SELECT 1 FROM accounting_inventory_cost_balances known_cb
-      JOIN skus known_s ON known_s.workspace_id=known_cb.workspace_id AND known_s.id=known_cb.sku_id
-      JOIN items known_i ON known_i.workspace_id=known_s.workspace_id AND known_i.id=known_s.item_id
-      WHERE known_cb.workspace_id=${workspaceId} AND known_cb.sku_id=${skuId} AND known_cb.quantity_units>0
-        AND (known_i.secondary_unit_label IS NULL OR known_cb.secondary_quantity_units>0)))`;
+function knownPurchaseCostSql(skuId,workspaceId,secondaryUnit){
+  const recorded=`SELECT 1 FROM accounting_inventory_cost_balances c
+    WHERE c.workspace_id=${workspaceId} AND c.sku_id=${skuId} AND c.quantity_units>0`;
+  // Ordinary stock uses the covering cost index. Only measured inventory
+  // needs the secondary quantity from the balance row.
+  return `(EXISTS(SELECT 1 FROM sku_purchase_costs p WHERE p.workspace_id=${workspaceId} AND p.sku_id=${skuId})
+    OR EXISTS(SELECT 1 FROM supplier_items s WHERE s.workspace_id=${workspaceId} AND s.sku_id=${skuId}
+      AND s.is_active=1 AND s.last_unit_cost IS NOT NULL)
+    OR CASE WHEN ${secondaryUnit} IS NULL THEN EXISTS(${recorded})
+      ELSE EXISTS(${recorded} AND c.secondary_quantity_units>0) END)`;
+}
 
 // The average recorded cost of the stock on hand for these SKUs, the third
 // source purchaseCost() falls back to. One row per SKU that has costed stock.

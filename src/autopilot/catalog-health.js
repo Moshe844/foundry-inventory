@@ -20,7 +20,7 @@ const SAFE=require('../catalog/agent-catalog-fixes').SAFE_SQL;
 // Stock counts: a count correction or an imported count. Stock that arrived
 // within the year counts as recently counted.
 const assessed=`WITH active AS MATERIALIZED (
-    SELECT s.id,s.code,s.barcode,s.weight_grams,s.item_id,i.name,
+    SELECT s.id,s.code,s.barcode,s.weight_grams,s.item_id,i.name,i.secondary_unit_label,
       count(*) OVER(PARTITION BY lower(btrim(s.code))) AS same_code,
       count(*) OVER(PARTITION BY lower(btrim(s.barcode))) AS same_barcode,
       regexp_replace(lower(i.name),'[^[:alnum:]]+','','g') AS name_key,
@@ -54,7 +54,7 @@ const assessed=`WITH active AS MATERIALIZED (
   ), checks AS MATERIALIZED (
     SELECT a.*,coalesce(a.code=btrim(a.code) AND a.code ~ '${SAFE}' AND a.same_code=1,false) AS code_ok,
       coalesce(length(btrim(a.barcode))>0 AND a.same_barcode=1,false) AS barcode_ok,
-      ${require('../pricing/postgres-service').knownPurchaseCostSql('a.id','$1')} AS cost_ok,
+      ${require('../pricing/postgres-service').knownPurchaseCostSql('a.id','$1','a.secondary_unit_label')} AS cost_ok,
       coalesce(a.weight_grams>0,false) AS weight_ok,
       d.id IS NULL AS unique_ok,
       EXISTS(SELECT 1 FROM supplier_items si JOIN suppliers v ON v.workspace_id=si.workspace_id AND v.id=si.supplier_id AND v.status='active'
