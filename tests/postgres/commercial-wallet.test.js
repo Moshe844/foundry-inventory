@@ -306,7 +306,21 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
    const expectedUsage=(await usage.summary(db,scope)).meters.filter(m=>m.definition?.kind==='USAGE'&&m.definition.customerVisible);
    for(const meter of expectedUsage)assert.equal(await page.locator('[data-usage-category="'+meter.meter+'"]').count(),1);
    assert.equal(await page.locator('[data-usage-category]').count(),expectedUsage.length);assert.match(await page.locator('body').innerText(),/Plan & billing/);
-   assert.match(await page.locator('body').innerText(),/Plan changes are paused/);for(const buy of await page.locator('form[action="/billing/buy-more"] button').all())assert.equal(await buy.isDisabled(),true);
+   assert.match(await page.locator('body').innerText(),/Plan changes are paused/);
+   assert.equal(await page.locator('[data-settings-section="billing"] a[href^="/complete-signup"], [data-settings-section="billing"] a[href^="/billing/change"], form[action="/billing/buy-more"]').count(),0);
+   await db.query("UPDATE account_subscriptions SET source='ADMIN_PRIVATE_PILOT',status='TRIALING',stripe_subscription_id=NULL,stripe_customer_id=NULL,current_period_end=now()+interval '30 days' WHERE account_id=$1",[scope.accountId]);
+   for(const width of [1440,390]){
+    await page.setViewportSize({width,height:960});
+    await page.reload();
+    assert.match(await page.locator('#plan-now-title').innerText(),/Private pilot/);
+    assert.doesNotMatch(await page.locator('#plan-now-title').innerText(),/\/month/);
+    assert.match(await page.locator('.ox-plan-now').innerText(),/Pilot access ends/);
+    assert.equal(await page.locator('.ox-plan-now a[href="/pricing"]').count(),1);
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
+    if(process.env.STOCKCHIEF_NAV_ARTIFACT_DIR){
+      await page.screenshot({path:require('node:path').join(process.env.STOCKCHIEF_NAV_ARTIFACT_DIR,'pilot-billing-'+width+'.png'),fullPage:true});
+    }
+   }
   }finally{await browser.close();await new Promise(resolve=>server.close(resolve));await app.locals.sessionStore.close();}
  });
 });

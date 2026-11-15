@@ -26,7 +26,7 @@ test('Connections, Settings and related pages use their real controls without co
    assert.equal(new URL(page.url()).pathname,'/settings/connections');assert.equal(await count(),before,type+' close must not create a record');
    assert.equal((await require('../../src/connections/postgres-service').list(db,ctx.workspaceId)).filter(c=>!['shippo'].includes(c.provider_type)).length,0);
   }
-  assert.equal(await page.locator('[data-integration-card=gmail] [role=switch]').count(),1);assert(await page.locator('[data-integration-card=gmail] [role=switch]').isDisabled());
+  for(const type of ['gmail','microsoft365'])assert.equal(await page.locator('[data-integration-card="'+type+'"] [role=switch]').count(),0);
   const rows=(await db.query('SELECT connector_id,expires_at,created_at FROM connection_authorization_states WHERE workspace_id=$1',[ctx.workspaceId])).rows;assert(rows.length>=9);assert(rows.every(r=>r.connector_id===null));
  });
  await t.test('three desktop columns, single phone column, Sola modal and labelled history',async()=>{

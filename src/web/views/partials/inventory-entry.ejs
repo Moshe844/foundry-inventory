@@ -9,7 +9,8 @@
     <% } %>
     <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/inventories">Your real inventories</a>
   </section>
-<% } else if (entry.empty && entryPage !== '/onboarding' && entryPage !== '/') { %>
+<% } else if (entry.empty && entryPage !== '/onboarding' && entryPage !== '/' &&
+  entryPage !== '/usage' && !/^\/(settings|billing)(\/|$)/.test(entryPage)) { %>
   <section class="rm-entry-banner" aria-label="Add inventory data">
     <div><strong>No products yet</strong><span>Import a spreadsheet, connect your system, or add products manually.</span></div>
     <a class="rm-btn rm-btn--sm" href="/onboarding">Add a source</a>

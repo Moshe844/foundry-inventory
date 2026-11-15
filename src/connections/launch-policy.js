@@ -37,10 +37,14 @@ async function resolveWorkspaceContext(database,ctx={}){
 }
 
 function pilotAllowed(providerType,ctx={}){
+ const type=String(providerType).toLowerCase();
+ if(type==='microsoft365'&&ctx.workspaceId&&require('../operations/postgres-production-environment').privateProductionPilot()){
+  return configured('STOCKCHIEF_PRODUCTION_MICROSOFT365_WORKSPACES').includes(ctx.workspaceId);
+ }
  if(process.env.STOCKCHIEF_RUNTIME_ENV!=='staging'||!ctx.workspaceId)return false;
  const seeds=configured('STOCKCHIEF_STAGING_CONNECTION_WORKSPACES'),grant=ctx[accountPilot];
  const approved=seeds.includes(ctx.workspaceId)||grant?.workspaceId===ctx.workspaceId&&grant.seeds===seeds.join('\0');
- return approved&&configured('STOCKCHIEF_STAGING_CONNECTION_PROVIDERS').includes(String(providerType).toLowerCase())&&['shopify','clover','quickbooks','xero','microsoft365','bigcommerce'].includes(String(providerType).toLowerCase());
+ return approved&&configured('STOCKCHIEF_STAGING_CONNECTION_PROVIDERS').includes(type)&&['shopify','clover','quickbooks','xero','microsoft365','bigcommerce'].includes(type);
 }
 function reason(providerType,ctx){return pilotAllowed(providerType,ctx)?null:EXCLUDED[String(providerType||'').toLowerCase()]||null;}
 function assertNewConnection(providerType,ctx){const denied=reason(providerType,ctx);
@@ -50,6 +54,6 @@ async function assertWorkspaceConnection(database,providerType,ctx){
  assertNewConnection(providerType,await resolveWorkspaceContext(database,ctx));
 }
 function metadata(meta,ctx){const denied=reason(meta.type,ctx);
- return denied?{...meta,available:false,unavailableReason:denied}:{...meta,pilot:pilotAllowed(meta.type,ctx)};}
+ return denied?{...meta,available:false,launchRestricted:true,unavailableReason:denied}:{...meta,pilot:pilotAllowed(meta.type,ctx)};}
 
 module.exports={EXCLUDED,reason,assertNewConnection,assertWorkspaceConnection,resolveWorkspaceContext,metadata,pilotAllowed};

@@ -101,6 +101,11 @@ jobs:
       - name: Imported stock wording and default reorder rules
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: node --test tests/postgres/import-stock-words-and-reorder.test.js
+      - name: Connection availability and private Outlook authorization
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=2 tests/unit/connection-pilot-policy.test.js tests/postgres/connection-settings-experience.test.js tests/postgres/connections-restored-pilot.test.js 2>&1 | tee output/customer-navigation-ci/connection-availability.log
       - name: Click every customer destination
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'crawl' }}
         run: |
