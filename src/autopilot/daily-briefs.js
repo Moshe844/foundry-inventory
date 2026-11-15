@@ -87,7 +87,13 @@ async function deliver(db,workspaceId,account,{now=new Date()}={}){
   const team=policy.permits(account.plan,180,'automatic');
   const existing=(await db.query('SELECT summary::jsonb AS data FROM workspace_daily_digests WHERE workspace_id=$1 AND report_date=$2',[workspaceId,day])).rows[0]?.data;
   if(existing?.format==='agent-brief'&&existing.business&&(!team||existing.team&&existing.staffTasks))return;
-  const data={format:'agent-brief',day,deliveredOn:calendarDate,asOf:new Date().toISOString(),...await collect(db,workspaceId,day,day,timeZone,{team})};
+  const collected=await collect(db,workspaceId,day,day,timeZone,{team});
+  // A new business gets no briefing for a day before it existed on which nothing
+  // was recorded. Only that day's own activity counts here; what is open or
+  // out of stock right now belongs to today.
+  const {totals,business,actions,verified}=collected;
+  if(await time.emptyBeforeFirstDay(db,workspaceId,day,{totals,business,actions,verified,team:collected.team}))return;
+  const data={format:'agent-brief',day,deliveredOn:calendarDate,asOf:new Date().toISOString(),...collected};
   await db.query(`INSERT INTO workspace_daily_digests AS d(workspace_id,report_date,generated_at,summary) VALUES($1,$2,$3,$4)
     ON CONFLICT(workspace_id,report_date) DO UPDATE SET summary=CASE WHEN d.summary::jsonb->>'format'='agent-brief' THEN
       (d.summary::jsonb||jsonb_build_object('business',excluded.summary::jsonb->'business')

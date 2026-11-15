@@ -126,6 +126,11 @@ jobs:
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/ask-followups-downloads-phone.test.js tests/postgres/same-rules-for-every-business.test.js 2>&1 | tee output/customer-navigation-ci/ask-business-consistency.log
+      - name: A new account's first day
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'shipping' }}
+        run: |
+          set -euo pipefail
+          node --test tests/postgres/new-account-first-day.test.js 2>&1 | tee output/customer-navigation-ci/new-account-first-day.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

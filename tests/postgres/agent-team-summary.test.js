@@ -11,6 +11,9 @@ const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID
 // pause and Ask me first (where the owner can send it from the page).
 test('the daily team summary says who did what and what is late, and reaches the app, Needs you and email on its own',{timeout:900000},async t=>{
  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:20}),{db,ctx,browser,subscribe}=f,ws=ctx.workspaceId;
+ // An established business: it has orders already late, so it existed before today.
+ // (A business created today gets no summary for the day before it existed.)
+ await db.query('UPDATE workspaces SET created_at=$2 WHERE id=$1',[ws,new Date(Date.now()-5*86400000).toISOString()]);
  const summary=require('../../src/autopilot/team-summary'),alerts=require('../../src/autopilot/agent-alerts'),notices=require('../../src/autopilot/operational-notices');
  const reviews=require('../../src/autopilot/job-reviews'),needs=require('../../src/projections/postgres-service'),modes=require('../../src/autopilot/job-modes');
  const autopilot=require('../../src/autopilot/postgres-service'),mail=require('../../src/connections/postgres-outbound-mail');

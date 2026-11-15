@@ -92,6 +92,9 @@ async function deliver(db,workspaceId,{now=new Date()}={}){
   const clock=await time.forWorkspace(db,workspaceId,now),day=addDays(clock.calendarDate,-1);
   if((await db.query(`SELECT 1 FROM ${table} WHERE workspace_id=$1 AND report_date=$2`,[workspaceId,day])).rowCount)return {replayed:true,day};
   const summary=await collect(db,workspaceId,day,clock);
+  // A new business gets no summary for a day before it existed on which nobody
+  // did anything. What is late right now belongs to today's summary.
+  if(await time.emptyBeforeFirstDay(db,workspaceId,day,summary.people))return {skipped:'before_first_day',day};
   const saved=await db.query(`INSERT INTO ${table}(workspace_id,report_date,summary) VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING report_date`,[workspaceId,day,summary]);
   if(!saved.rowCount)return {replayed:true,day};
   const owner=(await db.query(`SELECT u.id FROM users u JOIN workspaces w ON w.id=u.workspace_id AND w.owner_account_id=u.account_id WHERE w.id=$1 AND u.role='owner' ORDER BY u.id LIMIT 1`,[workspaceId])).rows[0];

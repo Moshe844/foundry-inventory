@@ -10,6 +10,20 @@ async function forWorkspace(db,workspaceId,now=new Date()){
  return context(row?.time_zone||'UTC',now);
 }
 async function today(db,workspaceId,now=new Date()){return (await forWorkspace(db,workspaceId,now)).calendarDate;}
+// The calendar date, in the business's own time zone, on which it was created.
+// A daily report for an earlier day would describe a business that did not exist yet.
+async function firstDay(db,workspaceId){
+ const row=(await db.query("SELECT w.created_at,coalesce(w.time_zone,a.time_zone,'UTC') time_zone FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id WHERE w.id=$1",[workspaceId])).rows[0];
+ return row?context(row.time_zone||'UTC',new Date(row.created_at)).calendarDate:null;
+}
+// True when a daily report for `day` would describe a day before the business
+// existed and counts nothing at all. Such a report is not written: a new owner
+// should not find an empty report for the day before they signed up.
+const counts=value=>typeof value==='number'?value>0:Array.isArray(value)?value.some(counts):Boolean(value)&&typeof value==='object'&&Object.values(value).some(counts);
+async function emptyBeforeFirstDay(db,workspaceId,day,report){
+ const first=await firstDay(db,workspaceId);
+ return Boolean(first&&day<first&&!counts(report));
+}
 async function alignAutomaticStart(db,workspaceId,oldZone,newZone){
  const w=(await db.query('SELECT created_at FROM workspaces WHERE id=$1',[workspaceId])).rows[0];if(!w)return;
  const s=(await db.query('SELECT accounting_start_date,start_date_basis FROM accounting_settings WHERE workspace_id=$1 FOR UPDATE',[workspaceId])).rows[0];if(s?.start_date_basis!=='WORKSPACE_CREATION')return;
@@ -18,4 +32,4 @@ async function alignAutomaticStart(db,workspaceId,oldZone,newZone){
  if((await db.query("SELECT 1 FROM accounting_periods WHERE workspace_id=$1 AND starts_on<=$2 AND ends_on>=$2 AND status<>'OPEN' LIMIT 1",[workspaceId,next])).rows.length)throw new ValidationError('The new business start date falls in a closed accounting period. Review Money → Accounting periods before changing the time zone.');
  await db.query('UPDATE accounting_settings SET accounting_start_date=$2,updated_at=$3 WHERE workspace_id=$1 AND start_date_basis=$4',[workspaceId,next,new Date().toISOString(),'WORKSPACE_CREATION']);
 }
-module.exports={zone,context,forWorkspace,today,parts,wall,dayBoundary,alignAutomaticStart};
+module.exports={zone,context,forWorkspace,today,firstDay,emptyBeforeFirstDay,parts,wall,dayBoundary,alignAutomaticStart};
