@@ -75,4 +75,20 @@ test('a new account’s first import has no stray panel or refusal, keeps its co
   assert.deepEqual(await digests(),[expected]);
   assert.equal((await summary.deliver(db,ws,{now:tomorrow})).day,expected);
   assert.deepEqual(await summaries(),[expected]);
+
+  // Recorded stock value can prepare an exact purchase cost for approval.
+  // Even Custom with routine work on needs that approval before setting it.
+  await db.query("UPDATE accounts SET created_at=(now()-interval '15 days')::text WHERE id=$1",[f.owner.accountId]);
+  await subscribe('enterprise');
+  await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+  const catalogFixes=require('../../src/catalog/agent-catalog-fixes');
+  await catalogFixes.run({workspaceId:ws},db);
+  assert.equal((await db.query('SELECT 1 FROM sku_purchase_costs WHERE workspace_id=$1 AND sku_id=$2',[ws,mug])).rowCount,0);
+  const draft=(await db.query(`SELECT id,fingerprint,status,reason FROM stockchief_runtime.agent_catalog_fixes
+    WHERE workspace_id=$1 AND sku_id=$2 AND kind='COST'`,[ws,mug])).rows[0];
+  assert.equal(draft?.status,'DRAFT');
+  assert.match(draft.reason,/Review this recorded stock cost/);
+  await catalogFixes.approve(db,ctx,draft.id,{confirmed:'yes',fingerprint:draft.fingerprint});
+  const finalCost=(await db.query('SELECT amount_minor FROM sku_purchase_costs WHERE workspace_id=$1 AND sku_id=$2',[ws,mug])).rows[0];
+  assert.equal(Number(finalCost.amount_minor),325);
 });

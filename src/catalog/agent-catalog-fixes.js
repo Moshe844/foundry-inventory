@@ -188,7 +188,8 @@ async function skuOptions(db,workspaceId,rows,{skip=new Set()}={}){
       const candidates=sources.filter(s=>s.amountMinor!=null);
       if(clear&&values.length===1){
         const s=sources[0];
-        out.push(option('COST',row,{after:{amountMinor:s.amountMinor,currency:s.currency},source:sources.map(x=>x.label).join(' and ')},{facts:values}));
+        out.push(option('COST',row,{after:{amountMinor:s.amountMinor,currency:s.currency},source:sources.map(x=>x.label).join(' and '),
+          ...(stock?{sourceKind:'recorded_stock_cost'}:{})},{facts:values}));
       }else out.push(option('COST',row,{after:null,candidates},{facts:sources.map(s=>[s.amountMinor,s.currency,s.label]),
         ask:!sources.length?'No receipt or supplier price records this cost. Enter it.':'Choose one or enter the cost.'}));
     }
@@ -415,6 +416,8 @@ async function gates(c,workspaceId){
 
 // Whether this fix may be made without a person right now, and if not, why.
 async function authority(c,gate,o){
+  if(o.details.sourceKind==='recorded_stock_cost')
+    return {reason:'Review this recorded stock cost before using it as the purchase cost for future orders.'};
   if(!policy.permits(gate.account.plan,JOB,'automatic',{trained:true}))return {reason:'A person approves each fix on this plan.'};
   const rule=await loadRule(c,gate.workspaceId,o.kind,{lock:true}),mode=policy.allowance(gate.account.plan,JOB);
   if(mode==='trained'){
