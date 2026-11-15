@@ -488,7 +488,8 @@ async function queueSend(database,ctx,id,input={},options={}){
       throw new ValidationError(prior.error_message||'The reply was not sent. Change the draft after correcting the connection, then try again.');}
     const queued=await providerEffects.enqueueInTransaction(client,{workspaceId:ctx.workspaceId,kind:'mail.reply.send',
       provider:message.provider_type,aggregateType:'email_message',aggregateId:id,idempotencyKey,
-      requestedByUserId:ctx.actorId,payload:{outboxId,messageId:id,connectorId:message.connector_id,actorId:ctx.actorId},
+      requestedByUserId:ctx.actorId,payload:{outboxId,messageId:id,connectorId:message.connector_id,actorId:ctx.actorId,
+        ...(connection.provider_account_id?{trainingMailboxAccount:connection.provider_account_id}:{})},
       priority:10,maxAttempts:12});return {queued:true,replayed:false,effectId:queued.effect.id,outboxId};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
@@ -506,11 +507,18 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){const
       throw Object.assign(new ValidationError('Reconnect or resume this mailbox before sending.'),{code:'email_connection_unavailable'});
     return {message,connection};},{isolation:'SERIALIZABLE',retrySafe:true});message=loaded.message;connection=loaded.connection;
     if(!provider?.send)throw Object.assign(new ValidationError('This mailbox connection cannot send replies.'),{code:'email_send_unavailable'});
+    if(input.trainingMailboxAccount&&input.trainingMailboxAccount!==connection.provider_account_id)
+      throw new ValidationError('The sending mailbox changed after approval. Review the draft in the current mailbox.');
     // Job 187: a reply StockChief queued on its own is checked again here.
     if(input.agentJob===187)await require('./agent-mail-replies').authority(database,workspaceId,input);
     const providerCredentials=await providerService.loadProviderCredentials(database,connection,provider);
-    providerCalled=true;const result=await require('../commercial/operations').run(database,workspaceId,{capability:'communications.send_approved',
-      key:effect.idempotencyKey,provider:effect.provider,operation:'reply_email',unit:'message'},async()=>{const accepted=await provider.send({credentials:providerCredentials,message:{id:outbox.id,recipient:outbox.recipient,
+    const result=await require('../commercial/operations').run(database,workspaceId,{capability:'communications.send_approved',
+      key:effect.idempotencyKey,provider:effect.provider,operation:'reply_email',unit:'message'},async()=>{
+      if(input.supplierReplyRuleId){
+        try{await require('./agent-mail-replies').authority(database,workspaceId,input);}
+        catch(error){if(error instanceof ValidationError)error.status=400;throw error;}
+      }
+      providerCalled=true;const accepted=await provider.send({credentials:providerCredentials,message:{id:outbox.id,recipient:outbox.recipient,
       subject:outbox.subject,body:outbox.body,externalThreadId:message.external_thread_id,
       inReplyTo:message.internet_message_id,externalReplyToMessageId:message.external_message_id},idempotencyKey:effect.idempotencyKey});if(!accepted||typeof accepted.externalMessageId!=='string'||!accepted.externalMessageId.trim())throw Object.assign(new Error('The mailbox provider did not confirm an acceptance identity.'),{code:'email_provider_acceptance_unverified'});return accepted;});
     await providerEffects.succeed(database,workspaceId,effectId,effect.claimToken,{providerReference:{messageId:result.externalMessageId||null},

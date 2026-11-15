@@ -128,6 +128,7 @@ async function page(db, ctx, { supplierId = '', supplierName = '' } = {}) {
 
 const definition = { id:job, key:'supplier-date-requests', label:'Email suppliers about purchase dates',
   readPage:async()=>({summary:'Ask a supplier for the expected delivery date after they accept a purchase without one. Review the first email and authorize one request per purchase.',
-    rows:[{Action:'Review supplier date requests',link:path}],more:false}) };
+    rows:[{Action:'Review supplier date requests',link:path},
+      {Action:'Review supplier questions and taught replies',link:'/autopilot/reviews/mail-replies'}],more:false}) };
 
 module.exports = { job, phase, path, activeRule, authority, configure, page, definition };
