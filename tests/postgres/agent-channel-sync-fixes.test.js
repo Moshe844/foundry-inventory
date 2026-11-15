@@ -155,6 +155,29 @@ test('channel sync errors are suggested on Starter and fixed alone on Growth, Pr
   await deliver();
   assert.equal((await effect(limited)).status,'SUCCEEDED');assert.equal(f.remote.value,18);
 
+  // A later retry must still have job 182 authority at the provider write,
+  // even if the inventory was on Pro when the worker accepted it.
+  await order(1);
+  await f.reconcile();
+  const pendingRetry=(await position()).pending_effect_id;
+  await assert.rejects(f.sync.execute(db,ws,pendingRetry,{providers:{get:()=>busy}}),/Too many requests/);
+  await db.query("UPDATE stockchief_runtime.jobs SET status='DEAD',completed_at=now()-interval '20 minutes' WHERE payload->>'effectId'=$1",[pendingRetry]);
+  assert.deepEqual(await run(),{fixed:1,notFixed:0});
+  const downgraded={...adapter,writeSyncPosition:async input=>{
+    await subscribe('starter');
+    return adapter.writeSyncPosition(input);
+  }};
+  await assert.rejects(f.sync.execute(db,ws,pendingRetry,{providers:{get:()=>downgraded}}),/Growth/);
+  assert.equal(f.remote.value,18);
+  const heldRetry=await effect(pendingRetry);
+  assert.equal(heldRetry.status,'PENDING');
+  assert.equal(heldRetry.error_code,'entitlement_required');
+
+  // The same retained delivery can finish when its plan authority returns.
+  await subscribe('pro');
+  await deliver();
+  assert.equal(f.remote.value,17);
+
   // When the channel's count changed since StockChief last checked it, the update is not sent again: a person decides.
   await subscribe('enterprise');
   await db.transaction(c=>cache(c,connection,{entityType:'sku',externalId:'custom-variant',code:'CUSTOM-1',displayName:'Custom product',providerData:{itemName:'Custom product'}}));

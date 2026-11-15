@@ -82,7 +82,31 @@ test('private production pilot closes self-registration and requires a real plan
     await browser.get('/inventory').expect(200);
     const form=await browser.get('/settings/billing').expect(200);
     await browser.post('/complete-signup/trial').set('Accept','application/json').type('form').send({_csrf:f.csrf(form.text)}).expect(403);
+
+    const pilot=require('../../scripts/provision-private-production-pilot');
+    const entitlements=require('../../src/commercial/entitlements');
+    const expires=new Date(Date.now()+30*86400000).toISOString();
+    for(const plan of ['starter','growth','pro','enterprise']){
+      const input={plan,expires,email:`pilot-${plan}@example.test`,name:`Pilot ${plan}`,
+        business:`Pilot ${plan} inventory`,reason:'Verified private-pilot test'};
+      const created=await pilot.provision(db,input);
+      const subscription=await entitlements.subscriptionFor(db,created.accountId);
+      assert.equal(subscription.plan_id,plan);
+      const state=await require('../../src/commercial/agent-plan').accountState(db,created.workspaceId);
+      assert.equal(state.plan,plan);
+      assert.equal(require('../../src/commercial/agent-plan').usesAgentTerms(state),true);
+      assert.equal(subscription.stripe_subscription_id,null);
+      assert.equal(entitlements.operationalAccess(subscription).canOperate,true);
+      assert.equal(entitlements.operationalAccess(subscription,new Date(Date.parse(expires)+1000)).canOperate,false);
+      const account=(await db.query('SELECT plan,email_verified_at FROM accounts WHERE id=$1',[created.accountId])).rows[0];
+      assert.equal(account.plan,'paid');
+      assert.equal(account.email_verified_at,null);
+      assert.equal((await db.query('SELECT 1 FROM users WHERE workspace_id=$1 AND account_id=$2 AND role=$3',
+        [created.workspaceId,created.accountId,'owner'])).rowCount,1);
+      await assert.rejects(pilot.provision(db,input),/already uses that email/);
+    }
     process.env.STOCKCHIEF_RUNTIME_ENV='staging';
+    await assert.rejects(pilot.provision(db,{}),/private production pilot/);
     assert.throws(()=>validateProductionEnvironment(production),/BILLING_STRIPE_SECRET_KEY/);
     await guest.get('/register?plan=starter').expect(200);
   });

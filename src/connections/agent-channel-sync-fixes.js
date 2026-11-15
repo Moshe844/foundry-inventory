@@ -66,9 +66,16 @@ async function owner(db,ctx){
 }
 // Why automatic fixes wait right now, or null.
 async function automaticStop(db,workspaceId,state){
+  if(!policy.usesAgentTerms(state)||!policy.permits(state.plan,JOB,'automatic'))return 'Automatic channel sync fixes require Growth or above.';
   const stop=await policy.stopped(db,workspaceId,state,ACTION,true);if(stop)return stop;
   if(!(await require('../autopilot/postgres-service').getState(db,workspaceId)).canAutomate)return 'Routine work is off for this inventory, so each fix waits for your approval.';
   return null;
+}
+
+async function deliveryAuthority(db,workspaceId,automatic){
+  const state=await policy.requireWorkspaceJob(db,workspaceId,JOB,automatic?'automatic':'draft');
+  const stop=automatic?await automaticStop(db,workspaceId,state):await policy.stopped(db,workspaceId,state,ACTION,false);
+  if(stop)throw new ValidationError(stop);
 }
 
 // Failed fixes in the last day, by problem, and undone matches.
@@ -210,12 +217,20 @@ async function renewSignIn(db,ctx,p,{providers}){
   if(!(at(expires)>p.data.expires))throw new ValidationError(NAMES[c.provider_type]+' did not renew the sign-in. Reconnect the channel if this keeps happening.');
   return {renewedUntil:expires?new Date(expires).toISOString():null};
 }
-async function retryUpdate(db,ctx,p){
-  const job=await jobs.retryDead(db,p.data.jobId,ctx.workspaceId,{by:RETRIER});
-  if(!job)throw new ValidationError('That stock update is already being tried again.');
-  return {jobId:job.id};
+async function retryUpdate(db,ctx,p,{automatic}){
+  return tx(db,async client=>{
+    await deliveryAuthority(client,ctx.workspaceId,automatic);
+    const job=await jobs.retryDead(scoped(client),p.data.jobId,ctx.workspaceId,{by:RETRIER});
+    if(!job)throw new ValidationError('That stock update is already being tried again.');
+    const changed=await client.query(`UPDATE stockchief_runtime.provider_effects SET
+      payload=jsonb_set(payload,'{channelSyncFix}',$3::jsonb,true)
+      WHERE workspace_id=$1 AND id=$2 AND kind='commerce.position.publish' AND status='PENDING'`,
+    [ctx.workspaceId,p.data.effectId,JSON.stringify({automatic})]);
+    if(!changed.rowCount)throw new ValidationError('That stock delivery changed before it could be retried.');
+    return {jobId:job.id};
+  });
 }
-async function resendStock(db,ctx,p,{providers}){
+async function resendStock(db,ctx,p,{providers,automatic}){
   const sync=require('./postgres-commerce-sync'),effect=await require('../operations/postgres-provider-effects').get(db,ctx.workspaceId,p.data.effectId);
   const position=(await db.query('SELECT * FROM connection_commerce_positions WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,effect.payload.positionId])).rows[0];
   if(!position)throw new NotFoundError('That channel product is no longer synced.');
@@ -224,11 +239,17 @@ async function resendStock(db,ctx,p,{providers}){
   if(!adapter?.readSyncPosition)throw new ValidationError('This channel cannot be read back.');
   const remote=await sync.readForReview(db,{workspaceId:ctx.workspaceId,actorId:position.authorized_by_user_id},position,adapter);
   if(!Number.isSafeInteger(remote.value)||remote.value<0)throw new ValidationError('The channel did not give a whole-unit stock count. Check the product on the channel.');
-  return tx(db,c2=>sync.resendFailedInTransaction(c2,c,effect.id,remote.value,p.data.attempt).then(r=>{if(r.held)throw new ValidationError(r.reason);return {...r,channelShowed:remote.value};}));
+  return tx(db,async client=>{
+    await deliveryAuthority(client,ctx.workspaceId,automatic);
+    const result=await sync.resendFailedInTransaction(client,c,effect.id,remote.value,p.data.attempt,{automatic});
+    if(result.held)throw new ValidationError(result.reason);
+    return {...result,channelShowed:remote.value};
+  });
 }
-async function matchProduct(db,ctx,p){
+async function matchProduct(db,ctx,p,{automatic}){
   return tx(db,async c=>{
     await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['provider-sync:'+p.data.connectorId]);
+    await deliveryAuthority(c,ctx.workspaceId,automatic);
     const connection=(await c.query("SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 AND status='connected' AND paused_at IS NULL",[ctx.workspaceId,p.data.connectorId])).rows[0];
     if(!connection)throw new ValidationError('Reconnect or resume the channel first.');
     if((await c.query("SELECT 1 FROM connection_mappings WHERE workspace_id=$1 AND connector_id=$2 AND entity_type='sku' AND external_id=$3",[ctx.workspaceId,connection.id,p.data.externalId])).rowCount)
@@ -368,4 +389,4 @@ async function inbox(db,workspaceId){
 }
 
 const definition={id:JOB,key,label:'Watch channel sync and fix common errors',filterLabel:'Channel name',readPage};
-module.exports={JOB,KIND,ACTIONS,key,path,problems,run,schedule,fixNow,undo,readPage,inbox,definition};
+module.exports={JOB,KIND,ACTIONS,key,path,problems,run,schedule,fixNow,undo,readPage,inbox,definition,deliveryAuthority};

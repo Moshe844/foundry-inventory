@@ -187,7 +187,7 @@ async function queue(db,c,p,l,expected,options={}){
  const key=hash({id:p.id,revision:p.revision,local:l.value,localVersion:l.version,expected,...(channelBuffer?{channelBuffer}:{}),...(resend?{resend}:{})});
  const queued=await effects.enqueueInTransaction(db,{workspaceId:p.workspace_id,kind:'commerce.position.publish',provider:c.provider_type,aggregateType:'connection_commerce_position',aggregateId:p.id,
   idempotencyKey:key,requestedByUserId:p.authorized_by_user_id,payload:{connectorId:c.id,positionId:p.id,revision:p.revision,value:l.value,localVersion:l.version,expected,
-   externalId:p.external_id,parentExternalId:p.parent_external_id,externalLocationId:p.external_location_id,providerAccountId:p.provider_account_id,field:p.field,...(channelBuffer?{channelBuffer}:{}),...(resend?{resend}:{})},maxAttempts:5});
+   externalId:p.external_id,parentExternalId:p.parent_external_id,externalLocationId:p.external_location_id,providerAccountId:p.provider_account_id,field:p.field,...(channelBuffer?{channelBuffer}:{}),...(resend?{resend,channelSyncFix:options.channelSyncFix}:{})},maxAttempts:5});
  await db.query('UPDATE connection_commerce_positions SET pending_effect_id=$3,updated_at=now() WHERE workspace_id=$1 AND id=$2',[p.workspace_id,p.id,queued.effect.id]);
  return queued;
 }
@@ -287,14 +287,27 @@ async function execute(db,workspaceId,effectId,options={}){
   if(p.provider_account_id!==c.provider_account_id)throw new ValidationError('The connected provider account changed before delivery.');
   if(!await mapped(db,p))throw new ValidationError('The mapped product or location changed before delivery.');
   const l=await local(db,p);if(!same(l.value,e.payload.value)||l.version!==e.payload.localVersion)throw new ValidationError('StockChief changed before delivery. A fresh synchronization must be prepared.');
+  const checkSyncFix=async()=>{
+   if(!e.payload.channelSyncFix&&!e.payload.resend)return;
+   await require('./agent-channel-sync-fixes').deliveryAuthority(db,workspaceId,e.payload.channelSyncFix?.automatic!==false);
+  };
+  await checkSyncFix();
   await require('./agent-channel-buffers').deliveryAuthority(db,workspaceId,e.payload.channelBuffer,p,l,e.payload.expected);
   const result=await require('../commercial/operations').run(db,workspaceId,{capability:'connections.commerce',key:'commerce-write:'+e.id,provider:c.provider_type,operation:'commerce_position_publish',retryReversed:true},async()=>{
    const credentials=await require('./postgres-provider-service').loadProviderCredentials(db,c,adapter);
-   const checkBufferDelivery=async()=>{if(!e.payload.channelBuffer&&!l.bufferId)return;const fresh=(await db.query('SELECT * FROM connection_commerce_positions WHERE workspace_id=$1 AND id=$2',[workspaceId,p.id])).rows[0];if(!fresh||fresh.revision!==e.payload.revision||fresh.pending_effect_id!==e.id)throw new ValidationError('Channel synchronization authority changed before delivery.');const freshLocal=await local(db,fresh);if(!same(freshLocal.value,e.payload.value)||freshLocal.version!==e.payload.localVersion)throw new ValidationError('Stock changed before channel delivery. Prepare a fresh buffered update.');await require('./agent-channel-buffers').deliveryAuthority(db,workspaceId,e.payload.channelBuffer,fresh,freshLocal,e.payload.expected);};
-   await checkBufferDelivery();
+   const beforeWrite=async()=>{
+    await checkSyncFix();
+    if(!e.payload.channelBuffer&&!l.bufferId)return;
+    const fresh=(await db.query('SELECT * FROM connection_commerce_positions WHERE workspace_id=$1 AND id=$2',[workspaceId,p.id])).rows[0];
+    if(!fresh||fresh.revision!==e.payload.revision||fresh.pending_effect_id!==e.id)throw new ValidationError('Channel synchronization authority changed before delivery.');
+    const freshLocal=await local(db,fresh);
+    if(!same(freshLocal.value,e.payload.value)||freshLocal.version!==e.payload.localVersion)throw new ValidationError('Stock changed before channel delivery. Prepare a fresh buffered update.');
+    await require('./agent-channel-buffers').deliveryAuthority(db,workspaceId,e.payload.channelBuffer,fresh,freshLocal,e.payload.expected);
+   };
+   await beforeWrite();
    await effects.checkpoint(db,workspaceId,e.id,token,{externalId:p.external_id,positionId:p.id});
    attempted=true;
-   return adapter.writeSyncPosition({...readInput(p,credentials),value:e.payload.value,expected:e.payload.expected,idempotencyKey:e.id,beforeWrite:checkBufferDelivery,
+   return adapter.writeSyncPosition({...readInput(p,credentials),value:e.payload.value,expected:e.payload.expected,idempotencyKey:e.id,beforeWrite,
     onAccepted:reference=>effects.checkpoint(db,workspaceId,e.id,token,{externalId:p.external_id,positionId:p.id,transactionId:reference.transactionId},{allowCommerceTransaction:true})});
   });
   const retained=(await effects.get(db,workspaceId,e.id)).providerReference;
@@ -390,7 +403,7 @@ async function acceptCountInTransaction(db,ctx,payload){
 // Job 182: send the current stock again after a delivery failed for certain
 // (nothing reached the channel). The channel must still show the count
 // StockChief last verified; otherwise a person decides which is right.
-async function resendFailedInTransaction(db,c,failedId,observed,attempt){
+async function resendFailedInTransaction(db,c,failedId,observed,attempt,channelSyncFix){
  const e=await effects.get(db,c.workspace_id,failedId);
  const p=(await db.query('SELECT * FROM connection_commerce_positions WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[c.workspace_id,e.payload.positionId])).rows[0];
  if(e.status!=='FAILED'||e.kind!=='commerce.position.publish'||!p||p.pending_effect_id!==e.id||p.revision!==e.payload.revision||p.field!=='quantity'||!['outbound','two_way'].includes(p.mode))
@@ -400,7 +413,7 @@ async function resendFailedInTransaction(db,c,failedId,observed,attempt){
  await db.query('UPDATE connection_commerce_positions SET pending_effect_id=NULL WHERE workspace_id=$1 AND id=$2',[p.workspace_id,p.id]);
  const fresh={...p,pending_effect_id:null},l=await local(db,fresh);
  if(same(l.value,observed)){await advance(db,fresh,l.value,observed);return {matched:true,value:l.value};}
- const queued=await queue(db,c,fresh,l,observed,{resend:{of:e.id,attempt}});
+ const queued=await queue(db,c,fresh,l,observed,{resend:{of:e.id,attempt},channelSyncFix});
  return queued.held?{held:true,reason:queued.reason}:{effectId:queued.effect.id,value:l.value,replayed:!queued.created};
 }
 async function readForReview(db,ctx,p,adapter){const c=await connection(db,ctx,p.connector_id);return providerRead(db,c,p,adapter,'buffer-review:'+newId('read'));}
