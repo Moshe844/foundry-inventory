@@ -3,6 +3,7 @@
 // These are the same stored controls counted when an owner grants new rules.
 // A bounded probe also handles a Custom account that later chooses a small plan.
 const sources=[
+ ['agent_supplier_reply_rules','enabled'],
  ['agent_draft_rules'],['agent_quote_companion_rules','enabled'],['agent_customer_checkin_rules','enabled'],['agent_transfer_balance_rules'],['agent_supplier_invoice_settings','enabled'],
  ['agent_supplier_return_rules','enabled'],['agent_supplier_cost_rules','enabled'],['agent_stock_protections','enabled'],['agent_customer_invoice_rules'],['agent_invoice_reminder_rules'],
  ['agent_supplier_forecast_rules','enabled'],['agent_return_email_rules'],['agent_return_disposition_rules','enabled'],['agent_customer_order_pages','enabled'],['agent_customer_page_rules','enabled'],

@@ -264,6 +264,7 @@ async function run(db,ctx,key,options={}){
       ...(result.customerStatementForm?{customerStatementForm:result.customerStatementForm}:{}),
       ...(result.customerQuestionForm?{customerQuestionForm:result.customerQuestionForm}:{}),
       ...(result.mailReplyForm?{mailReplyForm:result.mailReplyForm}:{}),
+      ...(result.supplierReplyRules?{supplierReplyRules:result.supplierReplyRules}:{}),
       ...(result.accountingDocumentsForm?{accountingDocumentsForm:result.accountingDocumentsForm}:{}),
       ...(result.quoteRequestForm?{quoteRequestForm:result.quoteRequestForm}:{}),
       ...(result.quoteFollowupDefaults?{quoteFollowupDefaults:result.quoteFollowupDefaults}:{}),

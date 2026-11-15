@@ -1884,6 +1884,12 @@ function createPostgresAutopilotRouter(database,options={}){
     catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
     res.redirect(303,mailReplies.path);
   }));
+  router.post('/autopilot/mail-replies/supplier-rule',requireAuth,owner,asyncRoute(async(req,res)=>{
+    const rules=require('../../connections/agent-supplier-reply-rules');
+    try{req.flash('success',(await rules.save(database,req.ctx,req.body)).message);}
+    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+    res.redirect(303,mailReplies.path);
+  }));
   // Job 184: invoices and bills sent to QuickBooks or Xero.
   const accountingDocuments=require('../../accounting/agent-accounting-documents');
   const documentPath=req=>'/autopilot/accounting-documents/'+encodeURIComponent(req.params.connectorId)+'/'+encodeURIComponent(req.params.kind)+'/'+encodeURIComponent(req.params.id);

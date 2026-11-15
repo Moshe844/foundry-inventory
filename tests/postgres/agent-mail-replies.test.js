@@ -34,6 +34,47 @@ async function fixture(t,plan='pro'){
 }
 const hours=['Opening hours','Hi, could you remind me of your warehouse opening hours? Thanks, Rita'];
 
+test('Growth repeats a verified owner-taught supplier reply only while its exact permission still holds',{timeout:180000},async t=>{
+ const f=await fixture(t,'growth'),{db,ctx}=f;
+ const rules=require('../../src/connections/agent-supplier-reply-rules');
+ const subject='Catalogue contact',question='Could you remind us who looks after your catalogue?';
+ const supplier={sender:'parts@example.test'};
+ const first=await f.ask(subject,question,supplier);
+ assert.equal(first.drafted,true);
+ await assert.rejects(rules.save(db,ctx,{exampleId:first.id}),/personally sent/);
+ await f.mail.queueSend(db,ctx,first.id,{subject:f.reply[0],body:f.reply[1]});
+ await f.deliver();
+ assert.equal(f.sent.length,1);
+ const page=await f.browser.get(f.replies.path).expect(200);
+ assert.ok(page.text.includes('Teach this reply'),'The approved example should be available from the Growth review page.');
+ await f.browser.post('/autopilot/mail-replies/supplier-rule').type('form')
+   .send({_csrf:f.csrf(page.text),exampleId:first.id}).expect(303);
+ const [rule]=(await rules.read(db,ctx,{teaching:true})).rules;
+ assert.equal(rule.example_id,first.id);
+
+ let repeated=await f.ask(subject,question,supplier);
+ assert.equal(repeated.queued,true,JSON.stringify(repeated));
+ await f.deliver();
+ assert.equal(f.sent.length,2);
+ assert.equal(f.sent[1].externalThreadId,repeated.thread);
+ assert.equal((await f.ask(subject,question+' Is there a second contact?',supplier)).drafted,true);
+ assert.equal((await f.ask(subject,question,supplier,[f.reply[0],f.reply[1]+' A different answer.'])).drafted,true);
+ assert.equal((await f.ask(subject,question)).drafted,true);
+
+ repeated=await f.ask(subject,question,supplier);
+ assert.equal(repeated.queued,true);
+ await rules.save(db,ctx,{stop:rule.id});
+ assert.match((await f.deliver())[0].error,/exact supplier reply rule changed/);
+ assert.equal(f.sent.length,2);
+ await rules.save(db,ctx,{exampleId:first.id});
+ repeated=await f.ask(subject,question,supplier);
+ assert.equal(repeated.queued,true);
+ await f.subscribe('starter');
+ assert.match((await f.deliver())[0].error,/Growth/);
+ assert.equal(f.sent.length,2);
+ await assert.rejects(rules.save(db,ctx,{exampleId:first.id}),/Growth/);
+});
+
 test('each plan by its mode: Starter cannot draft, Growth keeps replies for a person, Pro and Custom send alone in the same thread',{timeout:600000},async t=>{
  const f=await fixture(t,'starter'),{db,ctx}=f;
  // Starter: the job is not included; nothing is drafted or sent.

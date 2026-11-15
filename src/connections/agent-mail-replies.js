@@ -22,6 +22,7 @@ const crypto=require('node:crypto');
 const policy=require('../commercial/agent-plan');
 const {ValidationError,AuthorizationError}=require('../domain/errors');
 const {has}=require('../db/schema-installed');
+const supplierRules=require('./agent-supplier-reply-rules');
 
 const JOB=187,TABLE='stockchief_runtime.agent_mail_replies',SETTINGS='stockchief_runtime.agent_mail_reply_settings';
 const KIND='mail.agent-reply.v1',key='mail-replies',path='/autopilot/reviews/'+key;
@@ -92,7 +93,7 @@ async function decide(db,workspaceId){
 // The outcome for one prepared reply: SKIP, HELD (stops and asks), WATCHED,
 // DRAFTED (kept for a person) or SEND. `sending` names our own outbox row when
 // checked again at the mailbox.
-async function evaluate(db,workspaceId,m,{sending=null}={}){
+async function evaluate(db,workspaceId,m,{sending=null,expectedSupplierRule=null}={}){
   if(!m||m.reply_sent_at||m.reply_state!=='NEEDS_REPLY')return {status:'SKIP',reason:'Someone already answered or filed this email.'};
   if(m.draft_source!=='model'||!m.draft_body||!m.draft_subject)return {status:'SKIP',reason:'There is no reply prepared by StockChief.'};
   const outbox=(await db.query(`SELECT 1 FROM stockchief_runtime.email_reply_outbox WHERE workspace_id=$1 AND message_id=$2 AND status IN ('PENDING','SENDING','SENT','AMBIGUOUS') AND id IS DISTINCT FROM $3 LIMIT 1`,
@@ -130,10 +131,16 @@ async function evaluate(db,workspaceId,m,{sending=null}={}){
   if(!await known(db,workspaceId,contact,m.sender))return {...who,status:'HELD',reason:'This is the first time StockChief would write to '+contact.name+', so a person sends it.'};
   if(decision.mode==='watch')return {...who,status:'WATCHED',reason:decision.reason+' It would have replied to '+contact.name+'.'};
   // The owner's rules for replies sent on their own.
-  if(policy.allowance(decision.state.plan,JOB)==='draft')return {...who,status:'DRAFTED',reason:'Your plan keeps replies for you to read and send.'};
+  const supplier=contact.kind==='supplier';
+  const requiresExample=policy.allowance(decision.state.plan,JOB)==='draft';
+  const trainedRule=supplier&&(requiresExample||expectedSupplierRule)
+    ?await supplierRules.matchingRule(db,workspaceId,m,contact.id):null;
+  if(expectedSupplierRule&&trainedRule?.id!==expectedSupplierRule)
+    return {...who,status:'DRAFTED',reason:'The exact supplier reply rule changed. A person sends this reply.'};
+  if(requiresExample&&!trainedRule)return {...who,status:'DRAFTED',reason:'Your plan keeps replies for you to read and send. An exact, taught supplier reply can go on its own.'};
   const settings=await settingsOf(db,workspaceId);
   if(settings&&!settings[contact.kind+'s'])return {...who,status:'DRAFTED',reason:'You keep replies to '+contact.kind+'s for yourself.'};
-  const box=await require('./agent-sending-mailbox').resolve(db,workspaceId,settings?.connector_id||null,'replies');
+  const box=await require('./agent-sending-mailbox').resolve(db,workspaceId,settings?.connector_id||trainedRule?.connector_id||null,'replies');
   if(box.reason)return {...who,status:'HELD',reason:box.problem==='mailbox_choice'
     ?'You have '+box.boxes.length+' mailboxes connected. Choose the one StockChief replies from on its own; it never picks one for you.'
     :settings?.connector_id?'The mailbox you chose for replies is not connected now. Reconnect it or choose another.':'Connect a mailbox so StockChief can reply from it.'};
@@ -144,10 +151,16 @@ async function evaluate(db,workspaceId,m,{sending=null}={}){
   if(!decision.autopilot.canAutomate)return {...who,status:'DRAFTED',reason:'StockChief is set to ask you first.'};
   const ask=await require('../autopilot/job-modes').restriction(db,workspaceId,JOB,true);
   if(ask)return {...who,status:'DRAFTED',reason:ask};
-  if(!policy.permits(decision.state.plan,JOB,'automatic'))return {...who,status:'DRAFTED',reason:'Your plan asks you to send each reply.'};
+  if(supplier){
+    const supplierMode=await require('../autopilot/job-modes').restriction(db,workspaceId,supplierRules.job,true);
+    if(supplierMode)return {...who,status:'DRAFTED',reason:supplierMode};
+  }
+  const permitted=supplier?policy.permits(decision.state.plan,supplierRules.job,'automatic',{trained:Boolean(trainedRule)}):
+    policy.permits(decision.state.plan,JOB,'automatic');
+  if(!permitted)return {...who,status:'DRAFTED',reason:'Your plan asks you to send each reply.'};
   const quota=await require('../commercial/agent-rule-quota').restriction(db,decision.state);
   if(quota)return {...who,status:'DRAFTED',reason:quota};
-  return {...who,status:'SEND',box:box.box};
+  return {...who,status:'SEND',box:box.box,supplierRule:trainedRule?.id||null};
 }
 
 async function message(db,workspaceId,id,lock=false){
@@ -192,7 +205,8 @@ async function send(db,ctx,m,f){
     if(!started.rowCount)throw Object.assign(new ValidationError('StockChief already tried to send this exact reply. A person sends it.'),{status:409});
     const effect=await require('../operations/postgres-provider-effects').enqueueInTransaction(c,{workspaceId:ctx.workspaceId,kind:'mail.reply.send',provider:box.provider_type,
       aggregateType:'email_message',aggregateId:locked.id,idempotencyKey,requestedByUserId:ctx.actorId,
-      payload:{outboxId,messageId:locked.id,connectorId:locked.connector_id,actorId:ctx.actorId,agentJob:JOB,automatic:true,draftDigest:f.digest},priority:10,maxAttempts:12});
+      payload:{outboxId,messageId:locked.id,connectorId:locked.connector_id,actorId:ctx.actorId,agentJob:JOB,automatic:true,draftDigest:f.digest,
+        ...(again.supplierRule?{supplierReplyRuleId:again.supplierRule}:{})},priority:10,maxAttempts:12});
     await record(c,ctx.workspaceId,locked,{...f,status:'QUEUED',reason:null,outboxId,automatic:true});
     await audit(c,ctx,{action:'Mail reply sent by StockChief',reference:locked.sender,
       after:{messageId:locked.id,contact:f.contact.name,recipient:locked.sender,mailbox:locked.connector_id,threadId:locked.external_thread_id,outboxId,effectId:effect.effect.id,automatic:true}});
@@ -222,8 +236,9 @@ async function fromDraft(db,workspaceId,id){
 async function authority(db,workspaceId,input){
   const row=await has(db,TABLE)&&(await db.query(`SELECT status,outbox_id,draft_digest FROM ${TABLE} WHERE workspace_id=$1 AND message_id=$2`,[workspaceId,input.messageId])).rows[0];
   if(!row||row.status!=='QUEUED'||row.outbox_id!==input.outboxId||row.draft_digest!==input.draftDigest)throw Object.assign(new ValidationError('This reply changed after it was queued. Nothing was sent.'),{status:409});
-  const f=await evaluate(db,workspaceId,await message(db,workspaceId,input.messageId),{sending:input.outboxId});
-  if(f.digest!==input.draftDigest)throw Object.assign(new ValidationError('This reply changed after it was queued. Nothing was sent.'),{status:409});
+  const f=await evaluate(db,workspaceId,await message(db,workspaceId,input.messageId),
+    {sending:input.outboxId,expectedSupplierRule:input.supplierReplyRuleId});
+  if(f.digest&&f.digest!==input.draftDigest)throw Object.assign(new ValidationError('This reply changed after it was queued. Nothing was sent.'),{status:409});
   if(f.status!=='SEND')throw Object.assign(new ValidationError(f.reason||'This reply can no longer go out on its own. Nothing was sent.'),{status:409});
 }
 
@@ -271,7 +286,7 @@ async function review(db,ctx,{page=1,filter=''}={}){
   const state=await policy.accountState(db,ctx.workspaceId),plan=policy.usesAgentTerms(state)?state.plan:null;
   const alone=Boolean(plan)&&policy.permits(plan,JOB,'automatic');
   const summary='StockChief prepares replies to email from your customers and suppliers, from your records. '+
-    (alone?'On your plan it sends them on its own, from the mailbox the email came to and in the same conversation, within the rules below.':'On your plan every reply waits for you to read and send it.')+
+    (alone?'On your plan it sends them on its own, from the mailbox the email came to and in the same conversation, within the rules below.':'Read and send each reply. You can teach StockChief to repeat an exact supplier reply.')+
     ' Unknown senders, money, commitments, first emails to someone and unclear conversations always wait for you.';
   if(!await has(db,TABLE))return {summary:'Replies are being upgraded. Try again shortly.',rows:[],more:false};
   const rows=(await db.query(`SELECT * FROM ${TABLE} WHERE workspace_id=$1 AND ($3='' OR lower(sender)=lower($3) OR lower(coalesce(contact_name,''))=lower($3) OR strpos(lower(coalesce(subject,'')),lower($3))>0)
@@ -280,6 +295,7 @@ async function review(db,ctx,{page=1,filter=''}={}){
   const boxes=await require('./postgres-outbound-mail').mailboxes(db,ctx.workspaceId);
   return {summary,more:rows.length>100,
     rows:rows.slice(0,100).map(r=>({From:r.contact_name||r.sender,Subject:r.subject||'(No subject)',Outcome:OUTCOME[r.status]+(r.automatic&&['QUEUED','SENT'].includes(r.status)?' by StockChief':''),Why:r.reason||'',link:'/mail/'+encodeURIComponent(r.message_id)})),
+    supplierReplyRules:await supplierRules.read(db,ctx,{teaching:plan==='growth'}),
     mailReplyForm:alone?{revision:settings?.revision??'',connectorId:settings?.connector_id||'',customers:settings?settings.customers:true,suppliers:settings?settings.suppliers:true,
       mailboxes:boxes.map(b=>({id:b.id,name:b.display_name})),needsChoice:boxes.length>1&&!settings?.connector_id}:null};
 }

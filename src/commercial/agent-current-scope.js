@@ -3,6 +3,10 @@
 // in agent-plan-v3.json; a scope note never grants access or marks work complete.
 const summaries=require('./agent-current-scope-summaries.json');
 const notes={
+ 89:{common:'Requests a missing delivery date for a placed order and replies in the existing thread of a known supplier. Uses the authorized mailbox and checks current order and contact records. New suppliers, unclear facts, money and commitments wait for a person.',
+  growth:'Teach a date request from a sent example, or teach an exact repeat supplier reply after the mailbox confirms you sent it. A different question or answer comes back for approval.',
+  pro:'Can request delivery dates and answer routine questions from known suppliers without training, inside your mailbox and job settings.',
+  enterprise:'Can request delivery dates and answer routine questions from known suppliers without training, inside your mailbox and job settings.'},
  118:{common:'Balances owned locations using their stock targets, usable costed goods, customer commitments, transfer and other holds, and dated incoming. Supports exact lots, serials, measured quantities and independently recorded weights. A native request holds stock for separate approval and physical handling.',
  starter:'Shows one current balancing suggestion with the product, source, destination and quantity that preserves the source target.',
  growth:'Can repeat a native Requested transfer after you individually approve and complete a matching draft and teach that exact product, route and stocking-unit limit. Stock and authority are checked again each time.',
