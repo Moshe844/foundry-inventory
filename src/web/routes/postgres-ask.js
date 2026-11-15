@@ -94,8 +94,8 @@ function resultFor(turn,proposal=null){
   if(proposal?.status==='APPROVED')answer=`Rule in force: ${proposal.summary}`;
   if(['CANCELLED','SUPERSEDED'].includes(proposal?.status))answer='Discarded. Nothing was changed by this proposal.';
   if(emailProposal?.status==='EXECUTED')answer=emailProposal.deliveryStatus==='SENT'
-    ?`Email sent to ${emailProposal.payload.recipientEmail}. The mailbox confirmed delivery.`
-    :emailProposal.deliveryStatus==='FAILED'
+    ?`Email sent to ${emailProposal.payload.recipientEmail}. The mailbox confirmed the send.`
+    :['FAILED','AMBIGUOUS'].includes(emailProposal.deliveryStatus)
       ?'The mailbox did not confirm this email. Check its delivery status before trying again.'
       :`Approved. StockChief queued the email to ${emailProposal.payload.recipientEmail} and is checking delivery.`;
   if(emailProposal?.status==='CANCELLED')answer='Draft discarded. No email was sent and no contact was added.';
@@ -432,13 +432,17 @@ function createPostgresAskRouter(database,options={}){
     const latestProposal=proposals.get(latest?.intent?.proposalId);
     if(latestProposal?.actionType==='communication.send_email'){
       const proposal=latestProposal;
-        let deliveryStatus=null;
-        if(proposal.status==='EXECUTED'&&proposal.result?.communicationId){
-          const delivered=await outboundMail.get(database,req.ctx.workspaceId,
-            proposal.result.communicationKind,proposal.result.communicationId);
-          deliveryStatus=delivered.status;
-        }
-        proposal.deliveryStatus=deliveryStatus;
+      if(proposal.status==='EXECUTED'&&proposal.result?.communicationId){
+        const delivered=await outboundMail.get(database,req.ctx.workspaceId,
+          proposal.result.communicationKind,proposal.result.communicationId);
+        proposal.deliveryStatus=delivered.status;
+      }
+      if(proposal.status==='PENDING'){
+        const access=await require('../../commercial/agent-proposal-access').review(database,req.ctx,
+          {...proposal,action_type:proposal.actionType});
+        proposal.approvalAccess=access?.individual;
+      }
+      proposal.reviewStatus=require('../proposal-presentation').emailReviewStatus(proposal.status,proposal.deliveryStatus);
     }
     let transcript=transcriptFor(visible,proposals);
     const protectedNames=nameRows.rows.map(row=>row.name);
@@ -698,7 +702,17 @@ function createPostgresAskRouter(database,options={}){
     const draftTraining=req.user?.role==='owner'&&trainingService.jobs.has(proposal.action_type)?await trainingService.settings(database,req.ctx,proposal.id,req.query.draftMaximum):null;
     const approvalAccess=await require('../../commercial/agent-proposal-access').review(database,req.ctx,proposal,{mission:Boolean(mission)});
     const twoPeople=await require('../../autopilot/two-person-approval').view(database,req.ctx,proposal);
-    return res.page('attention/postgres-proposal',{draftTraining,approvalAccess,twoPeople,title:mission?'Review operating mission':'Review prepared change',nav:'ask',editProposal:req.query.edit==='1',proposal,presentation:require('../proposal-presentation').present(proposal),mission,nativeApproval:nativeCard?{goalId:native.id,...nativeCard}:null,
+    const presenter=require('../proposal-presentation');
+    const presentation=presenter.present(proposal);
+    if(presentation.email){
+      const delivery=proposal.status==='EXECUTED'&&proposal.result?.communicationId
+        ?await outboundMail.get(database,req.ctx.workspaceId,proposal.result.communicationKind,proposal.result.communicationId)
+        :null;
+      presentation.status=approvalAccess?.individual?.blocked
+        ?{label:'Sending paused',tone:'warn'}
+        :presenter.emailReviewStatus(proposal.status,delivery?.status);
+    }
+    return res.page('attention/postgres-proposal',{draftTraining,approvalAccess,twoPeople,title:mission?'Review operating mission':'Review prepared change',nav:'ask',editProposal:req.query.edit==='1',proposal,presentation,mission,nativeApproval:nativeCard?{goalId:native.id,...nativeCard}:null,
       nativeResume:approvedDelivery?{goalId:native.id,id:approvedDelivery.id,sha256:approvedDelivery.sha256}:null,
       missionSteps:(mission?.approved_steps||[]).map((step,index)=>{const contract=capabilities.get(step.capability);return {label:(contract?.legacyAction||step.capability).replace(/[._]/g,' ').replace(/^./,s=>s.toUpperCase()),args:step.args,fields:require('../proposal-presentation').fields(step.args),index:index+1,state:mission.steps[index]?.state||'BLOCKED'};}),
       resumeAvailable:proposal.status==='EXECUTED'&&resuming&&!native});

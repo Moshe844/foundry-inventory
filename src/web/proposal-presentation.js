@@ -25,6 +25,9 @@ function fields(payload){
 }
 function summary(proposal){if(proposal.action_type==='settings.ask_preferences'){let p=proposal.payload||{};if(p.answerPreferences){try{p={...p,...JSON.parse(p.answerPreferences)};}catch{}}if(p.value&&typeof p.value==='object')p={...p,...p.value};return 'Update Ask preferences'+(p.answerStyle?': '+p.answerStyle:'.')+(p.answerLanguage?' · Language: '+p.answerLanguage:'')+(p.timeZone?' · Time zone: '+p.timeZone:'');}return proposal.summary;}
 function present(proposal){
+ if(proposal.action_type==='communication.send_email'){
+  return {summary:proposal.summary,impact:'Sends a business email',email:proposal.payload||{},fields:[]};
+ }
  if(proposal.action_type==='inventory.write_down_aged'){
   const p=proposal.payload,format=value=>require('../domain/currency').format(value,p.currency);
   return {summary:proposal.summary,impact:'Reduces the inventory asset and records a write-down expense. All physical stock stays in place.',fields:[
@@ -183,4 +186,11 @@ function present(proposal){
 function cardPresentation(card){return present({action_type:card.action,payload:card.payload,summary:card.summary});}
 // Display only: the immutable approval capsule and its digest stay intact.
 function conversation(goal,cards=[]){const state=require('../assistant/agent-conversation').state(goal);if(goal.status!=='WAITING_APPROVAL'||!cards.length)return state;const message='Approval required. These changes are prepared, not executed:\n'+cards.map(c=>'- '+cardPresentation(c).summary).join('\n');return {...state,message,history:state.history.map(entry=>entry.role==='assistant'&&entry.phase==='approval'&&entry.text===goal.answer?{...entry,text:message}:entry)};}
-module.exports={impact,fields,present,summary,cardPresentation,conversation};
+function emailReviewStatus(status,delivery){
+ if(status==='PENDING')return {label:'Awaiting approval',tone:'warn'};
+ if(status!=='EXECUTED')return {label:status==='CANCELLED'?'Draft discarded':'Draft closed',tone:'muted'};
+ if(delivery==='SENT')return {label:'Sent and confirmed',tone:'ok'};
+ if(['FAILED','AMBIGUOUS'].includes(delivery))return {label:'Delivery needs attention',tone:'warn'};
+ return {label:'Approved · awaiting delivery',tone:'muted'};
+}
+module.exports={impact,fields,present,summary,cardPresentation,conversation,emailReviewStatus};

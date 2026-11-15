@@ -1,0 +1,28 @@
+<section class="sc-approval-email" aria-label="Email details">
+  <dl class="sc-approval-email__envelope">
+    <div>
+      <dt>To</dt>
+      <dd dir="auto">
+        <% if (email.recipientName && email.recipientName !== email.recipientEmail) { %>
+          <strong><%= email.recipientName %></strong>
+        <% } %>
+        <% if (email.recipientEmail) { %><span><%= email.recipientEmail %></span><% } %>
+      </dd>
+    </div>
+    <% if (email.mailboxName) { %>
+      <div><dt>From</dt><dd dir="auto"><%= email.mailboxName %></dd></div>
+    <% } %>
+    <div class="sc-approval-email__subject"><dt>Subject</dt><dd dir="auto"><%= email.subject %></dd></div>
+  </dl>
+  <div class="sc-approval-email__message">
+    <strong>Message</strong>
+    <div dir="auto" class="sc-approval-email__body"><%= email.body %></div>
+  </div>
+  <% if (email.purchaseOrderId || email.addContactKind || email.saveEmailToContact) { %>
+    <ul class="sc-approval-email__effects" aria-label="Other effects">
+      <% if (email.purchaseOrderId) { %><li>The email includes a link to the purchase order.</li><% } %>
+      <% if (email.addContactKind) { %><li>Approval adds <%= email.recipientName %> as a <%= email.addContactKind %>.</li><% } %>
+      <% if (email.saveEmailToContact) { %><li>Approval saves this email address on the contact.</li><% } %>
+    </ul>
+  <% } %>
+</section>

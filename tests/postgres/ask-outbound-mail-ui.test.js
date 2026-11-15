@@ -97,12 +97,28 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
     assert.match(review,/solomon@supplier\.example/);assert.match(review,/we received the order and will confirm Friday\./);
     assert.doesNotMatch(review,/wrong-tenant@supplier\.example/);
     assert.match(review,/Order received/);assert.match(review,/Approve and send/);
+    const draft=page.getByRole('region',{name:'Email draft',exact:true});
+    assert.deepEqual(await draft.locator('dt').allTextContents(),['To','From','Subject']);
+    assert.equal(await draft.locator('.sc-approval-email__body').textContent(),'We received the order and will confirm Friday.');
+    const standalone=await first.newPage();
+    await standalone.setViewportSize({width:390,height:844});
+    await standalone.goto(`${base}/actions/${proposal.id}`);
+    const details=standalone.getByRole('region',{name:'Email details',exact:true});
+    assert.deepEqual(await details.locator('dt').allTextContents(),['To','From','Subject']);
+    assert.equal(await details.locator('.sc-approval-email__body').textContent(),'We received the order and will confirm Friday.');
+    const size=await details.boundingBox();assert.ok(size&&size.x>=0&&size.x+size.width<=391);
+    assert.doesNotMatch(await standalone.locator('main').innerText(),/Draft Polished|Original Body|Connector Id/);
+    if(process.env.STOCKCHIEF_UX_SHOTS)await standalone.screenshot({path:require('path').join(require('os').tmpdir(),
+      'stockchief-email-approval-mobile.png')});
+    await standalone.close();
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM supplier_communications WHERE workspace_id=$1`,
       [one.workspace_id])).rows[0].count,'0');
     await Promise.all([page.waitForNavigation({url:/\/ask(\?chat=[^#]+)?#latest$/}),page.getByRole('button',{name:'Approve and send'}).click()]);
     assert.equal(delivered.length,0);
     let message=(await database.query(`SELECT * FROM supplier_communications WHERE workspace_id=$1`,[one.workspace_id])).rows[0];
     assert.equal(message.status,'QUEUED');assert.equal(message.recipient,'solomon@supplier.example');
+    const queuedReview=await page.request.get(`${base}/actions/${proposal.id}`);
+    assert.match(await queuedReview.text(),/Approved · awaiting delivery/);
     assert.match(message.body,/We received the order and will confirm Friday\./);
     await jobs.processOne(database,runtimeHandlers.create(providers),{owner:'ask-mail-worker'});
     assert.equal(delivered.length,1);assert.deepEqual({recipient:delivered[0].recipient,body:delivered[0].body},

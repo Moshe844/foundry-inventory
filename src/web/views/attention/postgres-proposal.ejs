@@ -1,7 +1,29 @@
-<div class="rm-head"><a class="rm-head__back" href="/ask"><span aria-hidden="true">←</span> Ask StockChief</a><div class="rm-title"><div><p class="rm-stamp"><%= proposal.status==='EXECUTED'?'Recorded change':'Prepared change' %></p><h1><%= proposal.action_type==='customer_return.refund'&&proposal.result?.queued?'Refund approved':proposal.status==='EXECUTED'?'Completed change':'Review before anything changes' %></h1></div></div></div>
+<div class="rm-head">
+  <a class="rm-head__back" href="/ask"><span aria-hidden="true">←</span> Ask StockChief</a>
+  <div class="rm-title"><h1><%= presentation.email?'Review email':proposal.action_type==='customer_return.refund'&&proposal.result?.queued?'Refund approved':proposal.status==='EXECUTED'?'Completed change':'Review before anything changes' %></h1></div>
+</div>
 <% if(locals.editProposal&&proposal.status==='PENDING'){ %><section class="card" id="revise-proposal"><div class="card-body"><h2>Revise this prepared change</h2><p>Its current details are shown below. Preparing a replacement withdraws this unapproved change; the replacement needs a new approval.</p><form method="post" action="/actions/<%= proposal.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span>Revised request</span><textarea name="message" class="input" required maxlength="10000" autofocus><%= proposal.source_message %></textarea></label><button class="btn btn--primary" type="submit">Prepare revised change</button></form></div></section><% } %>
-<div class="card measure"><div class="card-head"><h2><%= presentation.summary %></h2><span class="badge badge--<%= proposal.status === 'EXECUTED' ? 'ok' : proposal.status === 'PENDING' ? 'warn' : 'muted' %>"><%= proposal.status %></span></div>
-  <div class="card-body rm-mission-review"><p class="badge badge--muted"><%= presentation.impact %></p><section aria-label="Proposed changes"><dl class="summary-list"><% presentation.fields.forEach(function(field){ %><div><dt><%= field.label %></dt><dd class="<%= field.multiline ? 'message-body' : '' %>"><%= field.value %></dd></div><% }); %></dl></section><details class="rm-mission-request"><summary>Your original request</summary><p><%= proposal.source_message %></p></details>
+<div class="card measure sc-approval-review">
+  <div class="card-head">
+    <h2><%= presentation.email?'Email details':presentation.summary %></h2>
+    <span class="badge badge--<%= presentation.status?.tone || (proposal.status==='EXECUTED'?'ok':proposal.status==='PENDING'?'warn':'muted') %>"><%= presentation.status?.label || (proposal.status==='EXECUTED'?'Completed':proposal.status==='PENDING'?'Awaiting approval':proposal.status==='CANCELLED'?'Cancelled':proposal.status) %></span>
+  </div>
+  <div class="card-body rm-mission-review">
+    <% if(presentation.email){ %>
+      <%- include('../partials/approval-email',{email:presentation.email}) %>
+    <% } else { %>
+      <p class="sc-approval-impact"><%= presentation.impact %></p>
+      <section aria-label="Proposed changes">
+        <dl class="sc-approval-fields">
+          <% for(const field of presentation.fields){ %>
+            <div class="<%= field.multiline?'sc-approval-fields__wide':'' %>">
+              <dt><%= field.label %></dt><dd dir="auto"><%= field.value %></dd>
+            </div>
+          <% } %>
+        </dl>
+      </section>
+    <% } %>
+    <details class="rm-mission-request"><summary>Your original request</summary><p><%= proposal.source_message %></p></details>
     <% if(proposal.action_type==='inventory.establish_cost'){ const p=proposal.payload; %>
     <section aria-label="Existing stock cost review"><h3>Actual cost for stock already on hand</h3>
     <table class="table"><tbody><tr><th>Product</th><td><%= p.productName %> · <%= p.skuCode %></td></tr><tr><th>Location</th><td><%= p.locationName %></td></tr><tr><th>Units receiving cost</th><td><%= p.quantity %></td></tr><tr><th>Actual unit cost</th><td><%= helpers.money(p.unitCostMinor,p.currency) %></td></tr><tr><th>Inventory value added</th><td><%= helpers.money(p.totalCostMinor,p.currency) %></td></tr><tr><th>Stock quantity</th><td><%= p.physicalUnits %> — unchanged</td></tr><tr><th>Supporting evidence</th><td><%= p.evidenceReference %></td></tr><tr><th>Posting date</th><td><%= p.postingDate %></td></tr></tbody></table>
@@ -39,7 +61,20 @@
     <% if (proposal.status === 'PENDING') { %><p class="muted">Nothing has changed yet. Check the business result above before approving.</p><% } %>
     <details class="advanced-settings"><summary>Technical record details</summary><p class="muted">Action: <%= proposal.action_type %></p><% if(typeof mission!=='undefined'&&mission){ %><p class="muted">Plan integrity: <%= mission.plan_hash %></p><% } %>
     <p>Review identifier: <%= proposal.id %></p></details>
-    <% if (proposal.result) { %><% if(proposal.action_type==='customer_return.refund'){ %><p><a class="btn" href="/returns/<%= proposal.payload.recordId %>">View refund and payment status</a></p><% if(proposal.result.queued){ %><p class="notice">Your approval is recorded. See the return for current provider confirmation and accounting.</p><% } %><% } else { %><p class="notice">Completed. The result is recorded and retries will not perform it twice.</p><% } %><% if(proposal.action_type==='sales_quote.add_companions'&&proposal.result.quoteId){ %><p><a class="btn btn--primary" href="/quotes/<%= proposal.result.quoteId %>">Open revised quotation</a></p><% } %><% if (proposal.result.transferId) { %><p><a class="btn btn--primary" href="/transfers/<%= proposal.result.transferId %>">Continue <%= proposal.result.transferNumber %> in the warehouse</a></p><% } %><% if (proposal.result.salesOrderId) { %><p><a class="btn btn--primary" href="/orders/<%= proposal.result.salesOrderId %>">Continue <%= proposal.result.orderNumber %></a></p><% } %><% if (proposal.result.purchaseOrderId) { %><p><a class="btn btn--primary" href="/purchasing/orders/<%= proposal.result.purchaseOrderId %>">Continue <%= proposal.result.poNumber || 'purchase order' %></a></p><% } %><% if (proposal.result.journalEntryId) { %><p><a class="btn" href="/accounting/entries/<%= proposal.result.journalEntryId %>">View accounting proof</a></p><% } %><% if (proposal.result.communicationId) { %><p><a class="btn btn--primary" href="/messages/<%= proposal.result.communicationKind %>/<%= proposal.result.communicationId %>">Track this email</a></p><% } %><% } %>
+    <% if (proposal.result) { const result=proposal.result; %>
+      <% if(proposal.action_type==='customer_return.refund'){ %>
+        <p><a class="btn" href="/returns/<%= proposal.payload.recordId %>">View refund and payment status</a></p>
+        <% if(result.queued){ %><p class="notice">Your approval is recorded. See the return for current provider confirmation and accounting.</p><% } %>
+      <% }else if(!presentation.email){ %>
+        <p class="notice">Completed. The result is recorded and retries will not perform it twice.</p>
+      <% } %>
+      <% if(proposal.action_type==='sales_quote.add_companions'&&result.quoteId){ %><p><a class="btn btn--primary" href="/quotes/<%= result.quoteId %>">Open revised quotation</a></p><% } %>
+      <% if(result.transferId){ %><p><a class="btn btn--primary" href="/transfers/<%= result.transferId %>">Continue <%= result.transferNumber %> in the warehouse</a></p><% } %>
+      <% if(result.salesOrderId){ %><p><a class="btn btn--primary" href="/orders/<%= result.salesOrderId %>">Continue <%= result.orderNumber %></a></p><% } %>
+      <% if(result.purchaseOrderId){ %><p><a class="btn btn--primary" href="/purchasing/orders/<%= result.purchaseOrderId %>">Continue <%= result.poNumber || 'purchase order' %></a></p><% } %>
+      <% if(result.journalEntryId){ %><p><a class="btn" href="/accounting/entries/<%= result.journalEntryId %>">View accounting proof</a></p><% } %>
+      <% if(result.communicationId){ %><p><a class="btn btn--primary" href="/messages/<%= result.communicationKind %>/<%= result.communicationId %>">Track this email</a></p><% } %>
+    <% } %>
   </div>
   <% if (proposal.status === 'PENDING') { const native=typeof nativeApproval!=='undefined'?nativeApproval:null,access=locals.approvalAccess,two=locals.twoPeople; %><div class="card-foot rm-mission-actions">
     <% if(two){ %><p class="notice<%= two.locked?' notice--warn':'' %>" data-two-people><% if(two.locked){ %>Two people must approve anything over <%= two.threshold %>, and two-person approval needs Pro. <a class="btn" href="/billing">Upgrade to Pro</a><% }else{ %>Two people approve this. It is over your <%= two.threshold %> two-person amount<%= two.amount?' ('+two.amount+')':'' %>. <%= two.people.length?'Approved by '+two.people.join(' and ')+'.':'No one has approved it yet.' %><%= two.signed&&!two.complete?' Waiting for a second person.':'' %><% } %></p>

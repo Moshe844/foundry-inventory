@@ -228,21 +228,21 @@
         <% } %>
         <% if (result.emailProposal) { var emailDraft = result.emailProposal; var emailPayload = emailDraft.payload || {}; %>
           <section class="rm-email-preview" aria-label="Email draft">
-            <p class="rm-email-preview__k"><%= emailDraft.status === 'PENDING' ? 'Ready for your approval' : emailDraft.status === 'EXECUTED' ? emailDraft.deliveryStatus === 'SENT' ? 'Sent and confirmed' : emailDraft.deliveryStatus === 'FAILED' ? 'Delivery needs attention' : 'Approved · sending' : 'Discarded draft' %></p>
-            <dl><div><dt>To</dt><dd><%= emailPayload.recipientName %> &lt;<%= emailPayload.recipientEmail %>&gt;</dd></div>
-              <div><dt>From</dt><dd><%= emailPayload.mailboxName %></dd></div>
-              <div><dt>Subject</dt><dd><%= emailPayload.subject %></dd></div></dl>
-            <div class="rm-email-preview__body"><%= emailPayload.body %></div>
-            <% if (emailPayload.addContactKind) { %><p class="rm-email-preview__note">Approval also adds <%= emailPayload.recipientName %> as a <%= emailPayload.addContactKind %> with this address.</p><% } %>
-            <% if (emailPayload.saveEmailToContact) { %><p class="rm-email-preview__note">Approval also saves this address on the contact.</p><% } %>
-            <% if (!emailPayload.draftPolished && !emailPayload.editedByOwner && emailDraft.status === 'PENDING') { %><p class="rm-email-preview__note">I could not polish this wording automatically. Review or edit it before approving.</p><% } %>
+            <header class="sc-email-draft__head">
+              <h2>Email draft</h2>
+              <% if(emailDraft.reviewStatus){ %><span class="badge badge--<%= emailDraft.reviewStatus.tone %>"><%= emailDraft.approvalAccess?.blocked?'Sending paused':emailDraft.reviewStatus.label %></span><% } %>
+            </header>
+            <%- include('../partials/approval-email',{email:emailPayload}) %>
             <% if (emailDraft.status === 'PENDING') { %>
-              <div class="rm-email-preview__actions"><form method="post" action="/ask/email/<%= emailDraft.id %>/approve" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--sm" type="submit">Approve and send</button></form>
-                <form method="post" action="/ask/email/<%= emailDraft.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Discard</button></form></div>
+              <% if (!emailPayload.draftPolished && !emailPayload.editedByOwner) { %><p class="rm-email-preview__note">I could not polish this wording automatically. Review or edit it before approving.</p><% } %>
               <details class="rm-email-preview__edit"><summary>Edit this draft</summary><form method="post" action="/ask/email/<%= emailDraft.id %>/revise" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Subject<input name="subject" value="<%= emailPayload.subject %>" maxlength="200" required></label><label>Message<textarea name="body" rows="7" maxlength="6000" required><%= emailPayload.body %></textarea></label><button class="rm-btn rm-btn--sm" type="submit">Save draft</button></form></details>
-              <p class="rm-email-preview__note">Nothing is sent until you approve. You can change the wording here.</p>
+              <% if(emailDraft.approvalAccess?.blocked){ %><p class="notice notice--warn"><%= emailDraft.approvalAccess.reason %><% if(emailDraft.approvalAccess.upgrade){ %> <a href="/billing">Upgrade to <%= emailDraft.approvalAccess.upgrade %></a><% } %></p><% } %>
+              <div class="rm-email-preview__actions">
+                <form method="post" action="/ask/email/<%= emailDraft.id %>/approve" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--sm" type="submit" <%= emailDraft.approvalAccess?.blocked?'disabled':'' %>>Approve and send</button></form>
+                <form method="post" action="/ask/email/<%= emailDraft.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Discard draft</button></form>
+              </div>
             <% } else if (emailDraft.status === 'EXECUTED' && emailDraft.result?.communicationId) { %>
-              <p class="rm-email-preview__note">Delivery: <%= emailDraft.deliveryStatus || 'QUEUED' %>. <a href="/messages/<%= emailDraft.result.communicationKind %>/<%= emailDraft.result.communicationId %>">Track this email</a></p>
+              <p class="rm-email-preview__note"><a href="/messages/<%= emailDraft.result.communicationKind %>/<%= emailDraft.result.communicationId %>">Track this email</a></p>
             <% } %>
           </section>
         <% } %>
