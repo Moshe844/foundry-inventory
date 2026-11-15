@@ -232,7 +232,12 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     const receivingCandidate=req.user?.role==='owner'&&plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'&&
       plan.transformations.dataset!=='suppliers'&&(!plan.transformations.handwriting||plan.transformations.handwriting.purpose==='delivery');
     const receivingPolicy=require('../../commercial/agent-plan');
-    const receivingState=receivingCandidate?await receivingPolicy.accountState(database,req.ctx.workspaceId):null;
+    // An ordinary file is offered the receiving form only when the inventory has a placed
+    // purchase order still expecting goods: a first product import has nothing to receive
+    // against. A document read as a delivery note always keeps the form, its only way forward.
+    const receivingApplies=receivingCandidate&&(plan.transformations.handwriting?.purpose==='delivery'||
+      await require('../../purchasing/agent-receiving-documents').expectsGoods(database,req.ctx.workspaceId));
+    const receivingState=receivingApplies?await receivingPolicy.accountState(database,req.ctx.workspaceId):null;
     const receivingOffer=receivingState&&receivingPolicy.usesAgentTerms(receivingState)?{
       allowed:receivingPolicy.permits(receivingState.plan,43,'draft'),
       needsReading:(plan.sourceKind==='image'||plan.transformations.visualSource)&&!plan.transformations.imageReadingConfirmed

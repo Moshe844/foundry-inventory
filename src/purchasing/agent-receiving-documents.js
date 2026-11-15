@@ -2,6 +2,11 @@
 const {ValidationError}=require('../domain/errors'),{hash}=require('../pricing/postgres-promotions'),money=require('../domain/currency');
 const policy=require('../commercial/agent-plan'),packing=require('./packing-slip-lines');
 const action='purchase_order.receive_from_document',receiptKey=s=>'receiving-document:'+s.source_hash;
+// A delivery note is received against a placed warehouse PO that still expects goods.
+const EXPECTING=['ORDERED','PARTIALLY_RECEIVED'];
+async function expectsGoods(db,workspaceId){
+ return (await db.query("SELECT 1 FROM purchase_orders WHERE workspace_id=$1 AND status=ANY($2::text[]) AND delivery_kind IS DISTINCT FROM 'CUSTOMER_DIRECT' LIMIT 1",[workspaceId,EXPECTING])).rowCount>0;
+}
 async function source(db,ctx,reference,lock=false){
  const rows=(await db.query(`SELECT * FROM import_plans WHERE workspace_id=$1 AND (id=$2 OR lower(source_name)=lower($2)) ORDER BY created_at DESC LIMIT 2`+(lock?' FOR UPDATE':''),[ctx.workspaceId,reference])).rows;
  if(rows.length!==1)throw new ValidationError('Choose one exact packing-slip preview. Use its import ID when file names repeat.');return rows[0];
@@ -21,7 +26,7 @@ async function snapshot(db,ctx,orderId,reference,basis){
  if(transforms.agentJob!==undefined&&transforms.agentJob!==43)throw new ValidationError('Continue this source through its existing approved task.');
  if((s.source_kind==='image'||transforms.visualSource)&&transforms.imageReadingConfirmed!==true)throw new ValidationError('Check and confirm the image reading before preparing a receiving form.');
  if(order.delivery_kind==='CUSTOMER_DIRECT')throw new ValidationError('Record the actual supplier dispatch through Supplier-direct deliveries.');
- if(!['ORDERED','PARTIALLY_RECEIVED'].includes(order.status))throw new ValidationError('Choose a placed PO with goods still expected.');
+ if(!EXPECTING.includes(order.status))throw new ValidationError('Choose a placed PO with goods still expected.');
  if((await db.query(`SELECT 1 FROM import_executions e JOIN import_plans p ON p.workspace_id=e.workspace_id AND p.id=e.import_id
   WHERE e.workspace_id=$1 AND p.source_hash=$2 AND e.status NOT IN ('FAILED','CANCELLED') LIMIT 1`,[ctx.workspaceId,s.source_hash])).rowCount)throw new ValidationError('This source already has a stock import attempt. Review its saved result before using it as a PO receipt.');
  const rows=(await db.query("SELECT row_number,raw::jsonb AS raw,parsed::jsonb AS parsed,status,problems::jsonb AS problems FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status<>'EXCLUDED' ORDER BY row_number LIMIT 501",[ctx.workspaceId,s.id])).rows;
@@ -93,6 +98,6 @@ async function review(db,ctx,{filter='',page=1}){
    AND ($3::timestamptz IS NULL OR p.created_at>=$3::timestamptz) ORDER BY p.created_at DESC,p.id LIMIT 101 OFFSET $4`,[ctx.workspaceId,filter,history.activityAfter,(page-1)*100])).rows;
  return {rows:rows.slice(0,100),more:rows.length>100,summary:'Prepared receiving forms and their recorded results. Confirm the quantities physically received before posting a pending form.'};
 }
-module.exports={snapshot,spec:{name:action,record:'purchase_order',fields:['recordReference','sourceImport','receivingBasis'],permission:require('../actions/permissions').RECEIVE_PO,ownerOnly:true,capability:'purchasing.core',resultingRecords:['purchase_order_receipts','movements','accounting_journal_entries'],
+module.exports={snapshot,expectsGoods,spec:{name:action,record:'purchase_order',fields:['recordReference','sourceImport','receivingBasis'],permission:require('../actions/permissions').RECEIVE_PO,ownerOnly:true,capability:'purchasing.core',resultingRecords:['purchase_order_receipts','movements','accounting_journal_entries'],
  description:'Fill a receiving confirmation from a fresh packing-slip preview and exact placed PO. Match existing SKUs, stock units or the PO purchase packs, warehouses, split batches, serials and actual documented weights. Use approved PO costs. A person must confirm physical receipt; broad mission approval cannot post it. No supplier bill or payment is created.',build,execute,verify},
  definition:{id:43,key:'receiving-forms',label:'Prepared receiving confirmations',filterLabel:'Purchase order number',readPage:review}};

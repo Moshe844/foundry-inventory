@@ -48,9 +48,14 @@ async function authority(db,workspaceId){
   const account=await plans.accountState(db,workspaceId);
   if(!plans.usesAgentTerms(account)||!plans.permits(account.plan,JOB,'draft'))return null;
   if(!plans.permits(account.plan,JOB,'automatic'))return {automatic:false,reason:'On Starter you confirm the columns before importing.'};
+  // The shared words for the first 14 days and for Watch only refuse an action
+  // StockChief was about to take. Here the person simply confirms the columns
+  // and can approve the import, so the reason says that.
+  if(account.shadow)return {automatic:false,reason:'In its first 14 days StockChief only watches, so you confirm the columns.'};
+  const state=await require('../autopilot/postgres-service').getState(db,workspaceId);
+  if(state.mode==='OBSERVE')return {automatic:false,reason:'This inventory is set to Watch only, so you confirm the columns.'};
   const stopped=await plans.stopped(db,workspaceId,account,ACTION,true);
   if(stopped)return {automatic:false,reason:stopped};
-  const state=await require('../autopilot/postgres-service').getState(db,workspaceId);
   if(!state.canAutomate)return {automatic:false,reason:'Handle routine work is off for this inventory, so you confirm the columns.'};
   return {automatic:true,reason:null};
 }
