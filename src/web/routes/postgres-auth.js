@@ -8,7 +8,8 @@ const accountLifecycle=require('../../domain/postgres-account-lifecycle');
 const commercial=require('../../commercial/service');
 const commercialRelease=require('../../commercial/release');
 const config=require('../../config');
-const { ValidationError }=require('../../domain/errors');
+const { ValidationError, AuthorizationError }=require('../../domain/errors');
+const { privateProductionPilot }=require('../../operations/postgres-production-environment');
 
 function safeNext(value) {
   if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//')) return '/';
@@ -72,6 +73,11 @@ function createPostgresAuthRouter(database,options={}) {
       });
       return next(error);
     }
+  });
+  router.all(['/register','/complete-signup/trial'], (req,res,next) => {
+    if (!privateProductionPilot()) return next();
+    if (req.method === 'GET' && req.path === '/register' && req.account) return res.redirect(303,'/inventories');
+    return next(new AuthorizationError('StockChief is in a private pilot. Sign in with an approved account.'));
   });
   router.get('/register', async (req,res,next) => {
     try {

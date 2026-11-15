@@ -1,26 +1,29 @@
 'use strict';
 const {ValidationError}=require('../domain/errors');
 
-const base='https://sandbox-api.shipbob.com/2026-07/';
+const sandboxBase='https://sandbox-api.shipbob.com/2026-07/';
+const liveBase='https://api.shipbob.com/2026-07/';
 function positiveId(value,label){
   if(!/^[1-9]\d{0,14}$/.test(String(value))) throw new ValidationError('Enter a valid '+label+'.');
   return String(value);
 }
-function client({apiKey,channelId},fetchImpl=fetch){
+function client({apiKey,channelId,liveAuthority},fetchImpl=fetch){
   const channel=positiveId(channelId,'ShipBob channel ID');
+  const live=Boolean(liveAuthority),base=live?liveBase:sandboxBase,label=live?'ShipBob':'ShipBob sandbox';
   async function call(path,body){
+    if(live)liveAuthority();
     const headers={Authorization:'Bearer '+apiKey,shipbob_channel_id:channel,Accept:'application/json'};
     if(body)headers['Content-Type']='application/json';
     let response;
     try{
       response=await fetchImpl(base+path,{headers,method:body?'POST':'GET',...(body?{body:JSON.stringify(body)}:{}),
         signal:AbortSignal.timeout(12000),redirect:'error'});
-    }catch{const error=new ValidationError(path.startsWith('inventory-level/')?'ShipBob sandbox did not respond. The saved stock reading is unchanged.':'ShipBob sandbox did not respond. Retry this order using the same reference.');error.retryable=true;throw error;}
+    }catch{const error=new ValidationError(path.startsWith('inventory-level/')?label+' did not respond. The saved stock reading is unchanged.':label+' did not respond. Check the same order reference before retrying.');error.retryable=true;throw error;}
     if(!response.ok){
-      const error=new ValidationError('ShipBob sandbox returned HTTP '+response.status+'. Check the connected channel and request.');
+      const error=new ValidationError(label+' returned HTTP '+response.status+'. Check the connected channel and request.');
       error.providerStatus=response.status;error.retryable=response.status===429||response.status>=500;throw error;
     }
-    try{return await response.json();}catch{throw new ValidationError('ShipBob sandbox returned an unreadable response.');}
+    try{return await response.json();}catch{throw new ValidationError(label+' returned an unreadable response.');}
   }
   async function find(reference){
     const found=await call('order?'+new URLSearchParams({ReferenceIds:reference}));
@@ -47,7 +50,8 @@ function client({apiKey,channelId},fetchImpl=fetch){
         if(!Array.isArray(channels))throw new ValidationError('ShipBob returned an unexpected channel list.');
         const match=channels.find(c=>String(c.id)===channel);
         if(match){
-          if(Array.isArray(match.scopes)&&!['orders_read','orders_write','inventory_read'].every(scope=>match.scopes.includes(scope)))
+          const required=['orders_read','orders_write','inventory_read',...(live?['channels_read']:[])];
+          if((live||Array.isArray(match.scopes))&&!required.every(scope=>match.scopes?.includes(scope)))
             throw new ValidationError('Choose a ShipBob channel with permission to read and send orders and read inventory.');
           return;
         }
@@ -57,14 +61,14 @@ function client({apiKey,channelId},fetchImpl=fetch){
           throw new ValidationError('ShipBob returned an invalid channel page.');
         path='channel?'+new URLSearchParams({Cursor:cursor});
       }
-      throw new ValidationError('This sandbox token cannot see that channel.');
+      throw new ValidationError(label+' could not find this channel for the token you entered.');
     },
     async send(payload,beforeCreate){
       const existing=await find(payload.reference_id);
       if(existing)return checkOrder(existing,payload);
       if(beforeCreate)await beforeCreate();
       try{return checkOrder(await call('order',payload),payload);}
-      catch(error){if(error.providerStatus!==422)throw error;const duplicate=await find(payload.reference_id);if(!duplicate)throw error;return checkOrder(duplicate,payload);}
+      catch(error){if(![409,422].includes(error.providerStatus))throw error;const duplicate=await find(payload.reference_id);if(!duplicate)throw error;return checkOrder(duplicate,payload);}
     },
     async order(id,reference){
       const value=await call('order/'+positiveId(id,'ShipBob order ID'));

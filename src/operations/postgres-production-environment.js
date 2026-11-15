@@ -6,6 +6,11 @@ function configuredOption(options, key, fallback) {
   return Object.prototype.hasOwnProperty.call(options, key) ? options[key] : fallback;
 }
 
+function privateProductionPilot() {
+  return process.env.STOCKCHIEF_RUNTIME_ENV === 'production' &&
+    process.env.STOCKCHIEF_PRIVATE_PRODUCTION_PILOT === '1';
+}
+
 function validateProductionEnvironment(options = {}) {
   const env = options.env || config.env;
   if (env !== 'production') return;
@@ -35,10 +40,14 @@ function validateProductionEnvironment(options = {}) {
   if (!releaseRef || releaseRef === 'development') {
     throw new Error('Production StockChief requires an immutable FOUNDRY_RELEASE_REF or hosting commit identifier.');
   }
-  if (requirePaidWorkspace && !billingSecretKey) {
+  const privatePilot = privateProductionPilot();
+  if (privatePilot && (config.commercial.checkoutEnabled || !requirePaidWorkspace)) {
+    throw new Error('The private production pilot requires closed checkout and normal plan enforcement.');
+  }
+  if (requirePaidWorkspace && !privatePilot && !billingSecretKey) {
     throw new Error('Production StockChief paid workspaces require STOCKCHIEF_BILLING_STRIPE_SECRET_KEY.');
   }
-  if (requirePaidWorkspace && !billingWebhookSecret) {
+  if (requirePaidWorkspace && !privatePilot && !billingWebhookSecret) {
     throw new Error('Production StockChief paid workspaces require STOCKCHIEF_BILLING_STRIPE_WEBHOOK_SECRET.');
   }
   if (!emailApiKey) {
@@ -52,4 +61,4 @@ function validateProductionEnvironment(options = {}) {
   }
 }
 
-module.exports = { validateProductionEnvironment };
+module.exports = { validateProductionEnvironment, privateProductionPilot };

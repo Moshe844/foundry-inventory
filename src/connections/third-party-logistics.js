@@ -51,8 +51,8 @@ function byConnector(connectorKey){
   return null;
 }
 function list(){return [...adapters.values()];}
-function client(adapter,secret,config,transport){
-  const made=adapter.client(secret||{},config||{},transport);
+function client(adapter,secret,config,transport,workspaceId){
+  const made=adapter.client(secret||{},config||{},transport,workspaceId);
   const missing=CLIENT.filter(m=>typeof made?.[m]!=='function');
   if(missing.length)throw new TypeError('3PL adapter "'+adapter.key+'" is missing: '+missing.join(', ')+'.');
   return made;
@@ -67,20 +67,43 @@ function placedShipBob(order){
       (p.inventory_items||[]).reduce((n,i)=>n+Number(i.quantity||0),0)}))}));
   return {id:String(order.id),status:String(order.status||'Unknown'),shipments,raw:order};
 }
-register('shipbob',{
+const shipBobSandbox={
   label:'ShipBob sandbox',connectorKey:'agent-shipbob-sandbox',
   account:config=>String(config.channelId),
   payload:o=>({reference_id:o.reference,order_number:o.number,type:'DTC',shipping_method:'Standard',
     recipient:{name:o.recipient.name,address:{address1:o.recipient.line1,address2:o.recipient.line2,city:o.recipient.city,state:o.recipient.state,country:o.recipient.country,zip_code:o.recipient.postalCode}},
     products:o.lines.map(l=>({reference_id:l.sku,name:l.name,quantity:l.quantity}))}),
-  client(secret,config,transport){
-    const api=require('./shipbob-sandbox-api').client({apiKey:secret.apiKey,channelId:config.channelId},transport);
-    return {
-      verify:()=>api.verify(),
-      submit:async(payload,beforeCreate)=>placedShipBob(await api.send(payload,beforeCreate)),
-      order:async(id,reference)=>placedShipBob(await api.order(id,reference)),
-      async stock(inventoryRef,sku){const v=await api.stock(inventoryRef,sku);return {inventoryRef:String(v.inventory_id),onHand:whole(v.total_on_hand_quantity,'stock'),available:whole(v.total_fulfillable_quantity,'stock')};}
+  client(secret,config,transport){return shipBobClient(secret.apiKey,config.channelId,transport);}
+};
+register('shipbob',shipBobSandbox);
+
+function shipBobClient(apiKey,channelId,transport,liveAuthority){
+  const api=require('./shipbob-sandbox-api').client({apiKey,channelId,liveAuthority},transport);
+  return {
+    verify:()=>api.verify(),
+    submit:async(payload,beforeCreate)=>placedShipBob(await api.send(payload,beforeCreate)),
+    order:async(id,reference)=>placedShipBob(await api.order(id,reference)),
+    async stock(inventoryRef,sku){const v=await api.stock(inventoryRef,sku);return {inventoryRef:String(v.inventory_id),onHand:whole(v.total_on_hand_quantity,'stock'),available:whole(v.total_fulfillable_quantity,'stock')};}
+  };
+}
+
+// Production and sandbox credentials, channels and delegated orders stay separate.
+function shipBobLiveAllowed(workspaceId){
+  return process.env.STOCKCHIEF_RUNTIME_ENV==='production'&&Boolean(workspaceId)
+    && String(process.env.STOCKCHIEF_SHIPBOB_LIVE_WORKSPACES||'').split(',').map(id=>id.trim()).includes(workspaceId);
+}
+register('shipbob-live',{
+  ...shipBobSandbox,
+  label:'ShipBob production pilot',
+  connectorKey:'agent-shipbob-live',
+  available:shipBobLiveAllowed,
+  account:config=>String(config.account),
+  client(secret,config,transport,workspaceId){
+    const liveAuthority=()=>{
+      if(!shipBobLiveAllowed(workspaceId))throw new ValidationError('Live ShipBob is available only in an approved production pilot inventory.');
     };
+    liveAuthority();
+    return shipBobClient(secret.apiKey,config.account,transport,liveAuthority);
   }
 });
 

@@ -43,3 +43,46 @@ test('production launcher migrates PostgreSQL and serves shared multi-writer rea
   assert.ok(payload.migrations>=41);assert.equal(payload.deadJobs,0);assert.equal(payload.staleJobs,0);
   assert.equal(payload.commercialTelemetry.persistenceFailures,0);
 });
+
+test('private production pilot closes self-registration and requires a real plan without billing credentials',
+  {timeout:120000}, async t=>{
+    const f=await require('../helpers/agent-workflow-fixture').fixture(t);
+    const {db,browser}=f;
+    const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_PRIVATE_PRODUCTION_PILOT','STOCKCHIEF_CHECKOUT_ENABLED','STOCKCHIEF_REQUIRE_PAID_WORKSPACE'];
+    const prior=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
+    t.after(()=>{
+      for(const key of keys){
+        if(prior[key]===undefined)delete process.env[key];
+        else process.env[key]=prior[key];
+      }
+    });
+    Object.assign(process.env,{STOCKCHIEF_RUNTIME_ENV:'production',STOCKCHIEF_PRIVATE_PRODUCTION_PILOT:'1',
+      STOCKCHIEF_CHECKOUT_ENABLED:'false',STOCKCHIEF_REQUIRE_PAID_WORKSPACE:'true'});
+    const production={env:'production',publicOrigin:'https://app.example.test',sessionSecret:'s'.repeat(32),
+      encryptionKey:'e'.repeat(32),releaseRef:'release-1',billingSecretKey:null,billingWebhookSecret:null,emailApiKey:'re_fixture',
+      fromEmail:'notifications@example.test',supportEmail:'support@example.test'};
+    assert.doesNotThrow(()=>validateProductionEnvironment(production));
+    assert.throws(()=>validateProductionEnvironment({...production,requirePaidWorkspace:false}),/normal plan enforcement/);
+    process.env.STOCKCHIEF_CHECKOUT_ENABLED='true';
+    assert.throws(()=>validateProductionEnvironment(production),/closed checkout/);
+    process.env.STOCKCHIEF_CHECKOUT_ENABLED='false';
+    assert.equal(await require('../../src/commercial/release').isSubscriptionCheckoutOpen(db),false);
+    const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'pilot-fixture-secret'});
+    t.after(()=>app.locals.sessionStore.close());
+    const guest=require('supertest').agent(app);
+    const login=await guest.get('/login').expect(200),csrf=f.csrf(login.text);
+    const denied=await guest.get('/register?plan=starter').expect(403);
+    assert.match(denied.text,/StockChief is in a private pilot/);
+    const rejectedEmail='uninvited-production@example.test';
+    await guest.post('/register').set('Accept','application/json').type('form').send({_csrf:csrf,email:rejectedEmail,name:'Uninvited',businessName:'Uninvited',
+      password:'Strong-fixture-secret-41!',planId:'starter'}).expect(403);
+    assert.equal((await db.query('SELECT 1 FROM accounts WHERE email=$1',[rejectedEmail])).rowCount,0);
+
+    await f.subscribe('starter');
+    await browser.get('/inventory').expect(200);
+    const form=await browser.get('/settings/billing').expect(200);
+    await browser.post('/complete-signup/trial').set('Accept','application/json').type('form').send({_csrf:f.csrf(form.text)}).expect(403);
+    process.env.STOCKCHIEF_RUNTIME_ENV='staging';
+    assert.throws(()=>validateProductionEnvironment(production),/BILLING_STRIPE_SECRET_KEY/);
+    await guest.get('/register?plan=starter').expect(200);
+  });

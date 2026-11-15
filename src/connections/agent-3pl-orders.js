@@ -63,6 +63,7 @@ async function automaticStop(db,workspaceId,state){
 }
 
 // The connected 3PLs, each with its adapter.
+const availableFor=workspaceId=>adapters.list().filter(a=>!a.available||a.available(workspaceId));
 function shaped(row){
   const adapter=adapters.byConnector(row.connector_key);if(!adapter)return null;
   const config=JSON.parse(row.config||'{}');
@@ -70,7 +71,7 @@ function shaped(row){
 }
 async function connections(db,workspaceId){
   const rows=(await db.query(`SELECT id,connector_key,display_name,config,updated_at FROM workspace_connectors WHERE workspace_id=$1 AND status='connected' AND paused_at IS NULL
-    AND connector_key=ANY($2::text[]) ORDER BY display_name,id`,[workspaceId,adapters.list().map(a=>a.connectorKey)])).rows;
+    AND connector_key=ANY($2::text[]) ORDER BY display_name,id`,[workspaceId,availableFor(workspaceId).map(a=>a.connectorKey)])).rows;
   return rows.map(shaped).filter(Boolean);
 }
 async function connector(db,ctx,id){
@@ -81,7 +82,7 @@ async function connector(db,ctx,id){
 async function remote(db,ctx,con,transport){
   const secret=await vault.get(db,ctx.workspaceId,con.id,'provider');
   if(!secret?.apiKey)throw new ValidationError('Reconnect '+con.label+'.');
-  return adapters.client(con.adapter,secret,con.config,transport);
+  return adapters.client(con.adapter,secret,con.config,transport,ctx.workspaceId);
 }
 
 // Connect a 3PL other than ShipBob, whose sandbox page keeps its own connection form.
@@ -89,13 +90,15 @@ async function connect(db,ctx,input,transport){
   await owner(db,ctx);await policy.requireWorkspaceJob(db,ctx.workspaceId,JOB,'draft');
   const adapter=adapters.get(input.provider);
   if(adapter.key==='shipbob')return require('./postgres-shipbob-sandbox').connect(db,ctx,input,transport);
+  if(adapter.available&&!adapter.available(ctx.workspaceId))throw new ValidationError('This 3PL is unavailable in this inventory.');
   const apiKey=String(input.apiKey||'').trim(),account=String(input.account||'').trim();
   if(!apiKey||apiKey.length>4096||/\s/.test(apiKey))throw new ValidationError('Enter the 3PL’s API key.');
   if(!/^[A-Za-z0-9._:\-]{1,80}$/.test(account))throw new ValidationError('Enter the 3PL account or channel ID.');
   const config={account};
-  await adapters.client(adapter,{apiKey},config,transport).verify();
+  await adapters.client(adapter,{apiKey},config,transport,ctx.workspaceId).verify();
   return tx(db,async c=>{
     const state=await owner(c,ctx);await policy.requireWorkspaceJob(c,ctx.workspaceId,JOB,'draft');
+    if(adapter.available&&!adapter.available(ctx.workspaceId))throw new ValidationError('This 3PL is unavailable in this inventory.');
     await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[ctx.workspaceId+adapter.connectorKey]);
     const row=(await c.query('SELECT id,config FROM workspace_connectors WHERE workspace_id=$1 AND connector_key=$2 FOR UPDATE',[ctx.workspaceId,adapter.connectorKey])).rows[0];
     if(row&&JSON.parse(row.config).account!==account)throw new ValidationError('Reconnect the original account to keep its order references.');
@@ -131,6 +134,17 @@ async function plainOrder(db,ctx,orderId){
 // The exact request for one 3PL, and its fingerprint.
 async function review(db,ctx,orderId,con){
   const {order,plain}=await plainOrder(db,ctx,orderId),payload=con.adapter.payload(plain);
+  if(con.adapter.key==='shipbob-live'){
+    const unsupported=(await db.query(`SELECT 1 FROM sales_order_lines line
+      JOIN skus sku ON sku.workspace_id=line.workspace_id AND sku.id=line.sku_id
+      JOIN items product ON product.workspace_id=sku.workspace_id AND product.id=sku.item_id
+      WHERE line.workspace_id=$1 AND line.sales_order_id=$2 AND (
+        product.tracking_mode<>'quantity' OR product.quantity_precision<>0 OR product.secondary_unit_label IS NOT NULL
+        OR coalesce((SELECT sum(a.quantity) FROM sales_order_allocations a WHERE a.workspace_id=line.workspace_id
+          AND a.sales_order_line_id=line.id AND a.location_id=$3),0)<>line.quantity_ordered)
+      LIMIT 1`,[ctx.workspaceId,orderId,order.fulfillment_location_id])).rowCount;
+    if(unsupported)throw new ValidationError('Live ShipBob needs every line reserved at this warehouse in whole units without lot, serial or weight tracking.');
+  }
   return {order,plain,payload,account:con.account,hash:fingerprint([con.id,con.account,payload])};
 }
 const snapshot=placed=>placed.shipments.map(s=>({id:s.id,status:s.status,carrier:s.carrier,tracking:s.tracking}));
@@ -205,10 +219,32 @@ async function handOver(db,ctx,orderId,expectedHash,{automatic,decidedBy=null,tr
       [ctx.workspaceId,orderId,con.id,route.location_id,o.version,rv.hash,automatic,decidedBy]);
     return {con,rv,route};
   });
+  const live=prep.con.adapter.key==='shipbob-live';
   let placed;
   try{
     const client=await remote(db,ctx,prep.con,transport);
-    placed=await client.submit(prep.rv.payload,()=>require('../sales/agent-order-checks').assertCanRelease(db,ctx.workspaceId,orderId));
+    placed=await client.submit(prep.rv.payload,async()=>{
+      if(!live)return require('../sales/agent-order-checks').assertCanRelease(db,ctx.workspaceId,orderId);
+      await tx(db,async c=>{
+        const state=await policy.requireWorkspaceJob(c,ctx.workspaceId,JOB,automatic?'automatic':'draft');
+        const stop=automatic?await automaticStop(c,ctx.workspaceId,state):await policy.stopped(c,ctx.workspaceId,state,SEND,false);
+        if(stop)throw new ValidationError(stop);
+        await owner(c,ctx);
+        const route=(await c.query(`SELECT * FROM ${ROUTES} WHERE workspace_id=$1 AND location_id=$2 AND enabled FOR SHARE`,
+          [ctx.workspaceId,prep.route.location_id])).rows[0];
+        if(!route||route.connector_id!==prep.con.id||route.revision!==prep.route.revision||automatic&&!route.automatic)
+          throw new ValidationError('The 3PL route changed. Review the order before handing it over.');
+        const connection=await connector(c,ctx,route.connector_id);
+        const current=await review(c,ctx,orderId,connection);
+        if(current.hash!==prep.rv.hash||connection.updatedAt!==prep.con.updatedAt)
+          throw new ValidationError('The order or connected 3PL account changed. Review it again.');
+        await require('../sales/agent-order-checks').assertCanRelease(c,ctx.workspaceId,orderId);
+        const claim=await c.query(`UPDATE ${ORDERS} SET live_dispatch_started_at=clock_timestamp()
+          WHERE workspace_id=$1 AND sales_order_id=$2 AND request_hash=$3 AND status='SENDING' AND live_dispatch_started_at IS NULL`,
+          [ctx.workspaceId,orderId,prep.rv.hash]);
+        if(!claim.rowCount)throw new ValidationError('StockChief already tried to send this order. Check its reference in ShipBob before any new shipment.');
+      });
+    });
   }catch(error){
     await db.query(`UPDATE ${ORDERS} SET reason=$3,updated_at=clock_timestamp() WHERE workspace_id=$1 AND sales_order_id=$2 AND status='SENDING'`,
       [ctx.workspaceId,orderId,error.retryable||!expected(error)?'The 3PL did not confirm the order. StockChief checks again under the same reference, so it is never placed twice.':error.message]);
@@ -467,7 +503,7 @@ async function panel(db,ctx){
     .map(r=>({...r,provider:label.get(r.connector_id)||'3PL'}));
   const automatic=policy.permits(state.plan,JOB,'automatic');
   return {connections:linked.map(c=>({id:c.id,label:c.label,key:c.adapter.key,account:c.account})),
-    available:adapters.list().filter(a=>a.key!=='shipbob'&&!linked.some(c=>c.adapter.key===a.key)).map(a=>({key:a.key,label:a.label})),
+    available:availableFor(ctx.workspaceId).filter(a=>a.key!=='shipbob'&&!linked.some(c=>c.adapter.key===a.key)).map(a=>({key:a.key,label:a.label})),
     warehouses,routes,orders,parcels,stock,automatic,stop:automatic?await automaticStop(db,ctx.workspaceId,state):null};
 }
 

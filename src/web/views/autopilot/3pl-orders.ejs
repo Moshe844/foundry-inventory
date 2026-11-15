@@ -8,7 +8,9 @@
 <p><a href="/autopilot/shipbob">Connect or manage the ShipBob sandbox</a></p>
 <% for(const a of available){ %><form method="post" action="/autopilot/3pl-orders/connect" class="form-stack section"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="provider" value="<%= a.key %>"><h3>Connect <%= a.label %></h3>
 <label class="rm-field"><span>Account or channel ID</span><input name="account" required maxlength="80"></label>
-<label class="rm-field"><span>API key</span><input name="apiKey" type="password" autocomplete="new-password" required></label><button class="btn">Check and connect</button></form><% } %>
+<label class="rm-field"><span><%= a.key==='shipbob-live'?'Production personal access token':'API key' %></span><input name="apiKey" type="password" autocomplete="new-password" required></label>
+<% if(a.key==='shipbob-live'){ %><p>Use the channel for the production token. After connecting, approve the warehouse route before sending real orders.</p><% } %>
+<button class="btn">Check and connect</button></form><% } %>
 </section>
 <section class="card section" id="routes"><h2>Which warehouse each 3PL runs</h2>
 <p>Orders confirmed to ship from that warehouse after you save the route go to its 3PL. <%= automatic?'Tick the box to let StockChief send them on its own; otherwise each one waits for your approval.':'StockChief drafts each order for your approval.' %> Each route is one saved rule.</p>
