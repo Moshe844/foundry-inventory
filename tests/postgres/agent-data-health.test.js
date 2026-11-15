@@ -46,7 +46,7 @@ test('a data health score arrives on day one with a fix list, and refreshes thro
   assert.deepEqual([first.reason,first.products],['IMPORT',8]);
   const passed=first.checks.reduce((n,c)=>n+c.passed,0);
   assert.equal(first.score,Math.round(passed*100/72));
-  assert.deepEqual(Object.fromEntries(first.checks.map(c=>[c.key,c.failed])),{code_ok:1,barcode_ok:7,cost_ok:2,weight_ok:2,unique_ok:2,supplier_ok:7,reorder_ok:7,stock_ok:1,counted_ok:1});
+  assert.deepEqual(Object.fromEntries(first.checks.map(c=>[c.key,c.failed])),{code_ok:1,barcode_ok:7,cost_ok:1,weight_ok:2,unique_ok:2,supplier_ok:7,reorder_ok:7,stock_ok:1,counted_ok:1});
 
   // Every plan sees the score, the breakdown and the ordered fix list.
   for(const tier of ['starter','growth','pro','enterprise']){
@@ -56,7 +56,7 @@ test('a data health score arrives on day one with a fix list, and refreshes thro
     for(const key of ['code_ok','stock_ok','counted_ok','supplier_ok'])assert.ok(page.text.includes('data-health-check="'+key+'"'),key);
     const screen=await health.page(db,ctx);
     // Most urgent first, then the most products within each level.
-    assert.deepEqual(screen.fixes.map(x=>x.key),['stock_ok','cost_ok','unique_ok','code_ok','barcode_ok','supplier_ok','reorder_ok','weight_ok','counted_ok']);
+    assert.deepEqual(screen.fixes.map(x=>x.key),['stock_ok','unique_ok','code_ok','cost_ok','barcode_ok','supplier_ok','reorder_ok','weight_ok','counted_ok']);
     assert.match(screen.fixes[0].text,/^1 product shows stock below zero/);
     const costFix=screen.fixes.find(x=>x.key==='cost_ok');
     assert.equal(costFix.href,tier==='starter'?'/autopilot/reviews/catalog-fixes':'/autopilot/catalog-fixes?kind=COST');

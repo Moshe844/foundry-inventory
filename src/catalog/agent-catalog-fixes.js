@@ -152,6 +152,9 @@ async function skuOptions(db,workspaceId,rows,{skip=new Set()}={}){
   const prices=costIds.length?group((await db.query(`SELECT si.sku_id,v.name,v.currency,si.last_unit_cost::text AS cost FROM supplier_items si
       JOIN suppliers v ON v.workspace_id=si.workspace_id AND v.id=si.supplier_id AND v.status='active'
       WHERE si.workspace_id=$1 AND si.sku_id=ANY($2::text[]) AND si.is_active=1 AND si.last_unit_cost IS NOT NULL ORDER BY si.sku_id,v.name,si.id`,[workspaceId,costIds])).rows):new Map();
+  // Only for SKUs no receipt or supplier price covers: the cost recorded with the stock itself.
+  const uncovered=costIds.filter(id=>!receipts.has(id)&&!prices.has(id));
+  const stockCosts=new Map((await require('../pricing/postgres-service').recordedStockCosts(db,workspaceId,uncovered)).map(r=>[r.sku_id,r]));
   const siblings=weightIds.length?group((await db.query(`SELECT s.id AS sku_id,o.code,o.weight_grams::text AS grams FROM skus s
       JOIN skus o ON o.workspace_id=s.workspace_id AND o.item_id=s.item_id AND o.id<>s.id AND o.is_active=1 AND o.weight_grams>0
       WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) ORDER BY s.id,o.code`,[workspaceId,weightIds])).rows):new Map();
@@ -178,6 +181,9 @@ async function skuOptions(db,workspaceId,rows,{skip=new Set()}={}){
       const sources=[],receipt=receipts.get(row.id);
       if(receipt?.unit_cost!=null)sources.push({amountMinor:tryMinor(receipt.unit_cost,receipt.currency),currency:receipt.currency,label:'the latest receipt on '+receipt.po_number});
       for(const p of prices.get(row.id)||[])sources.push({amountMinor:tryMinor(p.cost,p.currency),currency:p.currency,label:p.name+' price'});
+      // Stock that came in with a cost (an import's unit cost column) already records it.
+      const stock=!sources.length&&stockCosts.get(row.id);
+      if(stock)sources.push({amountMinor:Number(stock.amount_minor),currency:stock.currency,label:'the recorded cost of your stock on hand'});
       const clear=sources.every(s=>s.amountMinor!=null),values=[...new Set(sources.map(s=>s.amountMinor+' '+s.currency))];
       const candidates=sources.filter(s=>s.amountMinor!=null);
       if(clear&&values.length===1){

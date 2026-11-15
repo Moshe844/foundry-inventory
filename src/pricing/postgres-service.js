@@ -54,6 +54,32 @@ async function currentPrice(queryable,workspaceId,skuId){
     {id:null,workspace_id:workspaceId,sku_id:skuId,amount_minor:null,currency:'USD',isSet:false,formatted:'Not set'};
 }
 
+// SQL for "this SKU has a purchase cost", from the same three sources
+// purchaseCost() reads below: a stated cost, a supplier's last cost, or the
+// recorded cost of the stock on hand (where an import's unit cost goes when
+// the row also brings stock). A check that scores whether a cost is known
+// uses this, so it agrees with what the product page and margins show.
+const knownPurchaseCostSql=(skuId,workspaceId)=>`(EXISTS(SELECT 1 FROM sku_purchase_costs known_pc WHERE known_pc.workspace_id=${workspaceId} AND known_pc.sku_id=${skuId})
+    OR EXISTS(SELECT 1 FROM supplier_items known_si WHERE known_si.workspace_id=${workspaceId} AND known_si.sku_id=${skuId}
+      AND known_si.is_active=1 AND known_si.last_unit_cost IS NOT NULL)
+    OR EXISTS(SELECT 1 FROM accounting_inventory_cost_balances known_cb
+      JOIN skus known_s ON known_s.workspace_id=known_cb.workspace_id AND known_s.id=known_cb.sku_id
+      JOIN items known_i ON known_i.workspace_id=known_s.workspace_id AND known_i.id=known_s.item_id
+      WHERE known_cb.workspace_id=${workspaceId} AND known_cb.sku_id=${skuId} AND known_cb.quantity_units>0
+        AND (known_i.secondary_unit_label IS NULL OR known_cb.secondary_quantity_units>0)))`;
+
+// The average recorded cost of the stock on hand for these SKUs, the third
+// source purchaseCost() falls back to. One row per SKU that has costed stock.
+async function recordedStockCosts(queryable,workspaceId,skuIds){
+  if(!skuIds.length)return [];
+  return (await queryable.query(`SELECT c.sku_id,round(sum(c.total_cost_minor)::numeric/nullif(sum(CASE WHEN i.secondary_unit_label IS NOT NULL
+      THEN c.secondary_quantity_units ELSE c.quantity_units END),0))::text AS amount_minor,a.base_currency AS currency
+    FROM accounting_inventory_cost_balances c JOIN accounting_settings a ON a.workspace_id=c.workspace_id
+    JOIN skus s ON s.workspace_id=c.workspace_id AND s.id=c.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+    WHERE c.workspace_id=$1 AND c.sku_id=ANY($2::text[]) AND c.quantity_units>0 AND (i.secondary_unit_label IS NULL OR c.secondary_quantity_units>0)
+    GROUP BY c.sku_id,a.base_currency`,[workspaceId,skuIds])).rows.filter(row=>row.amount_minor!==null);
+}
+
 async function purchaseCost(queryable,workspaceId,skuId){
   const stated=(await queryable.query(`SELECT pc.*,sup.name AS supplier_name FROM sku_purchase_costs pc
     LEFT JOIN supplier_items si ON si.id=pc.supplier_item_id AND si.workspace_id=pc.workspace_id LEFT JOIN suppliers sup ON sup.id=si.supplier_id AND sup.workspace_id=pc.workspace_id
@@ -303,7 +329,7 @@ async function cancelPurchaseCostProposal(database,workspaceId,id){
   return getPurchaseCostProposal(database,workspaceId,id);
 }
 
-module.exports={normaliseCurrency,toMinor,formatMinor,requireSku,currentPrice,purchaseCost,listForSkus,catalogueOnlyPrice,
+module.exports={normaliseCurrency,toMinor,formatMinor,requireSku,currentPrice,purchaseCost,knownPurchaseCostSql,recordedStockCosts,listForSkus,catalogueOnlyPrice,
   setPrice,setPriceInTransaction,setPricesInTransaction,setPurchaseCost,setPurchaseCostInTransaction,setPurchaseCostsInTransaction,createPriceProposal,getPriceProposal,
   approvePriceProposal,cancelPriceProposal,createPurchaseCostProposal,getPurchaseCostProposal,
   approvePurchaseCostProposal,cancelPurchaseCostProposal};

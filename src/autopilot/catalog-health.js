@@ -54,7 +54,7 @@ const assessed=`WITH active AS MATERIALIZED (
   ), checks AS MATERIALIZED (
     SELECT a.*,coalesce(a.code=btrim(a.code) AND a.code ~ '${SAFE}' AND a.same_code=1,false) AS code_ok,
       coalesce(length(btrim(a.barcode))>0 AND a.same_barcode=1,false) AS barcode_ok,
-      EXISTS(SELECT 1 FROM sku_purchase_costs p WHERE p.workspace_id=$1 AND p.sku_id=a.id) AS cost_ok,
+      ${require('../pricing/postgres-service').knownPurchaseCostSql('a.id','$1')} AS cost_ok,
       coalesce(a.weight_grams>0,false) AS weight_ok,
       d.id IS NULL AS unique_ok,
       EXISTS(SELECT 1 FROM supplier_items si JOIN suppliers v ON v.workspace_id=si.workspace_id AND v.id=si.supplier_id AND v.status='active'
