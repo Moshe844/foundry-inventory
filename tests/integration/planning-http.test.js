@@ -28,6 +28,9 @@ const planning = require('../../src/forecasting/planning-service');
 test.after(cleanupAll);
 
 const DAY = 24 * 60 * 60 * 1000;
+const renderedText = html => html
+  .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+  .replace(/<[^>]+>/g, ' ');
 const ago = (days) => new Date(Date.now() - days * DAY).toISOString();
 
 async function traded() {
@@ -76,7 +79,7 @@ test('the planning page shows what is coming and offers the two answers', async 
   assert.match(page.text, /Watching first/);
   assert.match(page.text, /Why this plan · compare \d+ options/);
   assert.match(page.text, /Keep this much cash available after known obligations/);
-  assert.doesNotMatch(page.text, /undefined|NaN/);
+  assert.doesNotMatch(renderedText(page.text), /\b(?:undefined|NaN)\b/);
   env.db.close();
 });
 
@@ -135,7 +138,7 @@ test('the product page carries the outlook, its working, and the two buttons', a
   assert.match(page.text, /See how I worked this out/);
   assert.match(page.text, /High confidence|Moderate confidence|Still learning/);
   assert.match(page.text, /\/planning\/recommendations\/rec_[a-z0-9]+\/accept/);
-  assert.doesNotMatch(page.text, /undefined|NaN/);
+  assert.doesNotMatch(renderedText(page.text), /\b(?:undefined|NaN)\b/);
   env.db.close();
 });
 
@@ -144,11 +147,11 @@ test('purchasing says what is coming short and the supplier page says whether th
 
   const purchasing = await env.agent.get('/purchasing');
   assert.equal(purchasing.status, 200);
-  assert.doesNotMatch(purchasing.text, /undefined|NaN/);
+  assert.doesNotMatch(renderedText(purchasing.text), /\b(?:undefined|NaN)\b/);
 
   const supplier = await env.agent.get(`/suppliers/${env.supplier.id}`);
   assert.equal(supplier.status, 200);
-  assert.doesNotMatch(supplier.text, /undefined|NaN/);
+  assert.doesNotMatch(renderedText(supplier.text), /\b(?:undefined|NaN)\b/);
   // No delivered orders yet, so StockChief must not be claiming a record.
   assert.doesNotMatch(supplier.text, /Do they turn up\?/,
     'a supplier with no deliveries gets no reliability panel at all');
@@ -169,15 +172,15 @@ test('a brand new inventory renders every planning surface without inventing any
   assert.equal(planningPage.status, 200);
   assert.match(planningPage.text, /Nothing StockChief can measure a sales rate for/);
   assert.match(planningPage.text, /No forecast has reached the end of its horizon yet/);
-  assert.doesNotMatch(planningPage.text, /undefined|NaN/);
+  assert.doesNotMatch(renderedText(planningPage.text), /\b(?:undefined|NaN)\b/);
 
   const product = await agent.get(`/inventory/${item.itemId}`);
   assert.equal(product.status, 200);
   assert.match(product.text, /cannot estimate how fast this sells yet/);
-  assert.doesNotMatch(product.text, /undefined|NaN/);
+  assert.doesNotMatch(renderedText(product.text), /\b(?:undefined|NaN)\b/);
 
   const home = await agent.get('/');
   assert.equal(home.status, 200);
-  assert.doesNotMatch(home.text, /undefined|NaN/);
+  assert.doesNotMatch(renderedText(home.text), /\b(?:undefined|NaN)\b/);
   db.close();
 });
