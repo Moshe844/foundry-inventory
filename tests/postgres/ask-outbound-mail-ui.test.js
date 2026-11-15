@@ -107,7 +107,7 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
     assert.deepEqual(await details.locator('dt').allTextContents(),['To','From','Subject']);
     assert.equal(await details.locator('.sc-approval-email__body').textContent(),'We received the order and will confirm Friday.');
     const size=await details.boundingBox();assert.ok(size&&size.x>=0&&size.x+size.width<=391);
-    assert.doesNotMatch(await standalone.locator('main').innerText(),/Draft Polished|Original Body|Connector Id/);
+    assert.doesNotMatch(await standalone.locator('main').innerText(),/Draft Polished|Original Body|Connector Id|No products yet/);
     if(process.env.STOCKCHIEF_UX_SHOTS)await standalone.screenshot({path:require('path').join(require('os').tmpdir(),
       'stockchief-email-approval-mobile.png')});
     await standalone.close();

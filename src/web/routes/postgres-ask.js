@@ -502,7 +502,7 @@ function createPostgresAskRouter(database,options={}){
     if(latestResult){latestResult.sources=answerSources.visible(req.user,latestResult.sources);
       // A row whose record page this person may not open is shown without its link.
       latestResult.rows=latestResult.rows.map(row=>row?.href&&!answerSources.visible(req.user,[{href:row.href}]).length?{...row,href:undefined}:row);}
-    return res.page('attention/ask',{voiceNotes:true,downloadableAnswers,recentRequests,chatGroups:chats.groups(recentRequests,businessZone),currentChat,chatReturn:'/ask',title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,aiCost:require('../../commercial/ai-spending-limits').forAsk(await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId)),...rules,
+    return res.page('attention/ask',{voiceNotes:true,downloadableAnswers,recentRequests,chatGroups:chats.groups(recentRequests,businessZone),currentChat,chatReturn:'/ask',title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,hideOnboardingEntry:latestProposal?.actionType==='communication.send_email'&&latestProposal.status==='PENDING',aiCost:require('../../commercial/ai-spending-limits').forAsk(await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId)),...rules,
       codexPilot:pilotView,adaptiveGoal:activeGoal,agentInspection:Boolean(options.agentInspection),focusedGoalId:focusedGoal?.id||null,renderAgentAnswer:require('../public/agent-answer').render,
       about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
       question:submission?.draft||latest?.message||'',result:latestResult,error:submission?.message||null,submissionError:submission,
@@ -712,7 +712,7 @@ function createPostgresAskRouter(database,options={}){
         ?{label:'Sending paused',tone:'warn'}
         :presenter.emailReviewStatus(proposal.status,delivery?.status);
     }
-    return res.page('attention/postgres-proposal',{draftTraining,approvalAccess,twoPeople,title:mission?'Review operating mission':'Review prepared change',nav:'ask',editProposal:req.query.edit==='1',proposal,presentation,mission,nativeApproval:nativeCard?{goalId:native.id,...nativeCard}:null,
+    return res.page('attention/postgres-proposal',{draftTraining,approvalAccess,twoPeople,title:mission?'Review operating mission':'Review prepared change',nav:'ask',hideOnboardingEntry:true,editProposal:req.query.edit==='1',proposal,presentation,mission,nativeApproval:nativeCard?{goalId:native.id,...nativeCard}:null,
       nativeResume:approvedDelivery?{goalId:native.id,id:approvedDelivery.id,sha256:approvedDelivery.sha256}:null,
       missionSteps:(mission?.approved_steps||[]).map((step,index)=>{const contract=capabilities.get(step.capability);return {label:(contract?.legacyAction||step.capability).replace(/[._]/g,' ').replace(/^./,s=>s.toUpperCase()),args:step.args,fields:require('../proposal-presentation').fields(step.args),index:index+1,state:mission.steps[index]?.state||'BLOCKED'};}),
       resumeAvailable:proposal.status==='EXECUTED'&&resuming&&!native});
