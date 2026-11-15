@@ -29,7 +29,7 @@ test('real website reviews and approves actual existing-stock cost and shows its
  const approval=await page.locator('main').innerText();assert.match(approval,/\$115\.50 total/);assert.match(approval,/Quantity stays 7/);assert.match(approval,/stock you already owned/);assert.doesNotMatch(approval,/opening equity|evidenced cost|Sku Id|Unit Cost Minor|Expected Snapshot/);assert.match(approval,/No payment or supplier debt/);
  assert.equal((await db.query('SELECT count(*) AS n FROM accounting_inventory_cost_establishments WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');
  await page.screenshot({path:path.join(proofDirectory,'approval.png'),fullPage:true});
- await page.getByRole('button',{name:'Approve only this change'}).click();await page.getByText('EXECUTED',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'Approve only this change'}).click();await page.getByRole('heading',{name:'Completed change',exact:true}).waitFor();
  const proof=(await db.query('SELECT c.quantity_units,c.total_cost_minor,e.journal_entry_id FROM accounting_inventory_cost_balances c JOIN accounting_inventory_cost_establishments e USING(workspace_id,sku_id,location_id) WHERE c.workspace_id=$1',[ctx.workspaceId])).rows[0];
  assert.equal(Number(proof.quantity_units),7);assert.equal(Number(proof.total_cost_minor),11550);assert.ok(proof.journal_entry_id);
  assert.equal(Number((await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2',[ctx.workspaceId,skuId])).rows[0].on_hand),7);

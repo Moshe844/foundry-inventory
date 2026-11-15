@@ -71,7 +71,7 @@ test('real Chromium previews and approves PostgreSQL selling prices and purchase
     await page.locator('details.advanced-settings summary').click();
     assert.match(await page.locator('main').innerText(),/catalog\.set_price/);
     await page.getByRole('button',{name:'Approve only this change'}).click();await page.waitForURL(`${base}${actionHref}`);
-    assert.match(await page.locator('main').innerText(),/EXECUTED/);
+    assert.match(await page.locator('main').innerText(),/Completed change/);
     assert.equal((await pricing.currentPrice(database,ctx.workspaceId,skuId)).amount_minor,2800);
 
     await page.goto(`${base}/ask`);await page.getByRole('textbox',{name:'Ask StockChief'}).fill('Set the purchase cost for Pricing Widget to $14.25');
@@ -83,6 +83,6 @@ test('real Chromium previews and approves PostgreSQL selling prices and purchase
     await page.locator('details.advanced-settings summary').click();
     assert.match(await page.locator('main').innerText(),/catalog\.set_purchase_cost/);
     await page.getByRole('button',{name:'Approve only this change'}).click();await page.waitForURL(`${base}${costActionHref}`);
-    assert.match(await page.locator('main').innerText(),/EXECUTED/);
+    assert.match(await page.locator('main').innerText(),/Completed change/);
     assert.equal((await pricing.purchaseCost(database,ctx.workspaceId,skuId)).amount_minor,1425);
   });
