@@ -321,6 +321,10 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
       await page.screenshot({path:require('node:path').join(process.env.STOCKCHIEF_NAV_ARTIFACT_DIR,'pilot-billing-'+width+'.png'),fullPage:true});
     }
    }
+   await page.locator('.ox-plan-now a[href="/pricing"]').click();
+   await page.waitForURL(base+'/pricing');
+   assert(await page.locator('.plan-card[data-plan="growth"] [data-plan-state="paused"]').isDisabled());
+   assert.equal(await page.locator('.plan-card[data-plan="pro"] [data-plan-state="current"]').count(),1);
   }finally{await browser.close();await new Promise(resolve=>server.close(resolve));await app.locals.sessionStore.close();}
  });
 });

@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/orders-ui.css?v=<%= locals.assetVersion||'current' %>">
 <% const sub=summary.subscription,currentPlan=plans.find(p=>p.id===sub?.plan_id),interval=sub?.billing_interval==='ANNUAL'?'annual':'monthly',
    privatePilot=sub?.source==='ADMIN_PRIVATE_PILOT',
+   showAiStatus=locals.aiCost&&(!aiCost.creditsOnly||aiCost.paused||aiCost.creditsBlocked||aiCost.creditWarning||aiCost.certificationPaused),
    money=(minor,currency)=>(Number(minor||0)/100).toLocaleString('en-US',{style:'currency',currency:currency||'USD',maximumFractionDigits:Number(minor)%100?2:0}),
    number=value=>Number(value||0).toLocaleString('en-US'),
    limit=(p,meter)=>{const row=(p.meters||[]).find(m=>m.meter===meter);if(!row)return null;const value=row.hard_limit??row.included_units;return value===null||value===undefined?'Unlimited':Number(value).toLocaleString('en-US');},
@@ -58,7 +59,7 @@
 </div>
 
 <% if(checkoutOpen||sub?.stripe_subscription_id){ %><p class="ox-billing-note">New subscriptions include a 14-day money-back guarantee. <a href="/support?topic=subscription-refund">Request a refund</a> within 14 days of your first payment. A successful subscription refund cancels renewal and starts the 30-day read-only retention period.</p><% } %>
-<% if(locals.aiCost&&(!aiCost.creditsOnly||aiCost.paused||aiCost.creditsBlocked||aiCost.creditWarning||aiCost.certificationPaused)){ %><%- include('../partials/ai-spending-status') %><% } %>
+<% if(showAiStatus){ %><%- include('../partials/ai-spending-status') %><% } %>
 <% const usageMeters=summary.meters.filter(m=>m.definition?.kind==='USAGE'&&m.definition.customerVisible),
    metered=usageMeters.filter(m=>m.remaining!==null),
    firstPeriodEnd=metered[0]?.periodEnd,
@@ -66,7 +67,7 @@
 <section class="rm-panel ox-billing-section" aria-labelledby="usage-packs">
   <div class="rm-panel__head ox-usage-heading">
     <div><h2 id="usage-packs">Monthly usage</h2><% if(sharedEnd&&(!privatePilot||new Date(sharedEnd).getTime()!==new Date(sub.current_period_end).getTime())){ %><p>Resets <%= helpers.dateTime(sharedEnd) %></p><% } %></div>
-    <a href="/usage">AI credit history</a>
+    <a href="/usage">Usage details</a>
   </div>
   <div class="ox-usage-grid">
     <% for(const warning of usageWarnings){ %>
@@ -77,10 +78,10 @@
       const includedUsed=meter.includedUsed??meter.used??0;
       const remaining=meter.meter==='ai_work_credits'&&locals.aiCost?helpers.aiCustomerMeter(aiCost).usableCredits??meter.remaining:meter.remaining;
     %>
-      <article class="ox-usage-card" data-usage-category="<%= meter.meter %>">
+      <article class="ox-usage-card" data-usage-category="<%= meter.meter %>"<% if(!showAiStatus&&meter.meter==='ai_work_credits'){ %> aria-label="AI availability"<% } %>>
         <h3><%= meter.label %></h3>
         <% if(meter.remaining===null){ %>
-          <p class="ox-usage-card__balance">Included under your terms</p><p><%= number(meter.used) %> used this period</p>
+          <p class="ox-usage-card__balance">Included under your accepted terms</p><p><%= number(meter.used) %> used this period</p>
         <% }else{ %>
           <p class="ox-usage-card__balance"><strong><%= number(remaining) %></strong> <%= meter.meter==='ai_work_credits'?'available':'remaining' %></p>
           <% if(Number(meter.included)>0){ %><progress aria-label="<%= meter.label %> used" max="<%= meter.included %>" value="<%= Math.min(includedUsed,meter.included) %>"></progress><% } %>
