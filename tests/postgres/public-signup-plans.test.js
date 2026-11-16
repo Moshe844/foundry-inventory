@@ -131,8 +131,15 @@ test('public pricing sends all monthly and yearly plans through verified paid si
           assert.ok(receipt, 'account verification must use the transactional email queue');
           const token = new URL(email.unseal(receipt.payload).text.match(/https?:\/\/\S+/)[0]).searchParams.get('token');
           assert.ok(token);
-          await page.goto(`${base}/verify-email?token=${encodeURIComponent(token)}`);
-          await page.getByRole('button', {name: 'Verify and continue'}).click();
+          const verificationTab=await page.context().newPage();
+          await verificationTab.goto(`${base}/verify-email?token=${encodeURIComponent(token)}`);
+          assert.equal((await db.query('SELECT email_verified_at FROM accounts WHERE id=$1',[account.id])).rows[0].email_verified_at,null,'A scanner opening the link cannot verify');
+          await verificationTab.getByRole('button', {name: 'Verify and continue'}).click();
+          await verificationTab.waitForURL(`${base}/verify-email/success`);
+          assert.match(await verificationTab.locator('main').innerText(),/Email verified successfully.*close this page.*previous StockChief tab/s);
+          await page.bringToFront();await page.waitForURL(`${base}/complete-signup`);
+          assert.equal(verificationTab.url(),`${base}/verify-email/success`,'Confirmation tab stays on success');
+          await verificationTab.close();
           assert.equal(await page.locator('select[name="planId"]').inputValue(), plan);
           assert.equal(await page.locator('select[name="interval"]').inputValue(), interval);
           assert.equal(await workspaceCount(), 0);

@@ -42,7 +42,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     title:'File imports and results',nav:'imports',recent:await progress.list(database,req.ctx.workspaceId,{limit:20}),
     sourceUploads:await sourceUploads.list(database,req.ctx.workspaceId),
     locations:await locations(database,req.ctx.workspaceId),aiConfigured:Boolean(provider||config.ai.configured),canOperate:true,
-    usageKey:newId('importpreview'),uploadLimitBytes:config.uploads.maxBytes,
+    usageKey:newId('importpreview'),uploadLimitBytes:config.uploads.maxBytes,uploadPolicy:await require('../../imports/plan-upload-policy').presentation(database,req.ctx.workspaceId),
   });}
   router.get('/imports/start',asyncRoute(renderStart));
   router.get('/imports',asyncRoute(renderStart));

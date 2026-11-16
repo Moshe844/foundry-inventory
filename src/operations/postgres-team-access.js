@@ -2,7 +2,20 @@
 const {AuthorizationError,ValidationError,NotFoundError}=require('../domain/errors');
 const permissions=require('../actions/permissions'),money=require('../domain/currency'),{newId}=require('../lib/util');
 const capability='authority.advanced';
-async function owner(c,ctx){const actor=(await c.query('SELECT role FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];if(actor?.role!=='owner')throw new AuthorizationError('Only an inventory owner can change team access.');}
+async function owner(c,ctx){const actor=(await c.query('SELECT role FROM users WHERE workspace_id=$1 AND id=$2 AND revoked_at IS NULL',[ctx.workspaceId,ctx.actorId])).rows[0];if(actor?.role!=='owner')throw new AuthorizationError('Only an inventory owner can change team access.');}
+async function remove(db,ctx,userId,input){return db.transaction(async c=>{
+ await owner(c,ctx);await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['team-access:'+ctx.workspaceId]);
+ const person=(await c.query('SELECT * FROM users WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,userId])).rows[0];
+ if(!person)throw new NotFoundError('That person was not found in this inventory.');
+ if(person.role==='owner'||person.id===ctx.actorId)throw new ValidationError('An owner cannot be removed here.');
+ if(person.revoked_at)return {removed:true};
+ if(input.confirm!=='remove')throw new ValidationError('Confirm removal before continuing.');
+ if(Number(input.revision)!==person.access_revision)throw new ValidationError('This person’s access changed. Reload the Team page before removing them.');
+ await c.query("UPDATE users SET revoked_at=now(),role='staff',permissions='[]',custom_role_id=NULL,warehouse_location_ids='[]'::jsonb,access_revision=access_revision+1 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,userId]);
+ await c.query("UPDATE workspace_invitations SET status='REVOKED' WHERE workspace_id=$1 AND lower(email)=(SELECT lower(email) FROM accounts WHERE id=$2) AND status='PENDING'",[ctx.workspaceId,person.account_id]);
+ await history(c,ctx,userId,'Person removed',{Person:person.name,Access:'Active'},{Person:person.name,Access:'Removed'});
+ return {removed:true};
+ },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function history(c,ctx,subjectId,action,before,after){await c.query('INSERT INTO team_access_history(id,workspace_id,actor_id,subject_id,action,before_state,after_state) VALUES($1,$2,$3,$4,$5,$6,$7)',[newId('teamchange'),ctx.workspaceId,ctx.actorId,subjectId,action,JSON.stringify(before),JSON.stringify(after)]);}
 function roleState(row){return row?{Name:row.name,Permissions:JSON.parse(row.permissions).map(p=>permissions.LABELS[p]||p).join(', ')}:{};}
 function memberState(row,roleName){return {Person:row.name,Role:roleName||row.role,'Purchase approval limit':row.po_approval_limit_minor===null?'No amount limit':money.format(Number(row.po_approval_limit_minor),row.po_approval_currency)};}
@@ -19,14 +32,14 @@ async function saveRole(db,ctx,input){return db.transaction(async c=>{
  if((await c.query('SELECT 1 FROM workspace_custom_roles WHERE workspace_id=$1 AND lower(name)=lower($2) AND id<>$3',[ctx.workspaceId,name,prior?.id||''])).rowCount)throw new ValidationError('A role already uses that name.');
  if(!prior){const ent=require('../commercial/entitlements'),state=await ent.assertMeterCapacity(c,await ent.ownerScopeForWorkspace(c,ctx.workspaceId),'custom_roles',1);if(state.hardLimit===null&&state.used>=50)throw new ValidationError('This inventory already has its 50 custom roles. Reuse or edit an existing role.');}
  const id=prior?.id||newId('teamrole');
- if(prior){await c.query('UPDATE workspace_custom_roles SET name=$3,permissions=$4,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,name,encoded]);await c.query("UPDATE users SET permissions=$3,access_revision=access_revision+1 WHERE workspace_id=$1 AND custom_role_id=$2 AND role<>'owner'",[ctx.workspaceId,id,encoded]);}
+ if(prior){await c.query('UPDATE workspace_custom_roles SET name=$3,permissions=$4,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,name,encoded]);await c.query("UPDATE users SET permissions=$3,access_revision=access_revision+1 WHERE workspace_id=$1 AND custom_role_id=$2 AND role<>'owner' AND revoked_at IS NULL",[ctx.workspaceId,id,encoded]);}
  else await c.query('INSERT INTO workspace_custom_roles(id,workspace_id,name,permissions) VALUES($1,$2,$3,$4)',[id,ctx.workspaceId,name,encoded]);
  await history(c,ctx,id,'Custom role changed',roleState(prior),roleState({name,permissions:encoded}));return {id};
  },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function assign(db,ctx,userId,input){return db.transaction(async c=>{
  await owner(c,ctx);await require('../commercial/enforcement').workspace(c,ctx.workspaceId,capability);
  await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['team-access:'+ctx.workspaceId]);
- const user=(await c.query('SELECT * FROM users WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,userId])).rows[0];
+ const user=(await c.query('SELECT * FROM users WHERE workspace_id=$1 AND id=$2 AND revoked_at IS NULL FOR UPDATE',[ctx.workspaceId,userId])).rows[0];
  if(!user)throw new NotFoundError('That person was not found in this inventory.');
  if(user.role==='owner')throw new ValidationError('Owners retain full authority. Choose a staff member or accountant.');
  if(Number(input.revision)!==user.access_revision)throw new ValidationError('This person’s access changed. Reload the Team page before saving.');
@@ -74,5 +87,5 @@ async function purchaseAmount(c,workspaceId,order){
  if(amount<0)throw new ValidationError('The purchase total needs review before approval.');
  return amount;
 }
-module.exports={list,saveRole,assign,assertPurchaseApproval,purchaseAmount,purchaseTotalsSql,capability};
+module.exports={remove,list,saveRole,assign,assertPurchaseApproval,purchaseAmount,purchaseTotalsSql,capability};
 

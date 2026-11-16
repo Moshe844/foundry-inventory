@@ -43,7 +43,18 @@ async function reconcile(client,event,accountId,purchase=null){
        stale?Math.floor(priorAt/1000):event.created,JSON.stringify({...detail,refundReversed:true,refundStatus:status})]);
   }
  }
- if(!purchase)await require('./subscription-refund-retention').observe(client,{...event,data:{...event.data,object:{...refund,status}}},accountId);
+ if(!purchase){
+  await require('./subscription-refund-retention').observe(client,{...event,data:{...event.data,object:{...refund,status}}},accountId);
+  const requestId=refund.metadata?.stockchief_guarantee_id;
+  if(requestId){
+   if(['failed','canceled'].includes(status))await client.query("UPDATE commercial_guarantee_requests SET status='REVIEW',last_error='Stripe could not complete the refund. Contact support for help.',updated_at=now() WHERE id=$1 AND account_id=$2",[requestId,accountId]);
+   else if(status==='succeeded')await client.query(`UPDATE commercial_guarantee_requests g SET status='REFUNDED',last_error=NULL,updated_at=now()
+    WHERE g.id=$1 AND g.account_id=$2 AND jsonb_array_length(g.parts)>0 AND NOT EXISTS(
+     SELECT 1 FROM jsonb_array_elements(g.parts) part WHERE NOT EXISTS(
+      SELECT 1 FROM commercial_stripe_refunds f WHERE f.account_id=g.account_id AND f.payment_intent_id=part->>'paymentIntentId'
+      AND f.amount_minor=(part->>'amount')::bigint AND f.currency=part->>'currency' AND f.status='succeeded'))`,[requestId,accountId]);
+  }
+ }
  return {status};
 }
 module.exports={reconcile};

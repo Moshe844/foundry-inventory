@@ -58,7 +58,10 @@
 <% } %>
 </div>
 
-<% if(checkoutOpen||sub?.stripe_subscription_id){ %><p class="ox-billing-note">New subscriptions include a 14-day money-back guarantee. <a href="/support/request?topic=subscription-refund&amp;from=/settings/billing">Request a refund</a> within 14 days of your first payment. A successful subscription refund cancels renewal and starts the 30-day read-only retention period.</p><% } %>
+<% if(checkoutOpen||sub?.stripe_subscription_id){ %><section class="rm-panel sc-guarantee"><h3>14-day money-back guarantee</h3>
+<% if(locals.guarantee?.request){ const status=guarantee.request.status; %><p role="status"><strong><%= status==='REFUNDED'?'Stripe confirmed your refund.':status==='PENDING'?'Stripe is processing your refund.':status==='REVIEW'?'Your refund needs a billing check. StockChief will retry safely.':'Your cancellation and refund request is saved.' %></strong></p><p>Refresh this page to check progress. A confirmed refund returns to your original payment method; your bank may take several business days to show it. <a href="/support/request?topic=subscription-refund">Get refund help</a>.</p>
+<% }else if(locals.guarantee?.eligible){ %><p>You can cancel now and receive a full refund of your subscription payments. Request by <strong><%= helpers.dateTime(guarantee.deadline) %></strong>. After Stripe confirms the refund, your records stay read-only for 30 days so you can export them.</p><form method="post" action="/billing/refund" class="stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label><input type="checkbox" name="confirm" value="refund" required> Cancel my subscription now and refund my subscription payments.</label><button class="rm-btn rm-btn--secondary" type="submit">Cancel and refund</button></form>
+<% }else{ %><p>Request a refund within 14 days of your first subscription payment. Cancelling renewal alone keeps access until the paid period ends and does not issue a refund. <a href="/support/request?topic=subscription-refund&amp;from=/settings/billing">Get refund help</a>.</p><% } %></section><% } %>
 <% if(showAiStatus){ %><%- include('../partials/ai-spending-status') %><% } %>
 <% const usageMeters=summary.meters.filter(m=>m.definition?.kind==='USAGE'&&m.definition.customerVisible),
    metered=usageMeters.filter(m=>m.remaining!==null),

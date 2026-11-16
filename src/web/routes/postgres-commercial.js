@@ -140,6 +140,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     if(localLocations&&scope.workspaceId){const accountLocations=await entitlements.meterState(database,{accountId:scope.accountId,workspaceId:null},'locations',{subscription:summary.subscription});
       summary.meters=summary.meters.map(m=>m.meter==='locations'?{...accountLocations,currentInventoryUsed:localLocations.used}:m);}
     return res.page('commercial/billing',{title:'Plan & billing',backTo:{href:'/settings',label:'Settings'},nav:'settings',room:true,searchableSettingsSections:require('../presentation/search-pages').settingsSections,summary,usageWarnings,invoices,aiCost:req.ctx?.workspaceId?await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId):null,
+      guarantee:await require('../../commercial/subscription-guarantee').quote(database,scope.accountId),
       pendingChanges,upgradeOutcome,scheduleUnavailable,billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database),
       capacityProducts:await require('../../commercial/capacity-addons').catalog(database,{subscription:summary.subscription}),capacityOrders:await require('../../commercial/capacity-addons').list(database,scope.accountId),
       packs:addons.currentPacks(await addons.packs(database,scope)),topups:await addons.topups(database,scope),purchaseKey:newId('purchasekey'),
@@ -207,6 +208,12 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     // The plan page reports the outcome of this upgrade once Stripe settles it.
     if(!changed.quote.downgrade)req.session.planChangeWatch=changed.changeId;
     return req.session.save(()=>res.redirect(303,'/billing'));}));
+  router.post('/billing/refund',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
+    if(req.body.confirm!=='refund')throw new ValidationError('Confirm that you want to cancel now and refund your subscription payments.');
+    await require('../../commercial/subscription-guarantee').request(database,commercialScope(req).accountId);
+    req.flash('success','Your cancellation and 14-day refund request is saved. This page shows the confirmed Stripe outcome.');
+    return res.redirect(303,'/billing');
+  }));
   router.post('/billing/cancel',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
     await commercial.setSubscriptionCancellation(database,commercialScope(req).accountId,true,{provider,providerOptions:options.providerOptions});
     req.flash('success','Cancellation is scheduled for the end of the paid period. Your records remain available.');

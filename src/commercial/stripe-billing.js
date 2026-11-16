@@ -35,6 +35,15 @@ async function call(path, options = {}) {
   return payload;
 }
 async function retrievePrice(id,options={}){return call(`/prices/${encodeURIComponent(id)}`,{...options,method:'GET'});}
+async function createSubscriptionRefund(input,options={}){return call('/refunds',{...options,idempotencyKey:'stockchief-guarantee:'+input.requestId+':'+input.paymentIntentId,values:{payment_intent:input.paymentIntentId,amount:input.amount,reason:'requested_by_customer','metadata[stockchief_guarantee_id]':input.requestId,'metadata[stockchief_account_id]':input.accountId}});}
+async function listRefunds(paymentIntentId,options={}){
+ const rows=[],seen=new Set();let cursor;
+ do{const page=await call('/refunds?payment_intent='+encodeURIComponent(paymentIntentId)+'&limit=100'+(cursor?'&starting_after='+encodeURIComponent(cursor):''),{...options,method:'GET'});
+  if(!Array.isArray(page.data)||page.has_more&&!page.data.length)throw new ValidationError('Stripe returned incomplete refunds.');
+  for(const row of page.data){if(seen.has(row.id))throw new ValidationError('Stripe repeated a refund.');seen.add(row.id);rows.push(row);}
+  cursor=page.has_more?page.data.at(-1).id:null;
+ }while(cursor);return rows;
+}
 
 async function createCheckout(input, options = {}) {
   const promotion=input.promotionCodeId?{'discounts[0][promotion_code]':input.promotionCodeId}:{};
@@ -240,7 +249,7 @@ function verifyEvent(raw, headers = {}, options = {}) {
   return JSON.parse(body);
 }
 
-module.exports = { createCheckout,createPortal,retrieveCheckout,retrieveSubscription,previewSubscriptionChange,updateSubscription,
+module.exports = { createSubscriptionRefund,listRefunds,createCheckout,createPortal,retrieveCheckout,retrieveSubscription,previewSubscriptionChange,updateSubscription,
   createCapacityCheckout,createAddonCheckout,createTopupPayment,retrievePrice,retrievePaymentMethod,retrieveBalanceTransaction,retrieveInvoice,retrievePaymentIntent,listInvoicePayments,listCreditNotes,listCustomerBalanceTransactions,
   scheduleDowngrade,retrieveSchedule,
   cancelImmediately,setCancellation,listInvoices,createInvoiceItem,verifyEvent,

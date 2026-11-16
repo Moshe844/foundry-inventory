@@ -84,7 +84,7 @@ async function emailAlertState(database,workspaceId){const [row,owners]=await Pr
 
 async function settingsPage(database,req,res){const [counts,users,instructions,emailAlerts,feedRows,events]=await Promise.all([
   summary(database,req.ctx.workspaceId),database.query(`SELECT member.id,member.name,member.role,member.custom_role_id,member.po_approval_limit_minor,member.po_approval_currency,member.access_revision,member.warehouse_location_ids,account.email
-    FROM users member JOIN accounts account ON account.id=member.account_id WHERE member.workspace_id=$1
+    FROM users member JOIN accounts account ON account.id=member.account_id WHERE member.workspace_id=$1 AND member.revoked_at IS NULL
     ORDER BY CASE member.role WHEN 'owner' THEN 0 ELSE 1 END,lower(member.name)`,[req.ctx.workspaceId]),
   database.query(`SELECT id,stated_as,status FROM operating_instruction_proposals
     WHERE workspace_id=$1 AND status IN ('APPROVED','REMOVED','SUPERSEDED') ORDER BY created_at DESC`,[req.ctx.workspaceId]),
@@ -198,6 +198,7 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     req.flash('success','Company details saved. Invoice documents now use this name and address.');
     return res.redirect(303,'/settings?section=general#company');
   }));
+  router.post('/settings/people/:id/remove',requireOwner,asyncRoute(async(req,res)=>{await require('../../operations/postgres-team-access').remove(database,req.ctx,req.params.id,req.body);req.flash('success','Person removed from this inventory. Their access is revoked; their historical work is preserved.');return res.redirect(303,'/settings?section=team');}));
   router.post('/settings/team-roles',requireOwner,asyncRoute(async(req,res)=>{await require('../../operations/postgres-team-access').saveRole(database,req.ctx,req.body);req.flash('success','Role saved. Assigned team members now use these permissions.');return res.redirect(303,'/settings?section=team#team-authority');}));
   router.post('/settings/people/:id/access',requireOwner,asyncRoute(async(req,res)=>{await require('../../operations/postgres-team-access').assign(database,req.ctx,req.params.id,req.body);req.flash('success','Team access and purchase approval limit saved.');return res.redirect(303,'/settings?section=team#team-authority');}));
   router.post('/settings/people',requireOwner,asyncRoute(async(req,res)=>{const name=String(req.body.name||'').trim();

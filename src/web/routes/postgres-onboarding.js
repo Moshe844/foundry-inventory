@@ -22,7 +22,7 @@ function createPostgresOnboardingRouter(database) {
     const account=req.user?.role==='owner'?await agent.accountState(database,req.ctx.workspaceId):null;
     const showCatalogHealth=account&&agent.usesAgentTerms(account)&&agent.permits(account.plan,200,'suggest');
     return res.page('onboarding/start',{title:'Get your inventory into StockChief',nav:'inventory',state,
-      showCatalogHealth,
+      showCatalogHealth,uploadPolicy:await require('../../imports/plan-upload-policy').presentation(database,req.ctx.workspaceId),
       paths:paths.PATHS,sourceOptions:paths.SOURCE_OPTIONS,canOperate:true,suppressBack:true,onboardingEntry:entry,
       importAction:'/imports',importFieldName:'file',importMultiple:false,importOptionsHref:'/imports'});
   }));

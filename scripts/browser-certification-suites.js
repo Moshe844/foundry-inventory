@@ -5,7 +5,7 @@
 const workflows = {
   signupAndOnboarding: ['public-signup-plans', 'signup-product-ui', 'auth-http',
     'new-account-first-day', 'onboarding-experience', 'onboarding-file-formats'],
-  inventoryAndIsolation: ['browser-ui', 'inventory-navigation-browser', 'workspaces-ui',
+  inventoryAndIsolation: ['settings-integrity', 'browser-ui', 'inventory-navigation-browser', 'workspaces-ui',
     'catalog-full-ui', 'inventory-engine', 'transfers-ui', 'existing-stock-costs-ui'],
   importsAndCutover: ['imports-ui', 'erp-cutover-ui', 'erp-cutover-application'],
   decisionsAndAutomation: ['home-ui', 'autopilot-ui', 'adaptive-goal-controller',
@@ -13,7 +13,7 @@ const workflows = {
     'external-job-lease', 'native-goal-write-queue', 'storage-import-priority'],
   purchasingSalesAndAccounting: ['commerce-ui', 'business-workflows', 'purchase-order-read-state',
     'accounting-ledger', 'completion-money-ui', 'reporting-ui', 'agent-customer-email-orders'],
-  paymentsAndFulfilment: ['payments-ui', 'commercial-lifecycle-ui', 'customer-returns-ui',
+  paymentsAndFulfilment: ['subscription-guarantee', 'customer-settings-controls', 'payments-ui', 'commercial-lifecycle-ui', 'customer-returns-ui',
     'supplier-returns-ui', 'shipping-ui', 'warehouse-waves-ui', 'warehouse-pages'],
   connectionsAndMail: ['connection-popup-return', 'connector-events', 'shopify-webhooks',
     'square-webhooks', 'square-shared-webhook', 'mail-ui'],

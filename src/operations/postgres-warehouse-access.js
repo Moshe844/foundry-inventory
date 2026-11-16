@@ -1,7 +1,7 @@
 'use strict';
 const {AuthorizationError}=require('../domain/errors');
 async function scope(db,ctx){
- const actor=(await db.query('SELECT role,warehouse_location_ids FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+ const actor=(await db.query('SELECT role,warehouse_location_ids FROM users WHERE workspace_id=$1 AND id=$2 AND revoked_at IS NULL',[ctx.workspaceId,ctx.actorId])).rows[0];
  if(!actor)throw new AuthorizationError('Your inventory membership could not be verified.');
  return actor.role==='owner'?null:actor.warehouse_location_ids;
 }

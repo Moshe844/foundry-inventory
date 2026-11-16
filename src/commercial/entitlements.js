@@ -189,7 +189,7 @@ async function meterState(database, scope, meter, options = {}) {
     members:`SELECT COUNT(*) AS used FROM (
       SELECT COALESCE(lower(account.email),'user:'||member.id) AS person FROM users member
       JOIN workspaces workspace ON workspace.id=member.workspace_id LEFT JOIN accounts account ON account.id=member.account_id
-      WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL
+      WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND member.revoked_at IS NULL
       UNION SELECT lower(invitation.email) FROM workspace_invitations invitation JOIN workspaces workspace ON workspace.id=invitation.workspace_id
       WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND invitation.status='PENDING' AND invitation.expires_at>now()
     ) people`,

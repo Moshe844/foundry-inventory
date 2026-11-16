@@ -111,6 +111,7 @@ async function syncInvoice(db,job,options={}){
     WHERE source_id=$1 AND account_id=$4`,
    [`invoice:${invoice.id}`,settlement.netCashRevenueMinor,
     JSON.stringify({paymentIntentIds:[...new Set(intents.map(x=>x.id))],stripeCashVerified:true,
+     ...(invoice.status_transitions?.paid_at?{invoicePaidAt:new Date(invoice.status_transitions.paid_at*1000).toISOString()}:{}),
      paidPaymentIds:payments.filter(x=>x.status==='paid').map(x=>x.id),
      creditNoteIds:creditNotes.filter(x=>x.status!=='void').map(x=>x.id),
      overpaymentBalanceTransactionIds:overpaidTransactions.map(x=>x.id),...settlement}),job.payload.accountId]);

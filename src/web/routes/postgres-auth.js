@@ -143,6 +143,17 @@ function createPostgresAuthRouter(database,options={}) {
       return next(error);
     }
   });
+  router.get('/verify-email/status',(req,res)=>{
+    res.set('Cache-Control','private, no-store');
+    if(!req.account)return res.status(401).json({verified:false});
+    return res.json({accountId:req.account.id,verified:Boolean(req.account.email_verified_at),next:req.account.plan==='commercial_pending'?'/complete-signup':req.user?'/':'/inventories'});
+  });
+  router.get('/verify-email/success',(req,res)=>{
+    res.set('Cache-Control','private, no-store');
+    if(!req.account?.email_verified_at)return res.redirect(303,'/verify-email/pending');
+    return res.render('auth/verify-success',{title:'Email verified successfully',origin:res.locals.origin,
+      next:req.account.plan==='commercial_pending'?'/complete-signup':req.user?'/':'/inventories'});
+  });
   router.get('/verify-email/pending',(req,res)=>{
     if(req.account?.email_verified_at)return res.redirect(req.account.plan==='commercial_pending'?'/complete-signup':req.user?'/':'/inventories');
     return res.render('auth/verify-pending',{title:'Verify your email',csrfToken:res.locals.csrfToken,
@@ -182,7 +193,7 @@ function createPostgresAuthRouter(database,options={}) {
     res.locals.flash=(res.locals.flash||[]).filter(message=>!message.message.includes('Check your email to verify'));
     const account=await auth.getAccount(database,verified.accountId);
     await sessionCall(req,'save');
-    return res.redirect(303,account.plan==='commercial_pending'?'/complete-signup':'/');}catch(error){if(error.status&&error.status<500)return res.status(error.status).render('auth/verify-pending',{
+    return res.redirect(303,'/verify-email/success');}catch(error){if(error.status&&error.status<500)return res.status(error.status).render('auth/verify-pending',{
       title:'Verification link expired',csrfToken:res.locals.csrfToken,flash:[{type:'error',message:error.message}],account:req.account,
       origin:res.locals.origin});return next(error);}});
   router.get('/invite',async(req,res,next)=>{try{const invitation=await accountLifecycle.inspectInvitation(database,req.query.token||'');

@@ -56,3 +56,51 @@ form.is-live-search[aria-busy=true] input[type=search] { background-image:linear
 
 /* Numbers line up in tables and figures. */
 html:root body :is(td,.num,.is-num,dd,.mono){font-variant-numeric:tabular-nums}
+
+/* Customer setup and settings: aligned actions and readable explanations. */
+html:root body .setup--focused .setup-source-grid{align-items:stretch}
+html:root body .setup--focused .setup-source-card:not(.setup-source-card--file){align-items:stretch;justify-content:flex-start;padding:22px 24px;gap:18px}
+html:root body .setup--focused .setup-source-card:not(.setup-source-card--file)>header{align-items:flex-start;flex:1}
+html:root body .setup--focused .setup-source-card:not(.setup-source-card--file)>form{margin-top:auto;padding-left:56px}
+html:root body .setup--focused .setup-source-card:not(.setup-source-card--file)>form .btn{width:auto;min-height:42px}
+html:root body .setup-details__forms{align-items:start;gap:24px}
+html:root body .setup-details__forms form{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-content:start}
+html:root body .setup-details__forms :is(.field,small){margin:0;min-width:0}
+html:root body .setup-details__forms .field{display:grid;gap:8px}
+html:root body .setup-details__forms input{box-sizing:border-box;min-height:46px;width:100%}
+html:root body .setup-details__forms small{display:block;min-height:36px;line-height:1.5}
+html:root body .setup-details__forms button{justify-self:start;margin:0}
+html:root body .setup-plan-allowance{margin:20px 0;padding:20px 24px;border:1px solid #e2e6ee;border-radius:14px;background:#fff}
+html:root body .setup-plan-allowance h3{font-size:15px;margin:0 0 16px}
+html:root body .setup-plan-allowance dl{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;margin:0}
+html:root body .setup-plan-allowance dt{font-size:12px;color:#657086;line-height:1.5}
+html:root body .setup-plan-allowance dd{font-size:13px;margin:5px 0 0;line-height:1.6}
+html:root body .setup-plan-allowance :is(p,a){font-size:12px;line-height:1.65}
+html:root body .setup-plan-allowance p{color:#657086;margin:16px 0 8px}
+html:root body .setup-file-types dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 28px;padding:14px 0;margin:0}
+html:root body .setup-file-types dl>div{margin:0}
+html:root body .setup-file-types dt{font-size:13px;margin-bottom:5px}
+html:root body .setup-file-types dd{font-size:13px;line-height:1.65}
+html:root body .sc-settings-intro{margin:0 0 24px;max-width:760px}
+html:root body .sc-settings-intro h2{font-size:21px;line-height:1.3;margin:0 0 8px}
+html:root body .sc-settings-intro p{margin:0;color:#657086;font-size:14px;line-height:1.7}
+html:root body .sc-settings-content .rm-told__m{display:flex;align-items:center;flex-wrap:wrap;gap:12px}
+html:root body .sc-settings-content .rm-told__t small{display:block;margin-top:5px;color:#657086}
+html:root body .sc-remove-person{padding:0;border:0;box-shadow:none;background:transparent;max-width:340px}
+html:root body .sc-remove-person summary{color:#a53636;cursor:pointer;padding:8px;font-size:13px}
+html:root body .sc-remove-person form{display:grid;gap:12px;padding:12px;border:1px solid #e7d0d0;border-radius:10px;text-align:left}
+html:root body .sc-remove-person p{font-size:13px;line-height:1.6;margin:0}
+html:root body .sc-remove-person .rm-btn{justify-self:start}
+html:root body .sc-guarantee{padding:22px 24px;margin:24px 0}
+html:root body .sc-guarantee h3{font-size:16px;margin:0 0 10px}
+html:root body .sc-guarantee p{font-size:14px;line-height:1.7}
+html:root body .sc-team-authority__body{padding:20px}
+html:root body .sc-team-authority__body>p{font-size:14px;line-height:1.7;margin:0 0 16px;color:#657086}
+html:root body .sc-team-authority__body>.rm-work{margin:12px 0 0;box-shadow:none;border:1px solid #e2e6ee;border-radius:10px;overflow:hidden}
+html:root body .sc-team-authority__body fieldset{min-width:0;border:1px solid #e2e6ee;border-radius:10px;padding:16px}
+html:root body .sc-team-authority__body fieldset>label{display:block;margin:8px 0}
+html:root body .sc-team-authority__body .rm-work__body{padding:18px}
+html:root body .sc-settings-content :is(.rm-form-grid,.stack) label{line-height:1.6}
+html:root body .sc-provider-action button{font:inherit;cursor:pointer;min-height:40px;border:1px solid #dddfea;border-radius:9px;background:#fff;color:#29334a;padding:9px 14px}
+html:root body .sc-provider-action button:hover{background:#f7f6ff;border-color:#b7b0f0}
+@media(max-width:700px){html:root body .setup-plan-allowance dl{grid-template-columns:repeat(2,minmax(0,1fr))}html:root body .setup-file-types dl{grid-template-columns:1fr}html:root body .setup--focused .setup-source-card:not(.setup-source-card--file)>form{padding-left:0}html:root body .setup--focused .setup-source-card:not(.setup-source-card--file)>form .btn{width:100%}html:root body .setup-plan-allowance{padding:18px}}

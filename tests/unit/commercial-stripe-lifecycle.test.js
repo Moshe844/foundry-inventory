@@ -6,6 +6,17 @@ const stripe=require('../../src/commercial/stripe-billing');
 
 function response(payload){return new Response(JSON.stringify(payload),{status:200,headers:{'content-type':'application/json'}});}
 
+test('guarantee refunds identify the original payment and keep a stable provider idempotency key',async()=>{
+ let sent;await stripe.createSubscriptionRefund({paymentIntentId:'pi_original',amount:19900,requestId:'guarantee_original',accountId:'account_original'},
+  {secretKey:'sk_test_fixture',fetch:async(url,options)=>{sent={url,headers:options.headers,form:new URLSearchParams(options.body)};return response({id:'re_fixture'});}});
+ assert.match(sent.url,/\/refunds$/);assert.equal(sent.form.get('payment_intent'),'pi_original');assert.equal(sent.form.get('amount'),'19900');assert.equal(sent.form.get('metadata[stockchief_guarantee_id]'),'guarantee_original');assert.equal(sent.headers['Idempotency-Key'],'stockchief-guarantee:guarantee_original:pi_original');
+});
+test('refund recovery reads every page and rejects repeating provider cursors',async()=>{
+ const urls=[],fetch=async url=>{urls.push(url);return response({data:[{id:urls.length===1?'re_first':'re_last'}],has_more:urls.length===1});};
+ assert.equal((await stripe.listRefunds('pi_original',{secretKey:'sk_test_fixture',fetch})).length,2);assert.match(urls[1],/starting_after=re_first/);
+ await assert.rejects(stripe.listRefunds('pi_original',{secretKey:'sk_test_fixture',fetch:async()=>response({data:[{id:'re_repeated'}],has_more:true})}),/repeated a refund/);
+});
+
 test('self-service portal is payment-method-only and cannot expose annual Price selection',async()=>{
  let body;await stripe.createPortal({accountId:'acct_fixture',requestId:'req_fixture',customerId:'cus_fixture',
   subscriptionId:'sub_fixture',returnUrl:'https://stockchief.example.test/billing'},

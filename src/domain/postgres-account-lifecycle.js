@@ -59,8 +59,8 @@ async function createInvitation(database,ctx,input,options={}){
   if(!origin)throw new ValidationError('Workspace invitations need a public StockChief URL.');
   return database.transaction(async(client)=>{const scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
     await require('../commercial/wallet').lock(client,scope,'members');
-    const known=(await client.query(`SELECT 1 FROM users u JOIN workspaces w ON w.id=u.workspace_id JOIN accounts a ON a.id=u.account_id WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL AND lower(a.email)=$2 UNION SELECT 1 FROM workspace_invitations i JOIN workspaces w ON w.id=i.workspace_id WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL AND lower(i.email)=$2 AND i.status='PENDING' AND i.expires_at>now() LIMIT 1`,[scope.accountId,email])).rows.length>0;
-    if((await client.query(`SELECT 1 FROM users u JOIN accounts a ON a.id=u.account_id WHERE u.workspace_id=$1 AND lower(a.email)=$2`,[ctx.workspaceId,email])).rows.length)throw new ValidationError('This person is already on your team.');
+    const known=(await client.query(`SELECT 1 FROM users u JOIN workspaces w ON w.id=u.workspace_id JOIN accounts a ON a.id=u.account_id WHERE u.revoked_at IS NULL AND w.owner_account_id=$1 AND w.deletion_requested_at IS NULL AND lower(a.email)=$2 UNION SELECT 1 FROM workspace_invitations i JOIN workspaces w ON w.id=i.workspace_id WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL AND lower(i.email)=$2 AND i.status='PENDING' AND i.expires_at>now() LIMIT 1`,[scope.accountId,email])).rows.length>0;
+    if((await client.query(`SELECT 1 FROM users u JOIN accounts a ON a.id=u.account_id WHERE u.revoked_at IS NULL AND u.workspace_id=$1 AND lower(a.email)=$2`,[ctx.workspaceId,email])).rows.length)throw new ValidationError('This person is already on your team.');
     await entitlements.assertMeterCapacity(client,scope,'members',known?0:1);
     const prior=(await client.query(`UPDATE workspace_invitations SET status='REVOKED'
     WHERE workspace_id=$1 AND email=$2 AND status='PENDING' RETURNING email,name,role`,[ctx.workspaceId,email])).rows;
@@ -105,13 +105,13 @@ async function acceptInvitation(database,token,input={}){return database.transac
     await client.query(`INSERT INTO accounts(id,email,name,password_hash,plan,email_verified_at,created_at)
       VALUES($1,$2,$3,$4,'invited',now(),now())`,[account.id,invitation.email,input.name||invitation.name||invitation.email,
       auth.hashPassword(password)]);}
-  const membership=(await client.query('SELECT id FROM users WHERE workspace_id=$1 AND account_id=$2',
+  const membership=(await client.query('SELECT id FROM users WHERE workspace_id=$1 AND account_id=$2 AND revoked_at IS NULL',
     [invitation.workspace_id,account.id])).rows[0];
   if(!membership){const scope=await entitlements.ownerScopeForWorkspace(client,invitation.workspace_id);
     const known=(await client.query('SELECT 1 FROM users u JOIN workspaces w ON w.id=u.workspace_id WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL AND u.account_id=$2 LIMIT 1',[scope.accountId,account.id])).rows.length>0;
     await entitlements.assertMeterCapacity(client,scope,'members',0);}
   await client.query(`INSERT INTO users(id,workspace_id,account_id,name,role,created_at) VALUES($1,$2,$3,$4,$5,now())
-    ON CONFLICT(workspace_id,account_id) DO NOTHING`,[newId('usr'),invitation.workspace_id,account.id,
+    ON CONFLICT(workspace_id,account_id) DO UPDATE SET revoked_at=NULL,role=EXCLUDED.role,permissions=NULL,custom_role_id=NULL,warehouse_location_ids=NULL,po_approval_limit_minor=NULL,po_approval_currency=NULL,access_revision=users.access_revision+1 WHERE users.revoked_at IS NOT NULL`,[newId('usr'),invitation.workspace_id,account.id,
     input.name||invitation.name||account.name,invitation.role]);
   await client.query(`UPDATE workspace_invitations SET status='ACCEPTED',accepted_by_account_id=$2,accepted_at=now()
     WHERE id=$1`,[invitation.id,account.id]);

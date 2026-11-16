@@ -1,5 +1,5 @@
-<section class="rm-panel" id="team-authority">
-<h2>Custom roles and approval limits</h2>
+<section class="rm-panel sc-team-authority" id="team-authority">
+<div class="rm-panel__head"><h2>Custom roles and approval limits</h2></div><div class="sc-team-authority__body">
 <%- include('../components/plan-lock',{capability:'authority.advanced',label:'Custom roles and approval limits'}) %>
 <p>Choose what each person can do. Purchase limits include tax and charges. Orders above a person’s limit need an owner or a manager with enough authority.</p>
 <% const canEditTeam=currentUser.role==='owner'&&locals.planGates?.['authority.advanced']?.enabled!==false; const teamRoles=locals.customRoles||[]; %>
@@ -23,4 +23,4 @@
 <fieldset class="rm-span-2"><legend>Allowed actions</legend><% for(const [key,label] of Object.entries(teamPermissionLabels)){ %><label style="display:block"><input type="checkbox" name="permissions" value="<%= key %>" <%= grants.includes(key)?'checked':'' %>> <%= label %></label><% } %></fieldset>
 <p class="rm-span-2">Saving updates everyone assigned to this role. Owners always retain full authority. Plan limits still apply.</p><button class="rm-btn" type="submit"><%= role.id?'Save role':'Create role' %></button>
 </form></div></details><% }} %>
-</section>
+</div></section>

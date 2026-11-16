@@ -875,6 +875,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'commercial.capacity-reconcile':external(async(job,database)=>{const sub=await require('../commercial/entitlements').subscriptionFor(database,job.payload.accountId);if(!sub?.cancel_at_period_end&&!sub?.refunded_at&&sub?.status!=='CANCELLED')return {skipped:'base_subscription_renewing'};return require('../commercial/capacity-addons').cancelAll(database,job.payload.accountId,options.commercialOptions||{});}),
   'commercial.auto-top-up':external((job,database)=>require('../commercial/addons').runTopup(database,
     {accountId:job.payload.accountId,workspaceId:job.workspaceId},job.payload.category,options.commercialOptions||{})),
+  'commercial.subscription-guarantee':external((job,database)=>require('../commercial/subscription-guarantee').process(database,job,options.commercialOptions||{})),
   'commercial.subscription-refund-cancel':external((job,database)=>require('../commercial/subscription-refund-retention').cancel(database,job,options.commercialOptions||{})),
   'commercial.refund-retention-delete':external((job,database)=>require('../commercial/subscription-refund-retention').remove(database,job)),
   'commercial.stripe-financial-sync':external((job,database)=>require('../commercial/stripe-financials').sync(database,job,options.commercialOptions||{})),

@@ -4,13 +4,13 @@
 </head>
 <body class="commercial-auth signup-auth"><main class="auth-centered">
 <a class="pub-brand" href="/"><span class="pub-brand__mark" aria-hidden="true"><%- include('../components/brand-symbol') %></span><span>StockChief</span></a>
-<div class="auth-centered__card"><%- include('../components/signup-progress',{step:3}) %><span class="auth-mail">✉</span><h1><%= title %></h1>
+<div class="auth-centered__card" data-verification-pending="<%= account?.id||'' %>"><%- include('../components/signup-progress',{step:1}) %><span class="auth-mail">✉</span><h1><%= title %></h1>
 <p>We sent a secure verification link<% if(account){ %> to <strong><%= account.email %></strong><% } %>.
   Open the message and select <strong>Verify my email</strong>. On the confirmation page, select <strong>Verify and continue</strong>.</p>
 <% if(flash&&flash.length){flash.forEach(function(message){%><div class="auth-message auth-message--<%= message.type %>" role="alert"><%= message.message %></div><%});}%>
 <form method="post" action="/verify-email/resend"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
   <button class="pub-btn pub-btn--secondary pub-btn--block" type="submit">Send a new verification link</button></form>
-<p class="auth-help">If you requested another link, open the newest email. Older links stop working.</p>
+<p class="auth-help" role="status">This page continues automatically after verification. If you requested another link, open the newest email.</p>
 <form method="post" action="/logout" class="auth-foot"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
   <button class="pub-link" type="submit">Use a different account</button></form>
-</div></main></body></html>
+</div></main><script src="/email-verification.js?v=<%= locals.assetVersion||'current' %>" defer></script></body></html>

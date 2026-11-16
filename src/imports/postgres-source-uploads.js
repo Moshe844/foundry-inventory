@@ -17,7 +17,7 @@ async function list(database,workspaceId,{activeOnly=false,limit=10}={}){return(
 async function enqueue(database,ctx,input){
  await operator(database,ctx);const bytes=input.buffer||Buffer.from(String(input.text||''),'utf8');
  if(!bytes.length)throw new ValidationError('Choose a file, or paste your data.');
- if(bytes.length>require('../config').uploads.maxBytes)throw new ValidationError('This file exceeds the displayed upload size limit.');
+ require('./plan-upload-policy').assertFile(input);
  if(input.importMode!==undefined&&!['add','set'].includes(input.importMode))throw new ValidationError('Choose whether the file sets on-hand quantities or receives additional stock.');
  if(input.readingMode&&!['standard','handwritten-count','handwritten-delivery'].includes(input.readingMode))throw new ValidationError('Choose the kind of file to read.');
  if(input.readingMode&&input.readingMode!=='standard'){await require('../commercial/agent-plan').requireWorkspaceJob(database,ctx.workspaceId,139,'draft');await require('./handwritten-table').documentCapacity(database,ctx);if(!input.buffer)throw new ValidationError('Upload the original handwritten page or PDF.');}

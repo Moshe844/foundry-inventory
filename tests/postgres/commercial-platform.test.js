@@ -541,7 +541,7 @@ test('paid-workspace signup verifies email before checkout and never provisions 
       'Opening or scanning the link must not consume it');
     const scanner=await browser.newPage();await scanner.goto(`${base}/verify-email?token=${encodeURIComponent(token)}`);
     assert.match(await scanner.locator('body').innerText(),/Verify and continue/i);await scanner.close();
-    await page.getByRole('button',{name:'Verify and continue'}).click();assert.match(await page.locator('body').innerText(),/Review your plan/i);
+    await page.getByRole('button',{name:'Verify and continue'}).click();await page.getByRole('link',{name:'Continue in this tab',exact:true}).click();assert.match(await page.locator('body').innerText(),/Review your plan/i);
     assert.equal(await page.getByLabel('Plan').inputValue(),'pro');assert.ok((await database.query('SELECT email_verified_at FROM accounts WHERE id=$1',
       [account.id])).rows[0].email_verified_at);
     await page.goto(`${base}/inventories`);

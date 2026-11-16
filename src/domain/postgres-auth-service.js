@@ -164,7 +164,7 @@ async function createWorkspace(database,accountId,input={}){
 }
 
 async function getMembership(database, workspaceId, accountId) {
-  const result = await database.query('SELECT * FROM users WHERE workspace_id=$1 AND account_id=$2',
+  const result = await database.query('SELECT * FROM users WHERE workspace_id=$1 AND account_id=$2 AND revoked_at IS NULL',
     [workspaceId,accountId]);
   return result.rows[0] || null;
 }
@@ -180,7 +180,7 @@ async function resolveForAccount(database, accountId, workspaceId) {
   const result = await database.query(`SELECT w.*,u.id AS membership_id,u.name AS membership_name,
       u.role AS membership_role,u.permissions AS membership_permissions,u.created_at AS membership_created_at
     FROM users u JOIN workspaces w ON w.id=u.workspace_id
-    WHERE u.account_id=$1 AND w.id=$2 AND w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access access WHERE access.account_id=w.owner_account_id AND access.disabled_at IS NOT NULL)`, [accountId,workspaceId]);
+    WHERE u.account_id=$1 AND u.revoked_at IS NULL AND w.id=$2 AND w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access access WHERE access.account_id=w.owner_account_id AND access.disabled_at IS NOT NULL)`, [accountId,workspaceId]);
   if (!result.rows.length) return null;
   const row = result.rows[0];
   return { workspace: {
@@ -198,23 +198,23 @@ async function listWorkspacesForAccount(database, accountId, {includeMetrics=tru
       (SELECT COUNT(*) FROM items i WHERE i.workspace_id=w.id AND i.is_active=1) AS item_count,
       (SELECT COUNT(*) FROM locations l WHERE l.workspace_id=w.id AND l.is_active=1) AS location_count,
       (${require('./stock-totals').totalsSql('w.id')}->>'units')::numeric AS units_on_hand,
-      (SELECT COUNT(*) FROM users members WHERE members.workspace_id=w.id) AS member_count`:''}
+      (SELECT COUNT(*) FROM users members WHERE members.workspace_id=w.id AND members.revoked_at IS NULL) AS member_count`:''}
     FROM users u JOIN workspaces w ON w.id=u.workspace_id
-    WHERE u.account_id=$1 AND w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access access WHERE access.account_id=w.owner_account_id AND access.disabled_at IS NOT NULL) ORDER BY w.created_at,w.name`, [accountId]);
+    WHERE u.account_id=$1 AND u.revoked_at IS NULL AND w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access access WHERE access.account_id=w.owner_account_id AND access.disabled_at IS NOT NULL) ORDER BY w.created_at,w.name`, [accountId]);
   return result.rows;
 }
 
 async function defaultWorkspaceFor(database, accountId) {
   const result = await database.query(`SELECT w.id FROM accounts a
     JOIN users u ON u.account_id=a.id JOIN workspaces w ON w.id=u.workspace_id
-    WHERE a.id=$1 AND w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access access WHERE access.account_id=w.owner_account_id AND access.disabled_at IS NOT NULL)
+    WHERE a.id=$1 AND u.revoked_at IS NULL AND w.deletion_requested_at IS NULL AND NOT EXISTS(SELECT 1 FROM platform_account_access access WHERE access.account_id=w.owner_account_id AND access.disabled_at IS NOT NULL)
     ORDER BY CASE WHEN w.id=a.last_workspace_id THEN 0 ELSE 1 END,w.created_at,w.name LIMIT 1`, [accountId]);
   return result.rows[0]?.id || null;
 }
 
 async function rememberWorkspace(database, accountId, workspaceId) {
   const result = await database.query(`UPDATE accounts a SET last_workspace_id=$2 WHERE a.id=$1
-    AND EXISTS(SELECT 1 FROM users u WHERE u.account_id=a.id AND u.workspace_id=$2)
+    AND EXISTS(SELECT 1 FROM users u WHERE u.account_id=a.id AND u.workspace_id=$2 AND u.revoked_at IS NULL)
     RETURNING id`, [accountId,workspaceId]);
   if (!result.rows.length) throw new NotFoundError('That inventory could not be found.');
   return workspaceId;
