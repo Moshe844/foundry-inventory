@@ -6,7 +6,10 @@ const net = require('node:net');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
-async function startCluster() {
+async function startCluster({ maxLocksPerTransaction = 64 } = {}) {
+  if (!Number.isSafeInteger(maxLocksPerTransaction) || maxLocksPerTransaction < 64) {
+    throw new Error('Fixture lock capacity must be an integer of at least 64.');
+  }
   if(process.env.STOCKCHIEF_POSTGRES_FIXTURE_URL){
     if(process.env.NODE_ENV!=='test')throw new Error('An external fixture database is test-only.');
     const address=new URL(process.env.STOCKCHIEF_POSTGRES_FIXTURE_URL);
@@ -43,7 +46,8 @@ async function startCluster() {
    const socket=net.createServer();await new Promise((resolve,reject)=>{socket.once('error',reject);socket.listen(0,'127.0.0.1',resolve);});
    port=socket.address().port;await new Promise(resolve=>socket.close(resolve));
    const log=path.join(directory,'postgres.log'),offset=fs.existsSync(log)?fs.statSync(log).size:0;
-   const options=`-h 127.0.0.1 -p ${port}`+(process.platform==='win32'?'':' -c unix_socket_directories=');
+   const options=`-h 127.0.0.1 -p ${port} -c max_locks_per_transaction=${maxLocksPerTransaction}`
+    +(process.platform==='win32'?'':' -c unix_socket_directories=');
    try{run('pg_ctl',['-D',data,'-l',log,'-w','-t','30','-o',options,'start']);break;}
    catch(error){const attemptLog=fs.existsSync(log)?fs.readFileSync(log).subarray(offset).toString():'';
     // Another parallel fixture can claim an ephemeral port after the socket

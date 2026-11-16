@@ -184,8 +184,9 @@ async function supplierBill(database,ctx,supplier,args){
   const description=String(args.description||'').trim();
   const quantity=Number(args.quantity);
   const currency=require('../domain/currency');
-  const unitCostMinor=currency.toMinor(args.unitAmount,order.currency,{label:'Invoice unit price'});
-  const taxMinor=args.tax==null?0:currency.toMinor(args.tax,order.currency,{label:'Invoice tax'});
+  const billCurrency=pricing.normaliseCurrency(supplier.currency||'USD');
+  const unitCostMinor=currency.toMinor(args.unitAmount,billCurrency,{label:'Invoice unit price'});
+  const taxMinor=args.tax==null?0:currency.toMinor(args.tax,billCurrency,{label:'Invoice tax'});
   if(!number||number.length>80)throw new ValidationError('State the supplier’s invoice number (up to 80 characters).');
   if(!description||description.length>250)throw new ValidationError('State the bill line description (up to 250 characters).');
   if(!Number.isFinite(quantity)||quantity<=0||!Number.isSafeInteger(unitCostMinor)||unitCostMinor<0||
@@ -195,12 +196,12 @@ async function supplierBill(database,ctx,supplier,args){
     AND supplier_id=$2 AND supplier_invoice_number=$3 AND status<>'VOID'`,
   [ctx.workspaceId,supplier.id,number])).rows[0];
   if(prior)throw new ValidationError('That supplier invoice is already recorded. Ask about its existing bill instead.');
-  return prepareResult({supplierId:supplier.id,supplierInvoiceNumber:number,
+  return prepareResult({supplierId:supplier.id,supplierInvoiceNumber:number,currency:billCurrency,
     issueDate:args.issueDate||nowIso().slice(0,10),dueDate:args.dueDate||null,taxMinor,
     lines:[{description,quantity,unitCostMinor}]},
   `Record supplier invoice ${number} from ${supplier.name}: ${quantity} × `+
-    `${pricing.formatMinor(unitCostMinor,supplier.currency||'USD')} plus `+
-    `${pricing.formatMinor(taxMinor,supplier.currency||'USD')} tax. This creates a payable and expense, `+
+    `${pricing.formatMinor(unitCostMinor,billCurrency)} plus `+
+    `${pricing.formatMinor(taxMinor,billCurrency)} tax. This creates a payable and expense, `+
     'not a physical stock receipt or bank payment.');
 }
 

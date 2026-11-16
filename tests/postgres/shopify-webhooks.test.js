@@ -76,7 +76,13 @@ for(const legacyStart of [true,false])test('real Chromium qualifies signed Shopi
       line_items:[{id:id*10+1,variant_id:501,product_id:50,sku:'SHOP-BOTTLE',quantity,price:'15.00'}]});
     const createBody=JSON.stringify(order(1001));
     const created=await send(createBody,'orders/create','shopify-create-1001');
-    assert.equal(created.status,202,await created.clone().text());assert.equal(providerRequests,0,'The signed HTTP acknowledgement must not wait for provider API reads');assert.equal((await require('../helpers/provider-webhook-worker').result(database,created,providers)).accepted,1);
+    assert.equal(created.status,202,await created.clone().text());
+    assert.equal(providerRequests,0,'The signed HTTP acknowledgement must not wait for provider API reads');
+    const imported=await require('../helpers/provider-webhook-worker').result(database,created,providers);
+    const importFailure=imported.accepted===1?null:(await database.query(
+      'SELECT error_code,error_message FROM connection_webhook_receipts WHERE workspace_id=$1 AND id=$2',
+      [ctx.workspaceId,imported.receiptId])).rows[0];
+    assert.equal(imported.accepted,1,JSON.stringify({imported,importFailure}));
     const mapped=(await database.query(`SELECT foundry_record_id FROM connection_mappings WHERE workspace_id=$1
       AND connector_id=$2 AND entity_type='sales_order' AND external_id='1001'`,[ctx.workspaceId,connectorId])).rows[0];
     assert.ok(mapped);

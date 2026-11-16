@@ -69,10 +69,15 @@ Automated browser, adversarial, load and worker evidence is valid only for the
 exact `FOUNDRY_RELEASE_REF` currently deployed. Production must never use the
 default `development` value.
 
-`certify:browser` requires two consecutive completions of the complete browser
-pack. It covers actual browser navigation and provider popup behavior; it is not
-replaced by unit tests. The independent zero-training walkthrough is separate
-and must be completed by a person who was not trained on StockChief.
+`certify:browser` runs the PostgreSQL browser and service tests and a funded
+live Anthropic check twice on the exact committed release. Install Playwright
+Chromium and Firefox and expose the test `ANTHROPIC_API_KEY` to the command.
+The tests use disposable PostgreSQL fixtures. Set `FOUNDRY_DATABASE_URL` to
+record the passing result in the checkpoint database. To retain the results
+on a runner without access to that database, use
+`npm run certify:browser -- --evidence-file /path/to/browser-results.json`.
+The independent zero-training walkthrough is separate and must be completed by
+a person who was not trained on StockChief.
 The unauthenticated soak creates no browser sessions. An authenticated soak
 reuses one dedicated staging cookie; it must not manufacture a new anonymous
 CSRF session on every request.

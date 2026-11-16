@@ -333,7 +333,17 @@ async function hydrateWebhook({headers,body,credentials,connection}){
  // The shared app HMAC alone does not prove that a record belongs to this
  // tenant. Resolve consequential record IDs using this store's own token.
  if(!body.id)throw new ValidationError('The Shopify event is missing its record identity.');
- const id=shopifyGid(type,body.id),data=await graphql(credentials,`query WebhookOwnership($id:ID!){node(id:$id){id ... on Fulfillment{order{id}} ... on Refund{order{id displayFinancialStatus}}}}`,{id});
+ const id=shopifyGid(type,body.id);
+ const readOwnership=()=>graphql(credentials,`query WebhookOwnership($id:ID!){node(id:$id){id ... on Fulfillment{order{id}} ... on Refund{order{id displayFinancialStatus}}}}`,{id});
+ // GraphQL transports this read as POST. Authorize this one fixed query as
+ // a read so the provider fence and usage ledger still cover the request.
+ const commercial=require('../../commercial/context').current();
+ const data=commercial?.database&&!commercial.funded
+  ? await require('../../commercial/operations').run(commercial.database,commercial.scope.workspaceId,{
+    capability:'connections.commerce',provider:'shopify',operation:'commerce_webhook_verify',
+    key:commercial.requestId+':ownership:'+id,
+  },readOwnership)
+  : await readOwnership();
  requireVerified(data.node?.id===id,'Shopify did not confirm this record in the connected store.');
  if(type!=='Order')requireVerified(data.node.order?.id===shopifyGid('Order',body.order_id),'Shopify did not confirm the event’s order identity.');
  if(type==='Refund')body._stockchiefOrderFinancialStatus=data.node.order.displayFinancialStatus||null;

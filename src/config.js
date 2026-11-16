@@ -34,7 +34,7 @@ function loadLocalEnvironment(envFile) {
 }
 try {
   const envFile = path.join(rootDir, '.env');
-  if (fs.existsSync(envFile)) loadLocalEnvironment(envFile);
+  if (process.env.FOUNDRY_SKIP_LOCAL_ENV !== '1' && fs.existsSync(envFile)) loadLocalEnvironment(envFile);
 } catch {
   /* A malformed .env must not stop the server from booting. */
 }

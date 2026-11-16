@@ -46,8 +46,10 @@ async function prepareAndApprove(page,base,database,workspaceId,message,capabili
     `Ask did not prepare ${capability}: ${(await page.locator('main').innerText()).slice(0,1000)}`);
   assert.equal(proposal.status,'PENDING');
   await page.goto(`${base}/actions/${proposal.id}`);
-  await Promise.all([page.waitForNavigation(),page.getByRole('button',
-    {name:/Approve (?:and execute|only this (?:step|change))/}).click()]);
+  const approve=page.locator(`form[action="/actions/${proposal.id}/approve"]`).getByRole('button');
+  assert.equal(await approve.count(),1);
+  assert.equal(await approve.isEnabled(),true,`Approval unavailable: ${(await page.locator('main').innerText()).slice(0,1200)}`);
+  await Promise.all([page.waitForNavigation(),approve.click()]);
   const saved=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
     WHERE workspace_id=$1 AND id=$2`,[workspaceId,proposal.id])).rows[0];
   assert.equal(saved.status,'EXECUTED',`Approval failed: ${(await page.locator('body').innerText()).slice(0,1200)}`);

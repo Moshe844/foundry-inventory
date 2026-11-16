@@ -108,7 +108,9 @@ test('real Chromium certifies complete PostgreSQL onboarding and tracked-catalog
     await Promise.all([page.waitForURL(/\/transfers\/tr_/),dialog.getByRole('button',{name:'Create transfer request'}).click()]);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve this move'}).click()]);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:/Confirm 1 unit left/}).click()]);
+    await page.locator('select[name^="serialOutcome_"]').selectOption('RECEIVED');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record serial outcomes'}).click()]);
+    assert.equal(await page.getByRole('heading',{name:'This transfer is complete.',exact:true}).count(),1);
     await page.goto(scannerUrl);
     assert.match(await page.locator('main').innerText(),/South Warehouse\s+1/);
 
