@@ -10,22 +10,25 @@ test('refund handler compensates once and never restores unfunded or foreign usa
  t.after(async()=>{await db.close();cluster.stop();});await migratePostgres(db);
  const owner=await auth.createBusiness(db,{name:'Refund Owner',businessName:'Refunds',email:'refund-owner@example.test',password:'Refund-test-password!'});
  const other=await auth.createBusiness(db,{name:'Other Owner',businessName:'Other',email:'refund-other@example.test',password:'Refund-test-password!'});
- await t.test('additive refund migration rolls back cleanly and preserves existing accounts and checkout lock',async()=>{
-  // Only this fresh, disposable fixture: restore its pre-028 schema to rehearse
-  // application and rollback against pre-existing account records.
+ await t.test('additive refund migration rolls back cleanly and preserves existing accounts and checkout lock',async history=>{
+  const original=await startCluster();const priorDb=openPostgres(original.connectionString);
+  history.after(async()=>{await priorDb.close();await original.stop();});
+  const preceding='027-commercial-dispute-holds.sql';
   const name='028-commercial-refund-states.sql';
   const sql=require('node:fs').readFileSync(require('node:path').join(__dirname,'../../src/db/postgres-migrations',name),'utf8');
-  await db.query('DROP TABLE commercial_stripe_refunds');
-  await db.query('DELETE FROM stockchief_postgres_migrations WHERE name=$1',[name]);
-  const before=(await db.query('SELECT id,email FROM accounts ORDER BY id')).rows;
-  await assert.rejects(()=>db.transaction(async client=>{await client.query(sql);
+  await migratePostgres(priorDb,{through:preceding});
+  await priorDb.query("INSERT INTO accounts(id,email,name,password_hash,created_at) VALUES($1,$2,$3,$4,$5)",
+   ['prior-account','prior-refund@example.test','Existing account','fixture-only',new Date().toISOString()]);
+  const before=(await priorDb.query('SELECT id,email FROM accounts ORDER BY id')).rows;
+  await assert.rejects(()=>priorDb.transaction(async client=>{await client.query(sql);
    assert.ok((await client.query("SELECT to_regclass('public.commercial_stripe_refunds') AS name")).rows[0].name);
    throw Error('Expected fixture migration rollback');}),/Expected fixture migration rollback/);
-  assert.equal((await db.query("SELECT to_regclass('public.commercial_stripe_refunds') AS name")).rows[0].name,null);
-  assert.deepEqual((await db.query('SELECT id,email FROM accounts ORDER BY id')).rows,before);
-  assert.deepEqual(await migratePostgres(db),[name]);
-  assert.deepEqual(await migratePostgres(db),[]);
-  const release=(await db.query('SELECT * FROM commercial_release_control')).rows[0];
+  assert.equal((await priorDb.query("SELECT to_regclass('public.commercial_stripe_refunds') AS name")).rows[0].name,null);
+  assert.deepEqual((await priorDb.query('SELECT id,email FROM accounts ORDER BY id')).rows,before);
+  assert.deepEqual(await migratePostgres(priorDb,{through:name}),[name]);
+  assert.deepEqual(await migratePostgres(priorDb,{through:name}),[]);
+  assert.deepEqual((await priorDb.query('SELECT id,email FROM accounts ORDER BY id')).rows,before);
+  const release=(await priorDb.query('SELECT * FROM commercial_release_control')).rows[0];
   assert.equal(release.checkout_enabled,false);assert.equal(release.economics_approved_at,null);assert.equal(release.readiness_approved_at,null);
  });
  let tick=Math.floor(Date.now()/1000);

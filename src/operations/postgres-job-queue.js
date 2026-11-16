@@ -54,22 +54,28 @@ async function get(database, id, workspaceId) {
 
 async function enqueue(database, input = {}) {
   if (!input.kind || !input.idempotencyKey) throw new TypeError('A durable job requires a kind and idempotency key.');
-  const now = await databaseTime(database, input);
+  const now = input.now === undefined ? null : time(input);
   const priority = input.priority ?? 100;
   const attempts = input.maxAttempts ?? 5;
-  const availableAt = input.availableAt ?? now;
+  const availableAt = input.availableAt ?? null;
   if (!Number.isSafeInteger(priority) || !Number.isSafeInteger(attempts) || attempts < 1
-    || !Number.isSafeInteger(availableAt) || availableAt < 0) throw new TypeError('Invalid durable job scheduling values.');
+    || (availableAt !== null && (!Number.isSafeInteger(availableAt) || availableAt < 0))) throw new TypeError('Invalid durable job scheduling values.');
   return database.transaction(async (client) => {
-    const inserted = await client.query(`INSERT INTO stockchief_runtime.jobs
+    const inserted = await client.query(`WITH job_clock AS MATERIALIZED (
+      SELECT COALESCE($9::bigint, floor(extract(epoch FROM clock_timestamp())*1000)::bigint) AS now_ms
+    ), inserted AS (
+      INSERT INTO stockchief_runtime.jobs
       (id, workspace_id, kind, payload, priority, max_attempts, available_at, idempotency_key, created_at, updated_at)
-      VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$9) ON CONFLICT DO NOTHING RETURNING *`,
+      SELECT $1,$2,$3,$4::jsonb,$5,$6,COALESCE($7::bigint,now_ms),$8,
+        to_timestamp(now_ms/1000.0),to_timestamp(now_ms/1000.0) FROM job_clock
+      ON CONFLICT DO NOTHING RETURNING *
+    ), history AS (
+      INSERT INTO stockchief_runtime.job_events(id,job_id,event_type,detail,created_at)
+      SELECT $10,id,'ENQUEUED',jsonb_build_object('availableAt',available_at),created_at FROM inserted
+    ) SELECT * FROM inserted`,
     [input.id || newId('rjob'), input.workspaceId || null, input.kind, JSON.stringify(input.payload || {}),
-      priority, attempts, availableAt, input.idempotencyKey, new Date(now).toISOString()]);
-    if (inserted.rows.length) {
-      await event(client, inserted.rows[0].id, 'ENQUEUED', { availableAt }, now);
-      return { job: hydrate(inserted.rows[0]), created: true };
-    }
+      priority, attempts, availableAt, input.idempotencyKey, now, newId('jobevt')]);
+    if (inserted.rows.length) return { job: hydrate(inserted.rows[0]), created: true };
     // Bind every leading unique-index key. IS NOT DISTINCT FROM prevents
     // PostgreSQL from narrowing the middle workspace key in large histories.
     const scoped=Boolean(input.workspaceId);
@@ -121,6 +127,11 @@ async function claim(database, options = {}) {
     ? [...new Set(options.kinds.map((kind) => String(kind || '').trim()).filter(Boolean))]
     : null;
   if (Array.isArray(kinds) && !kinds.length) return null;
+  // Ordinary lanes can use the existing runnable-priority index directly.
+  // Preserve FIFO for maintenance and its synthetic priority in mixed lanes.
+  const ordering = options.maintenanceOnly === true ? 'created_at, id'
+    : kinds && kinds.every(kind => !MAINTENANCE_KINDS.includes(kind)) ? 'priority, created_at, id'
+      : 'CASE WHEN kind=ANY($3::text[]) THEN 50 ELSE priority END, created_at, id';
   return database.transaction(async (client) => {
     const now = await databaseTime(client, options);
     const expires = now + leaseMs;
@@ -131,16 +142,14 @@ async function claim(database, options = {}) {
         AND (w.owner_account_id IS NULL OR EXISTS(SELECT 1 FROM public.accounts a WHERE a.id=w.owner_account_id
           AND NOT EXISTS(SELECT 1 FROM public.platform_account_access access WHERE access.account_id=a.id AND access.disabled_at IS NOT NULL) FOR KEY SHARE SKIP LOCKED)) FOR KEY SHARE SKIP LOCKED))
       AND ($2::text[] IS NULL OR kind = ANY($2::text[]))
-      AND public.commercial_job_lane_available(workspace_id,kind)
+      AND (workspace_id IS NULL OR public.commercial_job_lane_available(workspace_id,kind))
       AND (kind NOT IN('import.execute-approved','assistant.run-codex-goal','assistant.run-codex-read') OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
         WHERE active.workspace_id=jobs.workspace_id AND (active.kind=jobs.kind OR
          jobs.kind IN('assistant.run-codex-goal','assistant.run-codex-read') AND active.kind IN('assistant.run-codex-goal','assistant.run-codex-read')) AND active.status='RUNNING'))
       AND (NOT(kind=ANY($3::text[])) OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
         WHERE active.workspace_id=jobs.workspace_id AND active.kind=ANY($3::text[]) AND active.status='RUNNING'))
-      -- A maintenance-only worker has one slot. Its older eligible jobs must
-      -- run even when planning and reconciliation continually enqueue pages.
-      ORDER BY CASE WHEN $4::boolean OR kind=ANY($3::text[]) THEN 50 ELSE priority END, created_at, id
-      LIMIT 1 FOR UPDATE SKIP LOCKED`, [now, kinds, MAINTENANCE_KINDS, options.maintenanceOnly === true]);
+      ORDER BY ${ordering}
+      LIMIT 1 FOR UPDATE SKIP LOCKED`, [now, kinds, MAINTENANCE_KINDS]);
     if (!candidate.rows.length) return null;
     const selected=candidate.rows[0];
     if(selected.kind.startsWith('import.')||['assistant.run-goal','assistant.run-codex-goal','assistant.run-codex-read'].includes(selected.kind)){
@@ -162,12 +171,18 @@ async function claim(database, options = {}) {
       if(active.rows.length)return null;
     }
     const token = newId('lease');
-    const result = await client.query(`UPDATE stockchief_runtime.jobs SET status = 'RUNNING',
+    const result = await client.query(`WITH claimed AS (
+      UPDATE stockchief_runtime.jobs SET status = 'RUNNING',
       attempt_count = attempt_count + 1, lease_owner = $2, lease_token = $3, lease_expires_at = $4,
-      started_at = COALESCE(started_at, $5), updated_at = $5 WHERE id = $1 RETURNING *`,
-    [candidate.rows[0].id, String(options.owner), token, expires, new Date(now).toISOString()]);
-    await event(client, result.rows[0].id, 'CLAIMED', { owner: options.owner, leaseExpiresAt: expires,
-      queueWaitMs:Math.max(0,now-Math.max(Number(result.rows[0].available_at),new Date(result.rows[0].created_at).getTime())) }, now);
+      started_at = COALESCE(started_at, $5), updated_at = $5 WHERE id = $1 RETURNING *
+    ), history AS (
+      INSERT INTO stockchief_runtime.job_events(id,job_id,event_type,detail,created_at)
+      SELECT $6,id,'CLAIMED',jsonb_build_object('owner',$7::jsonb,'leaseExpiresAt',lease_expires_at,
+        'queueWaitMs',GREATEST(0,$8::bigint-GREATEST(available_at,floor(extract(epoch FROM created_at)*1000)::bigint))),
+        updated_at FROM claimed
+    ) SELECT * FROM claimed`,
+    [selected.id, String(options.owner), token, expires, new Date(now).toISOString(), newId('jobevt'),
+      JSON.stringify(options.owner), now]);
     return hydrate(result.rows[0]);
   }, { isolation: 'READ COMMITTED' });
 }
@@ -181,17 +196,28 @@ async function heartbeat(database, id, token, options = {}) {
 }
 
 async function complete(database, id, token, outcome = {}, options = {}) {
-  return database.transaction(async (client) => completeWithin(client, id, token, outcome, await databaseTime(client, options)), { isolation: 'READ COMMITTED' });
+  return Boolean(await completeJob(database, id, token, outcome, options));
 }
 
-async function completeWithin(client, id, token, outcome, now) {
-    const result = await client.query(`UPDATE stockchief_runtime.jobs SET status = 'COMPLETED', result = $3::jsonb,
+function completeJob(database, id, token, outcome, options) {
+  return database.transaction(client => completeWithin(client, id, token, outcome, options), { isolation: 'READ COMMITTED' });
+}
+
+async function completeWithin(client, id, token, outcome, options) {
+  const now = options.now === undefined ? null : time(options);
+  const result = await client.query(`WITH job_clock AS MATERIALIZED (
+    SELECT COALESCE($4::bigint, floor(extract(epoch FROM clock_timestamp())*1000)::bigint) AS now_ms
+  ), completed AS (
+    UPDATE stockchief_runtime.jobs SET status = 'COMPLETED', result = $3::jsonb,
       lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, last_error = NULL,
-      completed_at = $4, updated_at = $4 WHERE id = $1 AND lease_token = $2
-      AND status = 'RUNNING' AND lease_expires_at > $5 RETURNING id`,
-    [id, token, JSON.stringify(outcome), new Date(now).toISOString(), now]);
-    if (result.rowCount) await event(client, id, 'COMPLETED', { outcome }, now);
-    return result.rowCount === 1;
+      completed_at = to_timestamp(now_ms/1000.0), updated_at = to_timestamp(now_ms/1000.0)
+    FROM job_clock WHERE id = $1 AND lease_token = $2
+      AND status = 'RUNNING' AND lease_expires_at > now_ms RETURNING jobs.*
+  ), history AS (
+    INSERT INTO stockchief_runtime.job_events(id,job_id,event_type,detail,created_at)
+    SELECT $5,id,'COMPLETED',jsonb_build_object('outcome',result),completed_at FROM completed
+  ) SELECT * FROM completed`, [id, token, JSON.stringify(outcome), now, newId('jobevt')]);
+  return hydrate(result.rows[0]);
 }
 
 async function fail(database, id, token, error, options = {}) {
@@ -287,12 +313,13 @@ async function processOne(database, handlers, options = {}) {
         id:`${job.id}:${job.attemptCount}:${job.leaseToken}`,scope:scope||{accountId:job.payload?.accountId}},()=>
         require('../commercial/context').run({database,scope,requestId:job.id,attemptCount:Number(job.attemptCount)},()=>handler(job, database)));
       await renewal.check();
-      if (!await complete(database, job.id, job.leaseToken, outcome || {}, options)) {
+      const completed = await completeJob(database, job.id, job.leaseToken, outcome || {}, options);
+      if (!completed) {
         throw Object.assign(new Error('The PostgreSQL job expired before its provider result was recorded.'), {
           code: 'lease_lost', retryable: true,
         });
       }
-      return get(database, job.id, job.workspaceId);
+      return completed;
     } catch (error) {
       return fail(database, job.id, job.leaseToken, error, {
         ...options, retryable: error.retryable !== false,
@@ -301,7 +328,7 @@ async function processOne(database, handlers, options = {}) {
     } finally { await renewal.stop(); }
   }
   try {
-    await require('../commercial/resource-metrics').measure(database,{runtimeKind:'worker',operation:job.kind,
+    return await require('../commercial/resource-metrics').measure(database,{runtimeKind:'worker',operation:job.kind,
       id:`${job.id}:${job.attemptCount}:${job.leaseToken}`,scope:{accountId:job.payload?.accountId}},()=>database.transaction(async (client) => {
       const now = await databaseTime(client, options);
       const owned = await client.query(`SELECT id FROM stockchief_runtime.jobs WHERE id = $1 AND lease_token = $2
@@ -309,12 +336,13 @@ async function processOne(database, handlers, options = {}) {
       if (!owned.rows.length) throw Object.assign(new Error('The PostgreSQL worker lost its lease.'), { code: 'lease_lost' });
       const scope=job.workspaceId?await require('../commercial/entitlements').ownerScopeForWorkspace(client,job.workspaceId):null;
       const outcome = await require('../commercial/context').run({database:client,scope,requestId:job.id,attemptCount:Number(job.attemptCount)},()=>handler(job, client));
-      if (!await completeWithin(client, job.id, job.leaseToken, outcome || {}, await databaseTime(client, options))) {
+      const completed = await completeWithin(client, job.id, job.leaseToken, outcome || {}, options);
+      if (!completed) {
         throw Object.assign(new Error('The PostgreSQL job expired before its effect could commit.'), { code: 'lease_lost' });
       }
+      return completed;
     }, { isolation: options.isolation || 'READ COMMITTED', retrySafe: Boolean(options.retrySafe),
       statementTimeoutMs: Math.min(30000, lease(options)) }));
-    return get(database, job.id, job.workspaceId);
   } catch (error) {
     return fail(database, job.id, job.leaseToken, error, { ...options, retryable: error.retryable !== false });
   }

@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const strict = require('node:assert/strict');
 const config = require('../src/config');
 const { openPostgres } = require('../src/db/postgres');
 const auth = require('../src/domain/postgres-auth-service');
@@ -39,13 +40,24 @@ async function main() {
       email: emailB, password: `Cert-${runId}-B!`,
     });
 
+    const foreignSession = () => ({
+      accountId: first.accountId, workspaceId: secondBusiness.workspaceId, csrfToken: runId,
+    });
     const loaded = await invoke(middleware.loadUser(database), {
-      session: { accountId: first.accountId, workspaceId: secondBusiness.workspaceId },
+      method: 'GET',
+      session: foreignSession(),
     });
     assert(loaded.request.ctx.accountId === first.accountId, 'The authenticated account changed.');
     assert(loaded.request.ctx.workspaceId === first.workspaceId, 'A foreign workspace was trusted.');
     assert(loaded.request.session.workspaceId === first.workspaceId, 'The unsafe tenant session was not repaired.');
     assert(loaded.response.locals.workspaces.length === 1, 'A foreign workspace leaked into the inventory list.');
+    const foreignWrite = {
+      method: 'POST',
+      session: foreignSession(),
+    };
+    await strict.rejects(invoke(middleware.loadUser(database), foreignWrite), { code: 'inventory_context_changed' });
+    assert(!foreignWrite.ctx && foreignWrite.session.workspaceId === secondBusiness.workspaceId,
+      'The denied write was switched to a different inventory.');
     assert(await auth.resolveForAccount(database, first.accountId, secondBusiness.workspaceId) === null,
       'Account A resolved Account B inventory.');
     let permissionDenied = false;

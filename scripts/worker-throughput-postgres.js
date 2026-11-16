@@ -22,6 +22,7 @@ async function main(){
     const started=performance.now();
     for(let index=0;index<count;index+=1)await jobs.enqueue(database,{kind:'certification.noop',
       idempotencyKey:`${prefix}${index}`,payload:{runId,index},maxAttempts:1});
+    const queuedAt=performance.now();
     let completed=0;
     async function consumer(index){
       while(completed<count){
@@ -33,11 +34,20 @@ async function main(){
       }
     }
     await Promise.all(Array.from({length:concurrency},(_value,index)=>consumer(index)));
+    const drainedAt=performance.now();
     const completedCount=Number((await database.query(`SELECT COUNT(*) AS count FROM stockchief_runtime.jobs
       WHERE kind='certification.noop' AND idempotency_key LIKE $1 AND status='COMPLETED'`,[`${prefix}%`])).rows[0].count);
     if(completedCount!==count)throw new Error(`Expected ${count} completed jobs; found ${completedCount}.`);
+    const history=(await database.query(`SELECT count(*) FILTER (WHERE enqueue_count=1 AND claim_count=1 AND completion_count=1)::int AS qualified
+      FROM (SELECT job.id, count(*) FILTER (WHERE event_type='ENQUEUED') AS enqueue_count,
+        count(*) FILTER (WHERE event_type='CLAIMED') AS claim_count,
+        count(*) FILTER (WHERE event_type='COMPLETED') AS completion_count
+        FROM stockchief_runtime.jobs job LEFT JOIN stockchief_runtime.job_events event ON event.job_id=job.id
+        WHERE kind='certification.noop' AND idempotency_key LIKE $1 GROUP BY job.id) AS logs`,[`${prefix}%`])).rows[0];
+    if(history.qualified!==count)throw new Error('Every completed job must have exactly one enqueue, claim and completion event.');
     const durationMs=performance.now()-started;const jobsPerSecond=Math.round((count/durationMs)*1000);
     const detail={runId,jobs:count,completed:completedCount,concurrency,durationMs:Math.round(durationMs),jobsPerSecond,
+      enqueueMs:Math.round(queuedAt-started),drainMs:Math.round(drainedAt-queuedAt),
       minimumPerSecond,budgetPassed:jobsPerSecond>=minimumPerSecond,durable:true,leases:true,completionEvents:true,
       engine:'postgresql',releaseRef:config.operations.releaseRef};
     await checkpoints.record(database,'worker.throughput',detail.budgetPassed?'PASS':'FAIL',detail);
