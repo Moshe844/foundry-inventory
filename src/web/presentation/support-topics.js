@@ -12,6 +12,8 @@ const TOPICS=Object.freeze({
   security:{heading:'Ask a security question',subject:'Security question',body:'What would you like to know about how StockChief protects your data?',button:'Send question'},
   requirement:{heading:'Discuss a requirement',subject:'Requirement',body:'What do you need StockChief to do, and when do you need it?',button:'Send'},
   billing:{heading:'Change your plan',subject:'Plan change',body:'Which plan would you like, and for which business?',button:'Send'},
+  'subscription-refund':{heading:'Request a subscription refund',subject:'Subscription refund request',
+    body:'Which business is this for, and when did you make your first subscription payment?',button:'Send refund request'},
   pilot:{heading:'Tell us about your business',subject:'StockChief pilot access',
     body:'What do you sell, which systems do you use, and what work would you like help with?',button:'Request pilot access'},
   migration:{heading:'Plan a complex migration',subject:'Migration',body:'Which system are you moving from, and about how many products, locations and orders?',button:'Send',channel:'MIGRATION'},

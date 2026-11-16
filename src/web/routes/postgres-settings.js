@@ -262,6 +262,7 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
   router.get('/support',requireAuth,asyncRoute(async(req,res)=>{const service=require('../../operations/postgres-support-conversations'),requests=await require('../../operations/postgres-support').list(database,req.account.id),access=await service.access(database,{accountId:req.account.id,workspaceId:req.ctx.workspaceId});res.page('support/chat',{title:'Help and support',nav:null,supportAccess:access,supportSourcePath:String(req.query.from||'').split('?')[0],supportRequests:requests,ticket:null,staff:false,messageKey:newId('supportreply'),supportRequestKey:newId('supportform'),presence:await service.online(database)});}));
   router.get('/support/request',requireAuth,asyncRoute(async(req,res)=>res.page('support',{
     title:'Help and support',nav:null,supportEmail:require('../../operations/postgres-support').SUPPORT_EMAIL,
+    supportTopic:require('../presentation/support-topics').topic(req.query),
     supportRequestKey:newId('supportform'),supportContactEmail:req.account.email,
     supportRequests:await require('../../operations/postgres-support').list(database,req.account.id),supportSourcePath:String(req.query.from||'').split('?')[0],
     supportAccess:await require('../../operations/postgres-support-conversations').access(database,{accountId:req.account.id,workspaceId:req.ctx.workspaceId}),
