@@ -27,7 +27,13 @@ test('real browser and PostgreSQL reject incomplete Square OAuth before creating
  for(const table of ['workspace_connectors','connection_authorization_states'])assert.equal((await db.query('SELECT count(*)::int AS n FROM '+table+' WHERE workspace_id=$1',[actor.workspace_id])).rows[0].n,0);
  process.env.SQUARE_APPLICATION_SECRET='fixture-oauth-secret';
  await page.reload();const link=card.getByRole('link',{name:'Connect Square',exact:true});assert.equal(await link.count(),1);
- const href=await link.getAttribute('href'),launched=await page.request.get(origin+href,{maxRedirects:0});assert.equal(launched.status(),303);
+ const href=await link.getAttribute('href');
+ await page.goto(origin+href);
+ await page.getByRole('heading',{name:'Connect Square test account'}).waitFor();
+ assert.equal((await db.query('SELECT count(*)::int AS n FROM connection_authorization_states WHERE workspace_id=$1',[actor.workspace_id])).rows[0].n,0);
+ const form=page.locator('main form'),ready=new URL(await form.getAttribute('action'),origin);
+ for(const input of await form.locator('input[type=hidden]').all())ready.searchParams.set(await input.getAttribute('name'),await input.inputValue());
+ const launched=await page.request.get(ready.href,{maxRedirects:0});assert.equal(launched.status(),303);
  const target=new URL(launched.headers().location);assert.equal(target.origin,'https://connect.squareupsandbox.com');assert.equal(target.searchParams.get('client_id'),'sandbox-preflight-fixture');assert(target.searchParams.get('state'));assert(!target.href.includes('fixture-oauth-secret'));assert(!target.href.includes('fixture-personal-token'));
  const state=(await db.query('SELECT workspace_id,actor_id,metadata,used_at,expires_at FROM connection_authorization_states WHERE workspace_id=$1',[actor.workspace_id])).rows;
  assert.equal(state.length,1);assert.equal(state[0].actor_id,actor.id);assert.equal(state[0].used_at,null);assert(new Date(state[0].expires_at)>new Date());assert.equal(JSON.parse(state[0].metadata).redirectUri,origin+'/settings/connections/square/callback');

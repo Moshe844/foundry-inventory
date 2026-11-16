@@ -4,20 +4,47 @@ const vault=require('./credentials'),jobs=require('../operations/postgres-job-qu
 const headersAllowed=['x-shopify-topic','x-shopify-webhook-id','x-shopify-event-id','x-shopify-shop-domain','x-shopify-triggered-at','x-wc-webhook-topic','x-wc-webhook-resource','x-wc-webhook-event','x-wc-webhook-source','x-wc-webhook-delivery-id','x-wc-delivery-id'];
 function scoped(client){return {query:(sql,values)=>client.query(sql,values),transaction:fn=>fn(client)};}
 function deliveryId(provider,headers,body,rawBody){const id=provider==='bigcommerce'?facts.effectKey(provider,body.producer,body.scope,body.hash):String(headers['x-shopify-webhook-id']||headers['x-shopify-event-id']||headers['x-wc-webhook-delivery-id']||headers['x-wc-delivery-id']||body.event_id||body.id||facts.hash(rawBody.toString('base64')));return id.length<=160?id:provider+':'+facts.hash(id);}
+function squareOrderRevision(body){
+ const update=body.data?.object?.order_updated;
+ if(body.type!=='order.updated'||!body.event_id||!body.merchant_id||!update?.order_id||!Number.isSafeInteger(update.version)
+    ||update.version<0||typeof update.updated_at!=='string'||!Number.isFinite(Date.parse(update.updated_at)))return null;
+ const {version,updated_at,...identity}=update;
+ return {version,identity:facts.hash({...body,data:{...body.data,object:{...body.data.object,order_updated:identity}}})};
+}
+function squareRevisionDelivery(original,input,next){
+ // Square can reuse a notification ID when the same order advances. Treat only
+ // the version and update timestamp as mutable. The worker retrieves the order
+ // separately using the connected merchant's authorization before applying it.
+ const previous=squareOrderRevision(JSON.parse(Buffer.from(vault.decrypt(original).rawBody,'base64').toString('utf8')));
+ if(!previous||previous.identity!==next.identity||previous.version===next.version)return null;
+ return facts.effectKey('square','order-notification-revision',input.event_id,next.version);
+}
 async function receive(database,connection,input){
- const headers=Object.fromEntries(headersAllowed.filter(k=>input.headers[k]!=null).map(k=>[k,String(input.headers[k]).slice(0,1024)])),delivery=deliveryId(connection.provider_type,input.headers,input.body,input.rawBody),payloadHash=facts.hash({headers,body:input.body}),sealed=vault.encrypt({headers,rawBody:input.rawBody.toString('base64')});
+ const headers=Object.fromEntries(headersAllowed.filter(k=>input.headers[k]!=null).map(k=>[k,String(input.headers[k]).slice(0,1024)])),originalDelivery=deliveryId(connection.provider_type,input.headers,input.body,input.rawBody),payloadHash=facts.hash({headers,body:input.body}),sealed=vault.encrypt({headers,rawBody:input.rawBody.toString('base64')});
  const outcome=await database.transaction(async c=>{
   if(!(await c.query('SELECT 1 FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 AND status=$3 AND paused_at IS NULL',[connection.workspace_id,connection.id,'connected'])).rows.length)throw new ValidationError('That connection is not active in this business.');
-  const inserted=await c.query("INSERT INTO connection_webhook_receipts(id,workspace_id,connector_id,delivery_id,payload_hash,ciphertext,iv,auth_tag) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING RETURNING id",[newId('whreceipt'),connection.workspace_id,connection.id,delivery,payloadHash,sealed.ciphertext,sealed.iv,sealed.authTag]);
-  const row=(await c.query('SELECT id,payload_hash,status,result FROM connection_webhook_receipts WHERE workspace_id=$1 AND connector_id=$2 AND delivery_id=$3',[connection.workspace_id,connection.id,delivery])).rows[0];
+  async function retain(delivery){
+    const params=[connection.workspace_id,connection.id,delivery];
+    const inserted=await c.query("INSERT INTO connection_webhook_receipts(id,workspace_id,connector_id,delivery_id,payload_hash,ciphertext,iv,auth_tag) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING RETURNING id,status,result,payload_hash",[newId('whreceipt'),...params,payloadHash,sealed.ciphertext,sealed.iv,sealed.authTag]);
+    if(inserted.rows.length)return {row:inserted.rows[0],inserted:true};
+    return {row:(await c.query('SELECT id,payload_hash,status,result FROM connection_webhook_receipts WHERE workspace_id=$1 AND connector_id=$2 AND delivery_id=$3',params)).rows[0],inserted:false};
+  }
+  let delivery=originalDelivery,retained=await retain(delivery);
+  const nextRevision=connection.provider_type==='square'&&retained.row.payload_hash!==payloadHash?squareOrderRevision(input.body):null;
+  if(nextRevision){
+    const original=(await c.query('SELECT ciphertext,iv,auth_tag FROM connection_webhook_receipts WHERE workspace_id=$1 AND connector_id=$2 AND id=$3',[connection.workspace_id,connection.id,retained.row.id])).rows[0];
+    const revision=squareRevisionDelivery(original,input.body,nextRevision);
+    if(revision){delivery=revision;retained=await retain(delivery);}
+  }
+  const {row,inserted}=retained;
   if(row.payload_hash!==payloadHash){
    const reason='A signed webhook reused a delivery identity with different evidence. The original effect was not repeated.';
    await c.query("INSERT INTO connection_event_conflicts(id,workspace_id,connector_id,delivery_id,content_hash,evidence,reason) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7) ON CONFLICT(workspace_id,connector_id,delivery_id,content_hash) DO NOTHING",[newId('whconflict'),connection.workspace_id,connection.id,delivery,payloadHash,JSON.stringify({kind:'ENCRYPTED_WEBHOOK_CONFLICT',...sealed}),reason]);
    await c.query("INSERT INTO connection_issues(id,workspace_id,connector_id,external_event_id,issue_type,fingerprint,title,detail,resolution_hint,candidate_matches,status,created_at,updated_at) VALUES($1,$2,$3,$4,'EVENT_IDENTITY_CONFLICT',$5,'Conflicting webhook evidence needs reconciliation',$6,'Compare the retained provider records before authorizing any correction.','[]','OPEN',now(),now()) ON CONFLICT(workspace_id,fingerprint) DO UPDATE SET status='OPEN',resolved_at=NULL,updated_at=now()",[newId('conissue'),connection.workspace_id,connection.id,delivery,'webhook-delivery-conflict:'+connection.id+':'+delivery,reason]);
    return {integrityConflict:true};
   }
-  if(inserted.rows.length)await jobs.enqueue(scoped(c),{workspaceId:connection.workspace_id,kind:'provider.webhook-process',idempotencyKey:'webhook-receipt:'+row.id,payload:{receiptId:row.id},priority:30,maxAttempts:8});
-  return {receiptId:row.id,workspaceId:connection.workspace_id,replayed:!inserted.rows.length,status:row.status,result:row.result};
+  if(inserted)await jobs.enqueue(scoped(c),{workspaceId:connection.workspace_id,kind:'provider.webhook-process',idempotencyKey:'webhook-receipt:'+row.id,payload:{receiptId:row.id},priority:30,maxAttempts:8});
+  return {receiptId:row.id,workspaceId:connection.workspace_id,replayed:!inserted,status:row.status,result:row.result};
  },{isolation:'SERIALIZABLE',retrySafe:true});
  if(outcome.integrityConflict)throw new InvariantError('That webhook delivery identity conflicts with retained evidence.','webhook_delivery_conflict');
  return outcome;
@@ -73,7 +100,9 @@ async function processReceipt(database,workspaceId,receiptId,providers=providers
   }
   return result;
  }catch(error){
-  const transient=error.transient||error.retryable||Number(error.status)===429||Number(error.status)>=500,status=transient?'RETRY_PENDING':'NEEDS_REVIEW',result={processingStatus:status,accepted:applied.filter(r=>r.accepted).length,replayed:applied.filter(r=>r.replayed).length,needsMapping:0,requiresReview:!transient,results:applied,receiptId};
+  const waitingForSquareAddress=error.code==='square_order_destination_pending'&&row.attempt_count<5;
+  if(waitingForSquareAddress)error.retryAfterMs=60_000;
+  const transient=waitingForSquareAddress||error.transient||error.retryable||Number(error.status)===429||Number(error.status)>=500,status=transient?'RETRY_PENDING':'NEEDS_REVIEW',result={processingStatus:status,accepted:applied.filter(r=>r.accepted).length,replayed:applied.filter(r=>r.replayed).length,needsMapping:0,requiresReview:!transient,results:applied,receiptId};
   await database.transaction(async c=>{
    const retained=await c.query('UPDATE connection_webhook_receipts SET status=$3,result=$4::jsonb,lease_until=NULL,claim_token=NULL,error_code=$5,error_message=$6,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND claim_token=$7 RETURNING id',[workspaceId,receiptId,status,JSON.stringify(result),String(error.code||'provider_event_processing').slice(0,100),String(error.message||'Provider event processing failed.').slice(0,500),claimToken]);
    if(!retained.rows.length)return;

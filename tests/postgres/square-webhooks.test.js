@@ -20,6 +20,8 @@ function signature(secret,url,body){
 
 test('real Chromium qualifies signed Square sale, replay, forgery rejection and refund review without false stock',
   {timeout:180000},async(context)=>{
+    const square=require('../../src/connections/providers/square'),metadata=square.metadata;
+    context.mock.method(square,'metadata',options=>({...metadata(options),available:true}));
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-postgres-square-webhooks'});
     await migratePostgres(database);
@@ -51,7 +53,7 @@ test('real Chromium qualifies signed Square sale, replay, forgery rejection and 
         5,'CONNECTED',$4,'square-merchant-1','Square test merchant',$5,$5)`,
     [connectorId,ctx.workspaceId,`square:${connectorId}`,ctx.actorId,at]);
     await credentialStore.put(database,ctx.workspaceId,connectorId,'provider',{
-      accessToken:'encrypted-square-token',environment:'sandbox',webhookSignatureKey:webhookSecret,
+      accessToken:'fixture-square-token',environment:'sandbox',authMode:'sandbox_personal',webhookSignatureKey:webhookSecret,
     });
     for(const [entityType,externalId,foundryRecordId] of [
       ['sku','square-variation-1',item.skuIds[0]],['location','square-location-1',location.id],
@@ -95,6 +97,37 @@ test('real Chromium qualifies signed Square sale, replay, forgery rejection and 
     assert.equal((await database.query('SELECT count(*) AS count FROM accounting_customer_invoices WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].count,'1');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM connection_issues
       WHERE workspace_id=$1 AND issue_type='RETURN_REVIEW_REQUIRED' AND status='OPEN'`,[ctx.workspaceId])).rows[0].count,'1');
+
+    const shipment=JSON.parse(saleBody).data.object.order;
+    shipment.id='checkout-shipping-order';shipment.state='OPEN';shipment.fulfillments=[{type:'SHIPMENT',state:'PROPOSED'}];
+    shipment.line_items[0].uid='checkout-line';
+    const checkout=JSON.parse(saleBody);
+    checkout.event_id='checkout-payment-delivery';delete checkout.data.object.order;
+    checkout.data.object.payment={...checkout.data.object.payment,id:'checkout-payment',order_id:shipment.id};
+    const fetchLocal=globalThis.fetch;
+    context.mock.method(globalThis,'fetch',async (url,options)=>{
+      const target=new URL(url);
+      if(target.hostname==='127.0.0.1')return fetchLocal(url,options);
+      assert.equal(target.href,'https://connect.squareupsandbox.com/v2/orders/'+shipment.id);
+      assert.equal(String(options?.method||'GET'),'GET');
+      return Response.json({order:shipment});
+    });
+    const checkoutResponse=await send(JSON.stringify(checkout));assert.equal(checkoutResponse.status,202);
+    const {receiptId}=await checkoutResponse.json();
+    const queue=require('../../src/operations/postgres-job-queue');
+    const handlers=require('../../src/operations/postgres-runtime-handlers').create();
+    const run=()=>queue.processOne(database,{'provider.webhook-process':handlers['provider.webhook-process']},{owner:'square-address-retry-test'});
+    const delayed=await run();assert.equal(delayed.status,'RETRY');assert.equal(delayed.lastError.code,'square_order_destination_pending');
+    const held=(await database.query('SELECT status FROM connection_webhook_receipts WHERE id=$1',[receiptId])).rows[0];
+    assert.equal(held.status,'RETRY_PENDING');assert.equal(await balance(),3);
+    shipment.version++;shipment.fulfillments[0].shipment_details={recipient:{address:{address_line_1:'1 Example Way',locality:'Queens',country:'US'}}};
+    await database.query('UPDATE stockchief_runtime.jobs SET available_at=0 WHERE id=$1',[delayed.id]);
+    const completed=await run();assert.equal(completed.status,'COMPLETED',JSON.stringify(completed.lastError));
+    const imported=(await database.query(`SELECT o.ship_to_address,o.status FROM sales_orders o JOIN connection_mappings m
+      ON m.workspace_id=o.workspace_id AND m.foundry_record_id=o.id
+      WHERE m.workspace_id=$1 AND m.connector_id=$2 AND m.entity_type='sales_order' AND m.external_id=$3`,[ctx.workspaceId,connectorId,shipment.id])).rows[0];
+    assert.equal(imported.ship_to_address,'1 Example Way, Queens, US');assert.equal(imported.status,'CONFIRMED');
+    assert.equal(await balance(),3,'A paid shipment still awaiting dispatch must not issue inventory');
 
     await page.goto(`${base}/needs-you`);
     const main=await page.locator('main').innerText();

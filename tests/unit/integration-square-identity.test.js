@@ -14,3 +14,20 @@ test('multiple tenders and interleaved observations share order identity and nev
  const pending=payment('tender-B');pending.data.object.order.fulfillments=[{type:'PICKUP',state:'PREPARED'}];assert(!(await square.normalizeWebhook({body:pending,credentials:{}})).some(e=>e.type==='sales_order.fulfilled'));
  const wrong=payment('tender-A');wrong.data.object.payment.order_id='another-order';await assert.rejects(()=>square.normalizeWebhook({body:wrong,credentials:{}}),/identities disagree/);
 });
+test('Square waits for a payment-link shipment address and distinguishes successive snapshots',async()=>{
+ const at='2026-11-16T14:46:00Z',current={...order(),state:'OPEN',fulfillments:[{type:'SHIPMENT',state:'PROPOSED'}]};
+ assert.deepEqual(square.orderEvents({...current,state:'DRAFT'},'delivery-A',at),[]);
+ assert.deepEqual(square.orderEvents(current,'delivery-A',at),[],'An unaddressed, unpaid checkout is not a fulfillable order');
+ const payment={id:'payment-A',status:'COMPLETED',order_id:current.id,location_id:current.location_id,amount_money:{amount:2310,currency:'USD'}};
+ const input={body:{event_id:'delivery-A',type:'payment.updated',created_at:at,data:{object:{payment,order:current}}},credentials:{}};
+ await assert.rejects(()=>square.normalizeWebhook(input),{code:'square_order_destination_pending'});
+ current.fulfillments[0].shipment_details={recipient:{address:{address_line_1:'1 Example Way',locality:'Queens',country:'US'}}};
+ const addressed=await square.normalizeWebhook(input);
+ assert.deepEqual(addressed.map(e=>e.type),['sales_order.snapshot','payment.reported']);
+ assert.equal(addressed[0].data.shippingAddress,'1 Example Way, Queens, US');
+ current.version++;
+ const next=await square.normalizeWebhook(input);
+ assert.notEqual(next[0].eventId,addressed[0].eventId);
+ assert.notEqual(next[0].effectKey,addressed[0].effectKey);
+ assert.equal(next[1].effectKey,addressed[1].effectKey);
+});

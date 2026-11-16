@@ -2,7 +2,7 @@
 
 const crypto = require('node:crypto');
 const config = require('../../config');
-const { ValidationError, AuthenticationError } = require('../../domain/errors');
+const { DomainError, ValidationError, AuthenticationError } = require('../../domain/errors');
 const { safeEqual, requireVerified, jsonRequest, postalAddress } = require('./common');
 const facts=require('../commerce-facts');
 
@@ -251,7 +251,7 @@ async function normalizeWebhook({ body, credentials }) {
     const embedded = body.data?.object?.order;
     const order = embedded || (await api(credentials, `/v2/orders/${encodeURIComponent(payment.order_id)}`)).body.order;
     requireVerified(order?.id===payment.order_id&&order.location_id===payment.location_id,'Square payment and order identities disagree.');
-    return [...orderEvents(order,eventId,occurredAt),{eventId:eventId+':payment',effectKey:facts.effectKey('square','payment',payment.id),type:'payment.reported',
+    return [...orderEvents(order,eventId,occurredAt,payment),{eventId:eventId+':payment',effectKey:facts.effectKey('square','payment',payment.id),type:'payment.reported',
       aggregateId:order.id,occurredAt:payment.created_at||occurredAt,data:{externalOrderId:order.id,externalPaymentId:payment.id,amountMinor:payment.amount_money?.amount,currency:payment.amount_money?.currency}}];
   }
   if(type.startsWith('order.')){
@@ -285,18 +285,26 @@ async function normalizeWebhook({ body, credentials }) {
   }
   throw new ValidationError(`Square event ${type || '(missing)'} is not supported.`);
 }
-function orderEvents(order,delivery,at){
+function orderEvents(order,delivery,at,payment){
  const occurredAt=order.updated_at||order.created_at||at,version=String(order.version||occurredAt||'');
  if(!order.id||!version)throw new ValidationError('The Square order is missing a durable identity or version.');
+ if(order.state==='DRAFT')return [];
  if(order.state==='CANCELED')return [{eventId:delivery+':cancel',effectKey:facts.effectKey('square','order-cancel',order.id),type:'sales_order.cancelled',aggregateId:order.id,version,occurredAt,data:{externalOrderId:order.id,reason:'Cancelled in Square'}}];
  if(!order.line_items?.length)return [{eventId:delivery+':notice',effectKey:facts.effectKey('square','order-notice',order.id,version),type:'fulfillment.reported',aggregateId:order.id,version,occurredAt,data:{externalOrderId:order.id,reference:'Square order contains no supported inventory lines'}}];
- const fulfillments=order.fulfillments||[],methods=[...new Set(fulfillments.map(f=>({PICKUP:'PICKUP',IN_STORE:'PICKUP',SHIPMENT:'SHIP',DELIVERY:'DELIVERY'})[f.type]))];
+ const fulfillments=order.fulfillments||[],methods=[...new Set(fulfillments.map(f=>({PICKUP:'PICKUP',IN_STORE:'PICKUP',SHIPMENT:'SHIP',DELIVERY:'OWN_DELIVERY'})[f.type]))];
  if(methods.includes(undefined)||methods.length>1)throw new ValidationError('This Square order has unsupported or mixed fulfillment destinations. Reconcile its fulfillment scope before posting.');
- const deliveryMethod=methods[0]||'PICKUP',recipient=fulfillments[0]?.shipment_details?.recipient||fulfillments[0]?.delivery_details?.recipient||fulfillments[0]?.pickup_details?.recipient,address=recipient?.address||{};
- const shippingAddress=postalAddress({line1:address.address_line_1,line2:address.address_line_2,city:address.locality,region:address.administrative_district_level_1,postalCode:address.postal_code,country:address.country});
+ const deliveryMethod=methods[0]||'PICKUP';
+ const recipient=fulfillments[0]?.shipment_details?.recipient||fulfillments[0]?.delivery_details?.recipient||fulfillments[0]?.pickup_details?.recipient;
+ const address=recipient?.address;
+ const shippingAddress=address?.address_line_1?.trim()?postalAddress({line1:address.address_line_1,line2:address.address_line_2,city:address.locality,region:address.administrative_district_level_1,postalCode:address.postal_code,country:address.country}):null;
+ if(deliveryMethod!=='PICKUP'&&!shippingAddress){
+   // Payment links can emit an open cart before Square attaches its destination.
+   if(!payment&&order.state!=='COMPLETED'&&!order.tenders?.length)return [];
+   throw new DomainError('Square has not supplied the shipping destination for this paid order yet. Check the order in Square before resuming it.',{code:'square_order_destination_pending'});
+ }
  const data={externalOrderId:order.id,orderNumber:order.reference_id||undefined,sourceSnapshotComplete:true,externalLocationId:order.location_id,deliveryMethod,shippingAddress,customerEmail:recipient?.email_address,
   customer:{externalId:order.customer_id||undefined,name:recipient?.display_name||(order.customer_id?'Square customer '+order.customer_id:'Square counter customer')},...facts.square(order)};
- const events=[{eventId:delivery+':order',effectKey:facts.effectKey('square','order-snapshot',order.id,version),type:'sales_order.snapshot',aggregateId:order.id,version,occurredAt,data}];
+ const events=[{eventId:delivery+':order:'+version,effectKey:facts.effectKey('square','order-snapshot',order.id,version),type:'sales_order.snapshot',aggregateId:order.id,version,occurredAt,data}];
  // Payment is not handoff. Only a completed provider order with completed
  // fulfillments can own the physical issue; every tender shares this identity.
  if(order.state==='COMPLETED'&&(order.fulfillments||[]).every(f=>f.state==='COMPLETED'))events.push({eventId:delivery+':fulfilled',effectKey:facts.effectKey('square','order-fulfilled',order.id),type:'sales_order.fulfilled',aggregateId:order.id,version,occurredAt,data:{externalOrderId:order.id,fulfillmentMode:'cumulative',lines:data.lines.map(l=>({externalLineId:l.externalLineId,externalSku:l.externalSku,quantity:l.quantity,externalLocationId:order.location_id}))}});

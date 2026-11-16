@@ -12,5 +12,18 @@ test('one Square application endpoint retains only authenticated merchant events
  const receipts=(await db.query('SELECT workspace_id,connector_id FROM connection_webhook_receipts')).rows;assert.deepEqual(receipts,[{workspace_id:owners[2].workspaceId,connector_id:owners[2].id}]);assert.equal((await db.query("SELECT count(*)::int AS n FROM stockchief_runtime.jobs WHERE kind='provider.webhook-process'")).rows[0].n,1);
  assert.equal((await send(body,'forged')).status,401);const changed=body.replace(owners[2].merchant,owners[1].merchant);assert.equal((await send(changed,sign(endpoint,body))).status,401);assert.equal((await send(body,sign(endpoint+'/'+owners[2].id,body))).status,401);
  const unknown=body.replace(owners[2].merchant,'unconnected-merchant');assert.equal((await send(unknown,'forged')).status,200);assert.equal((await db.query('SELECT count(*)::int AS n FROM connection_webhook_receipts')).rows[0].n,1);assert.equal((await db.query('SELECT count(*)::int AS n FROM movements')).rows[0].n,0);
+ const orderUpdate={event_id:crypto.randomUUID(),merchant_id:owners[2].merchant,type:'order.updated',created_at:'2026-11-16T14:51:00Z',data:{type:'order_updated',id:'order-A',object:{order_updated:{order_id:'order-A',location_id:'location-A',state:'OPEN',version:10,updated_at:'2026-11-16T14:51:00Z'}}}};
+ const postOrder=async value=>{const payload=JSON.stringify(value);return send(payload,sign(endpoint,payload));};
+ assert.equal((await postOrder(orderUpdate)).status,202);
+ const revised=structuredClone(orderUpdate);revised.data.object.order_updated.version=11;revised.data.object.order_updated.updated_at='2026-11-16T14:51:01Z';
+ assert.equal((await postOrder(revised)).status,202);
+ assert.equal((await postOrder(revised)).status,202);
+ assert.equal((await postOrder(orderUpdate)).status,202);
+ assert.equal((await db.query('SELECT count(*)::int AS n FROM connection_webhook_receipts')).rows[0].n,3);
+ assert.equal((await db.query('SELECT count(*)::int AS n FROM connection_event_conflicts')).rows[0].n,0);
+ const conflicting=structuredClone(revised);conflicting.data.object.order_updated.order_id='other-order';
+ assert.equal((await postOrder(conflicting)).status,409);
+ assert.equal((await db.query('SELECT count(*)::int AS n FROM connection_event_conflicts')).rows[0].n,1);
+ assert.equal((await db.query("SELECT count(*)::int AS n FROM stockchief_runtime.jobs WHERE kind='provider.webhook-process'")).rows[0].n,3);
  t.diagnostic(JSON.stringify({actualHttp:true,tenants:4,oneApplicationEndpoint:true,merchantRouting:true,signatureAndUrlBound:true,forgeryRejected:true,durableReplaySafe:true,liveProvider:false,paidCalls:0}));
 });
