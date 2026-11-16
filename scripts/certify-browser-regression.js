@@ -99,6 +99,9 @@ async function main() {
     allowPositionals: true,
   });
   const count = Number(positionals[0] || 2);
+  const browserConcurrency=Number(process.env.STOCKCHIEF_BROWSER_TEST_CONCURRENCY||4);
+  if(!Number.isSafeInteger(browserConcurrency)||browserConcurrency<1||browserConcurrency>4)
+    throw new Error('Browser test concurrency must be an integer from 1 to 4.');
   if (positionals.length > 1 || !Number.isSafeInteger(count) || count < 2) {
     throw new Error('Use at least two consecutive browser certification runs.');
   }
@@ -113,7 +116,7 @@ async function main() {
   try {
     for (let index = 1; index <= count; index++) {
       console.log(`PostgreSQL browser certification ${index}/${count}`);
-      const browser = runSuite(suites.browser, fixtureEnvironment(fixtureUrl, releaseRef), 4);
+      const browser = runSuite(suites.browser, fixtureEnvironment(fixtureUrl, releaseRef), browserConcurrency);
       console.log(`Browser and service checks passed ${browser.pass}/${browser.tests}. Starting the live AI check.`);
       const liveAi = runSuite(suites.liveAi, fixtureEnvironment(fixtureUrl, releaseRef, true), 1);
       runs.push({ id: randomUUID(), browser, liveAi, completedAt: new Date().toISOString() });
