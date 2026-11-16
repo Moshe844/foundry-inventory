@@ -6,7 +6,7 @@ const auth=require('../../src/domain/postgres-auth-service');
 const store=require('../../src/assistant/postgres-goal-store');
 const controller=require('../../src/assistant/postgres-goal-controller');
 const assistant=require('../../src/assistant/postgres-service');
-const {pricedUsage,PRICED_MODEL}=require('../helpers/postgres-model-fixture');
+const {pricedUsage,PRICED_MODEL,fundWorkspace}=require('../helpers/postgres-model-fixture');
 function decision(action,extra={}){return {action,progress:'Checking the business records.',query:'',steps:[],answer:'',evidence:[],...extra};}
 function step(capability,args={},dependsOn=[]){return {capability,arguments:Object.entries(args).map(([name,value])=>({name,value:String(value)})),dependsOn};}
 function provider(queue,verify={complete:true,grounded:true,reason:''}){let calls=0;return {name:'anthropic',model:PRICED_MODEL,
@@ -19,6 +19,7 @@ test('adaptive goal ownership, cost bounds, approvals, tenant isolation and reco
   for(const [key,value]of [['STOCKCHIEF_ADAPTIVE_ASK',previous.flag],['STOCKCHIEF_ADAPTIVE_ASK_WORKSPACES',previous.workspaces]])
    if(value===undefined)delete process.env[key];else process.env[key]=value;});
  const first=await auth.createBusiness(db,{businessName:'Adaptive Certification',name:'Owner',email:'adaptive@example.test',password:'certification-password'});
+ await fundWorkspace(db,first.workspaceId);
  const ctx={workspaceId:first.workspaceId,actorId:first.userId};
  const second=await auth.createBusiness(db,{businessName:'Other Business',name:'Owner',email:'other-adaptive@example.test',password:'certification-password'});
  const other={workspaceId:second.workspaceId,actorId:second.userId};
@@ -97,16 +98,21 @@ test('adaptive goal ownership, cost bounds, approvals, tenant isolation and reco
     'Create Browser Part with SKU BR-8 and record three physically delivered units at Browser Depot against BROWSER-ARRIVAL.');
    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue',exact:true}).click()]);
    const goal=await store.latest(db,ctx);assert.equal(goal.status,'READY');
-   await require('../../src/operations/postgres-runtime-handlers').create(undefined,{aiProvider:model})['assistant.run-goal'](
+   const prepared=await require('../../src/operations/postgres-runtime-handlers').create(undefined,{aiProvider:model})['assistant.run-goal'](
     {workspaceId:ctx.workspaceId,payload:{actorId:ctx.actorId,goalId:goal.id}},db);
-   await page.reload();await page.getByRole('link',{name:'Review prepared operation'}).first().click();
-   await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve the whole mission'}).click()]);
+   assert.equal(prepared.goalStatus,'WAITING_APPROVAL',prepared.answer);
+   await page.goto(`${base}/ask?goal=${goal.id}`);
+   await page.getByRole('link',{name:'Review prepared operation'}).first().click();
+   await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve all remaining changes',exact:true}).click()]);
    const mission=(await db.query('SELECT * FROM stockchief_runtime.assistant_capability_plans WHERE goal_id=$1',[goal.id])).rows[0];
-   assert.equal(mission.status,'DONE');assert.equal(mission.metrics.approvalInteractions,1);
+   assert.equal(mission.status,'DONE');assert.equal(mission.verification_status,'VERIFIED');assert.equal(mission.metrics.approvalInteractions,1);
    assert.equal(Number((await db.query('SELECT sum(on_hand) AS n FROM balances WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),3);
    await require('../../src/assistant/postgres-goal-resume').refresh(db,ctx,goal.id);
    const result=await controller.run(db,ctx,goal.id,{provider:model});assert.equal(result.goalStatus,'COMPLETED');
-   await page.reload();assert.match(await page.getByRole('region',{name:'Goal progress'}).innerText(),/Verified/);
+   await page.reload();
+   const progress=await page.getByRole('region',{name:'Goal progress'}).innerText();
+   assert.match(progress,/Completed/);
+   assert.match(progress,/Records behind this answer/);
    const status=await page.request.get(`${base}/ask/goals/${goal.id}`);assert.equal((await status.json()).status,'COMPLETED');
    const otherGoal=await store.create(db,other,'Private other business goal.');
    assert.equal((await page.request.get(`${base}/ask/goals/${otherGoal.id}`)).status(),404);
@@ -126,9 +132,14 @@ test('adaptive goal ownership, cost bounds, approvals, tenant isolation and reco
   const goal=await store.create(db,ctx,'Carry out the recorded authorized stock transfer, without dispatch or receipt.');
   const claimed=await store.claim(db,ctx,goal.id);const scope={...ctx,goalId:goal.id,goalRunToken:claimed.run_token};
   const verify={verifyComplete:async()=>({data:{complete:true,grounded:true,reason:''}})};
+  await assert.rejects(authority.execute(db,scope,{recordReference:work.id},{provider:verify,sourceMessage:goal.original_request}),
+   {code:'entitlement_required',status:402});
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM inventory_transfers WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);
+  await db.query("UPDATE account_subscriptions SET plan_id='pro',plan_version_id='wallet-foundation:pro' WHERE account_id=$1",[first.accountId]);
   const result=await authority.execute(db,scope,{recordReference:work.id},{provider:verify,sourceMessage:goal.original_request});
-  assert.equal(result.status,'ANSWERED');assert.equal(result.rows[0].outcome.physicalExecutionPending,true);
-  await authority.execute(db,scope,{recordReference:work.id},{provider:verify,sourceMessage:goal.original_request});
+  assert.equal(result.status,'WAITING_EVENT');assert.equal(result.rows[0].outcome.physicalExecutionPending,true);
+  await assert.rejects(authority.execute(db,scope,{recordReference:work.id},{provider:verify,sourceMessage:goal.original_request}),
+   /not ready to execute/);
   assert.equal((await db.query('SELECT count(*)::int AS n FROM inventory_transfers WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,1);
   await demand('Standing Counter B');work=(await autonomy.plan(db,ctx.workspaceId)).created.find(w=>w.approval_requirement==='NONE');assert.ok(work);
   const revoked=await authority.execute(db,scope,{recordReference:work.id},{sourceMessage:goal.original_request,provider:{verifyComplete:async()=>{
@@ -155,20 +166,23 @@ test('adaptive goal ownership, cost bounds, approvals, tenant isolation and reco
  });
  await t.test('goal-wide reservations serialize concurrent calls and retain uncertain exposure',async()=>{
   const goal=await store.create(db,ctx,'Check inventory within a small budget.',{budgetMinor:15});
-  const scope=await require('../../src/commercial/entitlements').ownerScopeForWorkspace(db,ctx.workspaceId);
+  const entitlements=require('../../src/commercial/entitlements');
+  const scope=await entitlements.ownerScopeForWorkspace(db,ctx.workspaceId);
+  const fundingKey=`${ctx.workspaceId}:concurrent-goal-funding`;
+  await entitlements.reserveUsage(db,scope,{meter:'ai_work_credits',units:1,idempotencyKey:fundingKey});
   const budget=require('../../src/commercial/model-cost-budget');const commercial=require('../../src/commercial/model');
   const request={system:'Check records.',prompt:'Inventory.',schema:{type:'object',properties:{answer:{type:'string'}},required:['answer'],additionalProperties:false}};
   const outcomes=await Promise.allSettled(Array.from({length:8},(_,i)=>budget.reserve(db,scope,
    {name:'anthropic',model:PRICED_MODEL},request,commercial.POLICIES.ask,'ask',`${ctx.workspaceId}:concurrent-goal-${i}`,
-   `${ctx.workspaceId}:concurrent-goal-${i}`,{goalId:goal.id,actorId:ctx.actorId})));
+   fundingKey,{goalId:goal.id,actorId:ctx.actorId})));
   assert.equal(outcomes.filter(r=>r.status==='fulfilled').length,1);
   const hold=outcomes.find(r=>r.status==='fulfilled').value;
   await budget.settle(db,scope,hold.idempotency_key);
   assert.equal((await db.query('SELECT status FROM commercial_model_cost_holds WHERE id=$1',[hold.id])).rows[0].status,'UNKNOWN');
   await assert.rejects(()=>budget.reserve(db,scope,{name:'anthropic',model:PRICED_MODEL},request,commercial.POLICIES.ask,'ask',
-   `${ctx.workspaceId}:after-unknown`,`${ctx.workspaceId}:after-unknown`,{goalId:goal.id,actorId:ctx.actorId}),/cumulative model-cost ceiling/);
+   `${ctx.workspaceId}:after-unknown`,fundingKey,{goalId:goal.id,actorId:ctx.actorId}),/cumulative model-cost ceiling/);
   await assert.rejects(()=>budget.reserve(db,scope,{name:'anthropic',model:PRICED_MODEL},request,commercial.POLICIES.ask,'ask',
-   `${ctx.workspaceId}:cross-actor`,`${ctx.workspaceId}:cross-actor`,{goalId:goal.id,actorId:other.actorId}),/no longer authorized/);
+   `${ctx.workspaceId}:cross-actor`,fundingKey,{goalId:goal.id,actorId:other.actorId}),/no longer authorized/);
  });
  await t.test('cancellation and kill switch prevent model calls',async()=>{
   const goal=await store.create(db,ctx,'Investigate replenishment.');await store.cancel(db,ctx,goal.id);
