@@ -7,6 +7,7 @@ const config = require('./config');
 const commonMiddleware = require('./web/middleware');
 const { multipart } = require('./web/multipart');
 const { PostgresSessionStore } = require('./web/postgres-session-store');
+const { privateProductionPilot } = require('./operations/postgres-production-environment');
 const authMiddleware = require('./web/postgres-auth-middleware');
 const viewHelpers = require('./web/view-helpers');
 const { postgresPageRenderer } = require('./web/postgres-page-renderer');
@@ -190,6 +191,9 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.use((req,res,next)=>{
     req.db=database;
     res.locals.appName='StockChief';
+    if (privateProductionPilot()) {
+      res.locals.pilotAccessLink={href:'/contact?topic=pilot',label:'Request pilot access'};
+    }
     res.locals.origin=`${req.protocol}://${req.get('host')}`;
     res.locals.currentPath=req.path;
     res.locals.query=req.query || {};

@@ -80,13 +80,19 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   const support=require('../../operations/postgres-support');
   const supportData=async req=>({supportTopic:require('../presentation/support-topics').topic(req.query),supportEmail:support.SUPPORT_EMAIL,supportRequestKey:newId('supportform'),supportContactEmail:req.account?.email||'',
     supportRequests:await support.list(database,req.account?.id),supportSourcePath:String(req.query.from||'').split('?')[0],supportAccess:await require('../../operations/postgres-support-conversations').access(database,{accountId:req.account?.id,workspaceId:req.ctx?.workspaceId})});
-  router.get('/contact',asyncRoute(async(req,res)=>{const plan=(await commercial.listPlans(database)).find(p=>p.id===req.query.plan);return renderPublic(req,res,'public/contact',{title:plan?'Discuss '+plan.public_name:'Contact StockChief',nav:'contact',inquiryPlan:plan||null,...await supportData(req)});}));
+  router.get('/contact',asyncRoute(async(req,res)=>{
+    const plan=(await commercial.listPlans(database)).find(p=>p.id===req.query.plan);
+    const data=await supportData(req);
+    const title=data.supportTopic.key==='pilot'?'Request pilot access':plan?'Discuss '+plan.public_name:'Contact StockChief';
+    return renderPublic(req,res,'public/contact',{title,nav:'contact',inquiryPlan:plan||null,...data});
+  }));
   router.get('/support',asyncRoute(async(req,res,next)=>{if(req.account)return next();return renderPublic(req,res,'public/contact',{title:'StockChief support',nav:'contact',...await supportData(req)});}));
   router.post('/support/requests',asyncRoute(async(req,res)=>{
     const data=await supportData(req);
     data.inquiryPlan=(await commercial.listPlans(database)).find(p=>p.id===req.body.planId)||null;
     try{data.supportReceipt=await support.create(database,{accountId:req.account?.id,workspaceId:req.ctx?.workspaceId,email:req.account?.email,ip:req.ip},req.body);}
     catch(error){if(!error.status||error.status>=500)throw error;res.status(error.status);data.supportError=error.message;data.supportRequestKey=req.body.requestKey||data.supportRequestKey;}
+    if(data.supportTopic.key==='pilot')return renderPublic(req,res,'public/contact',{title:'Request pilot access',nav:'contact',...data});
     if(data.inquiryPlan)return renderPublic(req,res,'public/contact',{title:'Your plan enquiry',nav:'contact',...data});
     if(req.account)return res.page('support',{title:'Help and support',nav:null,...data});
     return renderPublic(req,res,'public/contact',{title:'Contact StockChief',nav:'contact',...data});

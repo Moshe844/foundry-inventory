@@ -7,6 +7,8 @@
  <h3>How to connect it</h3><ol><% for(const step of p.steps){ %><li><%= step %></li><% } %></ol>
  <% if(p.control && p.control.length){ %><h3>What stays in your hands</h3><ul><% for(const item of p.control){ %><li><%= item %></li><% } %></ul><% } %>
  <% if(p.earlyAccess){ %><p class="pub-integration-dialog__access"><strong>Early access.</strong> <%= p.name %> is switched on for each business while <%= p.name %>'s partner approval finishes. Ask us and we turn it on for yours.</p><% } %>
- <footer><% if(p.earlyAccess){ %><a class="pub-btn" href="/support?topic=connection&amp;about=<%= encodeURIComponent(p.name) %>&amp;from=%2Fintegrations">Ask us to turn on <%= p.name %></a><a class="pub-btn pub-btn--secondary" href="/register">Create your account</a><% }else{ %><a class="pub-btn" href="/register">Create your account</a><a class="pub-btn pub-btn--secondary" href="/login">Sign in to connect</a><% } %></footer>
+ <footer><% if(p.earlyAccess){ %><a class="pub-btn" href="/support?topic=connection&amp;about=<%= encodeURIComponent(p.name) %>&amp;from=%2Fintegrations">Ask us to turn on <%= p.name %></a><% } %>
+ <a class="pub-btn<%= p.earlyAccess?' pub-btn--secondary':'' %>" href="<%= locals.pilotAccessLink?.href || '/register' %>"><%= locals.pilotAccessLink?.label || 'Create your account' %></a>
+ <% if(!p.earlyAccess){ %><a class="pub-btn pub-btn--secondary" href="/login">Sign in to connect</a><% } %></footer>
 </dialog><% } } %>
 <section class="qualification-note"><h2>Your accounts. Your control.</h2><p>Available actions depend on your plan, provider permissions and account setup. Connect a test account to verify a workflow before enabling automatic work. A listed integration does not mean every provider feature has been certified.</p><a href="/support?topic=connection&amp;from=%2Fintegrations">Get help with a connection →</a></section>

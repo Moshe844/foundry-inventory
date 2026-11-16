@@ -71,8 +71,26 @@ test('private production pilot closes self-registration and requires a real plan
     t.after(()=>app.locals.sessionStore.close());
     const guest=require('supertest').agent(app);
     const login=await guest.get('/login').expect(200),csrf=f.csrf(login.text);
-    const denied=await guest.get('/register?plan=starter').expect(403);
-    assert.match(denied.text,/StockChief is in a private pilot/);
+    assert.match(login.text,/href="\/contact\?topic=pilot"[^>]*>Request pilot access/);
+    const pricing=await guest.get('/pricing').expect(200);
+    for(const [plan,label] of [['starter','Starter'],['growth','Growth'],['pro','Pro']]){
+      assert.ok(new RegExp('href="/contact\\?topic=pilot&amp;plan='+plan+'"[^>]*>Request '+label+' access').test(pricing.text),
+        'Pricing links '+label+' to its pilot request form');
+    }
+    const oldSignup=await guest.get('/register?plan=starter').expect(303);
+    assert.equal(oldSignup.headers.location,'/contact?topic=pilot&plan=starter');
+    const interest=await guest.get(oldSignup.headers.location).expect(200);
+    assert.match(interest.text,/<h1>Request access to StockChief<\/h1>/);
+    assert.match(interest.text,/<h2>Starter pilot access request<\/h2>/);
+    const pilotEmail='pilot-enquiry@example.test';
+    const inquiry={_csrf:f.csrf(interest.text),requestKey:/name="requestKey" value="([^"]+)"/.exec(interest.text)[1],
+      planId:'starter',subject:'Starter pilot access request',email:pilotEmail,
+      body:'StockChief can help us follow up on incoming purchase orders.',sourcePath:'/pricing'};
+    const received=await guest.post('/support/requests?topic=pilot').type('form').send(inquiry).expect(200);
+    assert.match(received.text,/Your request is saved/);
+    assert.equal((await db.query('SELECT 1 FROM support_requests WHERE contact_email=$1 AND subject=$2',
+      [pilotEmail,inquiry.subject])).rowCount,1);
+    assert.equal((await db.query('SELECT 1 FROM accounts WHERE email=$1',[pilotEmail])).rowCount,0);
     const rejectedEmail='uninvited-production@example.test';
     await guest.post('/register').set('Accept','application/json').type('form').send({_csrf:csrf,email:rejectedEmail,name:'Uninvited',businessName:'Uninvited',
       password:'Strong-fixture-secret-41!',planId:'starter'}).expect(403);
