@@ -1,6 +1,7 @@
 'use strict';
 
 const {ValidationError}=require('../domain/errors');
+const {privateProductionPilot}=require('../operations/postgres-production-environment');
 
 // Initial self-service provider set. These optional adapters remain in the
 // repository for existing records and later qualified/contractual activation.
@@ -36,9 +37,12 @@ async function resolveWorkspaceContext(database,ctx={}){
  return resolved;
 }
 
+function productionOutlookPilot(providerType){
+ return providerType==='microsoft365'&&privateProductionPilot();
+}
 function pilotAllowed(providerType,ctx={}){
  const type=String(providerType).toLowerCase();
- if(type==='microsoft365'&&ctx.workspaceId&&require('../operations/postgres-production-environment').privateProductionPilot()){
+ if(ctx.workspaceId&&productionOutlookPilot(type)){
   return configured('STOCKCHIEF_PRODUCTION_MICROSOFT365_WORKSPACES').includes(ctx.workspaceId);
  }
  if(process.env.STOCKCHIEF_RUNTIME_ENV!=='staging'||!ctx.workspaceId)return false;
@@ -49,6 +53,11 @@ function pilotAllowed(providerType,ctx={}){
 function reason(providerType,ctx){return pilotAllowed(providerType,ctx)?null:EXCLUDED[String(providerType||'').toLowerCase()]||null;}
 function assertNewConnection(providerType,ctx){const denied=reason(providerType,ctx);
  if(denied)throw new ValidationError(denied);}
+function assertCallbackProvider(providerType){
+ // Pilot callbacks resolve and recheck the inventory from stored OAuth state.
+ if(process.env.STOCKCHIEF_RUNTIME_ENV==='staging'||productionOutlookPilot(providerType))return;
+ assertNewConnection(providerType);
+}
 async function assertWorkspaceConnection(database,providerType,ctx){
  if(!EXCLUDED[String(providerType||'').toLowerCase()])return;
  assertNewConnection(providerType,await resolveWorkspaceContext(database,ctx));
@@ -56,4 +65,4 @@ async function assertWorkspaceConnection(database,providerType,ctx){
 function metadata(meta,ctx){const denied=reason(meta.type,ctx);
  return denied?{...meta,available:false,launchRestricted:true,unavailableReason:denied}:{...meta,pilot:pilotAllowed(meta.type,ctx)};}
 
-module.exports={EXCLUDED,reason,assertNewConnection,assertWorkspaceConnection,resolveWorkspaceContext,metadata,pilotAllowed};
+module.exports={EXCLUDED,reason,assertNewConnection,assertCallbackProvider,assertWorkspaceConnection,resolveWorkspaceContext,metadata,pilotAllowed};

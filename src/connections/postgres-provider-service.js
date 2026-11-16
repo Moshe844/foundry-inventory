@@ -183,10 +183,7 @@ async function completeOAuth(database,providerType,query,requestOrigin,options={
   const registry=options.providers||defaultProviders;
   const adapter=registry.get(providerType);
   if(!adapter)throw new NotFoundError('Provider not found.');
-  // Outside the Staging pilot, excluded providers are rejected before reading
-  // or consuming any authorization state. Staging callbacks resolve their
-  // inventory from the saved state, then recheck its current owner below.
-  if(registry===defaultProviders&&process.env.STOCKCHIEF_RUNTIME_ENV!=='staging')launchPolicy.assertNewConnection(providerType);
+  if(registry===defaultProviders)launchPolicy.assertCallbackProvider(providerType);
   const state=await readState(database,query.state,providerType,{consume:true});
   if(registry===defaultProviders)await launchPolicy.assertWorkspaceConnection(database,providerType,{workspaceId:state.workspace_id});
   const connection=await intents.connectionForState(database,state);

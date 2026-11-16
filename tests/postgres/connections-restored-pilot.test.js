@@ -29,5 +29,20 @@ test('restored real adapter authorization is Staging/workspace scoped, holds acc
  assert.equal(outlookTarget.hostname,'login.microsoftonline.com');
  assert.match(outlookTarget.searchParams.get('redirect_uri'),/\/settings\/connections\/microsoft365\/callback$/);
  assert.deepEqual(outlookTarget.searchParams.get('scope').split(' '),['openid','profile','offline_access','User.Read','Mail.Read','Mail.Send']);
+ const callback=(state)=>agent.get('/settings/connections/microsoft365/callback').query({state,
+  error:'access_denied',error_description:'Outlook pilot consent declined'});
+ const outlookState=outlookTarget.searchParams.get('state');
+ process.env.STOCKCHIEF_PRIVATE_PRODUCTION_PILOT='0';
+ assert.match((await callback(outlookState)).text,/needs final live connector qualification/);
+ process.env.STOCKCHIEF_PRIVATE_PRODUCTION_PILOT='1';
+ process.env.STOCKCHIEF_PRODUCTION_MICROSOFT365_WORKSPACES='different-inventory';
+ assert.match((await callback(outlookState)).text,/needs final live connector qualification/);
+ process.env.STOCKCHIEF_PRODUCTION_MICROSOFT365_WORKSPACES=owner.workspace_id;
+ page=await agent.get('/settings/connections');
+ const freshOutlook=await outlookRequest();
+ assert.equal(freshOutlook.status,303);
+ const freshState=new URL(freshOutlook.headers.location).searchParams.get('state');
+ assert.match((await callback(freshState)).text,/Outlook pilot consent declined/);
+ assert.match((await callback(freshState)).text,/expired or was already used/);
  for(const table of ['accounting_journal_entries','movements','connection_credentials'])assert.equal(Number((await db.query(`SELECT count(*) AS n FROM ${table} WHERE workspace_id=$1`,[owner.workspace_id])).rows[0].n),0);
 });
