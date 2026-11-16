@@ -27,8 +27,15 @@ async function completeTransfer(page) {
 
   const serial = page.getByRole('button', { name: 'Record serial outcomes' });
   const quantity = page.getByRole('button', { name: /^(?:All|Confirm all) \d+ arrived$/i });
-  await submit(page, (await serial.count()) ? serial : quantity);
-  assert.match(await page.locator('main').innerText(), /This transfer is complete|Complete/i);
+  if (await serial.count()) {
+    for (const outcome of await page.locator('select[name^="serialOutcome_"]').all()) {
+      await outcome.selectOption('RECEIVED');
+    }
+    await submit(page, serial);
+  } else {
+    await submit(page, quantity);
+  }
+  await page.getByRole('heading', { name: 'This transfer is complete.', exact: true }).waitFor();
 }
 
 module.exports = { completeTransfer };

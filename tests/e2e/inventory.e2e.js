@@ -83,6 +83,26 @@ async function stopServer(child) {
 
 // --- page helpers ----------------------------------------------------------
 
+async function registerReferenceBusiness(page) {
+  await page.goto(`${BASE}/register`);
+  const form = page.locator('form[action="/register"]');
+  await form.getByLabel('Your name', { exact: true }).fill(ACCOUNT.name);
+  await form.getByLabel('Business name', { exact: true }).fill(ACCOUNT.workspaceName);
+  await form.getByLabel('Email', { exact: true }).fill(ACCOUNT.email);
+  await form.getByLabel('Password', { exact: true }).fill(ACCOUNT.password);
+  await Promise.all([
+    page.waitForURL(`${BASE}/onboarding`),
+    form.getByRole('button', { name: 'Create account', exact: true }).click(),
+  ]);
+  const details = page.locator('[data-setup-details]');
+  await details.locator('summary').click();
+  await details.getByLabel('Inventory name', { exact: true }).fill(ACCOUNT.workspaceName);
+  await Promise.all([
+    page.waitForNavigation(),
+    details.getByRole('button', { name: 'Save name', exact: true }).click(),
+  ]);
+}
+
 async function signIn(page, email = ACCOUNT.email, password = ACCOUNT.password) {
   await page.goto(`${BASE}/login`);
   await page.fill('#email', email);
@@ -148,27 +168,48 @@ async function submitAction(page, dialog) {
   // A 303 produces an intermediate navigation before the final GET. The page
   // is ready for a person only when the item summary has been rendered.
   if (!new URL(page.url()).pathname.startsWith('/transfers/')) {
-    await page.locator('.rm-pulse .rm-stat__n').first().waitFor({ state: 'visible' });
+    await onHandSummary(page).waitFor({ state: 'visible' });
   }
+}
+
+function onHandSummary(page) {
+  return page.locator('.sc-product-stats > div')
+    .filter({ has: page.getByText('On hand', { exact: true }) }).locator('strong');
 }
 
 /** Total on hand shown at the top of an item page. */
 async function itemTotal(page) {
-  return Number((await page.locator('.rm-pulse .rm-stat__n').first().innerText())
-    .replace(/[^\d-]/g, ''));
+  return Number((await onHandSummary(page).innerText()).replace(/[^\d-]/g, ''));
 }
 
 /** Per-location total from the "Where it is" panel. */
 async function locationTotal(page, locationName) {
-  const bar = page.locator('.rm-where').filter({ hasText: locationName });
-  if ((await bar.count()) === 0) return 0;
-  return Number((await bar.first().locator('.rm-where__v').innerText()).replace(/[^\d-]/g, ''));
+  const panel = page.locator('section.sc-business-card')
+    .filter({ has: page.getByRole('heading', { name: 'Where it is', exact: true }) });
+  const position = (await panel.locator('p').allTextContents())
+    .find((text) => text.startsWith(`${locationName}: `));
+  return position ? Number(position.slice(locationName.length + 2).replace(/[^\d-]/g, '')) : 0;
 }
 
 async function rowQuantity(page, rowText) {
-  const row = page.locator('tbody tr').filter({ hasText: rowText }).first();
-  const cell = row.locator('td.num strong').last();
+  const row = page.locator('tr[id^="sku-"]').filter({ hasText: rowText }).first();
+  const cell = row.getByRole('cell').nth(1);
   return Number((await cell.innerText()).replace(/[^\d-]/g, ''));
+}
+
+function serialEntry(page, serial) {
+  return page.locator('section.sc-business-card')
+    .filter({ has: page.getByRole('heading', { name: 'Serial units', exact: true }) })
+    .locator('p').filter({ has: page.getByText(serial, { exact: true }) });
+}
+
+function lotEntry(page, code) {
+  return page.locator('article')
+    .filter({ has: page.getByRole('heading', { name: code, exact: true }) });
+}
+
+async function lotQuantity(page, code) {
+  return Number((await lotEntry(page, code).locator('[data-lot-on-hand]').innerText()).replace(/[^\d-]/g, ''));
 }
 
 async function assertVisibleText(page, text) {
@@ -216,16 +257,7 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
   });
 
   await t.test('a new workspace can be created and signed into', async () => {
-    await page.goto(`${BASE}/register`);
-    await page.fill('#name', ACCOUNT.name);
-    await page.fill('#businessName', ACCOUNT.workspaceName);
-    await page.fill('#email', ACCOUNT.email);
-    await page.fill('#password', ACCOUNT.password);
-    await page.fill('#confirmPassword', ACCOUNT.password);
-    await page.click('button[type=submit]');
-    await page.waitForURL(`${BASE}/onboarding`);
-      await page.fill('#inventory-name', ACCOUNT.workspaceName);
-      await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Save name', exact: true }).click()]);
+    await registerReferenceBusiness(page);
 
     // Mission 2 puts StockChief first. This run is about the Mission 1 console, so
     // take the documented manual path — which exercises that route too.
@@ -233,11 +265,11 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     // A new inventory is asked how it is managed today. These customers are
     // starting from nothing, so they take the Starting Fresh path — which is
     // the Mission 2 experience, unchanged.
-await Promise.all([
-        page.waitForURL(`${BASE}/inventory/new`),
-        page.click('button:has-text("Enter it manually")'),
-      ]);
-      await page.goto(`${BASE}/foundry/describe`);
+    await Promise.all([
+      page.waitForURL(`${BASE}/inventory/new`),
+      page.getByRole('button', { name: /Add my first item/ }).click(),
+    ]);
+    await page.goto(`${BASE}/foundry/describe`);
     await assertVisibleText(page, 'Give StockChief what you already have');
     await Promise.all([
       page.waitForURL(`${BASE}/locations`),
@@ -411,8 +443,8 @@ await Promise.all([
     await completeTransfer(page);
     await page.goto(state.laptopUrl);
 
-    const movedRow = page.locator('tbody tr').filter({ hasText: 'DL-829193' });
-    const stayedRow = page.locator('tbody tr').filter({ hasText: 'DL-829194' });
+    const movedRow = serialEntry(page, 'DL-829193');
+    const stayedRow = serialEntry(page, 'DL-829194');
     assert.equal(await movedRow.count(), 1, 'the serial appears exactly once');
     assert.match(await movedRow.innerText(), /Downtown Store/);
     assert.match(await stayedRow.innerText(), /Main Warehouse/);
@@ -438,9 +470,10 @@ await Promise.all([
       mode: 'lot',
     });
 
+    const futureDate = (days) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
     for (const [code, quantity, expires] of [
-      ['L240812', '84', '2026-10-30'],
-      ['L240902', '120', '2027-01-15'],
+      ['L240812', '84', futureDate(30)],
+      ['L240902', '120', futureDate(90)],
     ]) {
       const dialog = await openAction(page, 'receive');
       await dialog.locator('#receive-location').selectOption({ label: 'Main Warehouse' });
@@ -451,8 +484,8 @@ await Promise.all([
     }
 
     assert.equal(await itemTotal(page), 204);
-    assert.equal(await rowQuantity(page, 'L240812'), 84);
-    assert.equal(await rowQuantity(page, 'L240902'), 120);
+    assert.equal(await lotQuantity(page, 'L240812'), 84);
+    assert.equal(await lotQuantity(page, 'L240902'), 120);
 
     const transfer = await openAction(page, 'transfer');
     await transfer.locator('#transfer-from').selectOption({ label: 'Main Warehouse' });
@@ -463,15 +496,14 @@ await Promise.all([
     await completeTransfer(page);
     await page.goto(state.rationUrl);
 
-    assert.equal(await rowQuantity(page, 'L240812'), 84, 'the lot total is unchanged by a move');
-    assert.equal(await rowQuantity(page, 'L240902'), 120);
+    assert.equal(await lotQuantity(page, 'L240812'), 84, 'the lot total is unchanged by a move');
+    assert.equal(await lotQuantity(page, 'L240902'), 120);
     assert.equal(await itemTotal(page), 204);
     assert.equal(await locationTotal(page, 'Downtown Store'), 24);
 
-    const movedLotRow = page.locator('tbody tr').filter({ hasText: 'L240812' }).first();
-    const text = await movedLotRow.innerText();
-    assert.match(text, /Main Warehouse\s*60/);
-    assert.match(text, /Downtown Store\s*24/);
+    const text = await lotEntry(page, 'L240812').innerText();
+    assert.match(text, /Main Warehouse:\s*60/);
+    assert.match(text, /Downtown Store:\s*24/);
     await shot(page, 'lots');
 
     // A lot cannot give up more than it holds.
@@ -546,7 +578,7 @@ await Promise.all([
 
     await page.goto(state.laptopUrl);
     await page.reload();
-    assert.match(await page.locator('tbody tr').filter({ hasText: 'DL-829193' }).innerText(), /Downtown Store/);
+    assert.match(await serialEntry(page, 'DL-829193').innerText(), /Downtown Store/);
 
     await page.goto(state.rationUrl);
     await page.reload();
@@ -568,13 +600,13 @@ await Promise.all([
     assert.equal(await locationTotal(page, 'Downtown Store'), 20);
 
     await page.goto(state.rationUrl);
-    assert.equal(await rowQuantity(page, 'L240812'), 84);
-    assert.match(await page.locator('tbody tr').filter({ hasText: 'L240812' }).first().innerText(), /Downtown Store\s*24/);
+    assert.equal(await lotQuantity(page, 'L240812'), 84);
+    assert.match(await lotEntry(page, 'L240812').innerText(), /Downtown Store:\s*24/);
 
     await page.goto(state.laptopUrl);
-    assert.match(await page.locator('tbody tr').filter({ hasText: 'DL-829193' }).innerText(), /Downtown Store/);
+    assert.match(await serialEntry(page, 'DL-829193').innerText(), /Downtown Store/);
 
-    await page.goto(`${BASE}/settings`);
+    await page.goto(`${BASE}/settings?section=data`);
     await assertVisibleText(page, 'Every balance matches its movement history');
     await shot(page, 'settings-after-restart');
   });
@@ -597,9 +629,10 @@ await Promise.all([
     await mobile.waitForURL(`${BASE}/`);
     await shot(mobile, 'mobile-overview');
 
-    // The compact top rail is the mobile way around the app.
-    assert.equal(await mobile.locator('.rm-rail').isVisible(), true);
-    assert.equal(await mobile.locator('.sidebar').isVisible(), false);
+    const menu = mobile.getByRole('button', { name: 'Open navigation' });
+    await menu.click();
+    assert.equal(await mobile.getByRole('navigation', { name: 'Primary navigation' }).isVisible(), true);
+    await mobile.keyboard.press('Escape');
 
     // Search and item lookup.
     await mobile.goto(`${BASE}/inventory/table`);
@@ -657,7 +690,7 @@ await Promise.all([
   });
 
   await t.test('inventory integrity holds at the end of the run', async () => {
-    await page.goto(`${BASE}/settings`);
+    await page.goto(`${BASE}/settings?section=data`);
     await assertVisibleText(page, 'Every balance matches its movement history');
     console.log(`\nScreenshots: ${SHOTS}`);
   });

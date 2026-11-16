@@ -132,10 +132,15 @@ async function claim(database, options = {}) {
   const ordering = options.maintenanceOnly === true ? 'created_at, id'
     : kinds && kinds.every(kind => !MAINTENANCE_KINDS.includes(kind)) ? 'priority, created_at, id'
       : 'CASE WHEN kind=ANY($3::text[]) THEN 50 ELSE priority END, created_at, id';
+  const suppliedNow = options.now === undefined ? null : time(options);
   return database.transaction(async (client) => {
-    const now = await databaseTime(client, options);
+    const clock = (await client.query(`WITH job_clock AS MATERIALIZED (
+      SELECT COALESCE($1::bigint, floor(extract(epoch FROM clock_timestamp())*1000)::bigint) AS now_ms
+    ) SELECT now_ms, EXISTS(SELECT 1 FROM stockchief_runtime.jobs
+      WHERE status = 'RUNNING' AND lease_expires_at <= now_ms) AS expired FROM job_clock`, [suppliedNow])).rows[0];
+    const now = Number(clock.now_ms);
     const expires = now + leaseMs;
-    await recover(client, now);
+    if (clock.expired) await recover(client, now);
     const candidate = await client.query(`SELECT id,kind,workspace_id FROM stockchief_runtime.jobs
       WHERE status IN ('PENDING','RETRY') AND available_at <= $1
       AND (workspace_id IS NULL OR EXISTS(SELECT 1 FROM public.workspaces w WHERE w.id=jobs.workspace_id AND w.deletion_requested_at IS NULL
@@ -328,11 +333,13 @@ async function processOne(database, handlers, options = {}) {
     } finally { await renewal.stop(); }
   }
   try {
+    const suppliedNow = options.now === undefined ? null : time(options);
     return await require('../commercial/resource-metrics').measure(database,{runtimeKind:'worker',operation:job.kind,
       id:`${job.id}:${job.attemptCount}:${job.leaseToken}`,scope:{accountId:job.payload?.accountId}},()=>database.transaction(async (client) => {
-      const now = await databaseTime(client, options);
       const owned = await client.query(`SELECT id FROM stockchief_runtime.jobs WHERE id = $1 AND lease_token = $2
-        AND status = 'RUNNING' AND lease_expires_at > $3 FOR UPDATE`, [job.id, job.leaseToken, now]);
+        AND status = 'RUNNING' AND lease_expires_at >
+        COALESCE($3::bigint, floor(extract(epoch FROM clock_timestamp())*1000)::bigint) FOR UPDATE`,
+      [job.id, job.leaseToken, suppliedNow]);
       if (!owned.rows.length) throw Object.assign(new Error('The PostgreSQL worker lost its lease.'), { code: 'lease_lost' });
       const scope=job.workspaceId?await require('../commercial/entitlements').ownerScopeForWorkspace(client,job.workspaceId):null;
       const outcome = await require('../commercial/context').run({database:client,scope,requestId:job.id,attemptCount:Number(job.attemptCount)},()=>handler(job, client));

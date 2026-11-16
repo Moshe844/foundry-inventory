@@ -17,5 +17,17 @@
 <section class="sc-business-card"><h2>Where it is</h2><% for(const location of locationTotals){ %><p><%= location.name||location.locationName||location.location_name %>: <%= helpers.qty(location.total) %></p><% } %></section>
 <% if(outlook.length){ %><section class="sc-business-card"><h2>What happens next</h2><% for(const view of outlook){ %><article><h3><%= view.label %></h3><p><%= view.forecast?.confidenceLabel||'Still learning' %></p><% if(view.forecast?.dailyRate==null){ %><p>StockChief cannot estimate how fast this sells yet. Record normal sales and receipts to build demand history.</p><% }else{ %><p>Recent demand: <%= helpers.qty(view.forecast.dailyRate) %> per day.</p><% } %><a href="/planning">See how I worked this out</a><% if(canOperate){for(const decision of Object.values(view.decisions)){ %><form method="post" action="/planning/recommendations/<%= decision.id %>/accept"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="/inventory/<%= item.id %>"><button class="btn" type="submit">Use <%= decision.recommended_value %></button></form><form method="post" action="/planning/recommendations/<%= decision.id %>/decline"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="/inventory/<%= item.id %>"><button class="btn" type="submit">Keep <%= decision.current_value %></button></form><% }} %></article><% } %></section><% } %>
 <% if(mode==='serial'){ %><section class="sc-business-card"><h2>Serial units</h2><% for(const unit of units){ %><p><strong><%= unit.serial %></strong> · <%= unit.status==='in_stock'?'In stock':unit.status.replaceAll('_',' ') %> · <%= unit.location_name||'No location' %></p><% } %></section><% } %>
-<% if(mode==='lot'){ %><section class="sc-business-card"><h2>Lots and batches</h2><% for(const lot of lots){ %><p><strong><%= lot.code %></strong> · <%= helpers.qty(lot.total) %> on hand<%= lot.expires_at?' · Expires '+helpers.shortDate(lot.expires_at):'' %></p><% } %></section><% } %>
+<% if(mode==='lot'){ %>
+  <section class="sc-business-card"><h2>Lots and batches</h2>
+    <% for(const lot of lots){ %>
+      <article>
+        <h3><%= lot.code %></h3>
+        <p><span data-lot-on-hand><%= helpers.qty(lot.total) %></span> on hand<%= lot.expires_at?' · Expires '+helpers.shortDate(lot.expires_at):'' %></p>
+        <% for(const position of lot.perLocation){ %>
+          <p><%= position.location_name %>: <%= helpers.qty(position.quantity) %></p>
+        <% } %>
+      </article>
+    <% } %>
+  </section>
+<% } %>
 <section class="sc-business-card"><h2>Recent activity</h2><% if(!recent.length){ %><p>No stock activity yet.</p><% } %><% for(const movement of recent){ %><p><%= helpers.dateTime(movement.occurredAt) %> · <%= movement.sentence %> · <%= movement.reference||'' %></p><% } %></section>
