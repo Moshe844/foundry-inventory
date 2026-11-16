@@ -1,7 +1,6 @@
 'use strict';
 
 const {ValidationError}=require('../domain/errors');
-const {privateProductionPilot}=require('../operations/postgres-production-environment');
 
 // Initial self-service provider set. These optional adapters remain in the
 // repository for existing records and later qualified/contractual activation.
@@ -37,14 +36,14 @@ async function resolveWorkspaceContext(database,ctx={}){
  return resolved;
 }
 
-function productionOutlookPilot(providerType){
- return providerType==='microsoft365'&&privateProductionPilot();
+function productionOutlookWorkspaces(){
+ return process.env.STOCKCHIEF_RUNTIME_ENV==='production'
+  ?configured('STOCKCHIEF_PRODUCTION_MICROSOFT365_WORKSPACES'):[];
 }
 function pilotAllowed(providerType,ctx={}){
  const type=String(providerType).toLowerCase();
- if(ctx.workspaceId&&productionOutlookPilot(type)){
-  return configured('STOCKCHIEF_PRODUCTION_MICROSOFT365_WORKSPACES').includes(ctx.workspaceId);
- }
+ if(type==='microsoft365'&&process.env.STOCKCHIEF_RUNTIME_ENV==='production')
+  return productionOutlookWorkspaces().includes(ctx.workspaceId);
  if(process.env.STOCKCHIEF_RUNTIME_ENV!=='staging'||!ctx.workspaceId)return false;
  const seeds=configured('STOCKCHIEF_STAGING_CONNECTION_WORKSPACES'),grant=ctx[accountPilot];
  const approved=seeds.includes(ctx.workspaceId)||grant?.workspaceId===ctx.workspaceId&&grant.seeds===seeds.join('\0');
@@ -55,7 +54,7 @@ function assertNewConnection(providerType,ctx){const denied=reason(providerType,
  if(denied)throw new ValidationError(denied);}
 function assertCallbackProvider(providerType){
  // Pilot callbacks resolve and recheck the inventory from stored OAuth state.
- if(process.env.STOCKCHIEF_RUNTIME_ENV==='staging'||productionOutlookPilot(providerType))return;
+ if(process.env.STOCKCHIEF_RUNTIME_ENV==='staging'||(providerType==='microsoft365'&&productionOutlookWorkspaces().length))return;
  assertNewConnection(providerType);
 }
 async function assertWorkspaceConnection(database,providerType,ctx){
@@ -65,4 +64,4 @@ async function assertWorkspaceConnection(database,providerType,ctx){
 function metadata(meta,ctx){const denied=reason(meta.type,ctx);
  return denied?{...meta,available:false,launchRestricted:true,unavailableReason:denied}:{...meta,pilot:pilotAllowed(meta.type,ctx)};}
 
-module.exports={EXCLUDED,reason,assertNewConnection,assertCallbackProvider,assertWorkspaceConnection,resolveWorkspaceContext,metadata,pilotAllowed};
+module.exports={EXCLUDED,reason,assertNewConnection,assertCallbackProvider,assertWorkspaceConnection,resolveWorkspaceContext,metadata,pilotAllowed,productionOutlookWorkspaces};

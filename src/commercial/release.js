@@ -18,14 +18,16 @@ async function isOpen(database){const release=await state(database);
  const unresolved=(await database.query(`SELECT 1 FROM commercial_critical_warnings WHERE status='OPEN'
    AND code=ANY($1::text[]) LIMIT 1`,[LAUNCH_BLOCKERS])).rows.length;
  if(unresolved)return false;
- // Historical connections are preserved. An excluded adapter already active
- // in this environment needs a qualified cost agreement before new checkout.
+ // Previously approved Outlook pilot inventories retain their scoped access.
+ // Public signup grants no permission to use the Outlook pilot.
+ const launchPolicy=require('../connections/launch-policy');
  const unqualified=(await database.query(`SELECT 1 FROM workspace_connectors
    WHERE status='connected' AND paused_at IS NULL
    AND provider_type=ANY($1::text[])
+   AND NOT (provider_type='microsoft365' AND COALESCE(workspace_id=ANY($2::text[]),false))
    UNION ALL SELECT 1 FROM payment_connect_accounts WHERE charges_enabled=1
    LIMIT 1`,
-  [[...Object.keys(require('../connections/launch-policy').EXCLUDED),'stripe','supplier_email']])).rows.length;
+  [[...Object.keys(launchPolicy.EXCLUDED),'stripe','supplier_email'],launchPolicy.productionOutlookWorkspaces()])).rows.length;
  return unqualified===0;}
 async function assertCheckoutOpen(database,options={}){
   // Only isolated tests may exercise provider contracts while the live release is closed.

@@ -3,8 +3,12 @@ const entitlements=require('../entitlements/postgres-service');
 const control=require('./control-service');
 const {newId}=require('../lib/util');
 const {ValidationError}=require('../domain/errors');
-const GMAIL_LOGICAL_WRAPPERS=new Set(['authorization_exchange','catalog_sync',
- 'mailbox_poll','outbound_email','push_renewal','webhook_registration']);
+const MAIL_WRAPPERS=new Set(['authorization_exchange','catalog_sync','mailbox_poll','outbound_email','reply_email','push_renewal','webhook_registration']);
+const LOGICAL_WRAPPERS=new Map([
+ ['gmail',MAIL_WRAPPERS],
+ ['microsoft365',MAIL_WRAPPERS],
+ ['square',new Set(['authorization_exchange','catalog_sync','webhook_registration'])],
+]);
 async function modelUsage(database,scope,usage,key,detail={}){
  const fields=[['model_input',usage.inputTokens],['model_output',usage.outputTokens],['cache_read',usage.cacheReadTokens],
  ['cache_write_5m',usage.cacheWrite5mTokens],['cache_write_1h',usage.cacheWrite1hTokens]];
@@ -49,6 +53,7 @@ async function completeRetained(database,workspaceId,input,detail={}){
  return result;
 }
 async function run(database,workspaceId,input,operation){const held=await begin(database,workspaceId,input);let attempted=false;
+ const wrapper=LOGICAL_WRAPPERS.get(input.provider)?.has(input.operation);
  try{attempted=true;const result=await require('./context').run({...require('./context').current(),database,scope:held.scope,funded:true,requestId:input.key},operation);
  await complete(database,held);return result;}
  catch(error){const writes=new Set([...require('./usage-operation-contract').writes,'outbound_email','reply_email']);
@@ -62,11 +67,10 @@ async function run(database,workspaceId,input,operation){const held=await begin(
  finally{if(attempted)await control.recordCost(database,held.scope,{provider:input.provider,operation:input.operation,unit:input.unit||'operation',
   quantity:input.quantity||1,idempotencyKey:`${held.input.key}:attempt:${require('./context').current()?.attemptCount||1}`,
   providerVersion:input.providerVersion||'',
-  // This is the logical customer operation, not another Gmail API call.
-  // Network.after records each quota-checked API attempt independently and
+  // New provider attempts are recorded independently and
   // shared CPU/DB work is measured by the resource ledger.
-  ...(input.provider==='gmail'&&GMAIL_LOGICAL_WRAPPERS.has(input.operation)?{amountMinor:0,costBasis:'NO_EXTRA_GMAIL_WRAPPER_PROVIDER_FEE',
-    costConfidence:'HIGH',costSource:'src/commercial/operations.js; Gmail API attempts are accounted separately'}:{}),
-  detail:{attempted:true,...(input.provider==='gmail'&&GMAIL_LOGICAL_WRAPPERS.has(input.operation)?
+  ...(wrapper?{amountMinor:0,costBasis:input.provider==='gmail'?'NO_EXTRA_GMAIL_WRAPPER_PROVIDER_FEE':'NO_EXTRA_CONNECTOR_WRAPPER_PROVIDER_FEE',
+    costConfidence:'HIGH',costSource:'src/commercial/operations.js; API attempts are accounted separately'}:{}),
+  detail:{attempted:true,...(wrapper?
    {feeResponsibility:'NO_EXTRA_PROVIDER_CALL_FOR_WRAPPER'}:{})}});}}
 module.exports={modelUsage,begin,complete,reverse,completeRetained,run};

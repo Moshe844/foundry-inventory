@@ -442,6 +442,8 @@ async function ingest(database,auth,raw,options={}){
     if(owner?.owner_account_id)await commercialControl.recordCost(client,{accountId:owner.owner_account_id,
       workspaceId:auth.workspaceId},{provider:owner.provider_type||'commerce_connector',operation:'event_ingestion',unit:'event',
       quantity:1,idempotencyKey:`event:${auth.connectorId}:${event.eventId}`,occurredAt:receivedAt,
+      ...(owner.provider_type==='square'?{amountMinor:0,costBasis:'NO_EXTRA_SQUARE_EVENT_INGESTION_FEE',
+        costConfidence:'HIGH',costSource:'Local Square webhook ingestion; subsequent API requests are recorded separately'}:{}),
       detail:{eventType:event.type,connectorId:auth.connectorId}});
     if(['return.reported','fulfillment.reported','payment.reported'].includes(event.type)){
       const cancellationOnly=await cancellationOnlyRefund(client,auth,event);

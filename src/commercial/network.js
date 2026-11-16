@@ -79,6 +79,7 @@ async function after(context,attempt,success,detail){
  {meter:'connected_operations',idempotencyKey:attempt.key,reason:'The provider request failed.'});}
  const gmail=attempt.url?gmailQuota(attempt.url,attempt.method):null;
  const billingClassification=attempt.billing?require('./stripe-request-classification').classify(attempt.url):null;
+ const connectorClassification=attempt.billing?null:require('./connector-request-cost').classify(attempt.def,attempt.url,attempt.method);
  const gmailNoIncrementalFee=gmail&&attempt.def.host==='gmail.googleapis.com'?{
    basis:'VERIFIED_NO_INCREMENTAL_GMAIL_API_FEE_BELOW_RESERVED_DAILY_THRESHOLD',
    source:'https://developers.google.com/workspace/gmail/api/reference/quota',
@@ -90,6 +91,8 @@ async function after(context,attempt,success,detail){
    costSource:billingClassification.source}:{}),
  ...(gmailNoIncrementalFee?{amountMinor:0,costBasis:gmailNoIncrementalFee.basis,
    costConfidence:'HIGH',costSource:gmailNoIncrementalFee.source}:{}),
+ ...(connectorClassification?{amountMinor:0,costBasis:connectorClassification.basis,
+   costConfidence:'HIGH',costSource:connectorClassification.source}:{}),
  detail:{...detail,hostname:attempt.def.host,requestId:context.requestId,
    ...(billingClassification?{feeResponsibility:'NO_INCREMENTAL_HTTP_REQUEST_FEE',
      evidence:billingClassification,otherStripeFees:'Reconcile actual balance transactions and Billing volume charges separately.'}:{}),

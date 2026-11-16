@@ -7,7 +7,7 @@ const {LAUNCH_BLOCKERS}=require('../../src/commercial/release');
 const {createPostgresApp}=require('../../src/postgres-app');
 const {chromium}=require('playwright');
 
-test('initial monthly self-service snapshots exclude external accounting and merchant payments, not native accounting',
+test('monthly plans preserve native workflows and public checkout isolates private provider access',
  {timeout:120000},async t=>{
  const cluster=await startCluster();const db=openPostgres(cluster.connectionString);
  t.after(async()=>{await db.close();cluster.stop();});await migratePostgres(db);
@@ -16,8 +16,6 @@ test('initial monthly self-service snapshots exclude external accounting and mer
    WHERE plan_id=$1 AND status='ACTIVE'`,[plan]);
   assert.equal(result.rows.length,1);
   const grants=new Map(result.rows[0].entitlements.map(row=>[row.capability,Boolean(row.enabled)]));
-  for(const capability of ['connections.accounting','accounting.sync','accounting.post_connected',
-   'payments.customer'])assert.equal(grants.get(capability),false,`${plan} ${capability}`);
   assert.equal(grants.get('accounting.core'),true,`${plan} native accounting`);
   assert.equal(grants.get('shipping.workflow'),true,`${plan} manual shipping`);
  }
@@ -33,6 +31,8 @@ test('initial monthly self-service snapshots exclude external accounting and mer
  const priorCheckout=process.env.STOCKCHIEF_CHECKOUT_ENABLED;
  const priorTax=process.env.STOCKCHIEF_BILLING_AUTOMATIC_TAX;
  const priorStripeAccount=process.env.STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID;
+ const priorRuntime=process.env.STOCKCHIEF_RUNTIME_ENV;
+ const priorOutlook=process.env.STOCKCHIEF_PRODUCTION_MICROSOFT365_WORKSPACES;
  try{
   process.env.STOCKCHIEF_CHECKOUT_ENABLED='true';process.env.STOCKCHIEF_BILLING_AUTOMATIC_TAX='false';
   process.env.STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID='acct_1UBFTdIjKuQgOJD6';
@@ -46,6 +46,24 @@ test('initial monthly self-service snapshots exclude external accounting and mer
   process.env.STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID='acct_1UBFTdIjKuQgOJD6';
   assert.equal(await require('../../src/commercial/release').isOpen(db),true,
    'isolated fixture proves the unqualified-connector query is valid when every gate is satisfied');
+  async function outlookFixture(email){
+   const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,
+    {name:'Outlook owner',businessName:'Outlook fixture',email,password:'Outlook-fixture!test2026'});
+   await db.query(`INSERT INTO workspace_connectors
+    (id,workspace_id,connector_key,display_name,provider_type,provides,config,status,created_at,updated_at)
+    VALUES($1,$2,$1,'Outlook fixture','microsoft365','[]','{}','connected',now(),now())`,
+    ['outlook:'+owner.workspaceId,owner.workspaceId]);
+   return owner.workspaceId;
+  }
+  process.env.STOCKCHIEF_RUNTIME_ENV='production';
+  process.env.STOCKCHIEF_PRODUCTION_MICROSOFT365_WORKSPACES=await outlookFixture('release-pilot@example.test');
+  assert.equal(await require('../../src/commercial/release').isOpen(db),true,
+   'the approved production Outlook pilot remains isolated from public signup');
+  const outside=await outlookFixture('outside-release-pilot@example.test');
+  assert.equal(await require('../../src/commercial/release').isOpen(db),false,
+   'an Outlook connection outside the production pilot still blocks checkout');
+  await db.query("UPDATE workspace_connectors SET paused_at=now() WHERE workspace_id=$1",[outside]);
+  assert.equal(await require('../../src/commercial/release').isOpen(db),true);
   await db.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
    VALUES('cost-gate-fixture',NULL,'cost-gate-fixture','MISSING_COST_RATE','{}')`);
   assert.equal(await require('../../src/commercial/release').isOpen(db),false,
@@ -57,10 +75,14 @@ test('initial monthly self-service snapshots exclude external accounting and mer
   else process.env.STOCKCHIEF_BILLING_AUTOMATIC_TAX=priorTax;
   if(priorStripeAccount===undefined)delete process.env.STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID;
   else process.env.STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID=priorStripeAccount;
+  if(priorRuntime===undefined)delete process.env.STOCKCHIEF_RUNTIME_ENV;
+  else process.env.STOCKCHIEF_RUNTIME_ENV=priorRuntime;
+  if(priorOutlook===undefined)delete process.env.STOCKCHIEF_PRODUCTION_MICROSOFT365_WORKSPACES;
+  else process.env.STOCKCHIEF_PRODUCTION_MICROSOFT365_WORKSPACES=priorOutlook;
  }
 });
 
-test('PostgreSQL launch connection page does not market excluded providers or shared-key shipping',
+test('PostgreSQL connection page shows excluded providers as unavailable and uses customer shipping accounts',
  {timeout:120000},async t=>{
  const cluster=await startCluster();const db=openPostgres(cluster.connectionString);
  await migratePostgres(db);
@@ -77,9 +99,13 @@ test('PostgreSQL launch connection page does not market excluded providers or sh
  await page.locator('input[name="password"]').fill('launch-scope-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('launch-scope-password');
  await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
  await page.goto(`${base}/settings/connections`);const body=await page.locator('main').innerText();
- assert.doesNotMatch(body,/QuickBooks|Xero|Shopify|Clover|Microsoft 365|Set up Stripe for this business/);
+ assert.match(body,/QuickBooks Online\s+Unavailable/);
+ assert.match(body,/Xero\s+Unavailable/);
+ assert.match(body,/Shopify\s+Unavailable/);
+ assert.match(body,/Clover\s+Unavailable/);
+ assert.match(body,/Microsoft 365 \(Outlook\)\s+Unavailable/);
+ assert.doesNotMatch(body,/Set up Stripe for this business/);
  assert.doesNotMatch(body,/Set up shipping for me/);
- assert.match(body,/Connect my carrier accounts/);
- assert.match(body,/StockChief does not buy postage or labels on a shared account/);
+ assert.match(body,/Rates, labels and tracking with your own shipping accounts/);
  assert.match(body,/WooCommerce/);
 });

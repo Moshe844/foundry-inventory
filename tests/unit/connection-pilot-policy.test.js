@@ -19,7 +19,7 @@ test('account pilot context is verified by storage and cannot be supplied or reu
  process.env.STOCKCHIEF_RUNTIME_ENV='production';const before=reads;assert.equal(await policy.resolveWorkspaceContext(db,sibling),sibling);assert.equal(reads,before);assert.equal(policy.pilotAllowed('shopify',sibling),false);
 });
 
-test('Outlook production testing requires the private pilot and an explicit inventory',t=>{
+test('Outlook keeps only its explicit production pilot inventories when public signup opens',t=>{
  const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_PRIVATE_PRODUCTION_PILOT','STOCKCHIEF_PRODUCTION_MICROSOFT365_WORKSPACES'];
  const saved=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
  t.after(()=>{for(const key of keys){if(saved[key]===undefined)delete process.env[key];else process.env[key]=saved[key];}});
@@ -27,7 +27,9 @@ test('Outlook production testing requires the private pilot and an explicit inve
  process.env.STOCKCHIEF_PRODUCTION_MICROSOFT365_WORKSPACES='outlook-pilot';
  const approved={workspaceId:'outlook-pilot'};
  process.env.STOCKCHIEF_PRIVATE_PRODUCTION_PILOT='0';
- assert.throws(()=>policy.assertNewConnection('microsoft365',approved));
+ assert.doesNotThrow(()=>policy.assertNewConnection('microsoft365',approved));
+ assert.throws(()=>policy.assertNewConnection('microsoft365',{workspaceId:'new-customer'}));
+ assert.throws(()=>policy.assertNewConnection('microsoft365'));
  process.env.STOCKCHIEF_PRIVATE_PRODUCTION_PILOT='1';
  assert.doesNotThrow(()=>policy.assertNewConnection('microsoft365',approved));
  assert.equal(policy.metadata({type:'microsoft365',available:false},approved).available,false);

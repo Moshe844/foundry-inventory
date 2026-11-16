@@ -177,4 +177,30 @@ test('actual provider invoices allocate every cent once with administrator attes
   assert.equal((await db.query(`SELECT status FROM commercial_critical_warnings WHERE fingerprint=$1`,
    [`cost-rate:${first.accountId}:gmail:unclassified_future_method:request::v2`])).rows[0].status,'OPEN');
  });
+ await t.test('connector launch backfill prices only the evidenced historical records',async()=>{
+  const control=require('../../src/commercial/control-service');
+  const fs=require('node:fs'),path=require('node:path');
+  const scope={accountId:first.accountId,workspaceId:first.workspaceId};
+  for(const input of [
+   {provider:'gmail',operation:'reply_email',unit:'message',idempotencyKey:'release-reply',detail:{attempted:true}},
+   {provider:'square',operation:'http_request',unit:'request',idempotencyKey:'release-square',providerVersion:'2026-08-19',
+    detail:{hostname:'connect.squareup.com'}},
+   {provider:'microsoft365',operation:'http_request',unit:'request',idempotencyKey:'release-graph',providerVersion:'v1.0',
+    detail:{hostname:'graph.microsoft.com'}},
+   {provider:'microsoft365',operation:'http_request',unit:'request',idempotencyKey:'release-unknown',providerVersion:'v2.0',
+    detail:{hostname:'graph.microsoft.com'}},
+  ])await control.recordCost(db,scope,{...input,quantity:1});
+  const migration=fs.readFileSync(path.join(__dirname,
+   '../../src/db/postgres-migrations/528-commercial-connector-cost-evidence.sql'),'utf8');
+  await db.query(migration);
+  const rows=(await db.query(`SELECT idempotency_key,amount_minor,detail FROM commercial_cost_events
+   WHERE idempotency_key=ANY($1::text[]) ORDER BY idempotency_key`,
+   [['release-reply','release-square','release-graph','release-unknown']])).rows;
+  assert.equal(rows.length,4);
+  assert.ok(rows.slice(0,3).every(row=>row.amount_minor!==null&&Number(row.amount_minor)===0&&row.detail.costSource));
+  assert.equal(rows[3].amount_minor,null);
+  const states=(await db.query(`SELECT detail->>'providerVersion' AS version,status FROM commercial_critical_warnings
+   WHERE account_id=$1 AND detail->>'provider'='microsoft365' ORDER BY version`,[first.accountId])).rows;
+  assert.deepEqual(states,[{version:'v1.0',status:'RESOLVED'},{version:'v2.0',status:'OPEN'}]);
+ });
 });

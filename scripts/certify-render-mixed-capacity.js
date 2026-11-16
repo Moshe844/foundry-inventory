@@ -33,6 +33,10 @@ const settings={levels:realMixedSmoke?[1]:realMixed?[25]:smoke?[1]:soak?[25]:[5,
   maxP95Ms:2500,maxErrorRate:.02,maxDbConnectionFraction:.7};
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function percentile(sorted,fraction){return Math.round(sorted[Math.max(0,Math.ceil(sorted.length*fraction)-1)]||0);}
+function unexpectedStatus(observation){
+ if(observation.expectedStatus!==undefined)return observation.status!==observation.expectedStatus;
+ return observation.status==='EXCEPTION'||Number(observation.status)>=400;
+}
 function csrf(html){const value=/name="_csrf" value="([^"]+)"/.exec(html)?.[1];
  if(!value)throw Error('CSRF token missing from authenticated page');return value;}
 function browser(base){let cookie='';async function send(method,path,body,form=false,csrfToken=null){
@@ -278,7 +282,10 @@ async function phase(db,agents,level){const rps=Math.min(settings.maxRps,Math.ma
    }
   }catch(error){status='EXCEPTION';size=0;observations.push({kind,status,ms:performance.now()-since,
     error:String(error.message).slice(0,140)});return;}
-  observations.push({kind,status,ms:performance.now()-since,size});
+  // /planning is included in Growth and Pro. Verify that Starter's paywall
+  // still holds under load as a separate expected result.
+  const expectedStatus=kind==='replenishment'?(actor.plan==='starter'?402:200):undefined;
+  observations.push({kind,status,expectedStatus,ms:performance.now()-since,size});
  }
  for(let i=0;i<count;i++){
   const wait=started+i*delay-performance.now();if(wait>0)await sleep(wait);
@@ -297,8 +304,9 @@ async function phase(db,agents,level){const rps=Math.min(settings.maxRps,Math.ma
  }
  await Promise.all(inflight);
  const elapsedMs=performance.now()-started,endCpu=process.cpuUsage(startCpu),endDb=await dbMetrics(db);
- const durations=observations.map(x=>x.ms).sort((a,b)=>a-b),errors=observations.filter(x=>x.status==='EXCEPTION'||
-   Number(x.status)>=400),cpuFraction=(endCpu.user+endCpu.system)/1000/elapsedMs;
+ const durations=observations.map(x=>x.ms).sort((a,b)=>a-b),errors=observations.filter(unexpectedStatus),
+  expectedPlanDenials=observations.filter(x=>x.expectedStatus===402&&x.status===402).length,
+  cpuFraction=(endCpu.user+endCpu.system)/1000/elapsedMs;
  const queue=(await db.query(`SELECT status,count(*)::int AS count FROM stockchief_runtime.jobs
    WHERE idempotency_key LIKE $1 GROUP BY status`,[`${prefix}%`])).rows;
  const queryTelemetry=(await db.query(`SELECT count(*)::int AS measured_operations,
@@ -336,13 +344,13 @@ async function phase(db,agents,level){const rps=Math.min(settings.maxRps,Math.ma
  const result={businesses:level,plannedRequests:count,completed:observations.length,
   durationMs:Math.round(elapsedMs),throughputRps:Number((observations.length/elapsedMs*1000).toFixed(2)),
   p50Ms:percentile(durations,.5),p95Ms:percentile(durations,.95),p99Ms:percentile(durations,.99),
-  errors:errors.length,errorRate:Number((errors.length/Math.max(1,observations.length)).toFixed(4)),
+  errors:errors.length,expectedPlanDenials,errorRate:Number((errors.length/Math.max(1,observations.length)).toFixed(4)),
   errorsByKind:Object.fromEntries([...new Set(errors.map(x=>x.kind))].map(kind=>
    [kind,errors.filter(x=>x.kind===kind).map(x=>x.status).slice(0,12)])),
   errorSamples:errors.slice(0,12).map(x=>({kind:x.kind,status:x.status,error:x.error||null})),
   byKind:Object.fromEntries([...new Set(observations.map(x=>x.kind))].map(kind=>{
    const items=observations.filter(x=>x.kind===kind),sorted=items.map(x=>x.ms).sort((a,b)=>a-b);
-   return [kind,{count:items.length,p95Ms:percentile(sorted,.95),errors:items.filter(x=>x.status==='EXCEPTION'||Number(x.status)>=400).length}];})),
+   return [kind,{count:items.length,p95Ms:percentile(sorted,.95),errors:items.filter(unexpectedStatus).length}];})),
   process:{cpuFraction:Number(cpuFraction.toFixed(3)),rssStartBytes:startMemory,
    rssEndBytes:process.memoryUsage().rss,rssPeakBytes:process.memoryUsage().rss},
   postgres:{start:startDb,end:endDb,maxConnections,maxLockWaiters,maxPoolWaiters,
