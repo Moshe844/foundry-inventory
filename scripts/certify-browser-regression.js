@@ -1,7 +1,8 @@
 'use strict';
 
 const { execFileSync, spawnSync } = require('node:child_process');
-const { writeFileSync } = require('node:fs');
+const { mkdirSync, writeFileSync } = require('node:fs');
+const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { parseArgs } = require('node:util');
 const config = require('../src/config');
@@ -55,9 +56,16 @@ function runSuite(files, env, concurrency) {
   const summary = Object.fromEntries(Array.from(result.stdout?.matchAll(
     /^# (tests|pass|fail|cancelled|skipped|todo) (\d+)\s*$/gm,
   ) || [], ([, key, count]) => [key, Number(count)]));
+  const logDirectory = path.join(config.rootDir, 'data', 'browser-certification');
+  mkdirSync(logDirectory, { recursive: true });
+  const logFile = path.join(logDirectory, `${env.FOUNDRY_RELEASE_REF}-${randomUUID()}.tap`);
+  writeFileSync(logFile, (result.stdout || '') + (result.stderr || ''));
+  console.log(`Saved test output to ${logFile}.`);
   if (result.status !== 0 || !(summary.tests >= files.length) || summary.pass !== summary.tests
       || ['fail', 'cancelled', 'skipped', 'todo'].some(key => summary[key] !== 0)) {
-    if (result.stdout) process.stderr.write(result.stdout);
+    const failures = result.stdout?.split(/(?=^# Subtest:|^not ok \d+)/m)
+      .filter(block => /^not ok \d+/m.test(block));
+    if (failures?.length) process.stderr.write(failures.join('\n'));
     if (result.stderr) process.stderr.write(result.stderr);
     throw result.error || new Error('Browser certification failed or did not run every required test. No passing evidence was recorded.');
   }

@@ -14,6 +14,9 @@ const documentRecovery = new Map([
 
 const { newId } = require('../lib/util');
 const MAINTENANCE_KINDS = Object.freeze(['autopilot.evaluate', 'system.reconcile-business']);
+const GUARD_REQUIRED_KINDS = Object.freeze([
+  ...MAINTENANCE_KINDS, 'assistant.run-goal', 'assistant.run-codex-goal', 'assistant.run-codex-read',
+]);
 
 function hydrate(row) {
   if (!row) return null;
@@ -120,6 +123,64 @@ function recoverExpired(database, options = {}) {
   return database.transaction(async (client) => recover(client, await databaseTime(client, options)), { isolation: 'READ COMMITTED' });
 }
 
+const claimClock = `SELECT now_ms, EXISTS(SELECT 1 FROM stockchief_runtime.jobs
+  WHERE status = 'RUNNING' AND lease_expires_at <= now_ms) AS expired FROM job_clock`;
+
+function selectCandidate(ordering, availableBefore) {
+  return `SELECT id,kind,workspace_id FROM stockchief_runtime.jobs
+    WHERE status IN ('PENDING','RETRY') AND available_at <= ${availableBefore}
+    AND (workspace_id IS NULL OR EXISTS(SELECT 1 FROM public.workspaces w WHERE w.id=jobs.workspace_id AND w.deletion_requested_at IS NULL
+      AND (w.owner_account_id IS NULL OR EXISTS(SELECT 1 FROM public.accounts a WHERE a.id=w.owner_account_id
+        AND NOT EXISTS(SELECT 1 FROM public.platform_account_access access WHERE access.account_id=a.id AND access.disabled_at IS NOT NULL) FOR KEY SHARE SKIP LOCKED)) FOR KEY SHARE SKIP LOCKED))
+    AND ($2::text[] IS NULL OR kind = ANY($2::text[]))
+    AND (workspace_id IS NULL OR public.commercial_job_lane_available(workspace_id,kind))
+    AND (kind NOT IN('import.execute-approved','assistant.run-codex-goal','assistant.run-codex-read') OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
+      WHERE active.workspace_id=jobs.workspace_id AND (active.kind=jobs.kind OR
+       jobs.kind IN('assistant.run-codex-goal','assistant.run-codex-read') AND active.kind IN('assistant.run-codex-goal','assistant.run-codex-read')) AND active.status='RUNNING'))
+    AND (NOT(kind=ANY($3::text[])) OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
+      WHERE active.workspace_id=jobs.workspace_id AND active.kind=ANY($3::text[]) AND active.status='RUNNING'))
+    ORDER BY ${ordering}
+    LIMIT 1 FOR UPDATE SKIP LOCKED`;
+}
+
+const recordClaim = `claimed AS (
+  UPDATE stockchief_runtime.jobs SET status = 'RUNNING',
+    attempt_count = attempt_count + 1, lease_owner = claim_input.owner, lease_token = claim_input.token,
+    lease_expires_at = claim_input.now_ms + claim_input.lease_ms,
+    started_at = COALESCE(started_at, to_timestamp(claim_input.now_ms/1000.0)),
+    updated_at = to_timestamp(claim_input.now_ms/1000.0)
+  FROM claim_input WHERE jobs.id = claim_input.job_id RETURNING jobs.*
+), history AS (
+  INSERT INTO stockchief_runtime.job_events(id,job_id,event_type,detail,created_at)
+  SELECT claim_input.event_id,claimed.id,'CLAIMED',jsonb_build_object('owner',claim_input.event_owner,
+    'leaseExpiresAt',claimed.lease_expires_at,
+    'queueWaitMs',GREATEST(0,claim_input.now_ms-GREATEST(claimed.available_at,floor(extract(epoch FROM claimed.created_at)*1000)::bigint))),
+    claimed.updated_at FROM claimed CROSS JOIN claim_input
+)`;
+
+async function claimOrdinary(database, options, { ordering, suppliedNow, kinds, leaseMs }) {
+  // The scheduler selects the same first candidate as the guarded path.
+  // Expired leases and candidates requiring advisory locks use that path.
+  // For an ordinary job, its row lock, lease and history commit together.
+  const result = await database.query(`WITH job_clock AS MATERIALIZED (
+    SELECT COALESCE($1::bigint, floor(extract(epoch FROM clock_timestamp())*1000)::bigint) AS now_ms
+  ), recovery_clock AS MATERIALIZED (
+    ${claimClock}
+  ), candidate AS MATERIALIZED (
+    ${selectCandidate(ordering, '(SELECT now_ms FROM recovery_clock WHERE NOT expired)')}
+  ), claim_input AS MATERIALIZED (
+    SELECT candidate.id AS job_id, $4::text AS owner, $5::text AS token, recovery_clock.now_ms,
+      $6::bigint AS lease_ms, $7::text AS event_id, $8::jsonb AS event_owner
+    FROM candidate CROSS JOIN recovery_clock
+    WHERE candidate.kind NOT LIKE 'import.%' AND NOT(candidate.kind=ANY($9::text[]))
+  ), ${recordClaim}
+  SELECT claimed.*, recovery_clock.expired OR EXISTS(SELECT 1 FROM candidate) AS needs_guarded_claim
+  FROM recovery_clock LEFT JOIN claimed ON true`,
+  [suppliedNow, kinds, MAINTENANCE_KINDS, String(options.owner), newId('lease'),
+    leaseMs, newId('jobevt'), JSON.stringify(options.owner), GUARD_REQUIRED_KINDS]);
+  return result.rows[0];
+}
+
 async function claim(database, options = {}) {
   if (!options.owner) throw new TypeError('A PostgreSQL worker needs an explicit owner identity.');
   const leaseMs = lease(options);
@@ -133,28 +194,18 @@ async function claim(database, options = {}) {
     : kinds && kinds.every(kind => !MAINTENANCE_KINDS.includes(kind)) ? 'priority, created_at, id'
       : 'CASE WHEN kind=ANY($3::text[]) THEN 50 ELSE priority END, created_at, id';
   const suppliedNow = options.now === undefined ? null : time(options);
+  if (!kinds || kinds.some(kind => !kind.startsWith('import.') && !GUARD_REQUIRED_KINDS.includes(kind))) {
+    const ordinary = await claimOrdinary(database, options, { ordering, suppliedNow, kinds, leaseMs });
+    if (ordinary.id) return hydrate(ordinary);
+    if (!ordinary.needs_guarded_claim) return null;
+  }
   return database.transaction(async (client) => {
     const clock = (await client.query(`WITH job_clock AS MATERIALIZED (
       SELECT COALESCE($1::bigint, floor(extract(epoch FROM clock_timestamp())*1000)::bigint) AS now_ms
-    ) SELECT now_ms, EXISTS(SELECT 1 FROM stockchief_runtime.jobs
-      WHERE status = 'RUNNING' AND lease_expires_at <= now_ms) AS expired FROM job_clock`, [suppliedNow])).rows[0];
+    ) ${claimClock}`, [suppliedNow])).rows[0];
     const now = Number(clock.now_ms);
-    const expires = now + leaseMs;
     if (clock.expired) await recover(client, now);
-    const candidate = await client.query(`SELECT id,kind,workspace_id FROM stockchief_runtime.jobs
-      WHERE status IN ('PENDING','RETRY') AND available_at <= $1
-      AND (workspace_id IS NULL OR EXISTS(SELECT 1 FROM public.workspaces w WHERE w.id=jobs.workspace_id AND w.deletion_requested_at IS NULL
-        AND (w.owner_account_id IS NULL OR EXISTS(SELECT 1 FROM public.accounts a WHERE a.id=w.owner_account_id
-          AND NOT EXISTS(SELECT 1 FROM public.platform_account_access access WHERE access.account_id=a.id AND access.disabled_at IS NOT NULL) FOR KEY SHARE SKIP LOCKED)) FOR KEY SHARE SKIP LOCKED))
-      AND ($2::text[] IS NULL OR kind = ANY($2::text[]))
-      AND (workspace_id IS NULL OR public.commercial_job_lane_available(workspace_id,kind))
-      AND (kind NOT IN('import.execute-approved','assistant.run-codex-goal','assistant.run-codex-read') OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
-        WHERE active.workspace_id=jobs.workspace_id AND (active.kind=jobs.kind OR
-         jobs.kind IN('assistant.run-codex-goal','assistant.run-codex-read') AND active.kind IN('assistant.run-codex-goal','assistant.run-codex-read')) AND active.status='RUNNING'))
-      AND (NOT(kind=ANY($3::text[])) OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
-        WHERE active.workspace_id=jobs.workspace_id AND active.kind=ANY($3::text[]) AND active.status='RUNNING'))
-      ORDER BY ${ordering}
-      LIMIT 1 FOR UPDATE SKIP LOCKED`, [now, kinds, MAINTENANCE_KINDS]);
+    const candidate = await client.query(selectCandidate(ordering, '$1'), [now, kinds, MAINTENANCE_KINDS]);
     if (!candidate.rows.length) return null;
     const selected=candidate.rows[0];
     if(selected.kind.startsWith('import.')||['assistant.run-goal','assistant.run-codex-goal','assistant.run-codex-read'].includes(selected.kind)){
@@ -175,19 +226,11 @@ async function claim(database, options = {}) {
         [selected.workspace_id,maintenance?MAINTENANCE_KINDS:selected.kind.startsWith('assistant.')?['assistant.run-codex-goal','assistant.run-codex-read']:[selected.kind]]);
       if(active.rows.length)return null;
     }
-    const token = newId('lease');
-    const result = await client.query(`WITH claimed AS (
-      UPDATE stockchief_runtime.jobs SET status = 'RUNNING',
-      attempt_count = attempt_count + 1, lease_owner = $2, lease_token = $3, lease_expires_at = $4,
-      started_at = COALESCE(started_at, $5), updated_at = $5 WHERE id = $1 RETURNING *
-    ), history AS (
-      INSERT INTO stockchief_runtime.job_events(id,job_id,event_type,detail,created_at)
-      SELECT $6,id,'CLAIMED',jsonb_build_object('owner',$7::jsonb,'leaseExpiresAt',lease_expires_at,
-        'queueWaitMs',GREATEST(0,$8::bigint-GREATEST(available_at,floor(extract(epoch FROM created_at)*1000)::bigint))),
-        updated_at FROM claimed
-    ) SELECT * FROM claimed`,
-    [selected.id, String(options.owner), token, expires, new Date(now).toISOString(), newId('jobevt'),
-      JSON.stringify(options.owner), now]);
+    const result = await client.query(`WITH claim_input AS MATERIALIZED (
+      SELECT $1::text AS job_id, $2::text AS owner, $3::text AS token, $4::bigint AS now_ms,
+        $5::bigint AS lease_ms, $6::text AS event_id, $7::jsonb AS event_owner
+    ), ${recordClaim} SELECT * FROM claimed`,
+    [selected.id, String(options.owner), newId('lease'), now, leaseMs, newId('jobevt'), JSON.stringify(options.owner)]);
     return hydrate(result.rows[0]);
   }, { isolation: 'READ COMMITTED' });
 }
