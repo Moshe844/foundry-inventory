@@ -134,14 +134,17 @@ async function authenticate(database,authorization){
   const prefix=token.slice(TOKEN_PREFIX.length).split('.')[0];
   return database.transaction(async(client)=>{
     const result=await client.query(`SELECT token.*,connector.status AS connector_status,connector.paused_at,
-        connector.provider_type,connector.display_name,user_record.account_id
+        connector.provider_type,connector.display_name,user_record.account_id,user_record.role,user_record.permissions,user_record.revoked_at AS member_revoked_at
       FROM connector_feed_tokens token
       JOIN workspace_connectors connector ON connector.id=token.connector_id AND connector.workspace_id=token.workspace_id
       JOIN users user_record ON user_record.id=token.created_by_user_id AND user_record.workspace_id=token.workspace_id
       WHERE token.token_prefix=$1 AND token.token_hash=$2 AND token.revoked_at IS NULL FOR UPDATE OF token`,
     [prefix,hash(token)]);
     const row=result.rows[0];
-    if(!row||row.connector_status!=='connected')throw new AuthenticationError('That connection token is invalid or has been revoked.');
+    if(!row||row.member_revoked_at||row.connector_status!=='connected')throw new AuthenticationError('That connection token is invalid or has been revoked.');
+    require('../actions/permissions').assertCan(row,require('../actions/permissions').ADMIN,'use this custom connection token');
+    await require('../operations/postgres-warehouse-access').assertInventoryWide(client,{workspaceId:row.workspace_id,actorId:row.created_by_user_id});
+    await require('../commercial/enforcement').workspace(client,row.workspace_id,'connections.custom_api');
     if(row.paused_at)throw new AuthenticationError('This connection is paused. Resume it before sending more events.');
     await client.query('UPDATE connector_feed_tokens SET last_used_at=$2 WHERE id=$1',[row.id,nowIso()]);
     return {tokenId:row.id,connectorId:row.connector_id,workspaceId:row.workspace_id,

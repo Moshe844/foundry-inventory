@@ -62,8 +62,9 @@ async function process(db,job,options={}){
   if(['failed','canceled','requires_action'].includes(refund.status))throw new ValidationError('Stripe could not complete the refund. Support must review it; it has not been refunded again.');
   if(!['succeeded','pending'].includes(refund.status))throw new ValidationError('Stripe returned an unrecognized refund status.');
   // Authoritative API response: this is not a fabricated signed webhook.
-  await db.transaction(c=>require('./refunds').reconcile(c,{id:'api-refund:'+refund.id,created:refund.created,data:{object:refund}},row.account_id));
-  pending ||= refund.status!=='succeeded';
+  const reconciled=await db.transaction(c=>require('./refunds').reconcile(c,{id:'api-refund:'+refund.id,created:refund.created,data:{object:refund}},row.account_id));
+  if(['failed','canceled'].includes(reconciled.status))throw new ValidationError('Stripe could not complete the refund. Support must review it; it has not been refunded again.');
+  pending ||= reconciled.status!=='succeeded';
  }
  await db.query('UPDATE commercial_guarantee_requests SET status=$2,last_error=NULL,updated_at=now() WHERE id=$1',[row.id,pending?'PENDING':'REFUNDED']);
  if(pending)throw new ValidationError('Stripe is processing your refund. Renewal is stopped; StockChief will check again.');
