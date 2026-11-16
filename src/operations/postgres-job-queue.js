@@ -60,8 +60,9 @@ async function enqueue(database, input = {}) {
   const availableAt = input.availableAt ?? null;
   if (!Number.isSafeInteger(priority) || !Number.isSafeInteger(attempts) || attempts < 1
     || (availableAt !== null && (!Number.isSafeInteger(availableAt) || availableAt < 0))) throw new TypeError('Invalid durable job scheduling values.');
-  return database.transaction(async (client) => {
-    const inserted = await client.query(`WITH job_clock AS MATERIALIZED (
+  // The job and its first event commit in the same SQL statement. A caller
+  // with a surrounding business transaction still supplies its own client.
+  const inserted = await database.query(`WITH job_clock AS MATERIALIZED (
       SELECT COALESCE($9::bigint, floor(extract(epoch FROM clock_timestamp())*1000)::bigint) AS now_ms
     ), inserted AS (
       INSERT INTO stockchief_runtime.jobs
@@ -75,16 +76,15 @@ async function enqueue(database, input = {}) {
     ) SELECT * FROM inserted`,
     [input.id || newId('rjob'), input.workspaceId || null, input.kind, JSON.stringify(input.payload || {}),
       priority, attempts, availableAt, input.idempotencyKey, now, newId('jobevt')]);
-    if (inserted.rows.length) return { job: hydrate(inserted.rows[0]), created: true };
-    // Bind every leading unique-index key. IS NOT DISTINCT FROM prevents
-    // PostgreSQL from narrowing the middle workspace key in large histories.
-    const scoped=Boolean(input.workspaceId);
-    const prior = await client.query(`SELECT * FROM stockchief_runtime.jobs
-      WHERE kind = $1 AND ${scoped?'workspace_id = $2':'workspace_id IS NULL'} AND idempotency_key = ${scoped?'$3':'$2'}`,
+  if (inserted.rows.length) return { job: hydrate(inserted.rows[0]), created: true };
+  // Bind every leading unique-index key. IS NOT DISTINCT FROM prevents
+  // PostgreSQL from narrowing the middle workspace key in large histories.
+  const scoped=Boolean(input.workspaceId);
+  const prior = await database.query(`SELECT * FROM stockchief_runtime.jobs
+    WHERE kind = $1 AND ${scoped?'workspace_id = $2':'workspace_id IS NULL'} AND idempotency_key = ${scoped?'$3':'$2'}`,
     scoped?[input.kind,input.workspaceId,input.idempotencyKey]:[input.kind,input.idempotencyKey]);
-    if (!prior.rows.length) throw new Error('Job ID conflicts with a different idempotency key.');
-    return { job: hydrate(prior.rows[0]), created: false };
-  }, { isolation: 'READ COMMITTED' });
+  if (!prior.rows.length) throw new Error('Job ID conflicts with a different idempotency key.');
+  return { job: hydrate(prior.rows[0]), created: false };
 }
 
 async function recover(client, now) {
@@ -200,7 +200,7 @@ async function complete(database, id, token, outcome = {}, options = {}) {
 }
 
 function completeJob(database, id, token, outcome, options) {
-  return database.transaction(client => completeWithin(client, id, token, outcome, options), { isolation: 'READ COMMITTED' });
+  return completeWithin(database, id, token, outcome, options);
 }
 
 async function completeWithin(client, id, token, outcome, options) {

@@ -67,7 +67,8 @@ test('order and shipment evidence retain physical handover, bounded coverage and
  assert.match(row.shipmentProgress,/SHP-0: delivered · delivered by us/);assert.match(row.shipmentProgress,/SHP-2: packed; SHP-3/);assert.doesNotMatch(row.shipmentProgress,/packed · carrier/);
  const shipping=await assistant.lookup(db,ctx,{view:'shipping'});assert(shipping.rows.some(s=>s.handover==='DELIVERED_BY_US'&&s.handedOver));assert(shipping.rows.some(s=>s.status==='PACKED'&&!s.handedOver));
  const registry=require('../../src/reports/postgres-registry');assert.equal(registry.get('shipments').fields.handover,'text');assert.equal(registry.get('shipments').fields.handed_over,'text');
- const other={workspaceId:'not-this-workspace',actorId:'not-this-actor'},foreign=await assistant.lookup(db,other,{view:'sales_orders'});assert.deepEqual(foreign.rows,[]);assert.equal(foreign.extent.totalRows,0,'A tenant-scoped internal read cannot return another business\'s orders');
+ const other={workspaceId:'not-this-workspace',actorId:'not-this-actor'};
+ await assert.rejects(assistant.lookup(db,other,{view:'sales_orders'}),{code:'forbidden',status:403});
  assert.equal((await db.query('SELECT count(*)::int n FROM movements')).rows[0].n,0,'Reading delivery evidence never moves stock');
 });
 
