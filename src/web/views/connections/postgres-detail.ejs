@@ -22,7 +22,7 @@
     <span class="badge <%= displayStatus==='Connected'?'badge--ok':displayStatus==='Error'?'badge--warn':'badge--muted' %>"><%= displayStatus %></span></div>
 </header>
 
-<% if(displayStatus==='Error'){ %><div class="notice notice--warn section"><div><strong>This connection needs attention.</strong><p><%= helpers.connectionPresentation.issue(connection) %></p></div></div><% } %>
+<% if(displayStatus==='Error'){ const retryAt=Date.parse(connection.config?.syncRetryAt||''); %><div class="notice notice--warn section" role="status"><div><strong>This connection needs attention.</strong><p><%= helpers.connectionPresentation.issue(connection) %></p><% if(Number.isFinite(retryAt)&&retryAt>Date.now()){ %><p>Next automatic retry: <time data-local-time datetime="<%= new Date(retryAt).toISOString() %>"><%= helpers.dateTime(new Date(retryAt)) %></time>.</p><% } %></div></div><% } %>
 <% if(connection.provider_type==='woocommerce'&&currentUser.role==='owner'){ %><details class="card" id="reauthorize-woocommerce"><summary>Update WooCommerce authorization</summary><div class="card-body"><%- include('woocommerce-connect',{provider,postgresMode:true,csrfToken}) %></div></details><% } %>
 <% if(isMailbox){ %><%- include('mail-preparation',{mailPreparation,connection}) %><% } %>
 <% if(locals.connectionIssues&&(connectionIssues.total||connectionIssues.focused)){ %>

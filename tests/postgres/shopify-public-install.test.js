@@ -23,6 +23,8 @@ test('public Shopify installation authenticates before sign-in and preserves pai
      return Response.json({access_token:'public-access-'+calls.length,refresh_token:'public-refresh-'+calls.length,expires_in:3600,refresh_token_expires_in:7776000,scope:scopes.join(',')});
    }
    const body=JSON.parse(options.body);
+   if(body.query.includes('CatalogBootstrap'))return Response.json({data:{shop:{currencyCode:'USD'},productVariants:{nodes:[{id:'gid://shopify/ProductVariant/1',title:'Default Title',sku:'FIXTURE-1',price:'5.00',selectedOptions:[],product:{id:'gid://shopify/Product/1',title:'Fixture product',status:'ACTIVE',isGiftCard:false},inventoryItem:{id:'gid://shopify/InventoryItem/1',tracked:true,requiresShipping:true,inventoryLevels:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}}}}],pageInfo:{hasNextPage:false,endCursor:null}}}});
+   if(body.query.includes('query Locations'))return Response.json({data:{locations:{nodes:[{id:'gid://shopify/Location/1',name:'Fixture warehouse',isActive:true}],pageInfo:{hasNextPage:false,endCursor:null}}}});
    if(body.query.includes('StockChiefWebhooks'))return Response.json({data:{webhookSubscriptions:{nodes:[]}}});
    if(body.query.includes('AddWebhook'))return Response.json({data:{webhookSubscriptionCreate:{userErrors:[],webhookSubscription:{id:'gid://shopify/WebhookSubscription/'+calls.length}}}});
    throw Error('Unexpected provider operation: '+url.pathname);
@@ -41,6 +43,9 @@ test('public Shopify installation authenticates before sign-in and preserves pai
  const fixtures=[];
  for(const plan of ['starter','growth','pro'])fixtures.push(await business(plan));
  const map=Object.fromEntries(fixtures.map(f=>[f.owner.workspaceId,[f.shop,'legacy-fixture.myshopify.com','full-fixture.myshopify.com','denied-fixture.myshopify.com']]));process.env.STOCKCHIEF_PRODUCTION_SHOPIFY_PILOTS=JSON.stringify(map);
+ await t.test('production lists Stripe on every plan without enabling an unconfigured merchant connection',async()=>{
+  for(const f of fixtures){await login(f);const page=await f.agent.get('/settings/connections');assert.equal(page.status,200);assert.match(page.text,/data-integration-card="stripe"/);assert.match(page.text,/disabled data-stripe-production-pending/);assert(!/data-provider-type="stripe"/.test(page.text),'Unconfigured live authorization must not be offered');assert.match(page.text,/data-integration-card="cardknox"/);}
+ });
  for(const f of fixtures)await t.test(f.shop,async()=>{
    const before=(await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows;
    const start=await begin(f);assert.equal(start.status,303,start.text);const url=new URL(start.headers.location);
@@ -60,6 +65,12 @@ test('public Shopify installation authenticates before sign-in and preserves pai
    assert.equal(config.shopifyProfile,'public');assert.equal(config.shopifyClientId,'public-app');assert.equal(grant.shopifyClientId,'public-app');assert(grant.refreshToken);
    const handoff=(await db.query('SELECT * FROM shopify_public_installs WHERE linked_connector_id=$1',[connection.id])).rows[0];assert.equal(handoff.ciphertext,null,'Successful linking erases temporary credentials');
    assert.deepEqual((await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows,before,'Stripe subscription and selected plan are unchanged');
+   const queue=require('../../src/operations/postgres-job-queue'),handlers=require('../../src/operations/postgres-runtime-handlers').create();
+   const firstSync=await queue.processOne(db,handlers,{kinds:['provider.catalog-sync'],workspaceId:f.owner.workspaceId,owner:'public-shopify-worker-fixture'});
+   assert.equal(firstSync?.status,'COMPLETED',JSON.stringify(firstSync?.lastError));
+   assert.equal((await db.query("SELECT count(*)::int n FROM connection_external_records WHERE workspace_id=$1 AND connector_id=$2 AND entity_type='sku'",[f.owner.workspaceId,connection.id])).rows[0].n,1,'The actual background worker reads and retains the Shopify product');
+   const afterSync=(await db.query('SELECT last_synced_at,last_error FROM workspace_connectors WHERE id=$1',[connection.id])).rows[0];assert(afterSync.last_synced_at);assert.equal(afterSync.last_error,null);
+   assert.deepEqual((await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows,before,'The first background update preserves the subscription and plan');
    assert.equal(await require('../../src/commercial/release').isOpen(db),true,'An approved private Shopify connection must preserve public checkout');
    const event={eventId:'shipping-observation-'+f.owner.workspaceId,type:'fulfillment.reported',data:{}};
    const eventAuth={workspaceId:f.owner.workspaceId,connectorId:connection.id,actorId:f.owner.userId};

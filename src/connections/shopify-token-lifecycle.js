@@ -12,12 +12,12 @@ function key(clientId,shop){
 async function run(database,clientId,shop,operation){
  const lock=key(clientId,shop),current=held.getStore();
  if(current?.active&&current.key===lock)return operation(current.database);
- if(typeof database.withSessionLock!=='function')throw new ValidationError('Shopify authorization is temporarily unavailable. Your working connection is preserved.');
+ if(typeof database.withSessionLock!=='function')throw Object.assign(new ValidationError('Shopify authorization is temporarily unavailable. Your working connection is preserved.'),{code:'SHOPIFY_SESSION_LOCK_UNAVAILABLE',transient:true,retryable:true});
  const result=await database.withSessionLock(lock,async session=>{
    const lease={key:lock,database:session,active:true};
    try{return await held.run(lease,()=>operation(session));}finally{lease.active=false;}
  });
- if(result?.busy===true)throw Object.assign(new ValidationError('Shopify authorization is finishing for this store. Please try again in a moment. Your working connection is unchanged.'),{transient:true,retryable:true});
+ if(result?.busy===true)throw Object.assign(new ValidationError('Shopify authorization is finishing for this store. Please try again in a moment. Your working connection is unchanged.'),{code:'SHOPIFY_AUTHORIZATION_BUSY',transient:true,retryable:true});
  return result;
 }
 module.exports={key,run};
