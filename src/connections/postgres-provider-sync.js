@@ -7,6 +7,7 @@ const defaultProviders=require('./providers/registry');
 
 
 function scopedDatabase(client){return {query:(statement,values=[])=>client.query(statement,values),
+  ...(typeof client.withSessionLock==='function'?{withSessionLock:(key,operation)=>client.withSessionLock(key,operation)}:{}),
   transaction:(operation,options)=>typeof client.transaction==='function'?client.transaction(operation,options):operation(client)};}
 
 function providerData(record){
@@ -143,7 +144,7 @@ async function sync(job,client,providers=defaultProviders){
     discovered_locations=$3,auto_mapped=$4,needs_mapping=$5,completed_at=$6 WHERE id=$1`,
   [runId,products.length,locations.length,autoMapped,needsMapping,completedAt]);
   await client.query(`UPDATE workspace_connectors SET status='connected',setup_status=$3,last_synced_at=$4,
-    last_error=NULL,config=jsonb_set(config::jsonb-'syncRetryAt'-'syncFailureCount','{syncCadenceStartedAt}',to_jsonb($5::text),true)::text,
+    last_error=NULL,config=jsonb_set(config::jsonb-'syncRetryAt'-'syncFailureCount'-'syncFailureCode','{syncCadenceStartedAt}',to_jsonb($5::text),true)::text,
     updated_at=$4 WHERE workspace_id=$1 AND id=$2`,
   [job.workspaceId,connectorId,adapter.integrationClass==='accounting'?connection.setup_status:needsMapping?'MAPPING':'CONNECTED',completedAt,startedAt]);
   await client.query(`UPDATE connection_issues SET status='RESOLVED',resolved_at=$3,updated_at=$3

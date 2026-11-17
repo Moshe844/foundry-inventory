@@ -1,5 +1,13 @@
 'use strict';
 const {newId}=require('../lib/util');
+const messages=Object.freeze({
+ SHOPIFY_SESSION_LOCK_UNAVAILABLE:'Your Shopify store is connected, but StockChief could not start its secure update. The update will retry automatically; your saved products and stock are kept.',
+ SHOPIFY_AUTHORIZATION_BUSY:'Another update is finishing for this Shopify store. This update will retry automatically; your saved products and stock are kept.',
+ PROVIDER_RATE_LIMITED:'The provider asked StockChief to wait before checking again. The update will retry automatically.',
+ PROVIDER_UNREACHABLE:'StockChief could not reach the provider. The update will retry automatically; your saved records are kept.',
+});
+function failureCode(error){return Object.hasOwn(messages,error.code)?error.code:error.status===429?'PROVIDER_RATE_LIMITED':error.code==='PROVIDER_UNREACHABLE'?'PROVIDER_UNREACHABLE':null;}
+function explanation(config){return config&&Object.hasOwn(messages,config.syncFailureCode)?messages[config.syncFailureCode]:null;}
 
 function accessRejected(error){
  const appError=String(error.providerBody?.error||'');
@@ -29,9 +37,9 @@ async function record(db,connection,runId,error){
    [newId('conissue'),connection.workspace_id,connection.id,'sync-access:'+connection.id,'The provider refused the saved authorization. StockChief stopped automatic checks for this connection and preserved its records.','Reconnect the provider and check its permissions. Updates resume only after the connection is active again.',at]);
   }else await c.query(`UPDATE workspace_connectors SET config=(config::jsonb||$3::jsonb)::text,last_error=$4,updated_at=$5
    WHERE workspace_id=$1 AND id=$2 AND status='connected' AND paused_at IS NULL AND updated_at IS NOT DISTINCT FROM $6`,
-  [connection.workspace_id,connection.id,JSON.stringify({syncRetryAt:retryAt,syncFailureCount:failureCount}),error.status===429?'The provider asked StockChief to wait. Updates will retry automatically.':'The latest provider check did not finish. Your saved records are preserved; StockChief will retry automatically.',at,connection.updated_at]);
+  [connection.workspace_id,connection.id,JSON.stringify({syncRetryAt:retryAt,syncFailureCount:failureCount,syncFailureCode:failureCode(error)}),explanation({syncFailureCode:failureCode(error)})||(error.status===429?'The provider asked StockChief to wait. Updates will retry automatically.':'The latest provider check did not finish. Your saved records are preserved; StockChief will retry automatically.'),at,connection.updated_at]);
  },{isolation:'SERIALIZABLE',retrySafe:true});
  if(rejected){error.retryable=false;delete error.retryAfterMs;}else error.retryAfterMs=delay;
  return {accessRejected:rejected,retryAt:rejected?null:retryAt};
 }
-module.exports={accessRejected,record};
+module.exports={accessRejected,record,failureCode,explanation};
