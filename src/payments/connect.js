@@ -568,6 +568,10 @@ async function readAccount(accountId, key) {
     throw error;
   }
 }
+async function readStandardAccount(accountId,key){
+  if(!/^acct_[A-Za-z0-9]+$/.test(accountId||''))throw new ValidationError('Stripe did not identify a valid merchant account.');
+  return get(`${ACCOUNTS}/${encodeURIComponent(accountId)}`,key);
+}
 
 /**
  * Ask Stripe whether this account can take a payment yet.
@@ -711,5 +715,5 @@ module.exports = {
   platformModeEnabled, platform,
   authorizeUrl, complete, openOnboarding, relink, embeddedSession, refresh, disconnect,
   describe, rowFor, isUnfinished, forget,
-  post,readAccount,canTakeCharges,
+  post,readAccount,readStandardAccount,canTakeCharges,
 };

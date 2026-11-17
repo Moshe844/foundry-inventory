@@ -16,11 +16,16 @@ function hydrate(row){if(!row)return null;return {id:row.id,workspaceId:row.work
   externalCustomerId:row.external_customer_id,externalInvoiceId:row.external_invoice_id,hostedUrl:row.hosted_url,
   lastError:row.last_error,createdAt:row.created_at,updatedAt:row.updated_at,openedAt:row.opened_at,paidAt:row.paid_at};}
 
-async function accountFor(database,workspaceId,provider='stripe'){
-  const row=(await database.query(`SELECT * FROM payment_connect_accounts
-    WHERE workspace_id=$1 AND provider=$2`,[workspaceId,provider])).rows[0]||null;
+async function accountFor(database,workspaceId,provider='stripe',{refund=false}={}){
+  const row=(await database.query(`SELECT p.*,c.config AS connector_config,c.status AS connector_status,c.paused_at AS connector_paused_at FROM payment_connect_accounts p LEFT JOIN workspace_connectors c ON c.id=p.connector_id AND c.workspace_id=p.workspace_id
+    WHERE p.workspace_id=$1 AND p.provider=$2`,[workspaceId,provider])).rows[0]||null;
   if(!row)throw new ValidationError('Connect this inventory’s own payment account before asking a customer to pay online.');
-  if(Number(row.charges_enabled)!==1)throw new ValidationError('The connected payment account is not approved to take customer payments yet.');
+  if(provider==='stripe'&&require('./stripe-live-qualification').production()){
+    const q=require('./stripe-live-qualification'),proof=require('../connections/synchronization-policy').object(row.connector_config).stripeConnectEvidence;
+    if(Number(row.livemode)!==1||!q.valid(proof,row.provider_account_id))throw new ValidationError('Review this inventory’s live Stripe connection before requesting a payment.');
+    if(!refund&&(!q.allowed(workspaceId)||row.connector_status!=='connected'||row.connector_paused_at))throw new ValidationError('New Stripe payment requests are paused for this inventory. Existing records are kept.');
+  }
+  if(!refund&&Number(row.charges_enabled)!==1)throw new ValidationError('The connected payment account is not approved to take customer payments yet.');
   return row;
 }
 
@@ -30,6 +35,10 @@ async function providerContext(account,options={},database=null){
   if(account.provider!=='stripe')return {workspaceId:account.workspace_id,providerAccountId:account.provider_account_id};
   const secretKey=process.env.STRIPE_SECRET_KEY;
   if(!secretKey)throw new ValidationError('Stripe collection is not configured on this StockChief installation.');
+  if(require('./stripe-live-qualification').production()){
+    const current=await require('./connect').readStandardAccount(account.provider_account_id,secretKey);
+    require('./stripe-live-qualification').evidence(current,{accountId:account.provider_account_id,liveMode:Number(account.livemode)===1});
+  }
   return {workspaceId:account.workspace_id,stripeSecretKey:secretKey,stripeAccountId:account.provider_account_id};
 }
 
@@ -67,6 +76,7 @@ async function queueRequest(database,ctx,orderId,input={}){
     const account=(await client.query(`SELECT * FROM payment_connect_accounts
       WHERE workspace_id=$1 AND provider=$2 FOR UPDATE`,[ctx.workspaceId,providerName])).rows[0];
     if(!account)throw new ValidationError('Connect this inventory’s own payment account before asking a customer to pay online.');
+    if(providerName==='stripe'&&require('./stripe-live-qualification').production())await accountFor(scopedDatabase(client),ctx.workspaceId,providerName);
     if(Number(account.charges_enabled)!==1)throw new ValidationError('The connected payment account is not approved to take customer payments yet.');
     if(providerName==='cardknox'&&!require('./postgres-cardknox').enabled())throw new ValidationError('Sola customer payments have not been activated on this installation.');
     const other=(await client.query(`SELECT provider FROM payment_requests WHERE workspace_id=$1 AND sales_order_id=$2
@@ -194,10 +204,28 @@ async function receiveVerifiedEvent(database,workspaceId,providerName,event,opti
     await require('../commercial/control-service').recordCost(client,costScope,{provider:providerName,
       operation:'payment_webhook_reconciliation',unit:'event',quantity:1,providerVersion:'verified-webhook-v1',
       idempotencyKey:`payment-webhook:${providerName}:${workspaceId}:${externalEventId}`,
+      ...(providerName==='stripe'?{amountMinor:0,costBasis:'NO_EXTRA_STRIPE_WEBHOOK_PROCESSING_FEE',costConfidence:'HIGH',costSource:'Local verified payment reconciliation; API requests and shared resource costs are recorded separately'}:{}),
       detail:{essentialReconciliation:true,customerUsageExempt:true}});
     const finish=async(outcome,paymentId=null)=>{await client.query(`UPDATE payment_provider_events SET outcome=$2,
       payment_id=$3,processed_at=$4 WHERE id=$1`,[eventId,outcome,paymentId,nowIso()]);
       return {applied:Boolean(paymentId),replayed:false,outcome,paymentId,requestId:request?.id||null};};
+    const stripeEventType=String(event.type||'').replace(/^v\d+\./,'');
+    if(providerName==='stripe'&&['account.updated','account.application.deauthorized'].includes(stripeEventType)){
+      const account=(await client.query("SELECT p.*,c.config FROM payment_connect_accounts p JOIN workspace_connectors c ON c.id=p.connector_id AND c.workspace_id=p.workspace_id WHERE p.workspace_id=$1 AND p.provider='stripe' AND p.provider_account_id=$2 FOR UPDATE OF p,c",[workspaceId,event.account])).rows[0];
+      if(!account)return finish('The merchant connection changed; no account state was replaced.');
+      const config=require('../connections/synchronization-policy').object(account.config),created=Number(event.created);
+      if(!Number.isSafeInteger(created)||created<0)throw new ValidationError('The Stripe account event needs its provider timestamp.');
+      if(created<Number(config.stripeConnectLastEventCreated||0))return finish('An older Stripe account update was retained without replacing the current state.');
+      const revoke=stripeEventType==='account.application.deauthorized';
+      if(!revoke&&config.stripeConnectRevoked===true)return finish('Stripe authorization remains revoked until the owner reconnects.');
+      let proof=null;
+      if(!revoke){try{proof=require('./stripe-live-qualification').evidence(event.data?.object,{accountId:event.account,liveMode:event.livemode===true,verifiedEvent:true});}catch{}}
+      const ready=!revoke&&Boolean(proof)&&require('./connect').canTakeCharges(event.data.object);
+      await client.query("UPDATE payment_connect_accounts SET charges_enabled=$3,checked_at=$4,updated_at=$4 WHERE workspace_id=$1 AND provider='stripe' AND provider_account_id=$2",[workspaceId,event.account,ready?1:0,at]);
+      const changed={stripeConnectLastEventCreated:created,...(proof?{stripeConnectEvidence:proof}:{}),...(revoke?{stripeConnectRevoked:true}:{})};
+      await client.query("UPDATE workspace_connectors SET config=(config::jsonb||$3::jsonb)::text,status=$4,setup_status=$5,last_error=$6,updated_at=$7 WHERE workspace_id=$1 AND id=$2",[workspaceId,account.connector_id,JSON.stringify(changed),revoke||!proof?'error':'connected',revoke||!proof?'REAUTHORIZATION_REQUIRED':'CONNECTED',revoke?'Stripe authorization was revoked. Reconnect this business account to restore payment requests.':!proof?'Review this merchant account’s Stripe permissions and payment setup.':null,at]);
+      return finish(revoke?'Stripe authorization revoked; payment history preserved.':proof?'Stripe merchant account status updated.':'Stripe merchant needs review before new payment requests.');
+    }
     if(read.kind==='IGNORED')return finish(read.reason||'Nothing StockChief acts on.');
     if(!request)return finish('No payment request in this inventory matches that provider invoice.');
     if(read.kind==='FAILED'){await client.query(`UPDATE payment_requests SET last_error=$2,updated_at=$3 WHERE id=$1`,
@@ -276,7 +304,7 @@ async function queueCustomerReturnRefund(database,ctx,customerReturnId,input={})
       return {queued:false,replayed:false,noProviderPayment:true,amountMinor};}
     const providerName=paid.provider;
     await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'payments.customer');
-    await accountFor(scopedDatabase(client),ctx.workspaceId,providerName);
+    await accountFor(scopedDatabase(client),ctx.workspaceId,providerName,{refund:true});
     const id=newId('payrefund');const at=nowIso();
     await client.query(`INSERT INTO payment_refund_requests
       (id,workspace_id,customer_return_id,payment_request_id,provider,amount_minor,currency,
@@ -305,7 +333,7 @@ async function executeRefundEffect(database,workspaceId,effectId,options={}){
       WHERE workspace_id=$1 AND id=$2`,[workspaceId,effect.payload.refundRequestId])).rows[0];
     if(!refund||refund.status!=='PENDING')throw Object.assign(new ValidationError('That refund is no longer pending.'),
       {code:'payment_refund_not_pending',status:409});
-    const account=await accountFor(database,workspaceId,effect.provider);
+    const account=await accountFor(database,workspaceId,effect.provider,{refund:true});
     const provider=options.provider||providerRegistry.get(effect.provider);
     providerCalled=true;
     const paymentContext=await providerContext(account,options,database);
