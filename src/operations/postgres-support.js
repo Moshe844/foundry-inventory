@@ -5,7 +5,7 @@ const SUPPORT_EMAIL='support@stockchiefhq.com';
 async function create(database,scope,input){
  const email=String(scope.email||input.email||'').trim().toLowerCase();
  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254)throw new ValidationError('Enter a valid reply email address.');
- const subject=requireText(input.subject,'Subject',{max:180}),body=requireText(input.body,'What happened',{max:10000});
+ const files=input.attachments||[],written=String(input.body||'').trim(),body=requireText(written||(files.length?'Sent '+files.length+(files.length===1?' attachment':' attachments')+'.':''),'What happened',{max:10000}),subject=requireText(String(input.subject||'').trim()||body.split('\n')[0].slice(0,120),'Subject',{max:180});
  const key=requireText(input.requestKey,'Request reference',{max:100});
  const source=typeof input.sourcePath==='string'&&input.sourcePath.startsWith('/')&&!input.sourcePath.startsWith('//')?input.sourcePath.split('?')[0].slice(0,240):null;
  const requesterHash=crypto.createHash('sha256').update(scope.accountId||String(scope.ip||'unknown')).digest('hex');
@@ -19,8 +19,10 @@ async function create(database,scope,input){
   const row=(await client.query(`INSERT INTO support_requests(id,account_id,workspace_id,request_key,contact_email,subject,body,source_path,requester_hash)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[id,scope.accountId||null,scope.workspaceId||null,key,email,subject,body,source,requesterHash])).rows[0];
   const routing=await require('./postgres-support-conversations').routeRequest(client,scope,id,input);
+  const attached=require('./support-attachments');
+  await attached.save(client,{requestId:id,accountId:scope.accountId||null,files});
   const signature='StockChief Support\n'+SUPPORT_EMAIL+'\nhttps://stockchiefhq.com';
-  const messages=[{to:SUPPORT_EMAIL,replyTo:email,subject:'['+id+'] '+subject,text:'Support request: '+id+'\nFrom: '+email+'\nPage: '+(source||'Not supplied')+'\n\n'+body+'\n\n'+signature},
+  const messages=[{to:SUPPORT_EMAIL,replyTo:email,subject:'['+id+'] '+subject,text:'Support request: '+id+'\nFrom: '+email+'\nPage: '+(source||'Not supplied')+'\n\n'+body+attached.emailLine(files)+'\n\n'+signature},
     {to:email,replyTo:SUPPORT_EMAIL,subject:'StockChief received your request: '+subject,text:'We received your support request.\n\nReference: '+id+'\nSubject: '+subject+'\n\nYour message is saved in StockChief. We will reply to this email if we need more information. Please do not send passwords or connection secrets.\n\n'+signature}];
   const jobs=require('./postgres-job-queue'),seal=require('../connections/credentials').encrypt;
   for(const [index,message]of messages.entries())await jobs.enqueue({query:(...a)=>client.query(...a),transaction:fn=>fn(client)},

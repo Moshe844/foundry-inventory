@@ -119,6 +119,8 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.post('/autopilot/product-facts',multipart({limit:20*1024*1024+65536,maxFiles:1,memoryBudgetBytes:32*1024*1024}));
   app.post('/autopilot/procedure-originals',multipart({limit:20*1024*1024+65536,maxFiles:1,memoryBudgetBytes:32*1024*1024}));
   app.post('/autopilot/receiving-voice-notes',multipart({limit:12*1024*1024+65536,maxFiles:1,memoryBudgetBytes:24*1024*1024}));
+  // Support messages carry up to 5 files of 10 MB, at most 20 MB together.
+  app.post(['/support/message','/support/requests/:id/reply','/commercial-admin/support/:id/reply'],multipart({limit:20*1024*1024+65536,maxFiles:5,memoryBudgetBytes:48*1024*1024}));
   app.post('/autopilot/voice-paperwork',multipart({limit:12*1024*1024+65536,maxFiles:1,memoryBudgetBytes:24*1024*1024}));
   app.use(multipart({limit:config.uploads.maxBytes,maxFiles:config.uploads.maxFiles}));
   // One bounded JSON field carries up to 500 checked packing profiles.
