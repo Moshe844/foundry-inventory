@@ -12,7 +12,7 @@ test('public Shopify installation authenticates before sign-in and preserves pai
  const auth=require('../../src/domain/postgres-auth-service'),ent=require('../../src/commercial/entitlements'),adapter=require('../../src/connections/providers/shopify'),store=require('../../src/connections/postgres-credential-store');
  const calls=[],scopes=['read_orders','read_products','read_locations','read_inventory','read_fulfillments','write_products','write_inventory'];
  global.fetch=async(value,options)=>{
-   const url=new URL(value);assert.match(url.hostname,/^(?:browser-)?(starter|growth|pro|legacy|other|denied|full)-fixture\.myshopify\.com$/,'Only synthetic providers are contacted');
+   const url=new URL(value);assert.match(url.hostname,/^(?:browser-)?(starter|growth|pro|legacy|other|denied|full|lifecycle)-fixture\.myshopify\.com$/,'Only synthetic providers are contacted');
    calls.push({path:url.pathname,body:options.body});
    if(url.pathname==='/admin/oauth/access_token'){
      const form=new URLSearchParams(options.body);assert.equal(form.get('client_id'),'public-app');assert.equal(form.get('client_secret'),'public-secret');
@@ -63,6 +63,16 @@ test('public Shopify installation authenticates before sign-in and preserves pai
    assert.throws(()=>adapter.verifyWebhook({headers:{...headers,'x-shopify-hmac-sha256':crypto.createHmac('sha256','legacy-secret').update(rawBody).digest('base64')},rawBody,credentials:grant,connection:{...connection,config}}),/signature verification/);
    const refreshed=await adapter.refreshCredentials({...grant,accessTokenExpiresAt:new Date(Date.now()-1).toISOString()});assert.equal(refreshed.refreshed,true);assert.equal(refreshed.credentials.shopifyClientId,'public-app');
    const beforeReopen=calls.length,reopen=await begin(f);assert.equal(reopen.headers.location,'/integrations/shopify/connect');const opened=await claim(f);assert.equal(opened.headers.location,connected.headers.location);assert.equal(calls.length,beforeReopen,'Reopening does not replace its working token or register duplicate hooks');
+   const reconnect=await require('../../src/connections/postgres-provider-service').beginAuthorization(db,{workspaceId:f.owner.workspaceId,actorId:f.owner.userId},{providerType:'shopify',shop:f.shop,connectorId:connection.id,shopifyProfile:'legacy'},'https://app.stockchiefhq.com');
+   assert.equal(new URL(reconnect.redirectUrl).searchParams.get('client_id'),'public-app','Public reconnects cannot be switched to the old app by caller input');
+   assert.deepEqual(await store.get(db,f.owner.workspaceId,connection.id,'provider'),grant,'Starting reconnect preserves the working token');
+ });
+ await t.test('Settings starts every new paid-plan connection with the public app',async()=>{
+  for(const plan of ['starter','growth','pro']){
+   const f=await business(plan);f.shop='settings-'+plan+'-fixture.myshopify.com';map[f.owner.workspaceId]=[f.shop];process.env.STOCKCHIEF_PRODUCTION_SHOPIFY_PILOTS=JSON.stringify(map);
+   const before=calls.length,started=await require('../../src/connections/postgres-provider-service').beginAuthorization(db,{workspaceId:f.owner.workspaceId,actorId:f.owner.userId},{providerType:'shopify',shop:f.shop,shopifyProfile:'legacy'},'https://app.stockchiefhq.com'),url=new URL(started.redirectUrl);
+   assert.equal(url.searchParams.get('client_id'),'public-app');assert.equal(url.searchParams.get('redirect_uri'),'https://app.stockchiefhq.com/settings/connections/shopify/callback');assert.equal(calls.length,before);
+  }
  });
  await t.test('the actual sign-in and owner-link screens work on desktop and phone for all three plans',async()=>{
    const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));}),base='http://127.0.0.1:'+server.address().port;
@@ -125,6 +135,10 @@ test('public Shopify installation authenticates before sign-in and preserves pai
    const grant={shop:'legacy-fixture.myshopify.com',accessToken:'old-working-token'};await store.put(db,f.owner.workspaceId,id,'provider',grant);
    await consent(f,'legacy-fixture.myshopify.com');const rejected=await claim(f);assert.equal(rejected.status,400);assert.match(rejected.text,/older Shopify app/);
    assert.deepEqual(await store.get(db,f.owner.workspaceId,id,'provider'),grant);assert.equal((await db.query('SELECT status FROM workspace_connectors WHERE id=$1',[id])).rows[0].status,'connected');
+   const reconnect=await require('../../src/connections/postgres-provider-service').beginAuthorization(db,{workspaceId:f.owner.workspaceId,actorId:f.owner.userId},{providerType:'shopify',shop:'legacy-fixture.myshopify.com',connectorId:id,shopifyProfile:'public'},'https://app.stockchiefhq.com');
+   assert.equal(new URL(reconnect.redirectUrl).searchParams.get('client_id'),'legacy-app','An existing custom grant keeps its app even when public credentials exist');
+   const repeated=await require('../../src/connections/postgres-provider-service').beginAuthorization(db,{workspaceId:f.owner.workspaceId,actorId:f.owner.userId},{providerType:'shopify',shop:'legacy-fixture.myshopify.com'},'https://app.stockchiefhq.com');
+   assert.equal(repeated.connectorId,id);assert.equal(new URL(repeated.redirectUrl).searchParams.get('client_id'),'legacy-app','Adding the same store again also preserves its original app');
    const rawBody=Buffer.from('{}'),headers={'x-shopify-shop-domain':grant.shop,'x-shopify-hmac-sha256':crypto.createHmac('sha256','legacy-secret').update(rawBody).digest('base64')};adapter.verifyWebhook({headers,rawBody,credentials:grant});
  });
  await t.test('restricted users and cross-account claims cannot link a store',async()=>{
@@ -147,6 +161,43 @@ test('public Shopify installation authenticates before sign-in and preserves pai
    const restart=await second.get('/integrations/shopify/install').query(signed({shop,timestamp:timestamp()}));assert.equal(restart.status,303);
    const retired=(await db.query('SELECT status,ciphertext FROM shopify_public_installs WHERE id=$1',[pending.id])).rows[0];assert.equal(retired.status,'FAILED');assert.equal(retired.ciphertext,null);
    const replay=await first.get('/integrations/shopify/callback').query(firstCallback);assert.equal(replay.status,400);assert.equal(calls.length,before,'The retired browser cannot mint another token');
+ });
+
+ await t.test('a new Settings authorization cannot replace another inventory connection',async()=>{
+  const f=await business('growth');map[f.owner.workspaceId]=[fixtures[0].shop];process.env.STOCKCHIEF_PRODUCTION_SHOPIFY_PILOTS=JSON.stringify(map);
+  const before=calls.length;
+  await assert.rejects(require('../../src/connections/postgres-provider-service').beginAuthorization(db,{workspaceId:f.owner.workspaceId,actorId:f.owner.userId},{providerType:'shopify',shop:fixtures[0].shop},'https://app.stockchiefhq.com'),/different inventory/);
+  assert.equal(calls.length,before);
+ });
+ await t.test('an unclaimed handoff cannot overwrite a newer completed connection',async()=>{
+  const f=await business('growth');f.shop='other-fixture.myshopify.com';map[f.owner.workspaceId]=[f.shop];process.env.STOCKCHIEF_PRODUCTION_SHOPIFY_PILOTS=JSON.stringify(map);
+  await consent(f);await login(f);
+  const row=(await db.query("SELECT * FROM shopify_public_installs WHERE shop=$1 AND status='AUTHORIZED'",[f.shop])).rows[0],result=require('../../src/connections/credentials').decrypt(row);
+  result.credentials.accessToken='newer-working-grant';
+  const pending=require('../../src/connections/authorization-intent').draft(f.owner.workspaceId,f.owner.userId,'shopify',{name:'Shopify',provides:scopes,config:{shopifyProfile:'public',shopifyClientId:'public-app',autoImportCatalog:false,autoImportOpeningStock:false}});
+  const id=await require('../../src/connections/postgres-provider-service').finishAuthorization(db,pending,f.owner.userId,result,null,{enforceLaunchPolicy:true}),before=await store.get(db,f.owner.workspaceId,id,'provider');
+  const refused=await claim(f);assert.equal(refused.status,400);assert.match(refused.text,/working credentials have been kept/);assert.deepEqual(await store.get(db,f.owner.workspaceId,id,'provider'),before);
+ });
+
+ await t.test('public consent, Settings reconnect and refresh use the same store lock',async()=>{
+  const f=await business('growth');f.shop='lifecycle-fixture.myshopify.com';map[f.owner.workspaceId]=[f.shop];process.env.STOCKCHIEF_PRODUCTION_SHOPIFY_PILOTS=JSON.stringify(map);
+  const lifecycle=require('../../src/connections/shopify-token-lifecycle'),service=require('../../src/connections/postgres-provider-service'),lock=lifecycle.key('public-app',f.shop),start=await begin(f),query=callback(start.headers.location),before=calls.length;
+  await db.withSessionLock(lock,async()=>{
+   const busy=await f.agent.get('/integrations/shopify/callback').query(query);assert.equal(busy.status,400);assert.match(busy.text,/finishing/);assert.equal(calls.length,before);
+   assert.equal((await db.query("SELECT status FROM shopify_public_installs WHERE shop=$1",[f.shop])).rows[0].status,'AUTHORIZING','A busy callback remains retryable');
+  });
+  assert.equal((await f.agent.get('/integrations/shopify/callback').query(query)).status,303);await login(f);assert.equal((await claim(f)).status,303);
+  let connection=await require('../../src/connections/postgres-service').get(db,f.owner.workspaceId,(await db.query("SELECT id FROM workspace_connectors WHERE workspace_id=$1 AND provider_type='shopify'",[f.owner.workspaceId])).rows[0].id);
+  const started=await service.beginAuthorization(db,{workspaceId:f.owner.workspaceId,actorId:f.owner.userId},{providerType:'shopify',shop:f.shop,connectorId:connection.id},'https://app.stockchiefhq.com'),reconnectQuery=callback(started.redirectUrl),saved=await store.get(db,f.owner.workspaceId,connection.id,'provider'),callsBefore=calls.length;
+  await db.withSessionLock(lock,async()=>{
+   await assert.rejects(service.completeOAuth(db,'shopify',reconnectQuery,'https://app.stockchiefhq.com'),/finishing/);assert.equal(calls.length,callsBefore);assert.deepEqual(await store.get(db,f.owner.workspaceId,connection.id,'provider'),saved);
+  });
+  connection=await service.completeOAuth(db,'shopify',reconnectQuery,'https://app.stockchiefhq.com');
+  const expired={...await store.get(db,f.owner.workspaceId,connection.id,'provider'),accessTokenExpiresAt:new Date(Date.now()-1000).toISOString()};await store.put(db,f.owner.workspaceId,connection.id,'provider',expired);
+  const refreshBefore=calls.length;
+  await db.withSessionLock(lock,async()=>{await assert.rejects(service.loadProviderCredentials(db,connection,adapter),/finishing/);assert.equal(calls.length,refreshBefore);});
+  const renewed=await service.loadProviderCredentials(db,connection,adapter);assert.notEqual(renewed.accessToken,expired.accessToken);const refreshedCalls=calls.length;
+  assert.deepEqual(await service.loadProviderCredentials(db,connection,adapter),renewed);assert.equal(calls.length,refreshedCalls,'A second read reuses the committed current token');
  });
 
  await t.test('bare Shopify protocol URLs refuse unsigned and expired flows without provider calls',async()=>{

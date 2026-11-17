@@ -1,6 +1,8 @@
 'use strict';
 const {AuthenticationError,ValidationError}=require('../domain/errors');
 const config=require('../config');
+function initialProfile(){return process.env.SHOPIFY_PUBLIC_CLIENT_ID&&process.env.SHOPIFY_PUBLIC_CLIENT_SECRET?'public':'legacy';}
+function available(){return initialProfile()==='public'||config.connections.shopify.configured;}
 
 // The profile is retained with the grant. Never try both application secrets:
 // a valid signature for one Shopify app must not authorize the other app.
@@ -17,4 +19,4 @@ function forGrant(credentials={},connection={}){
  if(bound&&bound!==app.clientId)throw Object.assign(new AuthenticationError('This Shopify authorization belongs to a different application. Contact StockChief support.'),{code:'PROVIDER_CONFIGURATION_REQUIRED'});
  return app;
 }
-module.exports={profile,forGrant};
+module.exports={profile,forGrant,initialProfile,available};

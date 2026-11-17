@@ -47,6 +47,7 @@ test('credit warnings open the correct monthly capacity checkout and verified ad
   await page.waitForFunction(()=>!document.querySelector('[data-ai-credit-notice]').hidden,{},{timeout:22000});const banner=page.locator('[data-ai-credit-notice]');assert(await banner.isVisible(),'80% usage is visible outside the collapsed credit details');
   const link=banner.getByRole('link',{name:'Add more AI credits'});assert.equal(await link.getAttribute('href'),'/settings/billing?add=ai#ai-credit-packs');
   await link.click();await page.waitForURL('**/settings/billing?add=ai#ai-credit-packs');
+  const usagePage=await f.browser.get('/usage');assert.equal(usagePage.status,200);assert.match(usagePage.text,/settings\/billing\?add=ai#ai-credit-packs/);assert.match(usagePage.text,/settings\/billing\?add=documents#document-packs/);assert.match(usagePage.text,/data-usage-category="agent_documents"/);
   assert.equal(await page.locator('#extra-capacity').getAttribute('open'),'');assert(await page.locator('#ai-credit-packs').isVisible());
   assert(await page.locator('#ai-credit-packs button').isDisabled(),'Unqualified AI packs cannot take payment');
   assert.equal(await page.getByRole('heading',{name:'Auto-top-up',exact:true}).count(),0,'No empty legacy auto-top-up controls');
