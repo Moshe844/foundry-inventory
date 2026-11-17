@@ -46,7 +46,7 @@ test('real Chromium proves native PostgreSQL transfer-versus-buy planning, appro
     [newId('rpol'),ctx.workspaceId,transferItem.skuIds[0],destination.id,at,newId('rpol'),source.id]);
 
     await page.goto(`${base}/autopilot`);
-    assert.match(await page.locator('main').innerText(),/Decide what StockChief may handle without you/);
+    assert.match(await page.locator('main').innerText(),/What StockChief does on its own/);
     assert.equal(await page.locator('.job').count(),9);
     for(const job of ['Review incoming supplier invoices','Move stock between locations','Reorder and place purchase orders',
       'Keep replenishment levels up to date','Email suppliers','Answer customers','Ask customers to pay',
