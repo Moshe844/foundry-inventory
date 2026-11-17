@@ -46,10 +46,10 @@
 </header>
 
 <% const canRestore=needsAuthorization&&currentUser.role==='owner'&&provider?.available; %>
-<% if(displayStatus==='Error'||canRestore){ %>
-<section class="cx-alert<%= displayStatus==='Error'?' is-bad':'' %>" aria-label="<%= canRestore?'Restore provider authorization':'Connection needs attention' %>">
+<% if(displayStatus==='Error'||canRestore){ const retryAt=Date.parse(connection.config?.syncRetryAt||''); %>
+<section class="cx-alert<%= displayStatus==='Error'?' is-bad':'' %>" role="status" aria-label="<%= canRestore?'Restore provider authorization':'Connection needs attention' %>">
   <div class="cx-alert__text">
-    <% if(displayStatus==='Error'){ %><strong>This connection needs attention.</strong><p><%= helpers.connectionPresentation.issue(connection) %><%= canRestore?' Your records, matches and history are kept.':'' %></p>
+    <% if(displayStatus==='Error'){ %><strong>This connection needs attention.</strong><p><%= helpers.connectionPresentation.issue(connection) %><%= canRestore?' Your records, matches and history are kept.':'' %></p><% if(Number.isFinite(retryAt)&&retryAt>Date.now()){ %><p>Next automatic retry: <time data-local-time datetime="<%= new Date(retryAt).toISOString() %>"><%= helpers.dateTime(new Date(retryAt)) %></time>.</p><% } %>
     <% }else{ %><strong>Sign in again to <%= providerName %></strong><p>This restores the existing connection. Its records, mappings and history are kept.</p><% } %>
     <% if(canRestore&&provider.authorizationPrerequisite){ %><p><strong>Account sign-in needed.</strong> <%= provider.authorizationPrerequisite.message %> <a href="<%= provider.authorizationPrerequisite.href %>" target="_blank" rel="noopener noreferrer"><%= provider.authorizationPrerequisite.label %></a></p><% } %>
   </div>

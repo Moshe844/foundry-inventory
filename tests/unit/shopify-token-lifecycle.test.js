@@ -13,3 +13,7 @@ test('late inherited async work acquires a new session after the original lease 
 test('a busy store never runs the operation and remains retryable',async()=>{
  let attempted=false;await assert.rejects(life.run({withSessionLock:async()=>({busy:true})},'public-app','fixture.myshopify.com',()=>{attempted=true;}),error=>error.transient===true&&error.retryable===true&&/finishing/.test(error.message));assert.equal(attempted,false);
 });
+
+test('a handle without session locking refuses Shopify token access with a safe diagnostic code',async()=>{
+ let attempted=false;await assert.rejects(life.run({query:async()=>{}},'public-app','fixture.myshopify.com',()=>{attempted=true;}),error=>error.code==='SHOPIFY_SESSION_LOCK_UNAVAILABLE'&&error.transient===true&&error.retryable===true);assert.equal(attempted,false);
+});
