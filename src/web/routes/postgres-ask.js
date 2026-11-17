@@ -185,7 +185,10 @@ function createPostgresAskRouter(database,options={}){
   router.get('/ask/health',asyncRoute(async(req,res)=>{
     res.set('Cache-Control','no-store');
     if(await pilot.selected(database,req.ctx)){const health=await require('../../assistant/postgres-ask-health').read(database,req.ctx);return res.status(health.ok?200:503).json(health);}
-    const ok=Boolean(options.aiProvider||config.ai.configured);return res.status(ok?200:503).json({ok,message:ok?'Ask is ready.':'Ask is temporarily offline. You can keep using inventory, orders and reports.'});
+    const cost=await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId),
+      creditBalance=cost?{remaining:cost.credits.remaining,included:cost.credits.included,low:cost.creditWarning,exhausted:cost.creditsBlocked}:null,
+      ok=Boolean(options.aiProvider||config.ai.configured)&&!cost?.paused;
+    return res.status(ok?200:503).json({ok,creditBalance,message:cost?.creditsBlocked?'AI credits are used up. Add credits in Plan & billing or wait for your allowance to renew.':ok?'Ask is ready.':'Ask is temporarily unavailable. Your saved work is kept. You can keep using inventory, orders and reports.'});
   }));
   async function deliveredGoal(req,id=req.params.id){
     await pilot.access(database,req.ctx);

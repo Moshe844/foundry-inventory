@@ -1,0 +1,6 @@
+
+/* Monthly capacity checkout: readable amounts and aligned controls. */
+.sc-capacity-body{padding:20px}.sc-capacity-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:18px;margin:20px 0}.sc-capacity-card{border:1px solid var(--border,#dce0ec);border-radius:14px;padding:20px;display:flex;flex-direction:column;gap:10px;background:var(--surface,#fff);scroll-margin-top:110px}.sc-capacity-card h3,.sc-capacity-card p{margin:0}.sc-capacity-card form{margin-top:auto;display:grid;gap:12px}.sc-capacity-card input{width:100%;box-sizing:border-box}.sc-capacity-price strong{font-size:1.6rem}.sc-capacity-note{font-size:.875rem;color:var(--text-muted,#536078)}.sc-capacity-order{padding:16px 0;border-top:1px solid var(--border,#dce0ec)}.sc-credit-notice{display:flex;gap:16px;align-items:center;justify-content:space-between;margin:12px 18px}.sc-credit-notice p{margin:6px 0 0}.sc-credit-notice>a{flex-shrink:0}@media(max-width:600px){.sc-credit-notice{align-items:stretch;flex-direction:column}.sc-capacity-body{padding:14px}}
+.sc-credit-notice[hidden]{display:none}
+
+.sc-capacity-card p.notice{display:block;word-break:normal}.sc-capacity-card p.notice a{display:inline;white-space:normal}

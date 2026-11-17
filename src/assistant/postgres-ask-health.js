@@ -29,8 +29,11 @@ async function read(db,ctx){
  if(!readiness.allowanceAvailable)return readiness;
  const credits=await require('../commercial/entitlements').meterState(db,commercialAccess.scope,'ai_work_credits',
   {subscription:commercialAccess.subscription});
+ const creditBalance={remaining:credits.remaining,included:credits.included,
+  low:credits.included>0&&credits.remaining!==null&&credits.remaining<=credits.included*.2,
+  exhausted:credits.remaining!==null&&credits.remaining<=0};
  if(credits.remaining!==null&&credits.remaining<=0)return {...readiness,ok:false,allowanceAvailable:false,
-  reason:'credits_exhausted',periodEnd,message:'AI credits are used up. See your renewal date and available credit add-ons in Plan & billing.'};
- return {...readiness,periodEnd};
+  reason:'credits_exhausted',periodEnd,creditBalance,message:'AI credits are used up. See your renewal date and available credit add-ons in Plan & billing.'};
+ return {...readiness,periodEnd,creditBalance};
 }
 module.exports={state,sweep,read};

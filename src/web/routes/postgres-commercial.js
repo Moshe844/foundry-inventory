@@ -142,7 +142,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     return res.page('commercial/billing',{title:'Plan & billing',backTo:{href:'/settings',label:'Settings'},nav:'settings',room:true,searchableSettingsSections:require('../presentation/search-pages').settingsSections,summary,usageWarnings,invoices,aiCost:req.ctx?.workspaceId?await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId):null,
       guarantee:await require('../../commercial/subscription-guarantee').quote(database,scope.accountId),
       pendingChanges,upgradeOutcome,scheduleUnavailable,billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database),
-      capacityProducts:await require('../../commercial/capacity-addons').catalog(database,{subscription:summary.subscription}),capacityOrders:await require('../../commercial/capacity-addons').list(database,scope.accountId),
+      capacityFocus:['ai','documents','inventory'].includes(req.query.add)?req.query.add:null,capacityPaymentPending:req.query.capacity==='pending',capacityProducts:await require('../../commercial/capacity-addons').catalog(database,{subscription:summary.subscription}),capacityOrders:await require('../../commercial/capacity-addons').list(database,scope.accountId),
       packs:addons.currentPacks(await addons.packs(database,scope)),topups:await addons.topups(database,scope),purchaseKey:newId('purchasekey'),
       purchases:(await database.query('SELECT * FROM commercial_usage_purchases WHERE account_id=$1 ORDER BY created_at DESC LIMIT 50',[scope.accountId])).rows,
       planPortal:release.stagingTestCheckout()&&Boolean(process.env.STOCKCHIEF_STAGING_PORTAL_CONFIGURATION_ID),

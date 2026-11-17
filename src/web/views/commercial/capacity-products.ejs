@@ -1,0 +1,42 @@
+<link rel="stylesheet" href="/capacity-topups.css?v=<%= locals.assetVersion||'current' %>">
+<% const selected=locals.capacityFocus||'', anchor=p=>p.id==='agent-monthly-credits'?'ai-credit-packs':p.id==='agent-monthly-documents'?'document-packs':p.id==='agent-location-inventory'?'inventory-packs':p.id;
+ const descriptions={
+ 'agent-monthly-credits':'5,000 additional AI credits each month, shared across your account. Ask and AI file reading use the same balance.',
+ 'agent-monthly-documents':'500 additional AI document readings each month, shared across your account. AI readings also use AI credits.',
+ 'agent-location-inventory':'One additional inventory and five additional locations in the selected inventory. Available on Starter and Growth.',
+ 'agent-pro-edi':'EDI access on Pro. A supported provider account and trading-partner setup are also required.'};
+%>
+<details class="rm-panel ox-billing-section" id="extra-capacity" <%= selected?'open':'' %>>
+ <summary class="rm-panel__head"><h2>Extra capacity</h2></summary>
+ <div class="sc-capacity-body">
+  <p>Keep your current plan and add the capacity you need. These are monthly subscriptions, billed separately even if your plan is annual. They renew until cancelled. Extra usage does not unlock features from a higher plan.</p>
+  <div class="sc-capacity-grid">
+  <% if(checkoutOpen)for(const p of capacityProducts){
+    const unlimited=summary.meters.find(m=>m.meter===p.meter)?.hardLimit===null,
+      awaitingReview=p.awaiting_ai_review, renewing=summary.subscription?.stripe_customer_id&&!summary.subscription.cancel_at_period_end&&!summary.subscription.refunded_at,
+      ready=p.stripe_price_id&&!awaitingReview&&!unlimited&&renewing;
+  %>
+   <article class="sc-capacity-card" id="<%= anchor(p) %>" data-capacity-product="<%= p.id %>">
+    <h3><%= p.label %></h3><p class="sc-capacity-price"><strong><%= money(p.monthly_amount_minor,p.currency) %></strong> / month per pack</p>
+    <p><%= descriptions[p.id]||'Adds '+number(p.units_per_pack)+' '+p.meter.replaceAll('_',' ')+'.' %></p>
+    <% if(p.capacity_scope==='INVENTORY'){ %><p>Applies to the inventory selected in this browser tab.</p><% } %>
+    <% if(unlimited){ %><p class="notice">Already included under your accepted terms. No extra pack is needed.</p>
+    <% }else if(awaitingReview||!p.stripe_price_id){ %><p class="notice">This add-on is temporarily unavailable. <a href="/support">Contact support</a> for help. No payment will be taken.</p>
+    <% }else if(!renewing){ %><p class="notice">An active renewing subscription is needed before adding capacity.</p><% } %>
+    <form method="post" action="/billing/capacity" data-capacity-form data-pack-price="<%= p.monthly_amount_minor %>" data-pack-currency="<%= p.currency %>">
+     <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="productId" value="<%= p.id %>"><input type="hidden" name="purchaseKey" value="<%= purchaseKey %>:<%= p.id %>">
+     <label class="rm-field"><span>Number of packs</span><input type="number" name="quantity" value="1" min="1" max="<%= p.meter==='agent_edi'?1:1000 %>" step="1" required <%= ready?'':'disabled' %>></label>
+     <p data-capacity-total aria-live="polite">Total: <%= money(p.monthly_amount_minor,p.currency) %> / month</p>
+     <button type="submit" class="rm-btn" <%= ready?'':'disabled' %>>Review secure checkout</button>
+    </form>
+    <p class="sc-capacity-note">Capacity is added after payment is confirmed. Cancelling stops the next renewal; paid capacity remains available through the date shown below.</p>
+   </article>
+  <% } %>
+  </div>
+  <% if(capacityOrders.length){ %><h3>Your add-ons</h3><% } %>
+  <% for(const o of capacityOrders){ %><div class="sc-capacity-order"><p><strong><%= o.quantity %> × <%= o.label %></strong> · <%= o.status==='ACTIVE'?(o.cancel_at_period_end?'This add-on ends on ':'Paid through ')+helpers.dateTime(o.paid_through):o.status==='PENDING'?'Awaiting payment':'Cancelled' %></p>
+   <% if(o.stripe_subscription_id&&o.status!=='CANCELLED'&&!o.cancel_at_period_end){ %><form method="post" action="/billing/capacity/<%= o.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button type="submit" class="rm-btn rm-btn--ghost">Cancel this add-on at renewal</button></form><% } %>
+  </div><% } %>
+ </div>
+</details>
+<script src="/capacity-topups.js?v=<%= locals.assetVersion||'current' %>" defer></script>

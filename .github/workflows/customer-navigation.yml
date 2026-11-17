@@ -111,6 +111,11 @@ jobs:
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/authority-redesign-plans.test.js tests/postgres/authority-plan-enforcement.test.js tests/postgres/customer-polish-browser.test.js 2>&1 | tee output/customer-navigation-ci/authority-design-plans.log
+      - name: Capacity top-ups, credit warnings and unchanged plan boundaries
+        if: ${{ !cancelled() && matrix.group == 'core' && steps.test_ready.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=1 tests/postgres/capacity-topups-browser.test.js tests/postgres/agent-plan-addons.test.js 2>&1 | tee output/customer-navigation-ci/capacity-topups.log
       - name: Click every customer destination
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'crawl' }}
         run: |

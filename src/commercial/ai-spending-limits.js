@@ -17,7 +17,10 @@ async function save(db,ctx,input){
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 async function availability(db,workspaceId,actorId=null){if(!workspaceId)return null;const scope=await entitlements.ownerScopeForWorkspace(db,workspaceId),[cost,credits]=await Promise.all([require('./model-cost-budget').status(db,workspaceId),entitlements.meterState(db,scope,'ai_work_credits')]);
- const creditsBlocked=credits.remaining!==null&&credits.remaining<=0,creditWarning=credits.included>0&&(credits.capacityUsed||0)>=credits.included*.8;
+ const creditsBlocked=credits.remaining!==null&&credits.remaining<=0,
+   // Purchased and carried credits are usable too. A successful top-up must
+   // clear the warning even when the included monthly credits are exhausted.
+   creditWarning=credits.included>0&&credits.remaining!==null&&credits.remaining<=credits.included*.2;
  let nativeTestAllowance=null;
  if(actorId&&process.env.STOCKCHIEF_STAGING_NATIVE_COST_APPROVALS&&process.env.STOCKCHIEF_RUNTIME_ENV==='staging'){
   try{const access=await require('../assistant/postgres-codex-pilot').access(db,{workspaceId,actorId},{enabled:true}),funding=(await db.query('SELECT funding_workspace_id FROM stockchief_runtime.codex_pilot_workspace_access WHERE workspace_id=$1 AND owner_account_id=$2',[workspaceId,scope.accountId])).rows[0],approval=require('./staging-native-cost-approval').approved({accountId:scope.accountId,fundingWorkspaceId:funding?.funding_workspace_id,nativeTransport:true,goalRuntime:'codex-staging',fundingActive:Boolean(access.pilot?.enabled&&!access.pilot.stopped&&Date.parse(access.pilot.period_ends_at)>Date.now())});if(approval)nativeTestAllowance={maximumMinor:approval.maximumMinor,expiresAt:approval.expiresAt,available:!creditsBlocked&&cost.accountMinor<Math.max(cost.accountCapMinor,approval.maximumMinor)&&cost.workspaceMinor<Math.max(cost.workspaceCapMinor,approval.maximumMinor)};}catch(error){if(!['forbidden','validation_error','not_found','entitlement_required'].includes(error.code))throw error;}
