@@ -15,4 +15,10 @@ test('Starter Growth and Pro enforce native authority, transfer scope and unchan
    assert.equal((await autonomy.listCapabilities(db,ctx.workspaceId)).find(row=>row.capability==='inventory_transfers').granted,plan==='pro','Rejected requests never save a hidden higher-plan grant');
    assert.deepEqual((await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows,before);
  });
+ await db.query('UPDATE users SET revoked_at=now() WHERE id=$1',[ctx.actorId]);
+ const auth=require('../../src/domain/postgres-auth-service');
+ assert.equal(await auth.defaultWorkspaceFor(db,f.owner.accountId),null);
+ assert.deepEqual(await auth.listWorkspacesForAccount(db,f.owner.accountId),[]);
+ assert.equal(await auth.getMembership(db,ctx.workspaceId,f.owner.accountId),null);
+
 });
