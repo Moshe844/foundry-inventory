@@ -8,6 +8,9 @@ test('public Shopify installation authenticates before sign-in and preserves pai
  await require('../../src/db/migrate-postgres').migratePostgres(db);
  process.env.STOCKCHIEF_RUNTIME_ENV='production';process.env.SHOPIFY_CLIENT_ID='legacy-app';process.env.SHOPIFY_CLIENT_SECRET='legacy-secret';
  process.env.SHOPIFY_PUBLIC_CLIENT_ID='public-app';process.env.SHOPIFY_PUBLIC_CLIENT_SECRET='public-secret';process.env.STOCKCHIEF_PRODUCTION_SHOPIFY_PILOTS='{}';
+ process.env.STOCKCHIEF_CHECKOUT_ENABLED='true';process.env.STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID=require('../../src/commercial/stripe-live-fee-evidence').accountId;
+ await db.query('UPDATE commercial_release_control SET checkout_enabled=true,economics_approved_at=now(),readiness_approved_at=now() WHERE singleton=true');
+ await db.query("UPDATE commercial_critical_warnings SET status='RESOLVED'");
  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:crypto.randomUUID(),connectionPublicOrigin:'https://app.stockchiefhq.com'});
  const auth=require('../../src/domain/postgres-auth-service'),ent=require('../../src/commercial/entitlements'),adapter=require('../../src/connections/providers/shopify'),store=require('../../src/connections/postgres-credential-store');
  const calls=[],scopes=['read_orders','read_products','read_locations','read_inventory','read_fulfillments','write_products','write_inventory'];
@@ -57,6 +60,16 @@ test('public Shopify installation authenticates before sign-in and preserves pai
    assert.equal(config.shopifyProfile,'public');assert.equal(config.shopifyClientId,'public-app');assert.equal(grant.shopifyClientId,'public-app');assert(grant.refreshToken);
    const handoff=(await db.query('SELECT * FROM shopify_public_installs WHERE linked_connector_id=$1',[connection.id])).rows[0];assert.equal(handoff.ciphertext,null,'Successful linking erases temporary credentials');
    assert.deepEqual((await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows,before,'Stripe subscription and selected plan are unchanged');
+   assert.equal(await require('../../src/commercial/release').isOpen(db),true,'An approved private Shopify connection must preserve public checkout');
+   const event={eventId:'shipping-observation-'+f.owner.workspaceId,type:'fulfillment.reported',data:{}};
+   const eventAuth={workspaceId:f.owner.workspaceId,connectorId:connection.id,actorId:f.owner.userId};
+   const events=require('../../src/connections/postgres-event-ingestion');
+   assert.equal((await events.ingest(db,eventAuth,event)).status,'IGNORED');
+   assert.equal((await events.ingest(db,eventAuth,event)).replayed,true);
+   const eventCosts=(await db.query("SELECT amount_minor,detail FROM commercial_cost_events WHERE workspace_id=$1 AND provider='shopify' AND operation='event_ingestion'",[f.owner.workspaceId])).rows;
+   assert.equal(eventCosts.length,1,'A replay cannot count an event twice');
+   assert.equal(Number(eventCosts[0].amount_minor),0);assert.equal(eventCosts[0].detail.costBasis,'NO_EXTRA_SHOPIFY_EVENT_INGESTION_FEE');
+   assert.equal(await require('../../src/commercial/release').isOpen(db),true,'Receiving a private Shopify event must preserve public checkout');
    assert.equal((await db.query('SELECT count(*)::int n FROM movements WHERE workspace_id=$1',[f.owner.workspaceId])).rows[0].n,0,'Authorization does not import starting stock');
    const rawBody=Buffer.from('{"id":42}'),headers={'x-shopify-shop-domain':f.shop,'x-shopify-hmac-sha256':crypto.createHmac('sha256','public-secret').update(rawBody).digest('base64')};
    adapter.verifyWebhook({headers,rawBody,credentials:grant,connection:{...connection,config}});
@@ -66,6 +79,16 @@ test('public Shopify installation authenticates before sign-in and preserves pai
    const reconnect=await require('../../src/connections/postgres-provider-service').beginAuthorization(db,{workspaceId:f.owner.workspaceId,actorId:f.owner.userId},{providerType:'shopify',shop:f.shop,connectorId:connection.id,shopifyProfile:'legacy'},'https://app.stockchiefhq.com');
    assert.equal(new URL(reconnect.redirectUrl).searchParams.get('client_id'),'public-app','Public reconnects cannot be switched to the old app by caller input');
    assert.deepEqual(await store.get(db,f.owner.workspaceId,connection.id,'provider'),grant,'Starting reconnect preserves the working token');
+ });
+ await t.test('checkout exception requires both the configured inventory and exact store',async()=>{
+  const release=require('../../src/commercial/release'),f=fixtures[0],connection=(await db.query("SELECT id,provider_account_id FROM workspace_connectors WHERE workspace_id=$1 AND provider_type='shopify'",[f.owner.workspaceId])).rows[0];
+  assert.equal(await release.isOpen(db),true);
+  try{await db.query('UPDATE workspace_connectors SET provider_account_id=$2 WHERE id=$1',[connection.id,'unapproved-fixture.myshopify.com']);assert.equal(await release.isOpen(db),false,'A foreign store in a pilot inventory remains unqualified');}
+  finally{await db.query('UPDATE workspace_connectors SET provider_account_id=$2 WHERE id=$1',[connection.id,connection.provider_account_id]);}
+  const original=process.env.STOCKCHIEF_PRODUCTION_SHOPIFY_PILOTS;
+  try{const changed={...map};delete changed[f.owner.workspaceId];process.env.STOCKCHIEF_PRODUCTION_SHOPIFY_PILOTS=JSON.stringify(changed);assert.equal(await release.isOpen(db),false);process.env.STOCKCHIEF_PRODUCTION_SHOPIFY_PILOTS='{invalid';assert.equal(await release.isOpen(db),false);}
+  finally{process.env.STOCKCHIEF_PRODUCTION_SHOPIFY_PILOTS=original;}
+  assert.equal(await release.isOpen(db),true);
  });
  await t.test('Settings starts every new paid-plan connection with the public app',async()=>{
   for(const plan of ['starter','growth','pro']){
