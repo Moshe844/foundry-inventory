@@ -15,7 +15,7 @@ const workflows = {
     'accounting-ledger', 'completion-money-ui', 'reporting-ui', 'agent-customer-email-orders'],
   paymentsAndFulfilment: ['subscription-guarantee', 'customer-settings-controls', 'payments-ui', 'commercial-lifecycle-ui', 'customer-returns-ui',
     'supplier-returns-ui', 'shipping-ui', 'warehouse-waves-ui', 'warehouse-pages'],
-  connectionsAndMail: ['connection-popup-return', 'connector-events', 'shopify-webhooks',
+  connectionsAndMail: ['connection-popup-return', 'connector-events', 'shopify-production-pilot', 'shopify-scope-handoff', 'shopify-webhooks',
     'square-webhooks', 'square-shared-webhook', 'mail-ui'],
 };
 

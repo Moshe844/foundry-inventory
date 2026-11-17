@@ -31,10 +31,10 @@ test('native Shopify permission handoff persists the request, rejects partial co
    const response=await page.request.post(base+'/settings/connections/shopify/authorize',{form:{_csrf:csrf,shop},maxRedirects:0});assert.equal(response.status(),303);
    const url=response.headers().location,state=(await db.query("SELECT * FROM connection_authorization_states WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1",[owner.workspace_id])).rows[0];
    assert.equal(state.actor_id,owner.id);const metadata=typeof state.metadata==='string'?JSON.parse(state.metadata):state.metadata;assert(writes.every(s=>metadata.requestedScopes.includes(s)));
-   await page.goto(url);await page.getByRole('link',{name:'Approve fixture permissions'}).click();return state.connector_id;
+   await page.goto(url);await page.getByRole('link',{name:'Approve fixture permissions'}).click();return state.id;
  }
- const rejected=await start();assert.match(await page.locator('body').innerText(),/not approved all requested permissions/);assert.equal((await db.query('SELECT count(*) AS n FROM connection_credentials WHERE workspace_id=$1 AND connector_id=$2',[owner.workspace_id,rejected])).rows[0].n,'0');
- approved=true;const accepted=await start();await page.waitForURL(base+'/settings/connections/'+accepted);
+ const rejected=await start();assert.match(await page.locator('body').innerText(),/not approved all requested permissions/);assert.equal((await db.query('SELECT connector_id FROM connection_authorization_states WHERE id=$1',[rejected])).rows[0].connector_id,null);assert.equal((await db.query('SELECT count(*) AS n FROM connection_credentials WHERE workspace_id=$1',[owner.workspace_id])).rows[0].n,'0');
+ approved=true;const acceptedState=await start();const accepted=(await db.query('SELECT connector_id FROM connection_authorization_states WHERE id=$1',[acceptedState])).rows[0].connector_id;assert(accepted);await page.waitForURL(base+'/settings/connections/'+accepted);
  const connection=(await db.query('SELECT status,capabilities FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',[owner.workspace_id,accepted])).rows[0];
  assert.equal(connection.status,'connected');const capabilities=typeof connection.capabilities==='string'?JSON.parse(connection.capabilities):connection.capabilities;assert(writes.every(s=>capabilities.includes(s)));
  assert.equal(calls,2);assert.equal((await db.query('SELECT count(*) AS n FROM movements WHERE workspace_id=$1',[owner.workspace_id])).rows[0].n,'0');assert.deepEqual(errors,[]);

@@ -20,7 +20,7 @@ const providerOrigin=(requestOrigin)=>config.connections.publicOrigin||requestOr
 async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
   const registry=options.providers||defaultProviders;
   const providerType=requireText(input.providerType,'Provider',{max:40}).toLowerCase();
-  if(registry===defaultProviders)await launchPolicy.assertWorkspaceConnection(database,providerType,ctx);
+  if(registry===defaultProviders)await launchPolicy.assertWorkspaceConnection(database,providerType,ctx,input);
   const adapter=registry.get(providerType);
   if(!adapter)throw new ValidationError('Choose a supported connection provider.');
   const meta=adapter.metadata({oauthOnly:true});
@@ -81,10 +81,14 @@ async function callbackContext(database,stateValue,providerType){
     returnOrigin:state.metadata.returnOrigin||null,popup:Boolean(state.metadata.popup)};
 }
 
-async function finishAuthorization(database,connection,actorId,result,authorizationStateId=null){
+async function finishAuthorization(database,connection,actorId,result,authorizationStateId=null,options={}){
   return database.transaction(async(client)=>{
     const authorizer=(await client.query("SELECT role FROM users WHERE workspace_id=$1 AND id=$2 FOR UPDATE",[connection.workspace_id,actorId])).rows[0];
     if(authorizer?.role!=='owner')throw new AuthenticationError('The owner who started this connection no longer has permission to authorize it. Start again with a current owner.');
+    if(options.enforceLaunchPolicy&&connection.provider_type==='shopify'){
+      if(result.credentials?.shop!==result.accountId)throw new AuthenticationError('The Shopify credential does not match the approved store.');
+      await launchPolicy.assertWorkspaceConnection(client,'shopify',{workspaceId:connection.workspace_id},{shop:result.accountId});
+    }
     const scope=await entitlements.ownerScopeForWorkspace(client,connection.workspace_id);
     await entitlements.assertCapability(client,scope,['gmail','microsoft365'].includes(connection.provider_type)?'communications.email_ingestion':
       ['quickbooks','xero'].includes(connection.provider_type)?'connections.accounting':'connections.commerce');
@@ -185,7 +189,7 @@ async function completeOAuth(database,providerType,query,requestOrigin,options={
   if(!adapter)throw new NotFoundError('Provider not found.');
   if(registry===defaultProviders)launchPolicy.assertCallbackProvider(providerType);
   const state=await readState(database,query.state,providerType,{consume:true});
-  if(registry===defaultProviders)await launchPolicy.assertWorkspaceConnection(database,providerType,{workspaceId:state.workspace_id});
+  if(registry===defaultProviders)await launchPolicy.assertWorkspaceConnection(database,providerType,{workspaceId:state.workspace_id},state.metadata);
   const connection=await intents.connectionForState(database,state);
   let authorized=false;
   try{
@@ -196,7 +200,7 @@ async function completeOAuth(database,providerType,query,requestOrigin,options={
       result.verifiedFact=await require('../commercial/operations').run(database,connection.workspace_id,{capability:'connections.accounting',
         key:`oauth-verify:${state.id}`,provider:providerType,operation:'accounting_verify'},()=>adapter.verifyReadOnly({credentials:result.credentials,connection}));
     }
-    const connectorId=await finishAuthorization(database,connection,state.actor_id,result,state.id);
+    const connectorId=await finishAuthorization(database,connection,state.actor_id,result,state.id,{enforceLaunchPolicy:registry===defaultProviders});
     authorized=true;
     let connected=await connections.get(database,state.workspace_id,connectorId);
     if(adapter.integrationClass==='accounting'&&result.verifiedFact){

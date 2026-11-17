@@ -40,7 +40,7 @@ function normalizeStoreUrl(value) {
 }
 
 async function jsonRequest(url, options = {}) {
-  const {selfHostedStore=false,timeoutMs=20_000,retries,...requestOptions}=options;
+  const {selfHostedStore=false,timeoutMs=20_000,retries,parseErrorBody,...requestOptions}=options;
   let response;
   try {
     response = await providerFetch(url, requestOptions, { provider: options.provider || providerNameFor(url), timeoutMs,retries,
@@ -66,7 +66,7 @@ async function jsonRequest(url, options = {}) {
   let body = null;
   try { body = text ? JSON.parse(text) : {}; } catch {
     if(response.ok){const error=new ValidationError('The external service returned an unreadable API response. Verify its API access before continuing.');error.providerOutcomeUncertain=!['GET','HEAD','OPTIONS'].includes(String(options.method||'GET').toUpperCase());throw error;}
-    body={};
+    body=typeof parseErrorBody==='function'?parseErrorBody(text):{};
   }
   if (!response.ok) {
     const providerDetail = body?.Fault?.Error?.[0]?.Detail || body?.Fault?.Error?.[0]?.Message

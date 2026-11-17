@@ -76,6 +76,13 @@ function expiresAt(seconds) {
   return new Date(Date.now() + ttl * 1000).toISOString();
 }
 
+// Shopify can return its OAuth errors as an HTML page. Retain only the known
+// code from the title; provider HTML and any echoed credentials stay private.
+function oauthErrorBody(text){
+ const code=String(text).slice(0,8192).match(/<title\b[^>]*>[^<]*\bOauth error\s+(app_not_installed|shop_not_permitted)\b[^<]*<\/title>/i)?.[1]?.toLowerCase();
+ return code?{error:code}:{};
+}
+
 async function exchangeClientCredentials(shop) {
   const form = new URLSearchParams({
     client_id: config.connections.shopify.clientId,
@@ -84,6 +91,7 @@ async function exchangeClientCredentials(shop) {
   });
   const { body } = await jsonRequest(`https://${shop}/admin/oauth/access_token`, {
     method: 'POST',
+    parseErrorBody:oauthErrorBody,
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: form.toString(),
   });
@@ -114,7 +122,7 @@ async function tryDirectAuthorization({ input }) {
     // A different organization's store must use the merchant approval flow.
     if (providerCode === 'shop_not_permitted') return null;
     if (providerCode === 'app_not_installed') {
-      throw new ValidationError(`Shopify says StockChief Inventory is not installed on ${shop}. Install it from the Shopify Dev Dashboard—or uninstall and reinstall it—then try Connect Shopify again.`);
+      throw new ValidationError(`Shopify says the app is not installed on ${shop}. Check the exact myshopify.com address in the app’s Installs list, then install the app on that store and try Connect Shopify again.`);
     }
     if (error instanceof TypeError && error.message === 'fetch failed') {
       throw new ValidationError('StockChief could not reach Shopify securely. Check the internet connection and try again.');
@@ -152,6 +160,7 @@ async function exchangeAuthorization({ query, metadata: stateMeta }) {
   });
   const { body } = await jsonRequest(`https://${shop}/admin/oauth/access_token`, {
     method: 'POST',
+    parseErrorBody:oauthErrorBody,
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: form.toString(),
   });
