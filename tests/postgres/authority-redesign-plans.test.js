@@ -14,14 +14,15 @@ test('redesigned authority controls save in Chromium while every plan, shadow pe
    await page.goto(base+'/autopilot');assert.equal(await page.locator('[name=mode][value=POLICY_AUTOMATED]').isDisabled(),plan==='starter','Starter must never unlock automatic routine work');
    const before=(await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows;
    for(const mode of ['OBSERVE','SUPERVISED']){
-     await Promise.all([page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/autopilot/mode'),page.locator('[name=mode][value='+mode+']').check()]);
+     await Promise.all([page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/autopilot/mode'&&r.request().postData()?.includes('mode='+mode)),page.locator('[name=mode][value='+mode+']').check()]);
      await page.waitForLoadState('networkidle');assert.equal((await autonomy.getState(db,ctx.workspaceId)).mode,mode,'A selected level is actually saved');
    }
    if(plan==='starter'){
      const form=await f.browser.get('/autopilot');await f.browser.post('/autopilot/mode').type('form').send({_csrf:f.csrf(form.text),mode:'POLICY_AUTOMATED'});
      assert.equal((await autonomy.getState(db,ctx.workspaceId)).mode,'SUPERVISED','A forged Starter submit cannot grant automatic authority');
    }else{
-     await Promise.all([page.waitForNavigation(),page.locator('[name=mode][value=POLICY_AUTOMATED]').check()]);assert.equal((await autonomy.getState(db,ctx.workspaceId)).mode,'POLICY_AUTOMATED');
+     const [response]=await Promise.all([page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/autopilot/mode'&&r.request().postData()?.includes('mode=POLICY_AUTOMATED')),page.locator('[name=mode][value=POLICY_AUTOMATED]').check()]);
+     await page.waitForLoadState('networkidle');assert.equal(response.status(),303,await page.locator('main').innerText());assert.equal((await autonomy.getState(db,ctx.workspaceId)).mode,'POLICY_AUTOMATED',await page.locator('main').innerText());
    }
    const transfer=page.locator('.job').filter({hasText:'Move stock between locations'}),reorder=page.locator('.job').filter({hasText:'Reorder and place purchase orders'});
    assert.equal(await transfer.getByRole('button',{name:'Let StockChief do this',exact:true}).isDisabled(),plan!=='pro','Automatic transfers stay on the right plan');
