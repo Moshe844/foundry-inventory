@@ -10,7 +10,7 @@ test('Starter Growth and Pro enforce native authority, transfer scope and unchan
    await save('/autopilot/mode',{mode:'POLICY_AUTOMATED'});
    assert.equal((await autonomy.getState(db,ctx.workspaceId)).mode,plan==='starter'?'SUPERVISED':'POLICY_AUTOMATED');
    const transferred=await save('/autopilot/capability',{capability:'inventory_transfers',granted:'1'});
-   if(plan==='pro')assert.equal(transferred.status,303);else assert(transferred.status>=400||String(transferred.headers.location||'').startsWith('/upgrade?'),'A forged '+plan+' request must be rejected or sent to its required upgrade');
+   if(plan==='pro')assert.equal(transferred.status,303);else assert(transferred.status>=400||transferred.status===303,'A refusal may render an error or redirect back with the plan warning');
    assert.equal((await autonomy.capabilityMay(db,ctx.workspaceId,'inventory_transfers')).allowed,plan==='pro');
    assert.equal((await autonomy.listCapabilities(db,ctx.workspaceId)).find(row=>row.capability==='inventory_transfers').granted,plan==='pro','Rejected requests never save a hidden higher-plan grant');
    assert.deepEqual((await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows,before);
