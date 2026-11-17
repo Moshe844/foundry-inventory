@@ -783,7 +783,8 @@ html:root body.page-ask .ask-table .is-num { text-align:right; }
 html:root body.page-ask .ask-next { margin-top:8px; }
 html:root body.page-ask .ask-next > span { font-size:12px; color:var(--d-muted); }
 @media (max-width:900px) { html:root body.page-ask .sc-chat-workspace { grid-template-columns:minmax(0,1fr); } html:root body.page-ask .ask-starters { grid-template-columns:minmax(0,1fr); } }
-html:root body.page-ask .ask-table th:not(:first-child),html:root body.page-ask .ask-table td:not(:first-child) { text-align:right; }
+html:root body.page-ask .ask-table th,html:root body.page-ask .ask-table td { text-align:left; vertical-align:top; }
+html:root body.page-ask .ask-table :is(th,td).is-num { text-align:right; }
 html:root body .hm .hm-ask__links { display:inline-flex; gap:14px; flex-wrap:wrap; }
 
 /* ———— Ask, the conversation ————
@@ -1073,3 +1074,119 @@ html:root body .rm-canvas .hm-metrics .hm-tile.is-alarm > .hm-sub { color:#B4231
   html:root body .sc-mark svg { width:14px; height:14px; }
   html:root body .rm-canvas :is(.ox-kpi,.sc-tile,.sc-money-card):has(> .sc-mark) > :nth-child(-n+2) { padding-right:32px; }
 }
+
+/* ---- Ask StockChief: two cards, a conversation list and the chat ----------------
+   The list and the chat are two white cards side by side on the page background,
+   each with its own edge. The list has a heading, the conversations and a footer
+   (all conversations, AI credits, report a wrong answer). Every row, menu item and
+   footer link uses the same height, icon size and left edge, so they line up. */
+html:root body.page-ask .sc-chat-workspace { max-width:1280px; grid-template-columns:272px minmax(0,1fr); gap:20px; padding:18px 0 20px; }
+html:root body.page-ask .sc-chat-history,
+html:root body.page-ask .rm-chat { border-radius:14px; background:#fff; box-shadow:var(--d-1); }
+html:root body.page-ask .sc-chat-history { gap:0; padding:0; overflow:hidden; }
+html:root body.page-ask .ask-rail__head { display:flex; align-items:center; min-height:52px; padding:0 16px; border-bottom:1px solid #EEF0F5; }
+html:root body.page-ask .sc-chat-history h2 { margin:0; padding:0; font-size:14px; font-weight:600; letter-spacing:0; text-transform:none; color:var(--d-ink); }
+html:root body.page-ask .sc-chat-history .ask-filter { display:block; margin:10px 12px 2px; }
+html:root body.page-ask .sc-chat-history .ask-filter .input { min-height:34px; padding:6px 10px; border-radius:8px; font-size:13px; }
+html:root body.page-ask .sc-chat-history .ask-chats { gap:12px; padding:10px 8px 24px; }
+html:root body.page-ask .sc-chat-history .ask-chats h3 { margin:0 0 2px; padding:0 10px; font-size:11.5px; font-weight:600; color:#8A92A8; }
+html:root body.page-ask .ask-chats__none { padding:4px 10px; font-size:13px; color:var(--d-muted); }
+
+/* A conversation: one line, its mark, its title and its options button, all centred. */
+html:root body .ask-chat,html:root body.page-ask .ask-chat { display:flex; align-items:center; gap:2px; min-height:36px; padding-right:4px; border-radius:8px; background:none; box-shadow:none; transition:background .12s; }
+html:root body .ask-chat:hover,html:root body.page-ask .ask-chat:hover { background:none; }
+html:root body .ask-chat:has(> .sc-recent-request:hover),html:root body.page-ask .ask-chat:has(> .sc-recent-request:hover) { background:#F3F4F8; }
+html:root body.page-ask .ask-chat[aria-current]:hover,html:root body.page-ask .ask-chat[aria-current]:has(> .sc-recent-request:hover) { background:#EEF0FF; }
+html:root body .ask-chat[aria-current],html:root body.page-ask .ask-chat[aria-current] { background:#EEF0FF; box-shadow:none; }
+html:root body .ask-chat .sc-recent-request,
+html:root body.page-ask .sc-chat-history .ask-chat .sc-recent-request { display:flex; align-items:center; gap:10px; flex:1; min-width:0; min-height:36px; padding:0 4px 0 10px; border-radius:8px; background:none; text-decoration:none; }
+html:root body .ask-chat__mark,
+html:root body .ask-chat[aria-current] .ask-chat__mark,
+html:root body .ask-chat:hover .ask-chat__mark { display:inline-grid; place-items:center; flex:none; width:16px; height:16px; border-radius:0; background:none; box-shadow:none; color:#8A92A8; }
+html:root body .ask-chat[aria-current] .ask-chat__mark { color:#4F46E5; }
+html:root body .ask-chat .sc-recent-request strong,
+html:root body.page-ask .sc-chat-history .ask-chat .sc-recent-request strong { display:block; flex:1; min-width:0; padding:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; -webkit-line-clamp:unset; font-size:13.5px; font-weight:450 !important; line-height:1.3; color:var(--d-text); }
+html:root body.page-ask .sc-chat-history .ask-chat[aria-current] .sc-recent-request strong { font-weight:550 !important; color:#2B2F86; }
+html:root body.page-ask .sc-chat-history .ask-chat .sc-recent-request time { display:none; }
+
+/* The options button: a round, quiet button that is only shown on the row in use. */
+html:root body .ask-menu { position:relative; flex:none; }
+html:root body .ask-menu > summary { display:grid; place-items:center; width:26px; height:26px; margin:0; padding:0; border-radius:50%; background:none; color:#6A7188; list-style:none; cursor:pointer; transition:background .12s,color .12s,opacity .12s; }
+html:root body .ask-menu > summary:hover { background:rgba(17,21,46,.06); color:var(--d-ink); }
+html:root body .ask-menu[open] > summary { background:rgba(17,21,46,.06); color:var(--d-ink); opacity:1; }
+html:root body .ask-menu > summary:focus-visible { outline:2px solid #4F46E5; outline-offset:1px; }
+
+/* Its menu: every choice is one row of the same height, an icon then its name.
+   Rename is the same row with a box to type in and a Save button at its end. */
+html:root body .ask-menu__panel { top:30px; right:0; display:flex; flex-direction:column; gap:0; width:196px; padding:5px; border:1px solid #E3E6EE; border-radius:12px; background:#fff; box-shadow:0 2px 4px rgba(17,21,46,.06),0 16px 32px -12px rgba(17,21,46,.28); }
+html:root body .ask-menu.ask-menu--up .ask-menu__panel { top:auto; bottom:30px; }
+html:root body .ask-menu__panel form { display:block; margin:0; }
+html:root body .ask-menu__panel .ask-menu__item { display:flex; align-items:center; gap:10px; width:100%; height:34px; margin:0; padding:0 10px; border:0; border-radius:7px; background:none; box-shadow:none; color:var(--d-ink); font:500 13.5px/1 var(--f,inherit); font-weight:500 !important; text-align:left; text-decoration:none; cursor:pointer; }
+html:root body .ask-menu__panel .ask-menu__item svg,
+html:root body .ask-menu__rename > svg { flex:none; color:#6A7188; }
+html:root body .ask-menu__panel .ask-menu__item:hover { background:#F3F4F8; }
+html:root body .ask-menu__panel .ask-menu__item:focus-visible { outline:2px solid #4F46E5; outline-offset:-2px; }
+html:root body .ask-menu__panel .ask-menu__delete,
+html:root body .ask-menu__panel .ask-menu__delete svg { color:#C4321F !important; }
+html:root body .ask-menu__panel .ask-menu__delete:hover { background:#FDF1EF !important; }
+html:root body .ask-menu__rename { display:flex !important; flex-direction:row; align-items:center; gap:10px; height:40px; margin:0; padding:0 4px 0 10px; border:0; }
+html:root body .ask-menu__rename label { flex:1; min-width:0; margin:0; }
+html:root body .ask-menu__rename input { width:100%; height:30px; min-height:0; margin:0; padding:0 9px; border:1px solid #DCE0EA; border-radius:7px; background:#fff; box-shadow:none; font-size:13px; color:var(--d-ink); }
+html:root body .ask-menu__rename input:focus { border-color:#6366F1; outline:0; box-shadow:0 0 0 3px rgba(99,102,241,.16); }
+html:root body .ask-menu__rename button { flex:none; align-self:center; width:auto; height:30px; margin:0; padding:0 11px; border:0; border-radius:7px; background:#EEF0FF; box-shadow:none; color:#3730A3; font:600 12.5px/1 var(--f,inherit); font-weight:600 !important; cursor:pointer; }
+html:root body .ask-menu__rename button:hover { background:#E0E3FF; }
+html:root body .ask-menu__line { height:1px; margin:5px 4px; border:0; background:#EEF0F5; }
+
+/* The list's footer: the same rows, quieter, under a hairline. */
+html:root body.page-ask .ask-rail__foot { flex:none; display:flex; flex-direction:column; gap:1px; padding:8px 8px 10px; border-top:1px solid #EEF0F5; }
+html:root body.page-ask .ask-rail__foot :is(.ask-all,.sc-feedback a,.sc-ai-details > summary) { display:flex; align-items:center; gap:10px; min-height:34px; margin:0; padding:0 10px; border-radius:8px; color:var(--d-text); font-size:13px; font-weight:500; line-height:1.3; text-decoration:none; }
+html:root body.page-ask .ask-rail__foot :is(.ask-all,.sc-feedback a,.sc-ai-details > summary) svg { flex:none; color:#8A92A8; }
+html:root body.page-ask .ask-rail__foot :is(.ask-all,.sc-feedback a,.sc-ai-details > summary):hover { background:#F3F4F8; color:var(--d-ink); }
+html:root body.page-ask .ask-rail__foot .sc-ai-details { margin:0; padding:0; border:0; font-size:13px; color:var(--d-text); }
+/* The shared disclosure style makes every summary an inline box with a 6px gap and its own
+   arrow, with !important and a long selector; this row matches the footer links instead. */
+html:root body.page-ask .sc-chat-history .ask-rail__foot details.sc-ai-details.sc-ai-details.sc-ai-details > summary { display:flex !important; gap:10px !important; width:100%; list-style:none; cursor:pointer; }
+html:root body.page-ask .ask-rail__foot .sc-ai-details > summary::before { content:none !important; display:none !important; }
+html:root body.page-ask .ask-rail__foot .sc-ai-details > summary::-webkit-details-marker { display:none; }
+html:root body.page-ask .ask-rail__foot .sc-ai-details > summary::after { content:""; margin-left:auto; width:6px; height:6px; border-right:1.5px solid #8A92A8; border-bottom:1.5px solid #8A92A8; transform:rotate(-45deg); transition:transform .15s; }
+html:root body.page-ask .ask-rail__foot .sc-ai-details[open] > summary::after { transform:rotate(45deg); }
+html:root body.page-ask .ask-rail__foot .sc-ai-details > :not(summary) { margin:4px 2px 6px; font-size:12.5px; }
+html:root body.page-ask .ask-rail__foot .sc-feedback { margin:0; padding:0; }
+
+/* The chat card: its heading sits on a hairline, and the conversation scrolls inside. */
+html:root body.page-ask .rm-chat { overflow:clip; }
+html:root body.page-ask .rm-chat__bar { max-width:none; min-height:52px; margin:0; padding:0 12px 0 20px; border-bottom:1px solid #EEF0F5; }
+html:root body.page-ask .rm-chat__title { font-size:14px; font-weight:600; }
+html:root body.page-ask .sc-chat-scroll { padding:8px 20px 18px; }
+html:root body.page-ask .rm-chat > .rm-composer { width:calc(100% - 40px); margin-bottom:16px; }
+
+/* No room for both cards: the list goes (as before) and the chat card fills the page. */
+@media (max-width:1050px) {
+ html:root body.page-ask .sc-chat-workspace { grid-template-columns:minmax(0,1fr); gap:0; padding:10px 0 12px; }
+}
+@media (max-width:900px) {
+ html:root body.page-ask .sc-chat-workspace { padding:0; }
+ html:root body.page-ask .rm-chat { border-radius:0; background:none; box-shadow:none; }
+ html:root body.page-ask .rm-chat__bar { padding:0 2px; border-bottom:0; }
+ html:root body.page-ask .sc-chat-scroll { padding:4px 2px 14px; }
+ html:root body.page-ask .rm-chat > .rm-composer { width:100%; margin-bottom:12px; }
+}
+
+/* All conversations: search on the left, the status filter on the right, one row each. */
+html:root body .ask-history-tools { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 16px; margin:4px 0 14px; }
+html:root body .ask-history-tools form { display:flex; flex-direction:row; flex-wrap:nowrap; align-items:center; gap:8px; margin:0; padding:0; }
+html:root body .ask-history-tools form label { display:flex; align-items:center; margin:0; font-size:13px; font-weight:500; color:var(--d-text); white-space:nowrap; }
+html:root body .ask-history-tools .input { width:320px; max-width:100%; min-height:38px; }
+html:root body .ask-history-tools select { width:auto; min-width:180px; min-height:38px; margin:0; }
+html:root body .ask-history-tools .btn { min-height:38px; margin:0; }
+
+/* Rename happens in the row: the title becomes a box with a save tick, the row's
+   other parts step aside, and Escape or clicking away puts the old name back. */
+html:root body .ask-chat.is-renaming > :is(.sc-recent-request,.ask-menu) { display:none !important; }
+html:root body .ask-chat.is-renaming { background:#fff !important; box-shadow:none; }
+html:root body .ask-chat__rename { display:flex; align-items:center; gap:6px; flex:1; min-width:0; margin:0; padding:3px 0 3px 4px; }
+html:root body .ask-chat__rename[hidden] { display:none; }
+html:root body .ask-chat__rename label { flex:1; min-width:0; margin:0; }
+html:root body .ask-chat__rename input { width:100%; height:30px; min-height:0; margin:0; padding:0 9px; border:1px solid #6366F1; border-radius:7px; background:#fff; box-shadow:0 0 0 3px rgba(99,102,241,.14); font-size:13.5px; color:var(--d-ink); outline:0; }
+html:root body .ask-chat__rename button { display:grid; place-items:center; flex:none; width:30px; height:30px; margin:0; padding:0; border:0; border-radius:7px; background:#4F46E5; color:#fff; box-shadow:none; cursor:pointer; }
+html:root body .ask-chat__rename button:hover { background:#4338CA; }
