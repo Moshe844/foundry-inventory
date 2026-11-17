@@ -20,10 +20,10 @@ test('billing sections show the correct plan and balances without crowding or cr
   for(const [label,id]of [['Overview','billing-overview'],['Add capacity','billing-capacity'],['Change plan','billing-plans'],['Billing history','billing-history']]){
    await page.getByRole('link',{name:label,exact:true}).click();assert(await page.locator('#'+id).isVisible(),label+' shows its content');assert.equal(await page.getByRole('link',{name:label,exact:true}).getAttribute('aria-current'),'page');
   }
-  for(const width of [1440,390]){await page.setViewportSize({width,height:1000});await page.getByRole('link',{name:'Overview',exact:true}).click();await page.evaluate(()=>scrollTo({top:0,left:0,behavior:'instant'}));await page.waitForFunction(()=>scrollY===0);assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.screenshot({path:path.join(folder,plan+'-overview-'+width+'.png'),fullPage:true});}
+  for(const width of [1440,390]){await page.setViewportSize({width,height:1000});await page.goto(base+'/settings/billing');assert(await page.locator('#billing-overview').isVisible());await page.locator('h1').scrollIntoViewIfNeeded();assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.screenshot({path:path.join(folder,plan+'-overview-'+width+'.png'),fullPage:true});}
   await page.setViewportSize({width:1440,height:1000});
   await page.goto(base+'/settings/billing?add=ai#ai-credit-packs');assert(await page.locator('#ai-credit-packs').isVisible());assert.equal(await page.getByRole('link',{name:'Add capacity',exact:true}).getAttribute('aria-current'),'page');
-  await page.evaluate(()=>scrollTo({top:0,left:0,behavior:'instant'}));await page.waitForFunction(()=>scrollY===0);await page.screenshot({path:path.join(folder,plan+'-capacity.png'),fullPage:true});
+  await page.screenshot({path:path.join(folder,plan+'-capacity.png'),fullPage:true});
   assert.deepEqual((await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows,before);
  }
 });
