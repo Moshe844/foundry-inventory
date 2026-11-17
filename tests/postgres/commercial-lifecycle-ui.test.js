@@ -52,6 +52,7 @@ test('real Chromium completes upgrade, scheduled downgrade, cancellation and rea
     await app.locals.sessionStore.close();await database.close();cluster.stop();});const base=`http://127.0.0.1:${server.address().port}`;
   const page=await browser.newPage({viewport:{width:1360,height:900}});await page.goto(`${base}/login`);
   async function choosePlan(name){
+    await page.getByRole('link',{name:'Change plan',exact:true}).click();
     const [response]=await Promise.all([page.waitForNavigation({waitUntil:'load'}),page.getByRole('link',{name,exact:true}).click()]);
     assert.equal(response.status(),200,'The actual plan-review navigation must succeed');
     assert.equal(new URL(response.url()).pathname,'/billing/change');
