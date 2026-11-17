@@ -20,7 +20,8 @@ test('credit warnings open the correct monthly capacity checkout and verified ad
   server=await new Promise(r=>{const s=app.listen(0,'127.0.0.1',()=>r(s));}),browser=await require('playwright').chromium.launch();
  f.cleanup(async()=>{await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));await app.locals.sessionStore.close();});
  const screenshotDir=require('node:path').join(process.cwd(),'data','capacity-topups');require('node:fs').mkdirSync(screenshotDir,{recursive:true});
- const base='http://127.0.0.1:'+server.address().port,page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+ const browserContext=await browser.newContext({viewport:{width:1440,height:1000}});
+ const base='http://127.0.0.1:'+server.address().port,page=await browserContext.newPage(),errors=[];
  page.setDefaultTimeout(15000);page.on('pageerror',e=>errors.push(e.message));
  await page.route('https://billing.example.test/**',r=>r.fulfill({status:200,body:'Synthetic checkout. No charge.'}));
  await page.goto(base+'/login');await page.getByLabel('Work email').fill(f.email);await page.locator('[name=password]').fill(f.password);await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Sign in',exact:true}).click()]);
