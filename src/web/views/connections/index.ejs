@@ -20,7 +20,7 @@
 <% if(!paymentsFocus){ %><% if(connected.length||stripeConnected){ %><section class="sc-connected-section" aria-labelledby="connected-heading"><h2 id="connected-heading">Connected</h2><div class="sc-connected-list">
  <% for(const connection of connected){ const type=connection.provider_type; %><article class="sc-connected-row" data-connected-id="<%= connection.id %>">
  <div class="sc-connected-identity"><% if(cp.logo(type)){ %><img src="/provider-logos/<%= cp.logo(type) %>.svg" alt="" width="32" height="32"><% }else{ %><%- helpers.icon('link',{size:32}) %><% } %><div><strong><%= providerCatalog.find(p=>p.type===type)?.name||connection.display_name||type %></strong><span><%= connection.provider_account_name||connection.display_name||type %></span></div></div>
- <span class="badge <%= cp.status(connection)==='Connected'?'badge--success':'badge--warn' %>"><%= cp.status(connection) %></span><span class="sc-connected-sync"><%= connection.last_synced_at?'Synced '+helpers.timeAgo(connection.last_synced_at):'Waiting for first sync' %></span>
+ <span class="badge <%= cp.status(connection)==='Connected'?'badge--success':cp.status(connection)==='Error'?'badge--danger':'badge--warn' %>"><%= cp.status(connection) %></span><span class="sc-connected-sync"><%= connection.last_synced_at?'Synced '+helpers.timeAgo(connection.last_synced_at):'Waiting for first sync' %></span>
  <% if(cp.issue(connection)){ %><p class="hint sc-connection-error" data-connection-error><%= cp.issue(connection) %></p><% } %>
  <a class="btn" href="<%= ['shippo','shipstation','shipengine','easypost'].includes(type)?'/settings/shipping':'/settings/connections/'+connection.id %>"><%= cp.status(connection)==='Error'?'Fix':'Manage' %> <%= cp.name(connection) %></a>
 
@@ -29,7 +29,7 @@
  </div></section><% } %>
 <% for(const group of groups){const cards=catalogCards.filter(c=>group.types.includes(c.provider.type));if(!cards.length)continue; %><section class="sc-provider-section" <%- group.title==='Email'?'id="supplier-communication"':'' %> aria-label="<%= group.title %>"><h2><%= group.title %></h2><div class="sc-provider-grid">
  <% for(const card of cards){const provider=card.provider,requiredCommercialCapability=capability(provider.type),includedOnPlan=locals.commercialDevelopment||included.has(requiredCommercialCapability),
-    status=card.connection?card.state:provider.available?(provider.pilot?(runtime==='production'?'Private pilot':'Staging pilot'):card.state):provider.launchRestricted?'Unavailable':'Needs setup'; %>
+    status=card.connection?card.state:provider.available?(provider.pilot?(runtime==='production'?'Private pilot':'Staging pilot'):card.state):'Coming soon'; %>
  <article class="rm-provider sc-provider-card" data-integration-card="<%= provider.type %>"><div class="rm-provider__h"><img src="/provider-logos/<%= provider.type %>.svg" alt="" width="32" height="32"><strong class="rm-provider__n"><%= provider.name %><% if(provider.type==='microsoft365'){ %> (Outlook)<% } %></strong><span class="badge <%= status==='Connected'?'badge--success':status==='Error'?'badge--danger':'badge--muted' %>"><%= status %></span></div>
  <p class="sc-provider-description"><%= cp.description(provider) %></p><% if(card.connection&&cp.issue(card.connection)){ %><p class="hint sc-connection-error" data-connection-error><%= cp.issue(card.connection) %></p><% } %>
 

@@ -1,16 +1,17 @@
-<section class="card" <% if(connection){ %>id="reply-preparation-<%= encodeURIComponent(connection.id) %>" data-mail-preparation data-status-url="/settings/connections/<%= encodeURIComponent(connection.id) %>/reply-preparation"<% }else{ %>data-mail-preparation-unconnected<% } %>>
-  <div class="card-head"><h3>Let StockChief handle</h3></div>
-  <div class="card-body grid">
+<% const compact=locals.mailPreparationReturn==='connections'; %><section class="<%= compact?'sc-reply-prep':'card' %>" <% if(connection){ %>id="reply-preparation-<%= encodeURIComponent(connection.id) %>" data-mail-preparation data-status-url="/settings/connections/<%= encodeURIComponent(connection.id) %>/reply-preparation"<% }else{ %>data-mail-preparation-unconnected<% } %>>
+  <% if(!compact){ %><div class="card-head"><h3>Let StockChief handle</h3></div><% } %>
+  <div class="<%= compact?'sc-reply-prep__body':'card-body grid' %>">
+    <% if(compact){ %><p class="sc-reply-prep__title">Prepare email replies</p><% } %>
     <p><strong data-mail-preparation-state><%= mailPreparation.label %></strong></p>
     <% if(mailPreparation.agentLocked){ %><p>Preparing replies from your records requires Growth. <a href="/billing">Upgrade</a></p><% } %>
-    <p>For new emails from known customers and suppliers, StockChief reads the message and relevant records, then prepares a reply. Review, edit, send or discard it in Mail. Preparation uses your plan’s AI credits.</p>
+    <% if(!compact){ %><p>For new emails from known customers and suppliers, StockChief reads the message and relevant records, then prepares a reply. Review, edit, send or discard it in Mail. Preparation uses your plan’s AI credits.</p><% } %>
     <% if(currentUser.role==='owner'&&connection){ %>
     <form method="post" action="/settings/connections/<%= encodeURIComponent(connection.id) %>/reply-preparation">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="enabled" value="<%= mailPreparation.enabled?'0':'1' %>">
       <input type="hidden" name="returnTo" value="<%= locals.mailPreparationReturn||'' %>">
       <button class="sc-mail-toggle" type="submit" role="switch" aria-checked="<%= mailPreparation.enabled?'true':'false' %>" <%= (!mailPreparation.available||!mailPreparation.connected)&&!mailPreparation.enabled?'disabled':'' %> aria-label="Let StockChief handle replies for <%= connection.provider_account_name||connection.display_name %>"><span aria-hidden="true"></span><b data-mail-preparation-toggle-label><%= mailPreparation.enabled?'On':'Off' %></b></button>
     </form><% }else if(!connection){ %><span class="sc-mail-toggle" role="switch" aria-checked="false" aria-disabled="true" aria-label="Let StockChief handle replies for <%= mailProviderName %>"><span aria-hidden="true"></span><b>Off</b></span><% } %>
-    <p class="hint">Existing emails stay as they are. Open one and choose Prepare from verified records when needed. Sending always needs separate approval. Separate supplier-document instructions keep their own approval rules.</p>
+    <% if(!compact){ %><p class="hint">Existing emails stay as they are. Open one and choose Prepare from verified records when needed. Sending always needs separate approval. Separate supplier-document instructions keep their own approval rules.</p><% } %>
     <div aria-live="polite" data-mail-preparation-log>
     <% if(!mailPreparation.entries.length){ %><p>No reply preparation recorded yet.</p><% } %>
     <% for(const entry of mailPreparation.entries){ %><p><strong><%= entry.label %></strong> · <a href="/mail/<%= encodeURIComponent(entry.id) %>"><%= entry.subject %></a> · <time data-local-time datetime="<%= new Date(entry.at).toISOString() %>"><%= helpers.dateTime(entry.at) %></time></p><% } %>
