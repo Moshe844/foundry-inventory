@@ -1,0 +1,54 @@
+.sc-billing-layout{display:block;max-width:1240px;margin-inline:auto}
+.sc-billing-layout>.sc-settings-nav{display:flex;flex-direction:row;flex-wrap:wrap;gap:4px;border-bottom:1px solid #dfe3ee;padding:0 0 12px;margin-bottom:28px;width:100%;position:static}
+.sc-billing-layout>.sc-settings-nav a{padding:9px 13px;border-radius:8px;font-size:13px;white-space:nowrap}
+.sc-billing-layout>.sc-settings-content{min-width:0;width:100%;max-width:none}
+.sc-billing-layout [hidden]{display:none!important}
+.sc-billing-layout h2{font-size:25px;letter-spacing:-.5px;margin-bottom:6px}
+.sc-billing-intro{margin:0 0 24px;color:#59647b}
+.sc-billing-tabs{display:flex;flex-wrap:wrap;gap:6px;padding:5px;background:#e9ecf4;border-radius:12px;margin:22px 0 26px;width:fit-content}
+.sc-billing-tabs a{padding:11px 19px;text-decoration:none;border-radius:9px;color:#536079;font-size:14px;font-weight:600}
+.sc-billing-tabs a[aria-current=page]{color:#4437ce;background:#fff;box-shadow:0 1px 4px #1a254014}
+.sc-billing-tabs a:focus-visible{outline:2px solid #5847ef;outline-offset:2px}
+.sc-billing-layout .ox-plan-now{padding:25px 28px;border-top:4px solid #5746e9;background:linear-gradient(115deg,#fff 50%,#f3f1ff)}
+.sc-billing-layout .ox-plan-now h3{font-size:30px;margin-block:5px 7px}
+.sc-billing-layout .ox-plan-now h3 small{font-size:18px;white-space:nowrap}
+.sc-billing-layout .ox-plan-now__hint{font-size:12px;max-width:700px;margin-top:4px}
+.sc-billing-layout .ox-plan-now__actions{align-self:flex-start;margin-top:8px}
+.sc-billing-layout .ox-plan-now__actions .ox-btn{padding:10px 14px}
+.sc-billing-layout .ox-billing-section,.sc-billing-layout .sc-guarantee{border:1px solid #dfe3ee;box-shadow:none;border-radius:14px;overflow:hidden}
+.sc-billing-layout .sc-guarantee{padding:18px 22px;margin-block:0 20px;background:#f3f8f5}
+.sc-billing-layout .sc-guarantee h3{font-size:15px;margin:0 0 7px}
+.sc-billing-layout .sc-guarantee p{font-size:13px;line-height:1.6;max-width:900px;margin-block:5px}
+.sc-billing-layout .rm-panel__head{padding:20px 22px;border-bottom:1px solid #edf0f5}
+.sc-billing-layout .rm-panel__head h2{font-size:18px;margin:0}
+.sc-billing-layout .ox-usage-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:0;padding:0}
+.sc-billing-layout .ox-usage-card{border:0;border-radius:0;border-right:1px solid #edf0f5;border-bottom:1px solid #edf0f5;padding:22px;gap:9px}
+.sc-billing-layout .ox-usage-card:nth-child(3n){border-right:0}
+.sc-billing-layout .ox-usage-card h3{font-size:13px;color:#59647b}
+.sc-billing-layout .ox-usage-card__balance strong{font-size:29px;line-height:1.25;color:#19243b;letter-spacing:-.8px}
+.sc-billing-layout .ox-usage-card progress{width:100%;height:5px;accent-color:#5746e9}
+.sc-billing-layout [data-plan-capacity] dl.sc-billing-limit-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:20px 0}
+.sc-billing-limit{padding:16px;background:#f7f8fc;border-radius:10px;min-width:0}
+.sc-billing-limit dt{font-size:13px;color:#59647b;margin:0 0 6px}
+.sc-billing-layout .sc-billing-limit dd{font-size:15px;font-weight:600;margin:0;line-height:1.6;overflow-wrap:anywhere;text-align:left}
+.sc-billing-layout .ox-plans{margin-top:20px}
+.sc-billing-layout .ox-plans__grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-top:22px}
+.sc-billing-layout .ox-plan{padding:22px 18px;border-radius:13px;background:#fff}
+.sc-billing-layout .sc-capacity-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.sc-billing-layout .sc-capacity-card{padding:20px;gap:12px}
+.sc-billing-layout .sc-capacity-price strong{font-size:28px}
+.sc-billing-layout .sc-capacity-card>p{font-size:13px;line-height:1.6}
+.sc-billing-layout .sc-capacity-card .sc-capacity-note{font-size:12px}
+.sc-billing-layout .sc-capacity-card form{margin-top:auto}
+.sc-billing-layout .sc-capacity-body>p{max-width:870px;font-size:14px;line-height:1.6}
+.sc-billing-receipts{display:grid;gap:0;padding:4px 22px}
+.sc-billing-receipt{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:18px 0;border-bottom:1px solid #edf0f5}
+.sc-billing-receipt:last-child{border-bottom:0}
+.sc-billing-receipt p{margin:0;font-size:13px;color:#59647b}
+.sc-billing-receipt strong{display:block;font-size:14px;color:#19243b;margin-bottom:5px}
+.sc-billing-empty{padding:30px 22px;color:#59647b;font-size:14px}
+/* The global depth theme removes card borders and animates every panel. */
+html:root body .rm-canvas .sc-billing-layout .ox-plan-now{border-top:4px solid #5746e9!important}
+html:root body .rm-canvas .sc-billing-layout :is(.rm-panel,.ox-card){animation:none}
+@media(max-width:1050px){.sc-billing-layout .ox-plans__grid{grid-template-columns:repeat(2,minmax(0,1fr))}.sc-billing-layout .sc-capacity-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.sc-billing-layout>.sc-settings-nav{gap:0;margin-bottom:20px}.sc-billing-layout>.sc-settings-nav a{padding:8px 10px;font-size:12px}.sc-billing-tabs{width:100%;gap:3px}.sc-billing-tabs a{flex:1 1 40%;text-align:center;padding:10px 8px;font-size:13px}.sc-billing-layout .ox-plan-now{padding:20px}.sc-billing-layout .ox-plan-now h3{font-size:25px}.sc-billing-layout .ox-usage-grid,.sc-billing-layout [data-plan-capacity] dl.sc-billing-limit-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.sc-billing-layout .ox-usage-card{padding:16px;border-right:1px solid #edf0f5}.sc-billing-layout .ox-usage-card:nth-child(3n){border-right:1px solid #edf0f5}.sc-billing-layout .ox-usage-card:nth-child(2n){border-right:0}.sc-billing-layout .sc-capacity-grid,.sc-billing-layout .ox-plans__grid{grid-template-columns:1fr}.sc-billing-layout .sc-capacity-body{padding:16px}.sc-billing-layout .ox-plan-now__actions{width:100%;gap:9px}.sc-billing-layout .ox-plan-now__actions form{flex:1}.sc-billing-layout .ox-plan-now__actions button{width:100%}.sc-billing-layout .rm-panel__head{padding:18px 16px}.sc-billing-layout .sc-guarantee{padding:16px}}

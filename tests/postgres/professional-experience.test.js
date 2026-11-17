@@ -12,7 +12,7 @@ test('Professional customer experience uses real plans, human messages and canon
  await t.test('billing shows the credit balance and links to current usage-pack prices',async()=>{
   await visit('/billing');
   assert.equal(new URL(page.url()).pathname,'/settings/billing');
-  assert.equal(await page.locator('h1').innerText(),'Settings');
+  assert.equal(await page.locator('h1').innerText(),'Plan & billing');
   assert.match(await page.locator('main').innerText(),/Complimentary/);
   const heading=await page.locator('h1').boundingBox(),balance=await page.locator('[aria-label="AI availability"]').boundingBox();
   assert(balance.y>heading.y);

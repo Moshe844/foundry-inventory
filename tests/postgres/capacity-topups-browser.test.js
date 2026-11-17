@@ -32,6 +32,15 @@ test('credit warnings open the correct monthly capacity checkout and verified ad
   await db.query("DELETE FROM commercial_usage_events WHERE account_id=$1 AND meter='ai_work_credits'",[scope.accountId]);
   await db.query("DELETE FROM commercial_usage_grants WHERE account_id=$1",[scope.accountId]);
   const ai=await ent.meterState(db,scope,'ai_work_credits'),used=Math.ceil(ai.included*.8),event=randomUUID();
+  const checkoutsBeforeNavigation=calls.length;await page.goto(base+'/settings/billing');
+  assert.equal(await page.getByRole('link',{name:'Overview',exact:true}).getAttribute('aria-current'),'page');
+  assert(await page.locator('#billing-overview').isVisible());assert.equal(await page.locator('#billing-plans').isVisible(),false);assert.equal(await page.locator('#extra-capacity').isVisible(),false);
+  await page.getByRole('link',{name:'Change plan',exact:true}).click();assert(await page.locator('#billing-plans').isVisible());assert.equal(await page.locator('#billing-overview').isVisible(),false);
+  assert.match(await page.locator('.ox-plan.is-current').innerText(),new RegExp(plan,'i'),'The selected plan stays visible in plan comparison');
+  await page.getByRole('link',{name:'Billing history',exact:true}).click();assert(await page.locator('#billing-history').isVisible());assert.equal(calls.length,checkoutsBeforeNavigation,'Reading billing sections never creates a purchase');
+  await page.getByRole('link',{name:'Overview',exact:true}).click();
+  for(const width of [1440,390]){await page.setViewportSize({width,height:1000});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),plan+' billing overview fits '+width);await page.screenshot({path:require('node:path').join(screenshotDir,plan+'-overview-'+width+'.png'),fullPage:true});}
+  await page.setViewportSize({width:1440,height:1000});
   await ent.recordUsage(db,scope,{meter:'ai_work_credits',units:used-1,idempotencyKey:event});
   await page.goto(base+'/ask');assert.equal(await page.locator('[data-ai-credit-notice]').isVisible(),false,'No premature warning');
   await ent.recordUsage(db,scope,{meter:'ai_work_credits',units:1,idempotencyKey:event+':threshold'});

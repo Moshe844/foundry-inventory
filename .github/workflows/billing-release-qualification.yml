@@ -1,0 +1,77 @@
+name: Billing browser qualification
+on:
+  pull_request:
+    paths:
+      - tests/postgres/billing-sections-browser.test.js
+      - .github/workflows/billing-release-qualification.yml
+permissions:
+  contents: read
+jobs:
+  billing:
+    if: github.head_ref == 'codex/billing-clarity-20261117'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      NODE_ENV: test
+      FOUNDRY_SKIP_LOCAL_ENV: '1'
+      STOCKCHIEF_POSTGRES_BIN: /usr/lib/postgresql/17/bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Verify application code is identical to the full qualification candidate
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin c82c7e555419920663768c9ace3365fd79d2178a
+          mkdir -p output/billing-release
+          node <<'NODE'
+          const cp=require('node:child_process'),fs=require('node:fs'),assert=require('node:assert/strict');
+          const baseline='c82c7e555419920663768c9ace3365fd79d2178a';
+          const git=args=>cp.execFileSync('git',args,{encoding:'utf8'}).trim();
+          const changed=git(['diff','--name-only',baseline,'HEAD']).split('\n').filter(Boolean);
+          const allowed=new Set(['tests/postgres/billing-sections-browser.test.js','.github/workflows/billing-release-qualification.yml']);
+          assert(changed.every(file=>allowed.has(file)),'Changes outside the capture test require a new full application qualification');
+          const source=git(['rev-parse','HEAD:src']);assert.equal(source,'53458c36ed0af818ca141d1a13acd87e0a64cc01');
+          const evidence={baseline,applicationTree:source,applicationCodeUnchanged:true,changedFiles:changed};
+          fs.writeFileSync('output/billing-release/source-equivalence.json',JSON.stringify(evidence,null,2));console.log(JSON.stringify(evidence));
+          NODE
+      - name: Install PostgreSQL with bounded downloads
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'Acquire::Retries "2";' 'Acquire::http::Timeout "30";' 'Acquire::https::Timeout "30";' | sudo tee /etc/apt/apt.conf.d/99-stockchief-ci-network > /dev/null
+          if [ -f /etc/apt/apt-mirrors.txt ] && getent ahosts archive.ubuntu.com >/dev/null; then
+            sudo sed -i -E 's|https?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          fi
+          sudo install -d /usr/share/postgresql-common/pgdg
+          if ! sudo curl --fail --connect-timeout 15 --max-time 90 --retry 2 --retry-all-errors --retry-delay 2 -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc; then
+            sudo curl --fail --connect-timeout 15 --max-time 90 --retry 2 --retry-all-errors --retry-delay 2 -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://apt.postgresql.org/pub/repos/apt/ACCC4CF8.asc
+          fi
+          fingerprint="$(gpg --batch --show-keys --with-colons /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc 2>/dev/null | awk -F: '$1 == "fpr" {print $10; exit}')"
+          test "$fingerprint" = B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8
+          printf '%s\n' 'Types: deb' 'URIs: https://apt.postgresql.org/pub/repos/apt' 'Suites: noble-pgdg' 'Components: main' 'Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc' | sudo tee /etc/apt/sources.list.d/pgdg.sources > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y postgresql-17
+      - run: npm ci
+      - name: Install Chromium
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          npx playwright install chromium
+          if ! node -e 'require("playwright").chromium.launch().then(b=>b.close()).catch(()=>process.exit(1))'; then
+            npx playwright install-deps chromium
+          fi
+      - name: Exercise every plan and the corrected capture on the unchanged application
+        run: |
+          set -euo pipefail
+          node --test --test-force-exit --test-concurrency=2 tests/postgres/billing-sections-browser.test.js tests/postgres/capacity-topups-browser.test.js tests/postgres/commercial-lifecycle-ui.test.js tests/postgres/subscription-guarantee.test.js tests/postgres/agent-plan-addons.test.js tests/postgres/shopify-public-install.test.js tests/postgres/professional-experience.test.js tests/unit/commercial-launch-provider-policy.test.js tests/unit/shopify-token-lifecycle.test.js 2>&1 | tee output/billing-release/browser.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: billing-browser-qualification
+          path: |
+            output/billing-release
+            output/billing-design
+            data/capacity-topups
