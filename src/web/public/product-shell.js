@@ -26,7 +26,8 @@
   if(chat){
     let follow=true;
     chat.addEventListener('scroll',()=>{follow=chat.scrollHeight-chat.scrollTop-chat.clientHeight<100;},{passive:true});
-    const latest=()=>{if(!window.StockChiefNavigation?.wasRestored()&&follow)chat.scrollTop=chat.scrollHeight;};
+    // An empty conversation starts at its top, where its greeting is; once there are turns, the latest shows.
+    const latest=()=>{if(!chat.querySelector('.rm-turn'))return;if(!window.StockChiefNavigation?.wasRestored()&&follow)chat.scrollTop=chat.scrollHeight;};
     requestAnimationFrame(latest);
     new MutationObserver(()=>{if(follow)requestAnimationFrame(latest);}).observe(chat,{childList:true,subtree:true});
     new ResizeObserver(()=>{if(follow)requestAnimationFrame(latest);}).observe(chat);

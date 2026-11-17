@@ -19,7 +19,8 @@ const workflows = {
     'square-webhooks', 'square-shared-webhook', 'mail-ui'],
   customerPrivacyAndSettings: ['customer-polish-browser', 'shopify-privacy', 'shopify-privacy-orders',
     'retention-cleanup', 'import-source-upload', 'private-owner-console', 'platform-owner-operations', 'owner-company-console-ui',
-    'password-reset-success', 'password-recovery-alerts'],
+    'password-reset-success', 'password-recovery-alerts', 'support-attachments', 'support-live-chat-ui',
+    'human-support-access-ui', 'customer-decisions-conversations', 'ask-ui'],
 };
 
 const pathFor = name => `tests/postgres/${name}.test.js`;

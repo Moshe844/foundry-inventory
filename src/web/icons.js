@@ -66,6 +66,11 @@ const PATHS = {
   mic: '<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M9 21h6"/>',
   eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
   hand: '<path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11m0-.5V4.5a1.5 1.5 0 0 1 3 0V11m0-1.5a1.5 1.5 0 0 1 3 0V15a5.5 5.5 0 0 1-5.5 5.5h-1A5.5 5.5 0 0 1 6 15v-3a1.5 1.5 0 0 1 3 0"/>',
+  // A row's options: more, pin, rename and delete.
+  more: '<circle cx="5.5" cy="12" r="1.1" fill="currentColor"/><circle cx="12" cy="12" r="1.1" fill="currentColor"/><circle cx="18.5" cy="12" r="1.1" fill="currentColor"/>',
+  pin: '<path d="M9 4h6l-1 5.5 3.5 3.5H6.5L10 9.5z"/><path d="M12 13v7"/>',
+  pencil: '<path d="M4.5 19.5 5.3 15.7 15.4 5.6a1.9 1.9 0 0 1 2.7 0l.3.3a1.9 1.9 0 0 1 0 2.7L8.3 18.7z"/><path d="m13.5 7.5 3 3"/>',
+  trash: '<path d="M4.5 7h15M10 7V5h4v2M6.5 7l.9 12a1 1 0 0 0 1 .9h7.2a1 1 0 0 0 1-.9l.9-12"/><path d="M10 11v5.5M14 11v5.5"/>',
 };
 
 function icon(name, { size = 20, className = '' } = {}) {
