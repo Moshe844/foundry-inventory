@@ -9,7 +9,7 @@
  const logoTypes=new Set(['shopify','woocommerce','bigcommerce','square','clover','gmail','microsoft365','quickbooks','xero','stripe','cardknox']);
  const connected=connections.filter(c=>c.status!=='disconnected'&&c.provider_type!=='stripe');
  const developerMode=locals.connectionSection==='developers';
- const stripeConnected=Boolean(pay?.connected&&!grant?.unfinished),stripeDisconnect=postgresMode?'/settings/connections/payments/disconnect':'/settings/connections/payments/remove';
+ const stripeConnected=Boolean(pay?.connected&&!grant?.unfinished&&(runtime!=='production'||pay.liveMode)),stripeDisconnect=postgresMode?'/settings/connections/payments/disconnect':'/settings/connections/payments/remove';
  const stripeLaunch=postgresMode?'/settings/connections/payments/launch?ticket='+encodeURIComponent(locals.launchTicket||''):'/settings/connections/payments/start';
  const paymentsFocus=Boolean(locals.paymentsFocus);
 %>
