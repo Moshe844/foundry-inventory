@@ -1,4 +1,4 @@
-<% if(!provider.available){ %><p class="quiet sc-coming-soon">Not ready to connect on your own yet. Ask us and we will help you connect it.</p><a class="btn" href="/support/request?topic=connection&about=<%= encodeURIComponent(provider.name) %>">Get help connecting</a>
+<% if(!provider.available){ %><p class="quiet sc-coming-soon"><%= provider.unavailableReason||'Not ready to connect on your own yet. Ask us and we will help you connect it.' %></p><a class="btn" href="/support/request?topic=connection&about=<%= encodeURIComponent(provider.name) %>">Get help connecting</a>
 <% }else if(currentUser.role!=='owner'){ %><p class="quiet">A business owner can connect this account.</p>
 <% }else if(!includedOnPlan){ %><a class="btn" href="/upgrade?capability=<%= encodeURIComponent(requiredCommercialCapability) %>&return=<%= encodeURIComponent('/settings/connections') %>">View plan options</a>
 <% }else if(locals.connectionCapacity?.remaining===0){ %><a class="btn" href="/billing">Review plan</a>
