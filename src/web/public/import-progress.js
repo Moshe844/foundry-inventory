@@ -29,6 +29,12 @@
  document.querySelectorAll('[data-import-time]').forEach(time=>{if(Number.isFinite(Date.parse(time.dateTime))){time.textContent=format(time.dateTime);time.title=time.dateTime;}});
  document.querySelectorAll('[data-import-file-upload]').forEach(form=>form.querySelector('[type=file]')?.addEventListener('change',()=>{const key=form.querySelector('[name=uploadKey]');if(key)key.value=crypto.randomUUID();}));
  const sourceGroups=new Map();
+ document.querySelectorAll('[data-source-hide]').forEach(button=>button.addEventListener('click',()=>{
+   const panel=button.closest('[data-source-upload]');
+   // A completed/stopped global notice is presentation only. Its saved file,
+   // plan refusal, job and source bytes remain untouched in import history.
+   if(panel&&panel.dataset.sourceActive!=='yes')panel.remove();
+ }));
  document.querySelectorAll('[data-source-upload][data-source-active="yes"]').forEach(panel=>{const url=new URL(panel.dataset.sourceUpload,location.origin);if(url.origin!==location.origin)return;const entry=sourceGroups.get(url.pathname)||{panels:[],finished:false};entry.panels.push(panel);sourceGroups.set(url.pathname,entry);});
  if(sourceGroups.size){let pending=false;
   const refresh=async()=>{if(pending||document.hidden)return;pending=true;
@@ -44,6 +50,7 @@
       if(stages){stages.hidden=!state.active&&!state.ready;[...stages.children].forEach((step,index)=>{step.classList.toggle('is-done',index<rank);step.classList.toggle('is-now',index===rank);});}
       const seconds=Math.max(0,Math.floor((Date.now()-Date.parse(state.createdAt))/1000));set('[data-source-timing]','Started '+format(state.createdAt)+(state.active?' · '+(seconds>=60?Math.floor(seconds/60)+'m ':'')+seconds%60+'s':''));
       set('[data-source-live]','Last update '+format(state.lastUpdateAt));set('[data-source-reason]',state.reason||'');
+      for(const [selector,visible] of [['[data-source-reading]',state.active],['[data-source-stopped]',!state.active&&!state.ready],['[data-source-ready]',state.ready],['[data-source-hide]',!state.active]]){const element=panel.querySelector(selector);if(element)element.hidden=!visible;}
       const link=panel.querySelector('[data-source-result]');if(link){link.href=state.previewHref||state.href;if(link.hasAttribute('hidden')||panel.hasAttribute('data-source-detail'))link.hidden=!state.ready;else link.textContent=state.ready?'Review preview':'Open saved progress';}const retry=panel.querySelector('[data-source-retry]');if(retry)retry.hidden=!state.canRetry;
      }
      if(!state.active){entry.finished=true;if(state.ready&&entry.panels.some(panel=>panel.hasAttribute('data-source-detail'))&&/^\/imports\/imp_[a-z0-9]+$/.test(state.previewHref))location.assign(state.previewHref);}

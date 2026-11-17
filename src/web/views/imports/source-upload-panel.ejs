@@ -4,8 +4,12 @@
  <progress data-source-meter max="<%= upload.totalRows||1 %>" <% if(upload.processedRows!==null){ %>value="<%= upload.processedRows %>"<% } %> aria-label="File reading progress" style="width:100%" <%= upload.active?'':'hidden' %>></progress>
  <p data-source-timing>Uploaded <time data-import-time datetime="<%= new Date(upload.createdAt).toISOString() %>"><%= new Date(upload.createdAt).toUTCString() %></time>.</p>
  <p data-source-live>Last update <time data-import-time datetime="<%= new Date(upload.lastUpdateAt).toISOString() %>"><%= new Date(upload.lastUpdateAt).toUTCString() %></time>.</p>
- <p data-source-reason role="alert"><%= upload.reason||'' %></p><p>No products, stock or Money are being imported. You can leave this page and reopen the file from <a href="/imports">File imports and results</a>. Review and approval follow once the preview is ready.</p>
+ <p data-source-reason role="alert"><%= upload.reason||'' %></p>
+ <p data-source-reading <%= upload.active?'':'hidden' %>>You can leave this page while the file is checked. Find it again in <a href="/imports">File imports and results</a>. Review and approve the preview before importing.</p>
+ <p data-source-stopped <%= !upload.active&&!upload.ready?'':'hidden' %>>The check has stopped. Your saved file remains in <a href="/imports">File imports and results</a>. No products or stock were imported.</p>
+ <p data-source-ready <%= upload.ready?'':'hidden' %>>The preview is ready to review. Nothing is imported until you approve it.</p>
  <a class="btn btn--secondary" data-source-result href="<%= upload.previewHref||upload.href %>"><%= upload.ready?'Review preview':'Open saved progress' %></a>
  <a class="btn btn--secondary" data-source-plan href="/settings/billing" <%= upload.planBlocked?'':'hidden' %>>View plans and allowance</a>
+ <% if(typeof globalNotice!=='undefined'&&globalNotice){ %><button type="button" class="btn btn--secondary" data-source-hide <%= upload.active?'hidden':'' %>>Dismiss notice</button><% } %>
  <% if(detail){ %><form method="post" action="<%= upload.href %>/retry" data-source-retry <%= upload.canRetry?'':'hidden' %>><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Retry reading the saved file</button></form><% } %>
 </section>

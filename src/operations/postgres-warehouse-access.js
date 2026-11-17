@@ -1,7 +1,9 @@
 'use strict';
 const {AuthorizationError}=require('../domain/errors');
 async function scope(db,ctx){
- const actor=(await db.query('SELECT role,warehouse_location_ids FROM users WHERE workspace_id=$1 AND id=$2 AND revoked_at IS NULL',[ctx.workspaceId,ctx.actorId])).rows[0];
+ // Preserve revoked-member denial while allowing upgrade/recovery checks on
+ // schemas from before the revocation column was introduced in migration 530.
+ const actor=(await db.query("SELECT role,warehouse_location_ids FROM users WHERE workspace_id=$1 AND id=$2 AND to_jsonb(users)->>'revoked_at' IS NULL",[ctx.workspaceId,ctx.actorId])).rows[0];
  if(!actor)throw new AuthorizationError('Your inventory membership could not be verified.');
  return actor.role==='owner'?null:actor.warehouse_location_ids;
 }
