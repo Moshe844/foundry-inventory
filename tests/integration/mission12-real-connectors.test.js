@@ -423,7 +423,7 @@ test('Shopify uses client credentials for an installed same-organization store a
       status: 400, headers: { 'content-type': 'text/html' },
     });
     await assert.rejects(adapter.tryDirectAuthorization({ input: { shop: 'internal-test' } }),
-      /Shopify did not authorize this connection/);
+      error=>error.code==='validation_error'&&/app is not installed on internal-test\.myshopify\.com/.test(error.message)&&/Installs list/.test(error.message));
   } finally { global.fetch = originalFetch; }
 });
 
