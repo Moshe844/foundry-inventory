@@ -200,4 +200,12 @@ test('public Shopify installation authenticates before sign-in and preserves pai
   assert.deepEqual(await service.loadProviderCredentials(db,connection,adapter),renewed);assert.equal(calls.length,refreshedCalls,'A second read reuses the committed current token');
  });
 
+ await t.test('bare Shopify protocol URLs refuse unsigned and expired flows without provider calls',async()=>{
+   const before=calls.length,count=(await db.query('SELECT count(*)::int n FROM shopify_public_installs')).rows[0].n;
+   for(const url of ['/integrations/shopify/install','/integrations/shopify/callback','/integrations/shopify/connect']){
+     const response=await request(app).get(url);assert([400,401].includes(response.status),url+' must refuse a missing authorization request');assert(!response.text.includes('public-access-'),'An unsigned response must not expose credentials');
+   }
+   assert.equal(calls.length,before);assert.equal((await db.query('SELECT count(*)::int n FROM shopify_public_installs')).rows[0].n,count);
+ });
+
 });
