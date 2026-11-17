@@ -33,10 +33,13 @@ test('restored real adapter authorization is Staging/workspace scoped, holds acc
   error:'access_denied',error_description:'Outlook pilot consent declined'});
  const outlookState=outlookTarget.searchParams.get('state');
  process.env.STOCKCHIEF_PRIVATE_PRODUCTION_PILOT='0';
- assert.match((await callback(outlookState)).text,/needs final live connector qualification/);
+ assert.match((await callback(outlookState)).text,/Outlook pilot consent declined/,'An explicitly approved workspace remains pilot-authorized independently of public signup');
  process.env.STOCKCHIEF_PRIVATE_PRODUCTION_PILOT='1';
+ page=await agent.get('/settings/connections');
+ const revocationStart=await outlookRequest();assert.equal(revocationStart.status,303);
+ const revokedState=new URL(revocationStart.headers.location).searchParams.get('state');
  process.env.STOCKCHIEF_PRODUCTION_MICROSOFT365_WORKSPACES='different-inventory';
- assert.match((await callback(outlookState)).text,/needs final live connector qualification/);
+ assert.match((await callback(revokedState)).text,/needs final live connector qualification/);
  process.env.STOCKCHIEF_PRODUCTION_MICROSOFT365_WORKSPACES=owner.workspace_id;
  page=await agent.get('/settings/connections');
  const freshOutlook=await outlookRequest();

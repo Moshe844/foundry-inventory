@@ -25,6 +25,12 @@ test('briefings dismiss correctly and upload allowance failures stop the browser
   await page.goto(base+'/settings?section=advanced');assert(await page.locator('[data-source-upload]').filter({hasText:'starter-row-limit.csv'}).isVisible());
   const handler=require('../../src/operations/postgres-runtime-handlers').create({})['import.analyse-source'];const result=await jobs.processOne(db,{'import.analyse-source':handler},{owner:'starter-row-limit-test'});assert.equal(result.status,'PAUSED');assert.equal(result.lastError.code,'entitlement_required');assert.equal(result.lastError.details.requiredRows,25001);
   const panel=page.locator('[data-source-upload]').filter({hasText:'starter-row-limit.csv'});await panel.getByText('This file exceeds your plan allowance',{exact:true}).waitFor();assert(await panel.locator('[data-source-meter]').isHidden());assert(await panel.getByRole('link',{name:'View plans and allowance'}).isVisible());assert(!/Counting the rows/.test(await panel.innerText()));
+  assert.doesNotMatch(await panel.innerText(),/once the preview is ready/);
+  await panel.getByRole('button',{name:'Dismiss notice',exact:true}).click();assert.equal(await panel.count(),0,'The stopped global notice is removed immediately');
+  assert.equal(new URL(page.url()).searchParams.get('section'),'advanced','Dismissing keeps the current page');
+  await page.reload();assert.equal(await page.locator('[data-source-upload]').filter({hasText:'starter-row-limit.csv'}).count(),0,'Stopped work does not reappear as a global loading notice');
+  await page.goto(base+'/imports');assert(await page.getByText('starter-row-limit.csv',{exact:true}).first().isVisible(),'The saved file remains in import history');
+  const retained=(await db.query('SELECT u.source_content,j.status FROM import_source_uploads u JOIN stockchief_runtime.jobs j ON j.id=u.job_id WHERE u.id=$1',[saved.id])).rows[0];assert(retained.source_content);assert.equal(retained.status,'PAUSED','Dismissal never retries or bypasses the plan refusal');
   assert.equal((await uploads.get(db,ctx.workspaceId,saved.id)).active,false);assert.equal((await db.query('SELECT count(*)::int n FROM import_plans WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);assert.equal(await f.balance(),4);
  });
  assert.deepEqual(errors,[]);

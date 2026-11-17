@@ -267,6 +267,7 @@ test('scheduled reports and the daily briefing are emailed on their own from the
   await Promise.all([tab.waitForNavigation(),tab.getByRole('button',{name:'Sign in',exact:true}).click()]);
   for(const [file,href,heading] of [['report-emails',mail.path,'How reports are emailed'],['daily-briefing',briefing.path,'How you get the briefing'],['report-schedule','/reports/saved/'+report.id,'Delivery']]){
    await tab.goto(base+href);
+   if(file==='daily-briefing')await tab.getByText('Email delivery and schedule',{exact:true}).click();
    assert(await tab.getByRole('heading',{name:heading,exact:true}).isVisible(),file+' '+name);
    assert(await tab.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),file+' '+name+' must not scroll sideways');
    await tab.screenshot({path:require('node:path').join(folder,file+'-'+name+'.png'),fullPage:true});
