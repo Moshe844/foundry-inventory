@@ -5,6 +5,7 @@ on:
       - src/commercial/release.js
       - src/commercial/connector-request-cost.js
       - src/commercial/operations.js
+      - src/connections/postgres-event-ingestion.js
       - tests/postgres/shopify-public-install.test.js
       - tests/unit/commercial-connector-request-cost.test.js
       - .github/workflows/shopify-pilot-qualification.yml

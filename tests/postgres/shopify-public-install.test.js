@@ -61,6 +61,15 @@ test('public Shopify installation authenticates before sign-in and preserves pai
    const handoff=(await db.query('SELECT * FROM shopify_public_installs WHERE linked_connector_id=$1',[connection.id])).rows[0];assert.equal(handoff.ciphertext,null,'Successful linking erases temporary credentials');
    assert.deepEqual((await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows,before,'Stripe subscription and selected plan are unchanged');
    assert.equal(await require('../../src/commercial/release').isOpen(db),true,'An approved private Shopify connection must preserve public checkout');
+   const event={eventId:'shipping-observation-'+f.owner.workspaceId,type:'fulfillment.reported',data:{}};
+   const eventAuth={workspaceId:f.owner.workspaceId,connectorId:connection.id,actorId:f.owner.userId};
+   const events=require('../../src/connections/postgres-event-ingestion');
+   assert.equal((await events.ingest(db,eventAuth,event)).status,'IGNORED');
+   assert.equal((await events.ingest(db,eventAuth,event)).replayed,true);
+   const eventCosts=(await db.query("SELECT amount_minor,detail FROM commercial_cost_events WHERE workspace_id=$1 AND provider='shopify' AND operation='event_ingestion'",[f.owner.workspaceId])).rows;
+   assert.equal(eventCosts.length,1,'A replay cannot count an event twice');
+   assert.equal(Number(eventCosts[0].amount_minor),0);assert.equal(eventCosts[0].detail.costBasis,'NO_EXTRA_SHOPIFY_EVENT_INGESTION_FEE');
+   assert.equal(await require('../../src/commercial/release').isOpen(db),true,'Receiving a private Shopify event must preserve public checkout');
    assert.equal((await db.query('SELECT count(*)::int n FROM movements WHERE workspace_id=$1',[f.owner.workspaceId])).rows[0].n,0,'Authorization does not import starting stock');
    const rawBody=Buffer.from('{"id":42}'),headers={'x-shopify-shop-domain':f.shop,'x-shopify-hmac-sha256':crypto.createHmac('sha256','public-secret').update(rawBody).digest('base64')};
    adapter.verifyWebhook({headers,rawBody,credentials:grant,connection:{...connection,config}});
