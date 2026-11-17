@@ -6,12 +6,16 @@ const base='https://gmail.googleapis.com/gmail/v1/users/me';
 test('only existing Stripe Billing/Payments REST paths are evidenced as non-incremental HTTP attempts',()=>{
  const {classify}=require('../../src/commercial/stripe-request-classification');
  for(const path of ['/v1/checkout/sessions','/v1/invoices/in_test','/v1/invoices/create_preview',
-  '/v1/payment_intents/pi_test','/v1/subscription_schedules','/v1/balance_transactions/txn_test']){
+  '/v1/payment_intents/pi_test','/v1/subscription_schedules','/v1/subscription_schedules/sub_sched_test/release',
+  '/v1/refunds','/v1/refunds/re_test','/v1/refunds?payment_intent=pi_test&limit=100','/v1/balance_transactions/txn_test']){
   const result=classify(`https://api.stripe.com${path}`);
   assert.equal(result?.basis,'VERIFIED_NO_INCREMENTAL_REQUEST_FEE');
   assert.match(result.source,/stripe\.com\/billing\/pricing/);
  }
  assert.equal(classify('https://api.stripe.com/v1/tax/calculations'),null);
+ assert.equal(classify('https://api.stripe.com/v1/refunds/re_test/novel_paid_action'),null);
+ assert.equal(classify('https://api.stripe.com/v1/subscription_schedules/sub_sched_test/novel_paid_action'),null);
+ assert.equal(classify('https://api.stripe.com.example.test/v1/refunds'),null);
  assert.equal(classify('https://example.test/v1/invoices/in_test'),null);
 });
 test('billing interval validation accepts the published monthly and annual plans and rejects unknown periods',()=>{

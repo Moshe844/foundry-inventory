@@ -4,7 +4,7 @@ test('14-day cancellation refunds the original subscription payments for all six
  const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
  t.after(async()=>{await db.close();await cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db);
  const guarantee=require('../../src/commercial/subscription-guarantee'),auth=require('../../src/domain/postgres-auth-service');
- let sequence=0;
+ let sequence=0,latestNativeRefund;
  async function fixture(plan='starter',interval='MONTHLY',days=1){
   const key=String(++sequence),owner=await auth.createBusiness(db,{name:'Refund owner',businessName:'Refund '+key,email:randomUUID()+'@example.test',password:'Refund!'+randomUUID()}),accountId=owner.accountId;
   const sub='sub_g'+key,customer='cus_g'+key,invoice='in_g'+key,pi='pi_g'+key,amount=({starter:19900,growth:49900,pro:99900})[plan]*(interval==='ANNUAL'?10:1),paidAt=new Date(Date.now()-days*86400000);
@@ -34,6 +34,52 @@ test('14-day cancellation refunds the original subscription payments for all six
   const sub=(await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.accountId])).rows[0];assert.equal(sub.status,'CANCELLED');assert(sub.refunded_at);assert(sub.refund_deletion_at);
   assert.equal(Number((await db.query("SELECT amount_minor FROM commercial_revenue_events WHERE account_id=$1 AND kind='REFUND'",[f.accountId])).rows[0].amount_minor),-f.amount);
   assert.equal((await guarantee.process(db,job,{provider:f.provider})).replayed,true);assert.equal(f.calls.create,1);
+ });
+ for(const plan of ['starter','growth','pro'])await t.test(plan+' native refund HTTP costs preserve public checkout',async()=>{
+  const f=await fixture(plan),prior={enabled:process.env.STOCKCHIEF_CHECKOUT_ENABLED,account:process.env.STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID};
+  process.env.STOCKCHIEF_CHECKOUT_ENABLED='true';process.env.STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID=require('../../src/commercial/stripe-live-fee-evidence').accountId;
+  try{
+   await db.query('UPDATE commercial_release_control SET checkout_enabled=true,economics_approved_at=now(),readiness_approved_at=now() WHERE singleton=true');
+   await db.query("UPDATE commercial_critical_warnings SET status='RESOLVED'");
+   const release=require('../../src/commercial/release');assert.equal(await release.isOpen(db),true);
+   const r=await guarantee.request(db,f.accountId),job=(await db.query("SELECT * FROM stockchief_runtime.jobs WHERE kind='commercial.subscription-guarantee' AND payload->>'requestId'=$1",[r.id])).rows[0];
+   const fetch=async(input,init)=>{
+    const url=new URL(input),method=init.method||'GET',values=new URLSearchParams(init.body),provider=f.provider;let value;
+    if(url.pathname.startsWith('/v1/invoices/'))value=await provider.retrieveInvoice();
+    else if(url.pathname==='/v1/invoice_payments')value={data:[],has_more:false};
+    else if(url.pathname.startsWith('/v1/payment_intents/'))value=await provider.retrievePaymentIntent();
+    else if(url.pathname.startsWith('/v1/subscriptions/'))value=method==='DELETE'?await provider.cancelImmediately({subscriptionId:f.sub}):await provider.retrieveSubscription();
+    else if(url.pathname==='/v1/refunds')value=method==='GET'?{data:await provider.listRefunds(url.searchParams.get('payment_intent')),has_more:false}:await provider.createSubscriptionRefund({amount:Number(values.get('amount')),paymentIntentId:values.get('payment_intent'),accountId:values.get('metadata[stockchief_account_id]'),requestId:values.get('metadata[stockchief_guarantee_id]')});
+    else throw Error('Unexpected fixture HTTP path: '+url.pathname);
+    return new Response(JSON.stringify(value),{status:200,headers:{'content-type':'application/json'}});
+   };
+   await require('../../src/commercial/context').run({database:db,scope:{},requestId:job.id},()=>guarantee.process(db,{payload:job.payload},{providerOptions:{fetch,secretKey:'sk_test_fixture_only'}}));
+   assert.equal(f.calls.create,1);assert.equal(f.calls.cancel,1);
+   const costs=(await db.query("SELECT amount_minor,detail FROM commercial_cost_events WHERE provider='stripe_billing' AND detail->>'requestId'=$1",[job.id])).rows;
+   assert(costs.length>=7,'The real HTTP adapter must record every request');
+   assert(costs.every(c=>c.amount_minor!==null&&Number(c.amount_minor)===0),'Known refund HTTP requests must carry evidenced cost, including list and creation');
+   assert(costs.every(c=>c.detail.providerPath&&!c.detail.providerPath.includes('?')),'Billing request evidence must retain the path without query data');
+   assert(costs.some(c=>c.detail.providerPath==='/v1/refunds'&&c.detail.providerMethod==='POST'));
+   assert.equal(await release.isOpen(db),true,'A successful customer refund must not close public signup');
+   latestNativeRefund={f,job};
+  }finally{for(const [key,value]of [['STOCKCHIEF_CHECKOUT_ENABLED',prior.enabled],['STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID',prior.account]]){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
+ });
+ await t.test('historical refund HTTP evidence reopens checkout without certifying Tax or untraced requests',async()=>{
+  const {f,job}=latestNativeRefund,prior={enabled:process.env.STOCKCHIEF_CHECKOUT_ENABLED,account:process.env.STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID};
+  process.env.STOCKCHIEF_CHECKOUT_ENABLED='true';process.env.STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID=require('../../src/commercial/stripe-live-fee-evidence').accountId;
+  try{
+   await db.query("UPDATE stockchief_runtime.jobs SET status='COMPLETED',completed_at=now() WHERE id=$1",[job.id]);
+   const control=require('../../src/commercial/control-service'),release=require('../../src/commercial/release');
+   const old=await control.recordCost(db,{}, {provider:'stripe_billing',operation:'http_request',unit:'request',quantity:1,providerVersion:'2026-09-30.endive',idempotencyKey:'historical-refund-http',occurredAt:new Date(new Date(job.created_at).getTime()+1).toISOString(),detail:{hostname:'api.stripe.com',httpStatus:200,requestId:job.id}});
+   assert.equal(old.event.amount_minor,null);assert.equal(await release.isOpen(db),false);
+   const sql=require('node:fs').readFileSync(require('node:path').join(__dirname,'../../src/db/postgres-migrations/536-refund-http-cost-evidence.sql'),'utf8');await db.query(sql);
+   const repaired=(await db.query('SELECT amount_minor,rate_id,detail FROM commercial_cost_events WHERE id=$1',[old.event.id])).rows[0];assert.equal(Number(repaired.amount_minor),0);assert.equal(repaired.rate_id,null);assert.equal(repaired.detail.refundHttpEvidence,'536');assert.equal(await release.isOpen(db),true);
+   await require('../../src/commercial/network').after({database:db,scope:{},requestId:job.id},{billing:true,def:{provider:'stripe',host:'api.stripe.com',version:'2026-09-30.endive'},key:'unknown-tax-in-same-context',url:'https://api.stripe.com/v1/tax/calculations?private=do-not-store',method:'POST'},true,{httpStatus:200});
+   const untraced=await control.recordCost(db,{}, {provider:'stripe_billing',operation:'http_request',unit:'request',quantity:1,providerVersion:'2026-09-30.endive',idempotencyKey:'untraced-unknown-http',detail:{hostname:'api.stripe.com',httpStatus:200,requestId:'no-such-worker'}});
+   await db.query(sql);
+   const unknown=(await db.query("SELECT amount_minor,detail FROM commercial_cost_events WHERE idempotency_key='unknown-tax-in-same-context'")).rows[0];assert.equal(unknown.amount_minor,null);assert.equal(unknown.detail.providerPath,'/v1/tax/calculations');assert(!JSON.stringify(unknown.detail).includes('do-not-store'));
+   assert.equal((await db.query('SELECT amount_minor FROM commercial_cost_events WHERE id=$1',[untraced.event.id])).rows[0].amount_minor,null);assert.equal(await release.isOpen(db),false,'Unpriced unrelated requests must still close checkout');
+  }finally{for(const [key,value]of [['STOCKCHIEF_CHECKOUT_ENABLED',prior.enabled],['STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID',prior.account]]){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
  });
  await t.test('a zero-cash invoice alone does not start a refund window',async()=>{const f=await fixture();await db.query('DELETE FROM commercial_revenue_events WHERE account_id=$1',[f.accountId]);await zeroCashInvoice(f,1);const state=await guarantee.quote(db,f.accountId);assert.equal(state.eligible,false);assert.equal(state.deadline,null);await assert.rejects(guarantee.request(db,f.accountId),/14-day refund window/);assert.deepEqual(f.calls,{create:0,cancel:0});});
  await t.test('zero net revenue does not hide verified positive card cash',async()=>{const f=await fixture();await db.query("UPDATE commercial_revenue_events SET amount_minor=0,detail=detail||$2::jsonb WHERE account_id=$1",[f.accountId,JSON.stringify({cashMinor:f.amount,cashTaxMinor:f.amount,netCashRevenueMinor:0})]);assert.equal((await guarantee.quote(db,f.accountId)).eligible,true);});

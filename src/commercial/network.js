@@ -96,6 +96,8 @@ async function after(context,attempt,success,detail){
  ...(connectorClassification?{amountMinor:0,costBasis:connectorClassification.basis,
    costConfidence:'HIGH',costSource:connectorClassification.source}:{}),
  detail:{...detail,hostname:attempt.def.host,requestId:context.requestId,
+   ...(attempt.billing&&attempt.url?{providerPath:new URL(attempt.url).pathname,
+     providerMethod:String(attempt.method||'GET').toUpperCase()}:{}),
    ...(billingClassification?{feeResponsibility:'NO_INCREMENTAL_HTTP_REQUEST_FEE',
      evidence:billingClassification,otherStripeFees:'Reconcile actual balance transactions and Billing volume charges separately.'}:{}),
    ...(gmailNoIncrementalFee?{feeResponsibility:'NO_INCREMENTAL_GMAIL_API_FEE_BELOW_DAILY_THRESHOLD',
