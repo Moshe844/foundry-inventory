@@ -201,6 +201,9 @@ async function setupWebhookDelivery(database,ctx,connectorId,requestOrigin,optio
 }
 
 async function completeOAuth(database,providerType,query,requestOrigin,options={}){
+  const registry=options.providers||defaultProviders;
+  if(!registry.get(providerType))throw new NotFoundError('Provider not found.');
+  if(registry===defaultProviders)launchPolicy.assertCallbackProvider(providerType);
   if(providerType==='shopify'){
     const preview=await readState(database,query.state,providerType);
     if(preview.metadata.shopifyProfile==='public'){
