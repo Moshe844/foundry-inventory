@@ -387,10 +387,11 @@ async function recordDelivery(client,auth,event,contentHash){
 }
 
 async function ingest(database,auth,raw,options={}){
-  const event=normalize(raw);const payloadHash=event.effectKey?hash({type:event.type,data:event.data}):hash(raw);const receivedAt=nowIso();
+  let event=normalize(raw);const originalEvent=event,payloadHash=event.effectKey?hash({type:event.type,data:event.data}):hash(raw);const receivedAt=nowIso();
   const outcome=await database.transaction(async(client)=>{
-    const connection=(await client.query('SELECT id FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',[auth.workspaceId,auth.connectorId])).rows[0];
+    const connection=(await client.query('SELECT id,provider_type FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',[auth.workspaceId,auth.connectorId])).rows[0];
     if(!connection)throw new ValidationError('That connection does not belong to this business.');
+    event=await require('./postgres-shopify-privacy').filterEvent(client,connection,auth.workspaceId,originalEvent);
     if(event.effectKey){
       const delivered=(await client.query('SELECT effect_key,content_hash FROM connection_event_deliveries WHERE workspace_id=$1 AND connector_id=$2 AND delivery_id=$3',[auth.workspaceId,auth.connectorId,event.eventId])).rows[0];
       if(delivered&&(delivered.effect_key!==event.effectKey||delivered.content_hash!==payloadHash)){
@@ -405,7 +406,7 @@ async function ingest(database,auth,raw,options={}){
        payload_hash,normalized_payload,attempt_count,last_attempt_at,occurred_at,received_at,processed_at,effect_key)
       VALUES($1,$2,$3,$4,$5,$6,'PROCESSING','[]',$7,$8,$9,1,$10,$11,$10,$10,$12)
       ON CONFLICT DO NOTHING RETURNING id`,
-    [newId('cevt'),auth.workspaceId,auth.connectorId,event.eventId,event.type,JSON.stringify(raw),event.version,
+    [newId('cevt'),auth.workspaceId,auth.connectorId,event.eventId,event.type,JSON.stringify(event===originalEvent?raw:event),event.version,
       payloadHash,JSON.stringify(event),receivedAt,event.occurredAt,event.effectKey||null]);
     if(!inserted.rows.length){
       const priors=(await client.query(`SELECT * FROM connector_feed_events WHERE workspace_id=$1 AND connector_id=$2

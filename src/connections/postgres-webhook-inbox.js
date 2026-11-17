@@ -20,9 +20,11 @@ function squareRevisionDelivery(original,input,next){
  return facts.effectKey('square','order-notification-revision',input.event_id,next.version);
 }
 async function receive(database,connection,input){
- const headers=Object.fromEntries(headersAllowed.filter(k=>input.headers[k]!=null).map(k=>[k,String(input.headers[k]).slice(0,1024)])),originalDelivery=deliveryId(connection.provider_type,input.headers,input.body,input.rawBody),payloadHash=facts.hash({headers,body:input.body}),sealed=vault.encrypt({headers,rawBody:input.rawBody.toString('base64')});
+ const headers=Object.fromEntries(headersAllowed.filter(k=>input.headers[k]!=null).map(k=>[k,String(input.headers[k]).slice(0,1024)])),originalDelivery=deliveryId(connection.provider_type,input.headers,input.body,input.rawBody),payloadHash=facts.hash({headers,body:input.body});
  const outcome=await database.transaction(async c=>{
   if(!(await c.query('SELECT 1 FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 AND status=$3 AND paused_at IS NULL',[connection.workspace_id,connection.id,'connected'])).rows.length)throw new ValidationError('That connection is not active in this business.');
+  const storedBody=await require('./postgres-shopify-privacy').filterBody(c,connection,input.body);
+  const sealed=vault.encrypt({headers,rawBody:(connection.provider_type==='shopify'?Buffer.from(JSON.stringify(storedBody)):input.rawBody).toString('base64')});
   async function retain(delivery){
     const params=[connection.workspace_id,connection.id,delivery];
     const inserted=await c.query("INSERT INTO connection_webhook_receipts(id,workspace_id,connector_id,delivery_id,payload_hash,ciphertext,iv,auth_tag) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING RETURNING id,status,result,payload_hash",[newId('whreceipt'),...params,payloadHash,sealed.ciphertext,sealed.iv,sealed.authTag]);
@@ -135,7 +137,7 @@ async function scheduleMappedInTransaction(c,workspaceId,connectorId){
 async function reconcileCancellationObservations(database,connection,adapter){
  if(!adapter?.hydrateWebhook||!adapter?.normalizeWebhook)return {resolved:0};
  const rows=(await database.query(`SELECT r.* FROM connection_webhook_receipts r
- WHERE r.workspace_id=$1 AND r.connector_id=$2 AND r.status='COMPLETED' AND EXISTS(
+ WHERE r.workspace_id=$1 AND r.connector_id=$2 AND r.status='COMPLETED' AND r.payload_purged_at IS NULL AND EXISTS(
   SELECT 1 FROM connection_issues i WHERE i.workspace_id=r.workspace_id AND i.connector_id=r.connector_id
   AND i.status='OPEN' AND i.issue_type='RETURN_REVIEW_REQUIRED'
   AND left(i.external_event_id,length(r.delivery_id)+1)=r.delivery_id||':') ORDER BY r.received_at DESC LIMIT 20`,[connection.workspace_id,connection.id])).rows;

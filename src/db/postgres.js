@@ -20,13 +20,29 @@ function connectionOptions(connectionString, options = {}) {
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(address.hostname);
   const sslMode = address.searchParams.get('sslmode');
   const privateNetwork = options.privateNetwork === true;
+  const requireTls = options.requireTls === true;
+  if (!local && requireTls && ['disable', 'allow', 'prefer', 'no-verify'].includes(sslMode)) {
+    throw new Error('Production PostgreSQL requires encrypted TLS connections.');
+  }
   if (!local && !privateNetwork && ['disable', 'allow', 'prefer', 'no-verify'].includes(sslMode)) {
     throw new Error('Remote PostgreSQL requires certificate-verified TLS.');
   }
   let ssl;
-  if ((local || privateNetwork) && (!sslMode || sslMode === 'disable')) ssl = false;
+  if ((local || (privateNetwork && !requireTls)) && (!sslMode || sslMode === 'disable')) ssl = false;
   else if (sslMode === 'require') ssl = { rejectUnauthorized: false };
   else ssl = { rejectUnauthorized: true, ...(options.ca ? { ca: options.ca } : {}) };
+  if (!local && options.tlsFingerprint) {
+    if (!options.ca || !ssl || ssl.rejectUnauthorized !== true) throw new Error('Pinned database TLS requires a trusted certificate and verified TLS.');
+    const fingerprints=String(options.tlsFingerprint).split(',').map(value=>value.trim().replaceAll(':','').toLowerCase());
+    if(fingerprints.some(value=>!/^([a-f0-9]{64})$/.test(value)))throw new Error('Invalid database TLS certificate fingerprint.');
+    // Render's internal Postgres certificate is self-signed and has no DNS SAN.
+    // Trust the explicitly configured certificate and pin its SHA-256 identity;
+    // never disable chain validation or silently retry without TLS.
+    ssl.checkServerIdentity=(_hostname,certificate)=>{
+      const actual=String(certificate.fingerprint256||'').replaceAll(':','').toLowerCase();
+      if(!fingerprints.includes(actual))return Object.assign(new Error('The database TLS certificate identity changed.'),{code:'DATABASE_TLS_IDENTITY_CHANGED'});
+    };
+  }
   return { host: address.hostname.replace(/^\[|\]$/g, ''), port: Number(address.port || 5432),
     database: decodeURIComponent(address.pathname.slice(1)), user: decodeURIComponent(address.username),
     password: decodeURIComponent(address.password), max: options.max || 10,
@@ -47,6 +63,9 @@ function openPostgres(connectionString, options = {}) {
   const resolvedOptions = {
     ...options,
     privateNetwork: options.privateNetwork ?? process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK === 'true',
+    requireTls: options.requireTls ?? process.env.STOCKCHIEF_RUNTIME_ENV === 'production',
+    ca: options.ca ?? process.env.FOUNDRY_DATABASE_TLS_CA,
+    tlsFingerprint: options.tlsFingerprint ?? process.env.FOUNDRY_DATABASE_TLS_FINGERPRINT256,
   };
   const pool = new Pool(connectionOptions(connectionString, resolvedOptions));
   const subscriptions=new Set(),committedWrites=new Set();

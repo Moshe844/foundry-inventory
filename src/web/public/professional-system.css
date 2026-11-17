@@ -104,3 +104,16 @@ html:root body .sc-settings-content :is(.rm-form-grid,.stack) label{line-height:
 html:root body .sc-provider-action button{font:inherit;cursor:pointer;min-height:40px;border:1px solid #dddfea;border-radius:9px;background:#fff;color:#29334a;padding:9px 14px}
 html:root body .sc-provider-action button:hover{background:#f7f6ff;border-color:#b7b0f0}
 @media(max-width:700px){html:root body .setup-plan-allowance dl{grid-template-columns:repeat(2,minmax(0,1fr))}html:root body .setup-file-types dl{grid-template-columns:1fr}html:root body .setup--focused .setup-source-card:not(.setup-source-card--file)>form{padding-left:0}html:root body .setup--focused .setup-source-card:not(.setup-source-card--file)>form .btn{width:100%}html:root body .setup-plan-allowance{padding:18px}}
+/* Daily briefings: a short operational summary, with delivery controls separate. */
+.sc-briefing { max-width:1100px; margin:0 auto; display:grid; gap:20px; }
+.sc-briefing-head { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; flex-wrap:wrap; }
+.sc-briefing h1 { margin:4px 0 8px; }.sc-briefing h2 { margin:0 0 16px; font-size:20px; }
+.sc-briefing .rm-card { padding:24px; }.sc-briefing-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
+.sc-briefing-metric { display:flex; flex-direction:column; gap:8px; padding:18px; border:1px solid #e0e4ef; border-radius:12px; color:inherit; text-decoration:none; background:#fafaff; }
+.sc-briefing-metric:hover { border-color:#6354ef; }.sc-briefing-metric strong { font-size:30px; line-height:1.2; }.sc-briefing-metric small { color:#58647a; }
+.sc-briefing-list { list-style:none; margin:0; padding:0; }.sc-briefing-list li { display:grid; grid-template-columns:1fr auto auto; gap:20px; padding:14px 0; border-bottom:1px solid #e7eaf2; align-items:center; }
+.sc-briefing-delivery>summary { font-size:18px; font-weight:600; cursor:pointer; }.sc-briefing-delivery .card { border:0; box-shadow:none; padding:20px 0 0; }
+.sc-briefing-delivery .form-stack { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; align-items:start; }
+.sc-briefing-delivery .form-stack>fieldset,.sc-briefing-delivery .form-stack>p { grid-column:1/-1; }.sc-briefing-delivery label { display:block; line-height:1.5; }
+.sc-briefing-delivery input:not([type=checkbox]):not([type=hidden]),.sc-briefing-delivery select { display:block; width:100%; margin-top:6px; padding:10px 12px; border:1px solid #dce0eb; border-radius:8px; background:white; font:inherit; }
+@media(max-width:700px) { .sc-briefing-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }.sc-briefing-list li { grid-template-columns:1fr auto; gap:10px; }.sc-briefing-list li a { grid-column:1/-1; }.sc-briefing-delivery .form-stack { grid-template-columns:1fr; }.sc-briefing .rm-card { padding:18px; } }

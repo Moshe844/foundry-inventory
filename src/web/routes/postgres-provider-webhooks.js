@@ -39,6 +39,16 @@ function apiError(res,error){
 function createPostgresProviderWebhooks(database,options={}){
   const router=express.Router();
   const providers=options.providers||providersDefault;
+  router.post('/api/v1/connections/shopify/privacy/:profile(legacy|public)',express.raw({type:'application/json',limit:'256kb'}),async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    try{const raw=Buffer.isBuffer(req.body)?req.body:Buffer.alloc(0);
+      const result=await require('../../connections/postgres-shopify-privacy').receive(database,req.params.profile,req.headers,raw);
+      return res.status(200).json(result);
+    }catch(error){const status=error instanceof DomainError?error.status:([400,401,503].includes(error.status)?error.status:500);
+      // Never log the signature, body or provider exception.
+      return res.status(status).json({error:{code:status===401?'invalid_shopify_signature':'shopify_privacy_request_failed',message:status===500?'The privacy request could not be safely retained. Please retry.':status===503?'Shopify privacy verification is not configured.':error.message}});
+    }
+  });
   router.post('/api/v1/connections/woocommerce/callback',express.json({limit:'16kb'}),async(req,res)=>{
     try{const connection=await require('../../connections/postgres-application-authorization').complete(database,'woocommerce',req.body||{},requestOrigin(req,options.publicOrigin),{providers,publicOrigin:requestOrigin(req,options.publicOrigin)});
       return res.status(200).json({connected:true,connectionId:connection.id});

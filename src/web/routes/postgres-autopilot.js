@@ -2169,6 +2169,8 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   // Brand watches became watch rules (job 167).
   router.get('/autopilot/reviews/brand-watches',requireAuth,(req,res)=>res.redirect(301,'/autopilot/reviews/watch-rules'));
+  router.post('/autopilot/briefings/:day/dismiss',requireAuth,owner,asyncRoute(async(req,res)=>{await require('../../autopilot/briefing-email').dismiss(database,req.ctx,req.params.day);req.flash('success','Briefing dismissed from Needs you. It remains in your briefing history.');return res.redirect(303,'/needs-you');}));
+  router.post('/autopilot/briefing-notices',requireAuth,owner,asyncRoute(async(req,res)=>{if(!['yes','no'].includes(req.body.enabled))throw new ValidationError('Choose whether briefing notices are shown.');await require('../../autopilot/briefing-email').setNotices(database,req.ctx,req.body.enabled==='yes');req.flash('success',req.body.enabled==='yes'?'Future briefing notices will appear in Needs you.':'Future briefing notices hidden from Needs you. Email settings remain under Email delivery and schedule.');return res.redirect(303,require('../../autopilot/briefing-email').path);}));
   router.get('/autopilot/reviews/:job',requireAuth,owner,asyncRoute(async(req,res)=>{
     return reportPage(req,res,reviews.definitions.find(d=>d.key===req.params.job)?.id,'autopilot/review-result',{title:'Agent review',nav:'autopilot',backTo:{href:'/autopilot/reviews',label:'Agent reviews'}},async()=>{
       const result=await reviews.run(database,req.ctx,req.params.job,{filter:req.query.filter,page:req.query.page,

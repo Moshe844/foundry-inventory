@@ -131,12 +131,12 @@ async function report(db,ctx,{filter,team,page}){
     rows.push({'Team member':'Inventory',...pending[1]});
     const teamSummary=data.staffTasks?' Completed warehouse tasks are listed by who did them. Overdue tasks are listed by who they were assigned to when the summary ran.':
       ' This briefing was recorded before staff tasks were included.';
-    return {rows:rows.slice((page-1)*100,page*100),more:rows.length>page*100,summary:summary+teamSummary};
+    return {rows:rows.slice((page-1)*100,page*100),more:rows.length>page*100,summary:summary+teamSummary,briefingDate:data.day};
   }
   const rows=Object.entries(data.totals).map(([k,n])=>({Activity:verbs[k],Count:n,link:'/activity?'+dates+'&operation='+k}));
   if(data.business)businessEvents.forEach(([Activity,link],index)=>rows.push({Activity,Count:data.business[index],link}));
   rows.push({Activity:'Completed agent actions',Count:data.actions,link:'/activity'},{Activity:'Verified work items',Count:data.verified,link:'/autopilot'},...pending);
-  return {rows,more:false,summary};
+  return {rows,more:false,summary,briefingDate:data.day};
 }
 const definitions=[
   {id:156,key:'daily-briefing',label:'Daily briefing',filterLabel:'Business date (YYYY-MM-DD)',readPage:(db,ctx,o)=>report(db,ctx,{...o,team:false})}

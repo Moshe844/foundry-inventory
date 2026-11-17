@@ -53,6 +53,7 @@ async function run(database,{now=Date.now(),budgetMs=10*60_000}={}){
    out.measurements+=removed.rowCount;if(removed.rowCount<BATCH)break;}
   if(!more())break;
  }
+ out.personalData=await require('../connections/postgres-personal-data-retention').run(database,{now,budgetMs:Math.max(0,deadline-Date.now())});
  return out;
 }
 
