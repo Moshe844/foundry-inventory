@@ -149,4 +149,12 @@ test('public Shopify installation authenticates before sign-in and preserves pai
    const replay=await first.get('/integrations/shopify/callback').query(firstCallback);assert.equal(replay.status,400);assert.equal(calls.length,before,'The retired browser cannot mint another token');
  });
 
+ await t.test('bare Shopify protocol URLs refuse unsigned and expired flows without provider calls',async()=>{
+   const before=calls.length,count=(await db.query('SELECT count(*)::int n FROM shopify_public_installs')).rows[0].n;
+   for(const url of ['/integrations/shopify/install','/integrations/shopify/callback','/integrations/shopify/connect']){
+     const response=await request(app).get(url);assert.equal(response.status,400,url);assert.match(response.headers['cache-control'],/no-store/);assert.match(response.text,/Shopify/);
+   }
+   assert.equal(calls.length,before);assert.equal((await db.query('SELECT count(*)::int n FROM shopify_public_installs')).rows[0].n,count);
+ });
+
 });
