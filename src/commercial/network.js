@@ -56,6 +56,8 @@ async function before(context,url,init,provider){const def=definition(url);if(pr
    ||address.pathname.match(/\/api\.xro\/(\d+\.\d+)\//)?.[1]||def.version;
  if(address.searchParams.has('minorversion'))def.version+=`:minor${address.searchParams.get('minorversion')}`;
  if(provider==='StockChief Billing')return {def,key:newId('billinghttp'),billing:true,url,method:init.method||'GET'};
+ if(require('../connections/shopify-install-authorization').admit(context,url,init))
+   return {def,key:newId('shopify-install-attempt'),funded:true,resourceOnly:true,url,method:'POST'};
  if(!context.scope?.workspaceId){await control.recordCost(context.database,context.scope||{},
    {provider:def.provider,operation:'blocked_unscoped_provider_request',unit:'attempt',quantity:1,
     idempotencyKey:newId('unscoped'),providerVersion:def.version,detail:{hostname:def.host,providerNotCalled:true}});

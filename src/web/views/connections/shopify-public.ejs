@@ -1,0 +1,23 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect Shopify · StockChief</title><link rel="stylesheet" href="/shopify-public-install.css?v=<%= assetVersion %>"></head>
+<body class="sc-shopify-install"><main class="sc-shopify-card">
+ <a class="sc-shopify-brand" href="/"><span aria-hidden="true"><%- include('../components/brand-symbol') %></span><span>StockChief</span></a>
+ <h1><%= installation?.status==='LINKED'?'Your Shopify connection':'Connect your Shopify store' %></h1>
+ <% if(error){ %><div class="sc-shopify-error" role="alert"><%= error %></div><% } %>
+ <% if(installation){ %>
+ <p><strong><%= installation.shop %></strong></p>
+ <% if(installation.status==='AUTHORIZED'||installation.status==='LINKED'){ %>
+ <p>Shopify access is approved. Choose where to use this store in StockChief.</p>
+ <% if(!account){ %><a class="sc-shopify-action" href="/login?next=%2Fintegrations%2Fshopify%2Fconnect">Sign in to StockChief</a><p>Use the owner account for your inventory.</p>
+ <% }else if(!account.email_verified_at){ %><p>Verify your StockChief email before connecting this store.</p><a class="sc-shopify-action" href="/verify-email/pending">Verify my email</a>
+ <% }else if(choices.length){ %>
+ <form method="post" action="/integrations/shopify/connect" class="sc-shopify-form">
+ <input type="hidden" name="_csrf" value="<%= csrfToken %>"><label for="shopify-inventory">Your inventory</label>
+ <select id="shopify-inventory" name="workspaceId" required><% choices.forEach(choice=>{ %><option value="<%= choice.id %>"><%= choice.name %></option><% }); %></select>
+ <p>StockChief will read the store catalog for review. Connecting does not create a subscription or place orders. Your plan’s limits and approval rules still apply.</p>
+ <button type="submit" class="sc-shopify-action"><%= installation.status==='LINKED'?'Open connection':'Connect Shopify' %></button>
+ </form>
+ <% }else{ %><p>No inventory you own is available. Sign in with its owner account or finish setting up your StockChief account.</p><a class="sc-shopify-action" href="/inventories">View my inventories</a><% } %>
+ <% }else if(!error){ %><p>Shopify authorization has not finished. Open StockChief from Shopify to try again.</p><% } %>
+ <% } %>
+ <p><a href="/settings/connections">Back to connections</a> · <a href="mailto:support@stockchiefhq.com">Get help</a></p>
+</main></body></html>

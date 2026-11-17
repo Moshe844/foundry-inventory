@@ -259,6 +259,7 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.use(createPostgresCommercialRouter(database,{publicOrigin:connectionPublicOrigin || config.connections.publicOrigin,
     ...(commercialOptions||{})}));
   app.use(createPostgresAuthRouter(database,commercialOptions||{}));
+  app.use(require('./web/routes/postgres-shopify-public').createRouter(database,{publicOrigin:connectionPublicOrigin||(env==='test'?'request':undefined)}));
   app.use(createPostgresWorkspacesRouter(database));
   app.use(createPostgresSettingsRouter(database,{provider:aiProvider}));
   app.use(createPostgresOnboardingRouter(database));

@@ -1,0 +1,11 @@
+<link rel="stylesheet" href="/capacity-topups.css?v=<%= locals.assetVersion||'current' %>">
+<% if(locals.aiCost&&!aiCost.certificationPaused){
+ const owner=locals.currentUser?.role==='owner', exhausted=aiCost.creditsBlocked;
+ const addHref=aiCost.creditsOnly?'/settings/billing?add=ai#ai-credit-packs':'/usage#ai_work_credits';
+%>
+<aside class="notice notice--warn sc-credit-notice" role="status" data-ai-credit-notice="<%= exhausted?'exhausted':'low' %>" <%= aiCost.creditWarning||exhausted?'':'hidden' %>>
+  <div><strong data-credit-notice-title><%= exhausted?'Your AI credits are used up':'Your AI credits are running low' %></strong>
+  <p data-credit-notice-detail><%= exhausted?'AI work pauses until credits are added or your allowance renews. Your saved work stays available.':Number(aiCost.credits.remaining).toLocaleString('en-US')+' credits remain — 20% or less of your monthly included allowance.' %></p></div>
+  <% if(owner){ %><a class="rm-btn rm-btn--sm" href="<%= addHref %>">Add more AI credits</a><% }else{ %><p>Ask your account owner to add credits or review the plan.</p><% } %>
+</aside>
+<% } %>

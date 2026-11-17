@@ -46,7 +46,15 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
       const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
       await entitlements.assertMeterCapacity(client,commercialScope,'connections',1);
     }
+    // Reauthorization uses the application that owns the existing grant.
+    // A caller-supplied profile must never migrate an established connection.
+    let shopifyProfile;
+    if(providerType==='shopify'&&connectorId){
+      const saved=(await client.query('SELECT config FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,connectorId])).rows[0];
+      shopifyProfile=parseJson(saved.config).shopifyProfile;
+    }
     auth=adapter.authorizationUrl({state,input:{...input,
+      ...(providerType==='shopify'?{shopifyProfile:shopifyProfile||'legacy'}:{}),
       redirectUri:`${origin}/settings/connections/${providerType}/callback`,
       returnUri:`${origin}/settings/connections/woocommerce/return?state=${encodeURIComponent(state)}`,
       callbackUri:`${origin}/api/v1/connections/woocommerce/callback`}});
@@ -83,7 +91,7 @@ async function callbackContext(database,stateValue,providerType){
 
 async function finishAuthorization(database,connection,actorId,result,authorizationStateId=null,options={}){
   return database.transaction(async(client)=>{
-    const authorizer=(await client.query("SELECT role FROM users WHERE workspace_id=$1 AND id=$2 FOR UPDATE",[connection.workspace_id,actorId])).rows[0];
+    const authorizer=(await client.query("SELECT role FROM users WHERE workspace_id=$1 AND id=$2 AND revoked_at IS NULL FOR UPDATE",[connection.workspace_id,actorId])).rows[0];
     if(authorizer?.role!=='owner')throw new AuthenticationError('The owner who started this connection no longer has permission to authorize it. Start again with a current owner.');
     if(options.enforceLaunchPolicy&&connection.provider_type==='shopify'){
       if(result.credentials?.shop!==result.accountId)throw new AuthenticationError('The Shopify credential does not match the approved store.');
@@ -115,7 +123,10 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
     const currentConfig=parseJson(target.config);
     const safeConfig={...currentConfig};
     if(result.credentials?.shop)safeConfig.shop=result.credentials.shop;
-    if(connection.provider_type==='shopify')safeConfig.shopifyClientId=result.credentials?.shopifyClientId||require('../config').connections.shopify.clientId;
+    if(connection.provider_type==='shopify'){
+      safeConfig.shopifyClientId=result.credentials?.shopifyClientId||require('../config').connections.shopify.clientId;
+      if(result.credentials?.shopifyProfile)safeConfig.shopifyProfile=result.credentials.shopifyProfile;
+    }
     if(result.credentials?.storeUrl)safeConfig.storeUrl=result.credentials.storeUrl;
     if(result.verifiedFact)safeConfig.verifiedFact=result.verifiedFact;
     const now=nowIso();

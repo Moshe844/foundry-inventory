@@ -104,6 +104,7 @@
 
 </aside>
 <div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>"><header class="rm-chat__bar"><h1 class="rm-chat__title">Ask StockChief</h1><div class="rm-chat__new"><% if(locals.currentChat){ %><%- include('ask-download',{base:'/ask/chats/'+encodeURIComponent(currentChat.chat_id)+'/download',formats:[['pdf','PDF'],['xlsx','Excel'],['csv','CSV'],['','Text']]}) %><% } %><a class="rm-btn rm-btn--ghost rm-btn--sm sc-chat-history-link" href="/ask/history">Conversations</a><form method="post" action="/ask/new"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">New conversation</button></form></div></header>
+<%- include('../partials/ai-credit-notice') %>
 <% const allowanceNotice=locals.codexPilot?.enabled&&!locals.codexPilot.funded?locals.codexPilot.lockMessage:null; %>
 <p class="notice notice--warn" role="status" data-ask-health<% if(!allowanceNotice){ %> hidden<% } %>><% if(allowanceNotice){ %>Model-backed Ask requests are paused. <%= allowanceNotice %> Stock lookups and page navigation are available.<% } %></p>
 <div class="sc-chat-scroll" data-chat-scroll data-navigation-scroll id="chat-messages" role="log" aria-label="Conversation" aria-live="polite">

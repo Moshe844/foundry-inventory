@@ -103,13 +103,25 @@ test('approved monthly offers have plan-specific checkout, verified paid grants 
   await buy('agent-location-inventory',2900);
   assert.equal((await ent.meterState(db,{accountId:owner.accountId},'workspaces')).hardLimit,2);
   assert.equal((await ent.meterState(db,scope,'locations')).hardLimit,7);
+  const extra=await require('../../src/domain/postgres-auth-service').createWorkspace(db,owner.accountId,{name:'Paid extra inventory'}),
+    extraCtx={workspaceId:extra.workspaceId,actorId:extra.userId};
+  await require('../../src/domain/postgres-location-service').createLocation(db,extraCtx,{name:'Included stock location',kind:'warehouse'});
+  assert.equal((await ent.meterState(db,{accountId:owner.accountId,workspaceId:extra.workspaceId},'locations')).hardLimit,2,'A new paid Starter inventory keeps its own included locations');
+  assert.equal((await db.query('SELECT count(*)::int n FROM locations WHERE workspace_id=$1 AND is_active=1',[extra.workspaceId])).rows[0].n,1,'The paid extra inventory is usable immediately');
+  assert.equal((await ent.meterState(db,scope,'locations')).hardLimit,7,'The five additional locations remain assigned to the purchased inventory');
   const later=new Date((current+86405)*1000);
   assert.equal((await ent.meterState(db,scope,'agent_documents',{now:later})).purchasedRemaining,500);
   assert.equal((await ent.meterState(db,scope,'agent_documents',{now:new Date((current+172805)*1000)})).purchasedRemaining,0);
   await plan('growth');
+  const growthPurchased=(await ent.meterState(db,scope,'ai_work_credits')).purchasedRemaining;
+  await buy('agent-monthly-credits',4900);
+  assert.equal((await ent.meterState(db,scope,'ai_work_credits')).purchasedRemaining,growthPurchased+5000,'Growth receives exactly one verified paid AI pack');
   assert.equal((await ent.meterState(db,scope,'agent_documents')).included,500);
   await assert.rejects(policy.requireWorkspaceJob(db,scope.workspaceId,185,'automatic'),/Custom/);
   await plan('pro');
+  const proPurchased=(await ent.meterState(db,scope,'ai_work_credits')).purchasedRemaining;
+  await buy('agent-monthly-credits',4900);
+  assert.equal((await ent.meterState(db,scope,'ai_work_credits')).purchasedRemaining,proPurchased+5000,'Pro receives exactly one verified paid AI pack');
   assert.equal((await ent.meterState(db,scope,'locations')).hardLimit,null);
   assert.equal((await ent.meterState(db,scope,'agent_documents')).included,3000);
   await assert.rejects(addons.begin(db,scope,input('agent-location-inventory'),options),/current plan/);

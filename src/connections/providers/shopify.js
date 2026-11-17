@@ -6,6 +6,7 @@ const { ValidationError, AuthenticationError } = require('../../domain/errors');
 const { safeEqual, hmacBase64, requireVerified, jsonRequest, postalAddress } = require('./common');
 const money = require('../../domain/currency');
 const facts = require('../commerce-facts');
+const appProfiles=require('../shopify-app-profile');
 
 const API_VERSION = '2026-07';
 const SCOPES = ['read_orders', 'read_products', 'read_locations', 'read_inventory', 'read_fulfillments','write_products','write_inventory'];
@@ -60,15 +61,16 @@ function validateInput(input) {
 }
 
 function authorizationUrl({ state, input }) {
-  if (!config.connections.shopify.configured) throw new ValidationError('Shopify is not configured on this StockChief installation.');
+  const app=appProfiles.profile(input.shopifyProfile||'legacy');
   const shop = normalizeShop(input.shop);
-  const scopes = requestedScopes(shop);
+  const scopes = app.name==='public'?[...SCOPES]:requestedScopes(shop);
   const url = new URL(`https://${shop}/admin/oauth/authorize`);
-  url.searchParams.set('client_id', config.connections.shopify.clientId);
+  url.searchParams.set('client_id', app.clientId);
   url.searchParams.set('scope', scopes.join(','));
   url.searchParams.set('redirect_uri', input.redirectUri);
   url.searchParams.set('state', state);
-  return { url: url.toString(), metadata: { shop, redirectUri: input.redirectUri, requestedScopes:scopes } };
+  return { url: url.toString(), metadata: { shop, redirectUri: input.redirectUri, requestedScopes:scopes,
+    ...(app.name==='public'?{shopifyProfile:'public',shopifyClientId:app.clientId}:{}) } };
 }
 
 function expiresAt(seconds) {
@@ -132,6 +134,17 @@ async function tryDirectAuthorization({ input }) {
 }
 
 async function refreshCredentials(credentials) {
+  if(credentials?.shopifyProfile==='public'){
+    const app=appProfiles.forGrant(credentials);
+    const validUntil=Date.parse(credentials.accessTokenExpiresAt||'');
+    if(Number.isFinite(validUntil)&&validUntil>Date.now()+5*60_000)return {credentials,expiresAt:credentials.accessTokenExpiresAt,refreshed:false};
+    if(!credentials.refreshToken||Date.parse(credentials.refreshTokenExpiresAt||'')<=Date.now())throw new AuthenticationError('Reconnect Shopify to renew this store’s authorization.');
+    const {body}=await jsonRequest(`https://${normalizeShop(credentials.shop)}/admin/oauth/access_token`,{
+      method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},parseErrorBody:oauthErrorBody,
+      body:new URLSearchParams({client_id:app.clientId,client_secret:app.clientSecret,grant_type:'refresh_token',refresh_token:credentials.refreshToken}).toString()});
+    const next=publicCredentials(body,credentials.shop,app);
+    return {credentials:next,expiresAt:next.accessTokenExpiresAt,refreshed:true};
+  }
   if (credentials?.authMode !== 'client_credentials') return { credentials, refreshed: false };
   const validUntil = Date.parse(credentials.accessTokenExpiresAt || '');
   if (Number.isFinite(validUntil) && validUntil > Date.now() + 5 * 60_000) {
@@ -141,23 +154,36 @@ async function refreshCredentials(credentials) {
   return { credentials: result.credentials, expiresAt: result.expiresAt, refreshed: true };
 }
 
-function verifyOAuthQuery(query) {
+function verifyOAuthQuery(query,profile='legacy',{fresh=false}={}) {
+  if(!query||Object.values(query).some(value=>typeof value!=='string'))throw new AuthenticationError('The Shopify request is invalid. Start again from Shopify.');
   const hmac = String(query.hmac || '');
   const message = Object.keys(query).filter((key) => key !== 'hmac' && key !== 'signature')
     .sort().map((key) => `${key}=${Array.isArray(query[key]) ? query[key].join(',') : query[key]}`).join('&');
-  const expected = crypto.createHmac('sha256', config.connections.shopify.clientSecret).update(message).digest('hex');
+  const expected = crypto.createHmac('sha256', appProfiles.profile(profile).clientSecret).update(message).digest('hex');
   if (!safeEqual(hmac, expected)) throw new AuthenticationError('Shopify could not be verified. Please start the connection again.');
+  if(fresh&&(!/^\d{10}$/.test(query.timestamp||'')||Math.abs(Date.now()/1000-Number(query.timestamp))>300))throw new AuthenticationError('This Shopify request has expired. Open StockChief from Shopify again.');
+}
+
+function publicCredentials(body,shop,app){
+ const seconds=Number(body.expires_in),refreshSeconds=Number(body.refresh_token_expires_in);
+ if(!body.access_token||!body.refresh_token||!Number.isFinite(seconds)||seconds<=0||!Number.isFinite(refreshSeconds)||refreshSeconds<=0)
+   throw new AuthenticationError('Shopify did not confirm renewable authorization. Please start the connection again.');
+ return {accessToken:body.access_token,refreshToken:body.refresh_token,shop,shopifyProfile:'public',shopifyClientId:app.clientId,
+   accessTokenExpiresAt:new Date(Date.now()+seconds*1000).toISOString(),refreshTokenExpiresAt:new Date(Date.now()+refreshSeconds*1000).toISOString()};
 }
 
 async function exchangeAuthorization({ query, metadata: stateMeta }) {
-  verifyOAuthQuery(query);
+  const app=appProfiles.profile(stateMeta.shopifyProfile||'legacy');
+  if(stateMeta.shopifyClientId&&stateMeta.shopifyClientId!==app.clientId)throw new AuthenticationError('The Shopify application changed. Start the connection again.');
+  verifyOAuthQuery(query,app.name,{fresh:app.name==='public'});
   const shop = normalizeShop(query.shop);
   if (shop !== stateMeta.shop) throw new AuthenticationError('The Shopify store does not match the connection request.');
   const form = new URLSearchParams({
-    client_id: config.connections.shopify.clientId,
-    client_secret: config.connections.shopify.clientSecret,
+    client_id: app.clientId,
+    client_secret: app.clientSecret,
     code: String(query.code || ''),
   });
+  if(app.name==='public')form.set('expiring','1');
   const { body } = await jsonRequest(`https://${shop}/admin/oauth/access_token`, {
     method: 'POST',
     parseErrorBody:oauthErrorBody,
@@ -165,10 +191,11 @@ async function exchangeAuthorization({ query, metadata: stateMeta }) {
     body: form.toString(),
   });
   if(!body.access_token)throw new ValidationError('Shopify did not return an access token.');
-  const credential={accessToken:body.access_token,shop},scopes=await grantedScopes(body,credential);
+  if(app.name==='public'&&!(typeof body.scope==='string'&&body.scope.trim()))throw new AuthenticationError('Shopify did not confirm this installation’s permissions. Start again.');
+  const credential=app.name==='public'?publicCredentials(body,shop,app):{accessToken:body.access_token,shop},scopes=await grantedScopes(body,credential);
   if(missingScopes(scopes,stateMeta.requestedScopes||SCOPES).length)throw new ValidationError(
     'Shopify has not approved all requested permissions. Review the permission prompt for this store and try again.');
-  return { credentials:credential,accountId:shop,
+  return { credentials:credential,...(credential.accessTokenExpiresAt?{expiresAt:credential.accessTokenExpiresAt}:{}),accountId:shop,
     accountName:shop.replace('.myshopify.com',''),capabilities:scopes };
 }
 
@@ -327,7 +354,7 @@ async function historySummary({ credentials, since }) {
 
 function verifyWebhook({ headers, rawBody, credentials, connection }) {
   const provided = headers['x-shopify-hmac-sha256'];
-  const expected = hmacBase64(config.connections.shopify.clientSecret, rawBody);
+  const expected = hmacBase64(appProfiles.forGrant(credentials,connection).clientSecret, rawBody);
   requireVerified(safeEqual(provided, expected), 'This webhook did not pass Shopify signature verification.');
   const shop=credentials?.shop||connection?.provider_account_id;
   if(shop)requireVerified(normalizeShop(headers['x-shopify-shop-domain'])===normalizeShop(shop),'This webhook does not belong to the connected Shopify store.');
