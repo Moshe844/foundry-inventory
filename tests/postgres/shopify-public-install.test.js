@@ -44,7 +44,7 @@ test('public Shopify installation authenticates before sign-in and preserves pai
  for(const plan of ['starter','growth','pro'])fixtures.push(await business(plan));
  const map=Object.fromEntries(fixtures.map(f=>[f.owner.workspaceId,[f.shop,'legacy-fixture.myshopify.com','full-fixture.myshopify.com','denied-fixture.myshopify.com']]));process.env.STOCKCHIEF_PRODUCTION_SHOPIFY_PILOTS=JSON.stringify(map);
  await t.test('production lists Stripe on every plan without enabling an unconfigured merchant connection',async()=>{
-  for(const f of fixtures){await login(f);const page=await f.agent.get('/settings/connections');assert.equal(page.status,200);assert.match(page.text,/data-integration-card="stripe"/);assert.match(page.text,/disabled data-stripe-production-pending/);assert(!/data-provider-type="stripe"/.test(page.text),'Unconfigured live authorization must not be offered');assert.match(page.text,/data-integration-card="cardknox"/);}
+  for(const fixture of fixtures){const f={...fixture,agent:request.agent(app)};await login(f);const page=await f.agent.get('/settings/connections');assert.equal(page.status,200);assert.match(page.text,/data-integration-card="stripe"/);assert.match(page.text,/disabled data-stripe-production-pending/);assert(!/data-provider-type="stripe"/.test(page.text),'Unconfigured live authorization must not be offered');assert.match(page.text,/data-integration-card="cardknox"/);}
  });
  for(const f of fixtures)await t.test(f.shop,async()=>{
    const before=(await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows;
