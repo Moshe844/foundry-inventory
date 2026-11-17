@@ -106,11 +106,16 @@ jobs:
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/unit/connection-pilot-policy.test.js tests/postgres/connection-settings-experience.test.js tests/postgres/connections-restored-pilot.test.js 2>&1 | tee output/customer-navigation-ci/connection-availability.log
-      - name: Public Shopify installation, plan isolation and stopped upload notices
+      - name: Authority redesign plan boundaries and dismissible stopped file notices
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |
           set -euo pipefail
-          node --test --test-concurrency=2 tests/postgres/shopify-public-install.test.js tests/postgres/shopify-production-pilot.test.js tests/postgres/customer-polish-browser.test.js 2>&1 | tee output/customer-navigation-ci/shopify-public-install.log
+          node --test --test-concurrency=2 tests/postgres/authority-redesign-plans.test.js tests/postgres/authority-plan-enforcement.test.js tests/postgres/customer-polish-browser.test.js 2>&1 | tee output/customer-navigation-ci/authority-design-plans.log
+      - name: Public Shopify installation and existing connection isolation
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=2 tests/postgres/shopify-public-install.test.js tests/postgres/shopify-production-pilot.test.js 2>&1 | tee output/customer-navigation-ci/shopify-public-install.log
       - name: Click every customer destination
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'crawl' }}
         run: |

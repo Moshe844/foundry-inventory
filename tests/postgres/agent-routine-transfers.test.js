@@ -70,7 +70,7 @@ test('Pro owner configures a fractional stocking limit on a phone and queued wor
   await form.locator('[name=maximumQuantity]').fill('0.3');
   await form.locator('[name=locationIds][value="' + f.other.id + '"]').uncheck();
   await Promise.all([phone.waitForNavigation(), form.getByRole('button', { name: 'Confirm these limits' }).click()]);
-  assert.match(await phone.textContent('body'), /Saved versioned routine-work authority/);
+  assert.match(await phone.textContent('body'), /Limits saved. Anything outside them still comes to you first./);
   assert.equal((await autopilot.dashboard(db, ctx.workspaceId)).transferPolicy.maximumQuantity, 0.3);
   const before = await f.inventory();
   await f.enqueue();

@@ -1,70 +1,149 @@
-<div class="authority-settings"><div class="rm-head"><div class="rm-title"><div><p class="rm-stamp">Standing authority</p><h1>Decide what StockChief may handle without you</h1>
-  <p class="rm-prose">StockChief uses inventory, commitments, incoming supply, supplier packs, lead times and explicit reorder rules. A model never grants authority.</p></div></div></div>
+<%
+  const trustedPurchasing = state.plan === 'growth' && locals.planGates?.['automation.trusted_purchasing']?.enabled;
+  const routineGate = trustedPurchasing ? 'automation.trusted_purchasing' : 'authority.autonomous';
+  const routineLocked = state.shadowEndsAt || locals.planGates?.[routineGate]?.enabled === false;
+  const growthUp = ['growth','pro','enterprise'].includes(state.plan);
+  const isOwner = locals.user?.role === 'owner' || locals.currentUser?.role === 'owner';
+  const shadowDay = state.shadowEndsAt ? helpers.shortDate(new Date(state.shadowEndsAt).toISOString().slice(0,10)) : null;
+  // The words an owner reads for each job. The job's own label stays, so every
+  // other page and Ask still name it the same way.
+  const plain = {
+    supplier_document_review: ['Checks supplier invoices and delivery notes against your orders. It never approves a bill or pays on its own.'],
+    inventory_transfers: ['Moves stock to the location that needs it, within your transfer limit below.'],
+    replenishment: ['Orders more when an item runs low, within your spending limits below.'],
+    replenishment_settings: ['Adjusts reorder points to how fast things sell and how long deliveries take.'],
+    supplier_emails: ['Emails purchase orders and follow-ups to your suppliers from your mailbox.'],
+    customer_replies: ['Replies to customer emails it can answer from your own records.'],
+    payment_requests: ['Emails the customer a payment link when a deposit or balance is due.'],
+    shipping_labels: ['Buys the postage label when a parcel is packed and a shipping rule covers it.'],
+    shipping_notices: ['Emails the customer when their order ships.']
+  };
+  const groups = [
+    {label:'Buying', icon:'purchasing', jobs:['replenishment','replenishment_settings','supplier_emails','supplier_document_review']},
+    {label:'Stock and shipping', icon:'transfer', jobs:['inventory_transfers','shipping_labels']},
+    {label:'Customers', icon:'user', jobs:['customer_replies','payment_requests','shipping_notices']}
+  ];
+  const listed = new Set(groups.flatMap(g => g.jobs));
+  const extra = capabilities.filter(job => !listed.has(job.capability));
+  if (extra.length) groups.push({label:'Other', icon:'layers', jobs:extra.map(job => job.capability)});
+  const byKey = Object.fromEntries(capabilities.map(job => [job.capability, job]));
+  const granted = capabilities.filter(job => job.granted).length;
+  const levels = [
+    {mode:'OBSERVE', icon:'eye', title:'Watch only', text:'Notices and explains. Prepares and changes nothing.'},
+    {mode:'SUPERVISED', icon:'hand', title:'Ask me first', text:'Prepares the exact work and waits for your approval.'},
+    {mode:'POLICY_AUTOMATED', icon:'bolt', title:'Handle routine work', text:'Does the jobs you turn on below, inside your limits.'}
+  ];
+  const money = value => '$' + Number(value).toLocaleString('en-US', {maximumFractionDigits:2});
+%>
+<div class="ap">
+<header class="ap-head">
+  <div>
+    <h1>What StockChief does on its own</h1>
+    <p>Choose how much StockChief handles for you. Anything it may not do on its own waits for you in Needs you.</p>
+  </div>
+  <div class="ap-head__actions">
+    <form method="post" action="/autopilot/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="ap-btn" type="submit"><%- helpers.icon('spark',{size:16}) %><span>Check the operation now</span></button></form>
+    <% if(!state.paused){ %><form method="post" action="/autopilot/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="ap-btn" type="submit"><%- helpers.icon('pause',{size:16}) %><span>Pause automatic work</span></button></form><% } %>
+  </div>
+</header>
 
-<% const trustedPurchasing = state.plan === 'growth' && locals.planGates?.['automation.trusted_purchasing']?.enabled;
-   const routineGate = trustedPurchasing ? 'automation.trusted_purchasing' : 'authority.autonomous'; %>
-<% if(state.agentTerms){ %><p><a href="/autopilot/job-modes">Set authority by job</a></p><% } %>
-<% if(state.agentTerms){ %><p><% if(['growth','pro','enterprise'].includes(state.plan)){ %><a href="/autopilot/supplier-delivery-chases">Authorize late supplier delivery reminders</a><% }else{ %><span class="badge">Growth</span> Late supplier delivery reminders <a href="/billing">Upgrade</a><% } %></p><% } %>
-<% if(state.agentTerms){ %><p><% if(['growth','pro','enterprise'].includes(state.plan)){ %><a href="/autopilot/supplier-confirmations">Supplier confirmations and ship dates</a><% }else{ %><span class="badge">Growth</span> Supplier confirmations and ship dates <a href="/billing">Upgrade</a><% } %></p><% } %>
-<% if(state.agentTerms && ['growth','pro','enterprise'].includes(state.plan)){ %><p><a href="/autopilot/supplier-date-requests">Ask suppliers for missing delivery dates</a></p><% } %>
-<% if(state.shadowEndsAt){ %><div class="notice">StockChief is watching until <%= new Date(state.shadowEndsAt).toISOString().slice(0,10) %> (UTC). After that, the owner can authorize routine work. <a href="/autopilot/shadow">See what it would have done so far</a></div><% }else if(state.agentTerms){ %><p><a href="/autopilot/shadow">What StockChief would have done in its first 14 days</a></p><% } %>
-<% if(state.suspended){ %><div class="notice notice--warn"><div><strong>Automatic work is stopped.</strong><p><%= state.suspendedReason || 'A business check needs attention before automatic work can continue.' %></p></div></div><% } %>
-<% if(state.paused){ %><div class="notice notice--warn"><div><strong>Automatic work is paused.</strong><p><%= state.pausedReason || 'Read-only monitoring continues.' %></p></div>
-  <form method="post" action="/autopilot/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary">Resume safely</button></form></div><% } %>
+<% if(state.suspended){ %><div class="ap-alert ap-alert--stop"><%- helpers.icon('alert',{size:18}) %><div><strong>Automatic work is stopped.</strong><p><%= state.suspendedReason || 'A business check needs attention before automatic work can continue.' %></p></div></div><% } %>
+<% if(state.paused){ %><div class="ap-alert ap-alert--stop"><%- helpers.icon('pause',{size:18}) %><div><strong>Automatic work is paused.</strong><p><%= state.pausedReason || 'StockChief keeps watching but does nothing on its own.' %></p></div>
+  <form method="post" action="/autopilot/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="ap-btn ap-btn--primary" type="submit">Resume safely</button></form></div><% } %>
+<% if(state.shadowEndsAt){ %><div class="ap-alert"><%- helpers.icon('eye',{size:18}) %><div><strong>StockChief is only watching until <%= shadowDay %>.</strong><p>New accounts start this way. After that you can let it handle routine work. <a href="/autopilot/shadow">See what it would have done so far</a></p></div></div><% } %>
+<%- include('../components/maintenance-progress',{maintenanceProgress}) %>
 
-<%- include('../components/plan-lock',{capability:routineGate,label:'Automatic routine work'}) %><section class="card"><div class="card-head"><div><h2>How much control?</h2><p class="muted">Taking authority away is immediate. Increasing it requires the owner.</p></div></div>
-  <div class="card-body"><form method="post" action="/autopilot/mode" class="grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <label class="choice"><input type="radio" name="mode" value="OBSERVE" <%= state.mode==='OBSERVE'?'checked':'' %>><span><strong>Watch only</strong><small>Notice and explain. Prepare or change nothing.</small></span></label>
-    <label class="choice"><input type="radio" name="mode" value="SUPERVISED" <%= state.mode==='SUPERVISED'?'checked':'' %>><span><strong>Ask me first</strong><small>Prepare exact work and wait for approval.</small></span></label>
-    <label class="choice"><input type="radio" name="mode" value="POLICY_AUTOMATED" <%= state.shadowEndsAt || locals.planGates?.[routineGate]?.enabled===false?'disabled':'' %> <%= state.mode==='POLICY_AUTOMATED'?'checked':'' %>><span><strong>Handle routine work</strong><small>Execute only inside approved limits below.</small></span></label>
-    <div class="form-actions"><button class="btn btn--primary" type="submit">Save control level</button></div></form></div></section>
-
-<% if(state.agentTerms&&locals.confidence){ %><section class="card" id="confidence" data-confidence="<%= confidence.minimum %>"><div class="card-head"><div><h2>How sure StockChief must be</h2>
-  <p class="muted">Every order, transfer, count and tracking email shows how sure StockChief is: high, medium or low, with its reasons. When it is unsure, it always asks you.</p></div></div>
-  <div class="card-body"><form method="post" action="/autopilot/confidence" class="grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <% for(const choice of confidence.choices){ %><label class="choice"><input type="radio" name="minimum" value="<%= choice.key %>" <%= confidence.minimum===choice.key?'checked':'' %>><span><strong>Act on its own <%= choice.label.charAt(0).toLowerCase()+choice.label.slice(1) %></strong><small><%= choice.key==='high'?'It asks you when it is only fairly sure.':'It asks you when it is unsure.' %></small></span></label><% } %>
-    <div class="form-actions"><button class="btn btn--primary" type="submit">Save</button></div></form></div></section><% } %>
-
-<% if(locals.user?.role==='owner'||locals.currentUser?.role==='owner'){ %><p><a href="/autopilot/reviews">Agent reviews</a> &middot; <a href="/autopilot/playbooks">Manage scheduled playbooks</a> &middot; <a href="/autopilot/time-saved">Time saved</a></p><% } %>
-<% if(['growth','pro','enterprise'].includes(state.plan)){ %><p><a href="/purchasing/requests">Staff purchase requests</a></p><% } else { %><p>Staff purchase requests require Growth. <a href="/billing">Review plans</a></p><% } %>
-<section class="card" id="jobs"><div class="card-head"><div><h2>Which jobs StockChief may do on its own</h2>
-  <p class="muted">Every job is separate. Authorising a customer email never authorises purchasing, payments, transfers, or postage.</p></div></div>
-  <div class="card-body"><div class="job-list"><% capabilities.forEach(function(job){ %><div class="job">
-    <div class="job-body"><strong><%= job.label %></strong><span class="t-xs t-muted"><%= job.blurb %></span>
-      <span class="t-xs t-muted"><em><%= job.consequence %></em></span>
-      <% if(job.minimumMode==='SUPERVISED'){ %><span class="t-xs t-muted">Can investigate and prepare approvals in Ask me first mode.</span><% } %></div>
-    <% const jobKey=job.capability==='supplier_document_review'?'communications.ai_drafts':trustedPurchasing && ['supplier_emails','replenishment'].includes(job.capability)?routineGate:job.capability==='inventory_transfers'?'automation.transfers':'authority.autonomous';const jobLocked=locals.planGates?.[jobKey]?.enabled===false; %><%- include('../components/plan-lock',{capability:jobKey,label:job.label}) %><form method="post" action="/autopilot/capability" class="job-action"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <input type="hidden" name="capability" value="<%= job.capability %>"><input type="hidden" name="granted" value="<%= job.granted?'0':'1' %>">
-      <button <%= jobLocked&&!job.granted?'disabled':'' %> class="btn btn--sm <%= job.granted?'':'btn--primary' %>" type="submit"><%= job.granted?'Take this back':'Let StockChief do this' %></button></form>
-    <span class="job-state <%= job.granted?'is-on':'' %>"><%= job.granted?'Authorised':'Asks first' %></span>
-  </div><% }) %></div>
-  <% if(state.mode!=='POLICY_AUTOMATED'){ %><p class="hint"><strong>Watch only keeps every job inactive. Ask me first allows authorised investigation and preparation; business actions still wait for approval.</strong> Changing the mode grants nothing by itself.</p><% } %>
-  </div></section>
-
-<section class="card"><div class="card-head"><div><h2>Routine transfer and purchasing limits</h2><p class="muted">One confirmation creates immutable, versioned authority. Everything else goes to Needs you.</p></div></div>
-  <div class="card-body"><form method="post" action="/autopilot/routine-authority" class="grid"><fieldset <%= state.shadowEndsAt || locals.planGates?.[routineGate]?.enabled===false?'disabled':'' %> style="border:0;padding:0"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <label class="choice"><input type="checkbox" name="transferEnabled" value="1" <%= trustedPurchasing?'disabled':'' %> <%= transferPolicy?'checked':'' %>><span><strong>Balance stock between locations</strong><small>Prefer a safe internal transfer before buying more.</small></span></label>
-    <label>Maximum stocking quantity per automatic transfer<input name="maximumQuantity" inputmode="decimal" value="<%= transferPolicy?.maximumQuantity || 25 %>">
-      <small>The limit uses the product’s stocking unit. You can enter a decimal such as 0.875 for a product stocked in metres.</small></label>
-    <% if(transferPolicy?.thresholds?.transferRoute||transferPolicy?.itemScope?.length){ %>
-      <label class="choice"><input type="checkbox" name="allowBroaderTransferRoutes" value="yes"><span><strong>Replace the saved product or route restriction</strong><small>Leave unchecked to keep the exact restriction already approved through Ask StockChief.</small></span></label>
+<section class="ap-card" aria-labelledby="ap-level-title">
+  <div class="ap-card__head"><h2 id="ap-level-title">How much it does</h2><p>Taking work away happens at once. Only you can give it more.</p></div>
+  <%- include('../components/plan-lock',{capability:routineGate,label:'Automatic routine work'}) %>
+  <form method="post" action="/autopilot/mode" class="ap-levels" data-autosave><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <% for(const level of levels){ const locked = level.mode==='POLICY_AUTOMATED' && routineLocked; %>
+    <label class="ap-level<%= state.mode===level.mode?' is-on':'' %><%= locked?' is-locked':'' %>"><input type="radio" name="mode" value="<%= level.mode %>" <%= locked?'disabled':'' %> <%= state.mode===level.mode?'checked':'' %>>
+      <span class="ap-level__icon" aria-hidden="true"><%- helpers.icon(level.icon,{size:18}) %></span>
+      <span class="ap-level__text"><strong><%= level.title %></strong><small><%= locked&&state.shadowEndsAt?'Available after '+shadowDay+'.':level.text %></small></span>
+      <span class="ap-level__tick" aria-hidden="true"><%- helpers.icon('check',{size:14}) %></span></label>
     <% } %>
-    <fieldset><legend>Locations StockChief may use</legend><div class="grid grid--2"><% locations.forEach(function(location){ %><label class="choice"><input type="checkbox" name="locationIds" value="<%= location.id %>" <%= !transferPolicy || !transferPolicy.locationScope.length || transferPolicy.locationScope.includes(location.id)?'checked':'' %>><span><strong><%= location.name %></strong></span></label><% }) %></div></fieldset>
-    <label class="choice"><input type="checkbox" name="purchaseEnabled" value="1" <%= purchasePolicy?'checked':'' %>><span><strong>Complete routine replenishment</strong><small>Prepare and send the approved PO, then keep checking supplier confirmation and physical receiving. Email suppliers requires its separate grant.</small></span></label>
-    <div class="grid grid--2"><label>Most per purchase order ($)<input name="maximumValue" inputmode="decimal" value="<%= purchasePolicy?.maximumValue || 500 %>"></label>
-      <label>Most across seven days ($)<input name="weeklyValue" inputmode="decimal" value="<%= purchasePolicy?.thresholds?.maxValuePerWeek || 2000 %>"></label></div>
-    <% if(trustedPurchasing){ %><p>Growth can reorder trusted items from your approved suppliers, up to $500 per order and $2,000 per week across your inventories.</p><% } %>
-    <label>Trusted item codes <%= trustedPurchasing?'(required on Growth)':'(optional)' %><textarea name="trustedItemCodes"><%= (locals.trustedCodes||[]).join('\n') %></textarea><small>Enter one code per line or separate codes with commas.</small></label>
-    <fieldset><legend>Usual suppliers StockChief may use</legend><div class="grid grid--2"><% suppliers.forEach(function(supplier){ %><label class="choice"><input type="checkbox" name="supplierIds" value="<%= supplier.id %>" <%= purchasePolicy?.supplierScope.includes(supplier.id)?'checked':'' %>><span><strong><%= supplier.name %></strong></span></label><% }) %></div></fieldset>
-    <fieldset><legend>Supplier follow-up</legend><label class="choice"><input type="checkbox" name="supplierFollowUpsEnabled" value="1" <%= purchasePolicy?.thresholds?.supplierFollowUps?'checked':'' %>><span><strong>Send routine confirmation and late-delivery follow-ups</strong><small>Only for orders created under this exact purchasing policy, to the same verified supplier mailbox. Changed terms still require review.</small></span></label><div class="grid grid--2"><label>Maximum follow-ups per order<input name="maximumSupplierFollowUps" type="number" min="1" max="5" value="<%= purchasePolicy?.thresholds?.supplierFollowUps?.maximum??1 %>"></label><label>Minimum hours between follow-ups<input name="supplierFollowUpHours" type="number" min="24" max="720" value="<%= purchasePolicy?.thresholds?.supplierFollowUps?.intervalHours??48 %>"></label></div></fieldset>
-    <label>Authority expiry date (optional)<input name="authorityExpiresDate" type="date" value="<%= transferPolicy?.thresholds?.expiresOn||purchasePolicy?.thresholds?.expiresOn||'' %>"><span class="hint">Expires at the end of that date in your business time zone. You can pause or revoke it at any time.</span></label>
-    <div class="form-actions"><button class="btn btn--primary" type="submit">Confirm these limits</button></div></fieldset></form></div></section>
+    <button class="ap-btn ap-btn--primary ap-save" type="submit">Save control level</button>
+  </form>
+  <% if(state.agentTerms&&locals.confidence){ %><div class="ap-sure" id="confidence" data-confidence="<%= confidence.minimum %>">
+    <div><strong>How sure StockChief must be</strong><p>Every order, transfer, count and tracking email shows how sure StockChief is, with its reasons. When it is unsure, it asks you.</p></div>
+    <form method="post" action="/autopilot/confidence" class="ap-segment" data-autosave><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <% for(const choice of confidence.choices){ %><label class="<%= confidence.minimum===choice.key?'is-on':'' %>"><input type="radio" name="minimum" value="<%= choice.key %>" <%= confidence.minimum===choice.key?'checked':'' %>><span>Act on its own <%= choice.label.charAt(0).toLowerCase()+choice.label.slice(1) %></span></label><% } %>
+      <button class="ap-btn ap-btn--primary ap-save" type="submit">Save</button>
+    </form>
+  </div><% } %>
+</section>
 
-<section class="card"><div class="card-head"><div><h2>Run and audit</h2><p class="muted">Request a business review. Large inventories are checked in saved batches.</p></div></div><div class="card-body">
-  <%- include('../components/maintenance-progress',{maintenanceProgress}) %>
-  <div class="form-actions"><form method="post" action="/autopilot/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary">Check the operation now</button></form>
-    <% if(!state.paused){ %><form method="post" action="/autopilot/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Pause automatic work</button></form><% } %></div>
-  <% if(!recent.length){ %><p class="muted">No transfer or replenishment decisions have been prepared yet.</p><% } else { %><div class="list-rows"><% recent.forEach(function(item){ %><div class="list-row"><div><strong><%= item.recommendedAction.displayName %></strong><p><%= item.recommendedAction.type==='transfer'?'Transfer':'Purchase' %> <%= helpers.unitCount(item.recommendedAction.quantity,'unit') %> · <%= String(item.execution_status).replaceAll('_',' ').toLowerCase() %></p></div><a class="btn btn--sm" href="/autopilot/work/<%= item.id %>">Open</a></div><% }) %></div><% } %>
-</div></section>
+<section class="ap-card" id="jobs" aria-labelledby="ap-jobs-title">
+  <div class="ap-card__head"><h2 id="ap-jobs-title">Jobs it may do on its own</h2><p><%= granted %> of <%= capabilities.length %> on. Each job is separate: answering a customer never lets it buy, pay, move stock or buy postage.</p></div>
+  <% if(state.mode!=='POLICY_AUTOMATED'){ %><p class="ap-note"><%- helpers.icon('alert',{size:15}) %><span><%= state.mode==='OBSERVE'?'In Watch only, no job runs.':'In Ask me first, it prepares the work and waits for you.' %> Jobs you turn on run once you choose Handle routine work.</span></p><% } %>
+  <% for(const group of groups){ %><div class="ap-group"><h3><%- helpers.icon(group.icon,{size:15}) %><span><%= group.label %></span></h3>
+    <% for(const key of group.jobs){ const job = byKey[key]; if(!job) continue; const words = plain[job.capability] || [job.blurb];
+       const jobKey = job.capability==='supplier_document_review'?'communications.ai_drafts':trustedPurchasing && ['supplier_emails','replenishment'].includes(job.capability)?routineGate:job.capability==='inventory_transfers'?'automation.transfers':'authority.autonomous';
+       const gate = locals.planGates?.[jobKey], jobLocked = gate?.enabled===false; %>
+    <div class="job ap-job<%= job.granted?' is-on':'' %>">
+      <div class="ap-job__text"><strong><%= job.label %></strong><span><%= words[0] %><% if(job.minimumMode==='SUPERVISED'){ %> <em>Can investigate and prepare approvals in Ask me first mode.</em><% } %></span></div>
+      <div class="ap-job__side">
+        <span class="job-state ap-state<%= job.granted?' is-on':'' %>"><%= job.granted?'Authorised':'Asks first' %></span>
+        <% if(jobLocked&&!job.granted){ %><a class="ap-lock" href="<%= gate.currentOfferIncludes?'/billing/terms':'/upgrade?capability='+encodeURIComponent(jobKey) %>" data-plan-lock="<%= jobKey %>"><%- helpers.icon('shield',{size:14}) %><span><%= gate.currentOfferIncludes?'Accept plan terms':gate.tier %></span></a><% } %>
+        <form method="post" action="/autopilot/capability"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="capability" value="<%= job.capability %>"><input type="hidden" name="granted" value="<%= job.granted?'0':'1' %>">
+          <button class="ap-btn ap-btn--sm<%= job.granted?'':' ap-btn--soft' %>" type="submit" <%= jobLocked&&!job.granted?'disabled':'' %>><%= job.granted?'Take this back':'Let StockChief do this' %></button></form>
+      </div>
+    </div>
+    <% } %>
+  </div><% } %>
+</section>
 
+<section class="ap-card" aria-labelledby="ap-limits-title">
+  <div class="ap-card__head"><h2 id="ap-limits-title">Limits for reorders and transfers</h2><p>StockChief only spends or moves stock inside these limits. Anything bigger waits for you.</p></div>
+  <div class="ap-summary">
+    <span class="<%= purchasePolicy?'is-on':'' %>"><%- helpers.icon('purchasing',{size:15}) %><%= purchasePolicy ? 'Reorders up to '+money(purchasePolicy.maximumValue)+' an order, '+money(purchasePolicy.thresholds?.maxValuePerWeek||0)+' a week' : 'Reorders: not set' %></span>
+    <span class="<%= transferPolicy?'is-on':'' %>"><%- helpers.icon('transfer',{size:15}) %><%= transferPolicy ? 'Transfers up to '+transferPolicy.maximumQuantity+' units each' : 'Transfers: not set' %></span>
+    <% const expires = transferPolicy?.thresholds?.expiresOn||purchasePolicy?.thresholds?.expiresOn; if(expires){ %><span><%- helpers.icon('calendar',{size:15}) %>Until <%= helpers.shortDate(expires) %></span><% } %>
+  </div>
+  <%- include('../components/plan-lock',{capability:routineGate,label:'Routine limits'}) %>
+  <form method="post" action="/autopilot/routine-authority" class="ap-limits"><fieldset <%= routineLocked?'disabled':'' %>><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="ap-limits__cols">
+      <div class="ap-limits__col">
+        <h3>Reorders</h3>
+        <label class="ap-check"><input type="checkbox" name="purchaseEnabled" value="1" <%= purchasePolicy?'checked':'' %>><span><strong>Complete routine replenishment</strong><small>Sends the approved order, then follows the supplier's confirmation and the delivery. Emailing suppliers is its own job above.</small></span></label>
+        <div class="ap-pair"><label class="ap-field">Most per purchase order ($)<input name="maximumValue" inputmode="decimal" value="<%= purchasePolicy?.maximumValue || 500 %>"></label>
+          <label class="ap-field">Most across seven days ($)<input name="weeklyValue" inputmode="decimal" value="<%= purchasePolicy?.thresholds?.maxValuePerWeek || 2000 %>"></label></div>
+        <% if(trustedPurchasing){ %><p class="ap-hint">Growth can reorder trusted items from your approved suppliers, up to $500 an order and $2,000 a week across your inventories.</p><% } %>
+        <fieldset class="ap-choices"><legend>Usual suppliers StockChief may use</legend><% if(suppliers.length){ %><% suppliers.forEach(function(supplier){ %><label class="ap-chip"><input type="checkbox" name="supplierIds" value="<%= supplier.id %>" <%= purchasePolicy?.supplierScope.includes(supplier.id)?'checked':'' %>><span><%= supplier.name %></span></label><% }) %><% }else{ %><p class="ap-hint">StockChief only reorders from suppliers you choose here, and this business has none yet. <a href="/suppliers">Add a supplier</a></p><% } %></fieldset>
+        <details class="ap-more"<%= trustedPurchasing||(locals.trustedCodes||[]).length||purchasePolicy?.thresholds?.supplierFollowUps?' open':'' %>><summary>Item codes and supplier follow-ups</summary><div class="ap-more__body">
+        <label class="ap-field">Trusted item codes <%= trustedPurchasing?'(required on Growth)':'(optional)' %><textarea name="trustedItemCodes" rows="2" placeholder="One code per line, or separated by commas"><%= (locals.trustedCodes||[]).join('\n') %></textarea></label>
+        <fieldset class="ap-choices"><legend>Supplier follow-up</legend><label class="ap-check"><input type="checkbox" name="supplierFollowUpsEnabled" value="1" <%= purchasePolicy?.thresholds?.supplierFollowUps?'checked':'' %>><span><strong>Send routine confirmation and late-delivery follow-ups</strong><small>Only for orders placed under these limits, to the same supplier mailbox. Changed terms still come to you.</small></span></label>
+          <div class="ap-pair"><label class="ap-field">Maximum follow-ups per order<input name="maximumSupplierFollowUps" type="number" min="1" max="5" value="<%= purchasePolicy?.thresholds?.supplierFollowUps?.maximum??1 %>"></label><label class="ap-field">Minimum hours between follow-ups<input name="supplierFollowUpHours" type="number" min="24" max="720" value="<%= purchasePolicy?.thresholds?.supplierFollowUps?.intervalHours??48 %>"></label></div></fieldset>
+        </div></details>
+      </div>
+      <div class="ap-limits__col">
+        <h3>Transfers</h3>
+        <label class="ap-check"><input type="checkbox" name="transferEnabled" value="1" <%= trustedPurchasing?'disabled':'' %> <%= transferPolicy?'checked':'' %>><span><strong>Balance stock between locations</strong><small>Moves stock from a location that has extra before buying more.</small></span></label>
+        <label class="ap-field">Maximum stocking quantity per automatic transfer<input name="maximumQuantity" inputmode="decimal" value="<%= transferPolicy?.maximumQuantity || 25 %>"><small>In each product's stocking unit; decimals such as 0.875 work for products stocked in metres.</small></label>
+        <% if(transferPolicy?.thresholds?.transferRoute||transferPolicy?.itemScope?.length){ %><label class="ap-check"><input type="checkbox" name="allowBroaderTransferRoutes" value="yes"><span><strong>Replace the saved product or route restriction</strong><small>Leave unticked to keep the exact restriction approved through Ask StockChief.</small></span></label><% } %>
+        <fieldset class="ap-choices"><legend>Locations StockChief may use</legend><% locations.forEach(function(location){ %><label class="ap-chip"><input type="checkbox" name="locationIds" value="<%= location.id %>" <%= !transferPolicy || !transferPolicy.locationScope.length || transferPolicy.locationScope.includes(location.id)?'checked':'' %>><span><%= location.name %></span></label><% }) %></fieldset>
+        <label class="ap-field">Authority expiry date (optional)<input name="authorityExpiresDate" type="date" value="<%= transferPolicy?.thresholds?.expiresOn||purchasePolicy?.thresholds?.expiresOn||'' %>"><small>Ends at the end of that day in your time zone. You can pause or take it back at any time.</small></label>
+      </div>
+    </div>
+    <div class="ap-limits__foot"><button class="ap-btn ap-btn--primary" type="submit">Confirm these limits</button></div>
+  </fieldset></form>
+</section>
+
+<section class="ap-card" aria-labelledby="ap-more-title">
+  <div class="ap-card__head"><h2 id="ap-more-title">More controls</h2></div>
+  <div class="ap-links">
+    <% if(state.agentTerms){ %><a href="/autopilot/job-modes"><%- helpers.icon('layers',{size:16}) %><span>Set each job's mode</span></a><% } %>
+    <% if(state.agentTerms){ %><% if(growthUp){ %><a href="/autopilot/supplier-delivery-chases"><%- helpers.icon('clock',{size:16}) %><span>Late delivery reminders</span></a><a href="/autopilot/supplier-confirmations"><%- helpers.icon('check',{size:16}) %><span>Supplier confirmations and ship dates</span></a><a href="/autopilot/supplier-date-requests"><%- helpers.icon('calendar',{size:16}) %><span>Ask suppliers for missing delivery dates</span></a><% }else{ %><a href="/billing"><%- helpers.icon('shield',{size:16}) %><span>Supplier reminders and confirmations</span><em>Growth</em></a><% } %><% } %>
+    <% if(state.agentTerms&&!state.shadowEndsAt){ %><a href="/autopilot/shadow"><%- helpers.icon('eye',{size:16}) %><span>What it would have done in its first 14 days</span></a><% } %>
+    <% if(isOwner){ %><a href="/autopilot/reviews"><%- helpers.icon('activity',{size:16}) %><span>Agent reviews</span></a><a href="/autopilot/playbooks"><%- helpers.icon('play',{size:16}) %><span>Scheduled playbooks</span></a><a href="/autopilot/time-saved"><%- helpers.icon('clock',{size:16}) %><span>Time saved</span></a><% } %>
+    <% if(growthUp){ %><a href="/purchasing/requests"><%- helpers.icon('purchasing',{size:16}) %><span>Staff purchase requests</span></a><% }else{ %><a href="/billing"><%- helpers.icon('purchasing',{size:16}) %><span>Staff purchase requests</span><em>Growth</em></a><% } %>
+  </div>
+</section>
+
+<section class="ap-card" aria-labelledby="ap-recent-title">
+  <div class="ap-card__head"><h2 id="ap-recent-title">Recent reorders and transfers</h2></div>
+  <% if(!recent.length){ %><p class="ap-empty">None prepared yet. They show here, and in Needs you when they need you.</p><% } else { %><div class="ap-recent"><% recent.forEach(function(item){ %><a href="/autopilot/work/<%= item.id %>"><span class="ap-recent__icon"><%- helpers.icon(item.recommendedAction.type==='transfer'?'transfer':'purchasing',{size:15}) %></span><strong><%= item.recommendedAction.displayName %></strong><span><%= item.recommendedAction.type==='transfer'?'Transfer':'Purchase' %> <%= helpers.unitCount(item.recommendedAction.quantity,'unit') %></span><small><%= String(item.execution_status).replaceAll('_',' ').toLowerCase() %></small></a><% }) %></div><% } %>
+</section>
 </div>
+<script src="/autopilot-settings.js?v=<%= assetVersion %>" defer></script>

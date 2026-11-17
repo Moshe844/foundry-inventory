@@ -2598,7 +2598,7 @@ function createPostgresAutopilotRouter(database,options={}){
     return res.redirect(303,'/autopilot/misses');
   }));
   router.post('/autopilot/mode',requireAuth,asyncRoute(async(req,res)=>{
-    await autonomy.setMode(database,req.ctx,req.user,req.body.mode);req.flash('success','StockChief authority was updated.');
+    await autonomy.setMode(database,req.ctx,req.user,req.body.mode);req.flash('success','Saved. Taking work away takes effect at once.');
     return res.redirect(303,'/autopilot');
   }));
   router.post('/autopilot/capability',requireAuth,asyncRoute(async(req,res)=>{
@@ -2610,7 +2610,7 @@ function createPostgresAutopilotRouter(database,options={}){
   }));
   router.post('/autopilot/routine-authority',requireAuth,asyncRoute(async(req,res)=>{
     await autonomy.configureRoutine(database,req.ctx,req.user,req.body);
-    req.flash('success','Saved versioned routine-work authority. Anything outside these exact limits still asks first.');
+    req.flash('success','Limits saved. Anything outside them still comes to you first.');
     return res.redirect(303,'/autopilot');
   }));
   router.post('/autopilot/pause',requireAuth,asyncRoute(async(req,res)=>{
