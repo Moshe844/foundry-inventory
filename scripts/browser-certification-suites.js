@@ -18,7 +18,8 @@ const workflows = {
   connectionsAndMail: ['connection-popup-return', 'connector-events', 'shopify-production-pilot', 'shopify-scope-handoff', 'shopify-webhooks',
     'square-webhooks', 'square-shared-webhook', 'mail-ui'],
   customerPrivacyAndSettings: ['customer-polish-browser', 'shopify-privacy', 'shopify-privacy-orders',
-    'retention-cleanup', 'import-source-upload', 'private-owner-console', 'platform-owner-operations', 'owner-company-console-ui'],
+    'retention-cleanup', 'import-source-upload', 'private-owner-console', 'platform-owner-operations', 'owner-company-console-ui',
+    'password-reset-success', 'password-recovery-alerts'],
 };
 
 const pathFor = name => `tests/postgres/${name}.test.js`;

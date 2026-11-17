@@ -250,9 +250,22 @@ function createPostgresAuthRouter(database,options={}) {
   router.get('/reset-password',async(req,res,next)=>{try{const valid=await passwordRecovery.inspect(database,req.query.token||'');
     return res.status(valid?200:400).render('auth/reset-password',{title:'Choose a new password',csrfToken:res.locals.csrfToken,
       flash:res.locals.flash,token:req.query.token||'',valid:Boolean(valid),appName:res.locals.appName});}catch(error){return next(error);}});
+  router.get('/reset-password/success',(req,res)=>{
+    const completed=req.session?.passwordResetSuccess;
+    if(!completed||!Number.isFinite(completed.at)||Date.now()-completed.at>30*60*1000)return res.redirect(303,'/login');
+    res.set('Cache-Control','no-store');
+    return res.render('auth/reset-success',{title:'Password updated',appName:res.locals.appName,signInHref:completed.signInHref||'/login',admin:completed.admin===true});
+  });
   router.post('/reset-password',async(req,res,next)=>{try{matchingPasswords(req.body);
-    await passwordRecovery.consume(database,req.body.token||'',req.body.password||'');
-    req.flash('success','Your password has been changed. Sign in with the new password.');return res.redirect(303,'/login');}
+    const changed=await passwordRecovery.consume(database,req.body.token||'',req.body.password||'');
+    // Do not re-save a revoked, signed-in session after changing its password.
+    if(req.session?.accountId===changed.accountId)await sessionCall(req,'regenerate');
+    let signInHref='/login',admin=false;
+    if(config.commercial.adminEmails.includes(changed.email.toLowerCase())){
+      try{const ownerOrigin=require('../../platform-owner/app').origin(process.env.STOCKCHIEF_OWNER_ORIGIN,{test:process.env.NODE_ENV==='test'});if(ownerOrigin){signInHref=ownerOrigin.origin+'/login';admin=true;}}catch{}
+    }
+    req.session.passwordResetSuccess={at:Date.now(),signInHref,admin};await sessionCall(req,'save');
+    return res.redirect(303,'/reset-password/success');}
   catch(error){if(error.status&&error.status<500)return res.status(error.status).render('auth/reset-password',{
     title:'Choose a new password',csrfToken:res.locals.csrfToken,flash:[{type:'error',message:error.message}],
     token:req.body.token||'',valid:true,appName:res.locals.appName});return next(error);}});
