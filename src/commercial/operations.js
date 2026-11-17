@@ -8,6 +8,7 @@ const LOGICAL_WRAPPERS=new Map([
  ['gmail',MAIL_WRAPPERS],
  ['microsoft365',MAIL_WRAPPERS],
  ['square',new Set(['authorization_exchange','catalog_sync','webhook_registration'])],
+ ['shopify',new Set(['authorization_exchange','catalog_sync','webhook_registration','event_ingestion'])],
 ]);
 async function modelUsage(database,scope,usage,key,detail={}){
  const fields=[['model_input',usage.inputTokens],['model_output',usage.outputTokens],['cache_read',usage.cacheReadTokens],

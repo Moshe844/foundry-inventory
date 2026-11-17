@@ -18,16 +18,17 @@ async function isOpen(database){const release=await state(database);
  const unresolved=(await database.query(`SELECT 1 FROM commercial_critical_warnings WHERE status='OPEN'
    AND code=ANY($1::text[]) LIMIT 1`,[LAUNCH_BLOCKERS])).rows.length;
  if(unresolved)return false;
- // Previously approved Outlook pilot inventories retain their scoped access.
- // Public signup grants no permission to use the Outlook pilot.
+ // Approved private pilots do not grant provider access to public signups.
+ // Shopify additionally binds the exception to its exact authorized store.
  const launchPolicy=require('../connections/launch-policy');
  const unqualified=(await database.query(`SELECT 1 FROM workspace_connectors
    WHERE status='connected' AND paused_at IS NULL
    AND provider_type=ANY($1::text[])
-   AND NOT (provider_type='microsoft365' AND COALESCE(workspace_id=ANY($2::text[]),false))
+   AND NOT ((provider_type='microsoft365' AND COALESCE(workspace_id=ANY($2::text[]),false))
+    OR (provider_type='shopify' AND COALESCE(($3::jsonb->workspace_id) ? provider_account_id,false)))
    UNION ALL SELECT 1 FROM payment_connect_accounts WHERE charges_enabled=1
    LIMIT 1`,
-  [[...Object.keys(launchPolicy.EXCLUDED),'stripe','supplier_email'],launchPolicy.productionOutlookWorkspaces()])).rows.length;
+  [[...Object.keys(launchPolicy.EXCLUDED),'stripe','supplier_email'],launchPolicy.productionOutlookWorkspaces(),JSON.stringify(launchPolicy.productionShopifyPilots())])).rows.length;
  return unqualified===0;}
 async function assertCheckoutOpen(database,options={}){
   // Only isolated tests may exercise provider contracts while the live release is closed.
