@@ -2,7 +2,7 @@
 
 const crypto=require('node:crypto');
 const config=require('../config');
-const { AuthenticationError,NotFoundError,ValidationError }=require('../domain/errors');
+const { AuthenticationError,AuthorizationError,NotFoundError,ValidationError }=require('../domain/errors');
 const { newId,nowIso,requireText }=require('../lib/util');
 const credentials=require('./postgres-credential-store');
 const connections=require('./postgres-service');
@@ -32,13 +32,18 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
   const pending=intents.draft(ctx.workspaceId,ctx.actorId,providerType,{name:input.displayName||meta.name,
     provides:meta.provides,config:{autoImportCatalog:Boolean(adapter.catalogueCapabilities?.length)&&adapter.integrationClass!=='accounting',
       autoImportOpeningStock:Boolean(adapter.catalogueCapabilities?.length)&&adapter.integrationClass!=='accounting'}});
-  const connectorId=input.connectorId||null;
+  let connectorId=input.connectorId||null;
   const state=crypto.randomBytes(32).toString('base64url');
   const now=nowIso();
   const origin=options.publicOrigin||providerOrigin(requestOrigin);
   let auth;
   await database.transaction(async(client)=>{
-    if(input.connectorId){
+    if(providerType==='shopify'&&typeof adapter.normalizeShop==='function'&&require('./shopify-app-profile').initialProfile()==='public'&&!connectorId){
+      const active=(await client.query("SELECT id,workspace_id FROM workspace_connectors WHERE provider_type='shopify' AND provider_account_id=$1 AND status='connected' FOR SHARE",[adapter.normalizeShop(input.shop)])).rows;
+      if(active.some(row=>row.workspace_id!==ctx.workspaceId))throw new AuthorizationError('This Shopify store is already connected to a different inventory. Its working connection has been preserved.');
+      connectorId=active[0]?.id||null;
+    }
+    if(connectorId){
       const existing=await client.query(`SELECT id FROM workspace_connectors
         WHERE workspace_id=$1 AND id=$2 AND provider_type=$3`,[ctx.workspaceId,connectorId,providerType]);
       if(!existing.rows.length)throw new NotFoundError('Connection not found.');
@@ -48,10 +53,10 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
     }
     // Reauthorization uses the application that owns the existing grant.
     // A caller-supplied profile must never migrate an established connection.
-    let shopifyProfile;
+    let shopifyProfile=providerType==='shopify'?require('./shopify-app-profile').initialProfile():null;
     if(providerType==='shopify'&&connectorId){
       const saved=(await client.query('SELECT config FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,connectorId])).rows[0];
-      shopifyProfile=parseJson(saved.config).shopifyProfile;
+      shopifyProfile=parseJson(saved.config).shopifyProfile||'legacy';
     }
     auth=adapter.authorizationUrl({state,input:{...input,
       ...(providerType==='shopify'?{shopifyProfile:shopifyProfile||'legacy'}:{}),
@@ -197,6 +202,24 @@ async function setupWebhookDelivery(database,ctx,connectorId,requestOrigin,optio
 
 async function completeOAuth(database,providerType,query,requestOrigin,options={}){
   const registry=options.providers||defaultProviders;
+  if(!registry.get(providerType))throw new NotFoundError('Provider not found.');
+  if(registry===defaultProviders)launchPolicy.assertCallbackProvider(providerType);
+  if(providerType==='shopify'){
+    const preview=await readState(database,query.state,providerType);
+    if(preview.metadata.shopifyProfile==='public'){
+      const adapter=(options.providers||defaultProviders).get(providerType);
+      adapter.verifyOAuthQuery(query,'public',{fresh:true});
+      if(query.shop!==preview.metadata.shop)throw new AuthenticationError('This Shopify response belongs to a different store.');
+      if(query.code&&!query.error)return require('./shopify-token-lifecycle').run(database,preview.metadata.shopifyClientId,preview.metadata.shop,async db=>{
+        await db.query("UPDATE shopify_public_installs SET status='FAILED',ciphertext=NULL,iv=NULL,auth_tag=NULL WHERE client_id=$1 AND shop=$2 AND status IN('AUTHORIZING','AUTHORIZED')",[preview.metadata.shopifyClientId,preview.metadata.shop]);
+        return completeOAuthLocked(db,providerType,query,requestOrigin,options);
+      });
+    }
+  }
+  return completeOAuthLocked(database,providerType,query,requestOrigin,options);
+}
+async function completeOAuthLocked(database,providerType,query,requestOrigin,options={}){
+  const registry=options.providers||defaultProviders;
   const adapter=registry.get(providerType);
   if(!adapter)throw new NotFoundError('Provider not found.');
   if(registry===defaultProviders)launchPolicy.assertCallbackProvider(providerType);
@@ -235,6 +258,11 @@ async function completeOAuth(database,providerType,query,requestOrigin,options={
 }
 
 async function loadProviderCredentials(database,connection,adapter){
+  const saved=parseJson(connection.config);
+  if(connection.provider_type==='shopify'&&saved.shopifyProfile==='public')return require('./shopify-token-lifecycle').run(database,saved.shopifyClientId||require('./shopify-app-profile').profile('public').clientId,saved.shop||connection.provider_account_id,db=>loadProviderCredentialsLocked(db,connection,adapter));
+  return loadProviderCredentialsLocked(database,connection,adapter);
+}
+async function loadProviderCredentialsLocked(database,connection,adapter){
   if(connection.setup_status==='REAUTHORIZATION_REQUIRED')throw new AuthenticationError('Reconnect this provider before using its authorization again.');
   const refresh=async queryable=>{
   if(adapter?.refreshCredentials){
