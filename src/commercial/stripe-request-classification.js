@@ -14,6 +14,7 @@ const paths=[
  /^\/v1\/checkout\/sessions(?:\/[^/?]+)?$/,
  /^\/v1\/billing_portal\/sessions(?:\/[^/?]+)?$/,
  /^\/v1\/payment_intents(?:\/[^/?]+)?$/,
+ /^\/v1\/refunds(?:\/[^/?]+)?$/,
  /^\/v1\/payment_methods\/[^/?]+$/,
  /^\/v1\/balance_transactions\/[^/?]+$/,
  /^\/v1\/invoices(?:\/[^/?]+)?(?:\/create_preview)?$/,
@@ -21,7 +22,7 @@ const paths=[
  /^\/v1\/invoice_payments(?:\/[^/?]+)?$/,
  /^\/v1\/customers\/[^/?]+\/balance_transactions$/,
  /^\/v1\/subscriptions(?:\/[^/?]+)?$/,
- /^\/v1\/subscription_schedules(?:\/[^/?]+)?$/,
+ /^\/v1\/subscription_schedules(?:\/[^/?]+)?(?:\/release)?$/,
  /^\/v1\/invoiceitems(?:\/[^/?]+)?$/,
  /^\/v1\/prices\/[^/?]+$/,
 ];
