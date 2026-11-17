@@ -28,7 +28,6 @@ for(const legacyStart of [true,false])test('real Chromium qualifies signed Shopi
     const oldSecret=process.env.SHOPIFY_CLIENT_SECRET,oldClient=process.env.SHOPIFY_CLIENT_ID,oldFetch=global.fetch;process.env.SHOPIFY_CLIENT_SECRET=webhookSecret;process.env.SHOPIFY_CLIENT_ID='fixture-shopify-client';let providerRequests=0;
     global.fetch=async(value,options)=>{const url=new URL(value);if(url.hostname==='127.0.0.1')return oldFetch(value,options);assert.equal(url.hostname,'shopify-store-1.myshopify.com','The wire fixture must never contact an actual store');providerRequests++;const id=JSON.parse(options.body).variables.id,node=/\/Order\/(1001|1002)$/.test(id)?{id}:/\/Fulfillment\/700[12]$/.test(id)?{id,order:{id:'gid://shopify/Order/'+(id.endsWith('7002')?'1002':'1001')}}:/\/Refund\/800[1-4]$/.test(id)?{id,order:{id:'gid://shopify/Order/'+(id.endsWith('8002')?'1001':'1002'),displayFinancialStatus:id.endsWith('8002')?'PAID':'VOIDED'}}:null;return Response.json({data:{node}});};
     context.after(()=>{global.fetch=oldFetch;if(oldSecret===undefined)delete process.env.SHOPIFY_CLIENT_SECRET;else process.env.SHOPIFY_CLIENT_SECRET=oldSecret;if(oldClient===undefined)delete process.env.SHOPIFY_CLIENT_ID;else process.env.SHOPIFY_CLIENT_ID=oldClient;});
-    const eventDay=new Date().toISOString().slice(0,10);
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-postgres-shopify-webhooks'});
     await migratePostgres(database);
@@ -37,7 +36,7 @@ for(const legacyStart of [true,false])test('real Chromium qualifies signed Shopi
     const browser=await chromium.launch();
     context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));
       await app.locals.sessionStore.close();await database.close();cluster.stop();});
-    const page=await browser.newPage({viewport:{width:1440,height:900}});const errors=[];
+    const page=await browser.newPage({viewport:{width:1440,height:900},timezoneId:'America/New_York'});const errors=[];
     page.on('pageerror',(error)=>errors.push(error.message));page.setDefaultTimeout(15000);
     const base=`http://127.0.0.1:${server.address().port}`;
     await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('Shopify Webhook Business');
@@ -49,8 +48,15 @@ for(const legacyStart of [true,false])test('real Chromium qualifies signed Shopi
     const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
     const location=await locations.createLocation(database,ctx,{name:'Shopify Warehouse',kind:'warehouse'});
     const item=await catalog.createItem(database,ctx,{name:'Shopify Bottle',baseCode:'SHOP-BOTTLE',trackingMode:'quantity',unitLabel:'unit'});
+    // Use ordered past instants, rather than today's noon in UTC (which is
+    // still in the future during evening runs in the business's time zone).
+    const eventStart=Date.now()-60000,eventAt=offset=>new Date(eventStart+offset).toISOString();
+    const businessTime=require('../../src/lib/business-time');
+    assert.equal((await businessTime.forWorkspace(database,ctx.workspaceId)).timeZone,'America/New_York');
+    await require('../../src/accounting/postgres-ledger').configure(database,ctx,{
+      startDate:businessTime.context('America/New_York',new Date(eventAt(0))).calendarDate,currency:'USD'});
     const received=await inventory.receive(database,ctx,{skuId:item.skuIds[0],locationId:location.id,quantity:6,
-      reference:'OPENING',idempotencyKey:'shopify-webhook-opening'});
+      occurredAt:eventAt(0),reference:'OPENING',idempotencyKey:'shopify-webhook-opening'});
     await database.transaction((client)=>costing.receiveInTransaction(client,ctx,{movementId:received.movementId,
       unitCostMinor:500,sourceType:'opening_inventory',sourceRecordId:received.movementId}));
     const connectorId=newId('con');const at=nowIso();
@@ -70,7 +76,7 @@ for(const legacyStart of [true,false])test('real Chromium qualifies signed Shopi
     const endpoint=`${base}/api/v1/connections/shopify/webhooks/${connectorId}`;
     const send=async(body,topic,delivery,token=sign(body))=>fetch(endpoint,{method:'POST',headers:{'content-type':'application/json',
       'x-shopify-topic':topic,'x-shopify-webhook-id':delivery,'x-shopify-shop-domain':'shopify-store-1.myshopify.com','x-shopify-hmac-sha256':token},body});
-    const order=(id,quantity=2)=>({id,name:`#${id}`,created_at:`${eventDay}T12:00:00.000Z`,updated_at:`${eventDay}T12:00:00.000Z`,
+    const order=(id,quantity=2)=>({id,name:`#${id}`,created_at:eventAt(1000),updated_at:eventAt(1000),
       currency:'USD',location_id:44,email:`buyer-${id}@example.test`,customer:{id:77,first_name:'Sharon',last_name:'Buyer',
         email:`buyer-${id}@example.test`},shipping_address:{address1:'20 Main Street',city:'Monroe',province:'NY',zip:'10950',country_code:'US'},
       line_items:[{id:id*10+1,variant_id:501,product_id:50,sku:'SHOP-BOTTLE',quantity,price:'15.00'}]});
@@ -86,15 +92,18 @@ for(const legacyStart of [true,false])test('real Chromium qualifies signed Shopi
     const mapped=(await database.query(`SELECT foundry_record_id FROM connection_mappings WHERE workspace_id=$1
       AND connector_id=$2 AND entity_type='sales_order' AND external_id='1001'`,[ctx.workspaceId,connectorId])).rows[0];
     assert.ok(mapped);
-    const fulfillmentBody=JSON.stringify({id:7001,order_id:1001,location_id:44,created_at:`${eventDay}T13:00:00.000Z`,tracking_company:'Test carrier',tracking_number:'TEST-7001',tracking_url:'https://example.test/tracking/7001',
-      updated_at:`${eventDay}T13:00:00.000Z`,line_items:[{id:10011,variant_id:501,product_id:50,sku:'SHOP-BOTTLE',quantity:2}]});
+    const fulfillmentBody=JSON.stringify({id:7001,order_id:1001,location_id:44,created_at:eventAt(2000),tracking_company:'Test carrier',tracking_number:'TEST-7001',tracking_url:'https://example.test/tracking/7001',
+      updated_at:eventAt(2000),line_items:[{id:10011,variant_id:501,product_id:50,sku:'SHOP-BOTTLE',quantity:2}]});
     legacyShipment=legacyStart;const fulfilled=await send(fulfillmentBody,'fulfillments/create','shopify-fulfill-1001');
-    assert.equal(fulfilled.status,202);assert.equal((await require('../helpers/provider-webhook-worker').result(database,fulfilled,providers)).accepted,1);
+    assert.equal(fulfilled.status,202);const fulfilledResult=await require('../helpers/provider-webhook-worker').result(database,fulfilled,providers);const fulfillmentFailure=fulfilledResult.accepted===1?null:(await database.query('SELECT error_code,error_message FROM connection_webhook_receipts WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,fulfilledResult.receiptId])).rows[0];assert.equal(fulfilledResult.accepted,1,JSON.stringify({fulfilledResult,fulfillmentFailure}));
     legacyShipment=false;
     assert.equal((await database.query('SELECT status FROM sales_orders WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,mapped.foundry_record_id])).rows[0].status,'FULFILLED');
     assert.equal(Number((await database.query(`SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),4);
+    const shipmentJournal=(await database.query("SELECT posting_date FROM accounting_journal_entries WHERE workspace_id=$1 AND source_type='sale_fulfillment'",[ctx.workspaceId])).rows[0];
+    assert.equal(String(shipmentJournal.posting_date).slice(0,10),businessTime.context('America/New_York',new Date(eventAt(2000))).calendarDate,
+      'Provider instants must post to the business calendar day, including after UTC midnight');
     // Reproduce the actual live gap: physical/invoice effects completed but
     // the shipping handoff was absent. A new delivery of that same retained
     // provider fact must repair metadata without repeating business effects.
@@ -132,13 +141,13 @@ for(const legacyStart of [true,false])test('real Chromium qualifies signed Shopi
     assert.equal((await require('../helpers/provider-webhook-worker').result(database,wrongSource,providers)).processingStatus,'NEEDS_REVIEW');
     assert.match((await database.query("SELECT error_message FROM connection_webhook_receipts WHERE workspace_id=$1 AND delivery_id='wrong-allocated-source'",[ctx.workspaceId])).rows[0].error_message,/stock committed/);
     assert.equal(Number((await database.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),4);
-    const cancelBody=JSON.stringify({...order(1002,1),cancel_reason:'customer',updated_at:`${eventDay}T14:00:00.000Z`});
+    const cancelBody=JSON.stringify({...order(1002,1),cancel_reason:'customer',updated_at:eventAt(3000)});
     const cancelled=await send(cancelBody,'orders/cancelled','shopify-cancel-1002');
     assert.equal(cancelled.status,202);assert.equal((await require('../helpers/provider-webhook-worker').result(database,cancelled,providers)).accepted,1);
     assert.equal((await database.query(`SELECT so.status FROM sales_orders so JOIN connection_mappings m ON m.foundry_record_id=so.id
       WHERE m.workspace_id=$1 AND m.connector_id=$2 AND m.entity_type='sales_order' AND m.external_id='1002'`,
     [ctx.workspaceId,connectorId])).rows[0].status,'CANCELLED');
-    const refund=(id,orderId,transactions=[])=>JSON.stringify({id,order_id:orderId,created_at:`${eventDay}T14:00:01.000Z`,transactions,
+    const refund=(id,orderId,transactions=[])=>JSON.stringify({id,order_id:orderId,created_at:eventAt(4000),transactions,
       refund_line_items:[{id:id*10,quantity:1,restock_type:'cancel',line_item:{variant_id:501,product_id:50,sku:'SHOP-BOTTLE'}}]});
     const zero=await send(refund(8001,1002),'refunds/create','zero-cancel-refund');await require('../helpers/provider-webhook-worker').result(database,zero,providers);
     assert.equal(Number((await database.query("SELECT count(*) AS n FROM connection_issues WHERE workspace_id=$1 AND issue_type='RETURN_REVIEW_REQUIRED' AND status='OPEN'",[ctx.workspaceId])).rows[0].n),0);
