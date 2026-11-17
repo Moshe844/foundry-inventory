@@ -1,7 +1,13 @@
 'use strict';
 const {ValidationError}=require('../domain/errors'),{newId}=require('../lib/util');
 const DAYS=14*86400000,identity=v=>typeof v==='string'?v:v?.id,paidAt=r=>new Date(r.detail.invoicePaidAt||r.occurred_at);
-async function receipts(db,accountId){return (await db.query(`SELECT * FROM commercial_revenue_events WHERE account_id=$1 AND kind='SUBSCRIPTION' AND detail->>'stripeCashVerified'='true' ORDER BY occurred_at,id`,[accountId])).rows;}
+async function receipts(db,accountId){
+ const rows=(await db.query(`SELECT * FROM commercial_revenue_events WHERE account_id=$1 AND kind='SUBSCRIPTION' AND detail->>'stripeCashVerified'='true' ORDER BY occurred_at,id`,[accountId])).rows;
+ // Reconciled free or customer-credit invoices are not card payments. They
+ // neither start the guarantee window nor add a payment to refund. Use gross
+ // cash evidence, since tax can make net revenue zero on an actual payment.
+ return rows.filter(row=>row.detail.cashMinor!==0);
+}
 async function quote(db,accountId){
  const sub=(await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[accountId])).rows[0];
  const request=sub?.stripe_subscription_id?(await db.query('SELECT * FROM commercial_guarantee_requests WHERE account_id=$1 AND stripe_subscription_id=$2',[accountId,sub.stripe_subscription_id])).rows[0]:null;
