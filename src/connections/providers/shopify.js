@@ -42,10 +42,10 @@ async function grantedScopes(body,credentials) {
 }
 
 function metadata() {
-  return { type: 'shopify', name: 'Shopify', mark: 'S', category: 'selling', authMode: 'oauth', available: config.connections.shopify.configured,
+  return { type: 'shopify', name: 'Shopify', mark: 'S', category: 'selling', authMode: 'oauth', available: appProfiles.available(),
     description: 'Automatically receive Shopify orders, cancellations, fulfillment, returns, products, SKUs, and locations.',
     provides: ['customer orders', 'cancellations', 'fulfillment', 'returns', 'products, SKUs and locations'],
-    unavailableReason: config.connections.shopify.configured ? null : 'StockChief’s Shopify app credentials have not been configured on this installation.',
+    unavailableReason: appProfiles.available() ? null : 'StockChief’s Shopify app credentials have not been configured on this installation.',
   };
 }
 

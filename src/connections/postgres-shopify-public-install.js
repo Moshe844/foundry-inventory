@@ -8,6 +8,7 @@ const launch=require('./launch-policy');
 const providerService=require('./postgres-provider-service');
 const intents=require('./authorization-intent');
 const credentials=require('./credentials');
+const lifecycle=require('./shopify-token-lifecycle');
 const TTL_MS=30*60*1000,PATH='/integrations/shopify';
 const hash=value=>crypto.createHash('sha256').update(String(value)).digest('hex');
 function browser(value){
@@ -24,6 +25,10 @@ async function purge(database,{now=Date.now()}={}){
  return (await database.query('DELETE FROM shopify_public_installs WHERE expires_at<=$1',[new Date(now).toISOString()])).rowCount;
 }
 async function begin(database,query,origin){
+ adapter.verifyOAuthQuery(query,'public',{fresh:true});
+ return lifecycle.run(database,profiles.profile('public').clientId,query.shop,db=>beginLocked(db,query,origin));
+}
+async function beginLocked(database,query,origin){
  adapter.verifyOAuthQuery(query,'public',{fresh:true});
  if(!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(query.shop||''))throw new AuthenticationError('Shopify did not identify a valid store.');
  const shop=query.shop,app=profiles.profile('public');approvedShop(shop);
@@ -62,9 +67,20 @@ async function read(database,cookie){
 async function complete(database,cookie,query){
  const row=await read(database,cookie);
  adapter.verifyOAuthQuery(query,'public',{fresh:true});
+ return lifecycle.run(database,row.client_id,row.shop,db=>completeLocked(db,cookie,query));
+}
+async function completeLocked(database,cookie,query){
+ const row=await read(database,cookie);
+ adapter.verifyOAuthQuery(query,'public',{fresh:true});
  if(hash(query.state)!==row.state_hash||query.shop!==row.shop)throw new AuthenticationError('This Shopify response does not match the store and browser that started it.');
  if(query.error)throw new AuthorizationError('Shopify access was not approved. Your existing connections are unchanged.');
  if(!query.code||query.code.length>2048)throw new AuthenticationError('Shopify did not supply a valid authorization code.');
+ const active=(await database.query("SELECT id,workspace_id FROM workspace_connectors WHERE provider_type='shopify' AND provider_account_id=$1 AND status='connected' AND config::jsonb->>'shopifyProfile'='public' AND config::jsonb->>'shopifyClientId'=$2 ORDER BY updated_at DESC LIMIT 1",[row.shop,row.client_id])).rows[0];
+ if(active){
+   const linked=await database.query("UPDATE shopify_public_installs SET status='LINKED',linked_workspace_id=$2,linked_connector_id=$3,ciphertext=NULL,iv=NULL,auth_tag=NULL WHERE id=$1 AND status='AUTHORIZING' RETURNING id",[row.id,active.workspace_id,active.id]);
+   if(!linked.rowCount)throw new AuthenticationError('This Shopify response was already used. Open StockChief from Shopify again.');
+   return PATH+'/connect';
+ }
  const taken=await database.transaction(async client=>{
    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['shopify-public-install:'+row.client_id+':'+row.shop]);
    return client.query("UPDATE shopify_public_installs SET status='EXCHANGING' WHERE id=$1 AND status='AUTHORIZING' AND expires_at>now() RETURNING id",[row.id]);
@@ -84,7 +100,11 @@ async function choices(database,account,row){
    ON u.workspace_id=w.id AND u.account_id=$1 AND u.role='owner' AND u.revoked_at IS NULL
    WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL ORDER BY w.name,w.id`,[account.id])).rows;
 }
-async function attach(database,account,cookie,workspaceId,{requestOrigin}={}){
+async function attach(database,account,cookie,workspaceId,options={}){
+ const row=await read(database,cookie);
+ return lifecycle.run(database,row.client_id,row.shop,db=>attachLocked(db,account,cookie,workspaceId,options));
+}
+async function attachLocked(database,account,cookie,workspaceId,{requestOrigin}={}){
  if(!account?.email_verified_at)throw new AuthorizationError('Verify your StockChief email before connecting a store.');
  const row=await read(database,cookie),choice=(await choices(database,account,row)).find(w=>w.id===workspaceId);
  if(!choice)throw new AuthorizationError('Choose an inventory you own. Restricted team members cannot connect this store.');
@@ -104,6 +124,7 @@ async function attach(database,account,cookie,workspaceId,{requestOrigin}={}){
    if(current.status!=='AUTHORIZED'||!current.ciphertext)throw new AuthenticationError('Complete Shopify authorization before linking the inventory.');
    if(active.some(c=>{const config=typeof c.config==='string'?JSON.parse(c.config):c.config;return config?.shopifyProfile!=='public'||config?.shopifyClientId!==row.client_id;}))
      throw new ValidationError('This store already has a working connection with the older Shopify app. It has been kept. Contact StockChief support to arrange a reviewed migration.');
+   if(active.length)throw new ValidationError('A Shopify connection was already completed for this store. Its working credentials have been kept. Open its connection page to reconnect if needed.');
    const other=(await client.query("SELECT id FROM workspace_connectors WHERE provider_type='shopify' AND provider_account_id=$1 AND status='connected' AND workspace_id<>$2",[row.shop,workspaceId])).rows;
    if(other.length)throw new AuthorizationError('This store is already connected to another inventory. Its existing connection has been kept.');
    const result=credentials.decrypt(current);
