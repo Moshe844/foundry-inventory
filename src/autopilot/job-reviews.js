@@ -237,6 +237,7 @@ async function run(db,ctx,key,options={}){
     if(mode==='suggest')return {label:def.label,summary:result.summary,...(def.id===97?{supplierBenefitLink:true}:{}),
       rows:firstSuggestion(def,result.rows),mode,more:false,page:1,filterable:true,...inputs};
     return {label:def.label,summary:result.summary,rows:result.rows,more:result.more,page,mode,filterable:true,
+      ...(result.briefingDate?{briefingDate:result.briefingDate}:{}),
       ...(result.scenarioOptions?{scenarioOptions:result.scenarioOptions}:{}),
       ...(result.reportQuarter?{reportQuarter:result.reportQuarter}:{}),
       ...(result.cyclePlan?{cyclePlan:true}:{}),

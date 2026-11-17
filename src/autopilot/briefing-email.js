@@ -227,6 +227,7 @@ const said={QUEUED:'It is on its way by email',SENT:'It was emailed',FAILED:'The
 // Needs you: the latest briefing, once its time has come.
 async function inbox(db,workspaceId){
   if(!await ready(db))return [];
+  if(!await noticesEnabled(db,workspaceId))return [];
   const row=(await db.query(`SELECT report_date::text AS day,from_date::text AS from_day,status,hold_reason,recipients,slot_at FROM ${table}
     WHERE workspace_id=$1 ORDER BY report_date DESC LIMIT 1`,[workspaceId])).rows[0];
   if(!row){
@@ -234,19 +235,21 @@ async function inbox(db,workspaceId){
       WHERE workspace_id=$1 AND summary::jsonb->>'format'='agent-brief'
       ORDER BY report_date DESC LIMIT 1`,[workspaceId])).rows[0];
     if(!brief)return [];
+    if(await noticeDismissed(db,workspaceId,brief.report_date))return [];
     return [{kind:'inventory',grouped:true,importance:'Information',priority:45,title:'Your daily briefing',
       happened:'The briefing for '+brief.report_date+' is ready.',
       why:'StockChief prepares the briefing from your inventory records.',
       recommendation:'Read it and follow up on anything waiting.',
       href:path+'?filter='+encodeURIComponent(brief.report_date),actionLabel:'Read the briefing',
-      sourceId:'daily-briefing:'+brief.report_date,createdAt:brief.generated_at,at:brief.generated_at}];
+      dismiss:{action:'/autopilot/briefings/'+brief.report_date+'/dismiss',label:'Dismiss briefing'},sourceId:'daily-briefing:'+brief.report_date,createdAt:brief.generated_at,at:brief.generated_at}];
   }
+  if(await noticeDismissed(db,workspaceId,row.day))return [];
   const email=row.status==='HELD'?' The email is waiting: '+row.hold_reason:row.status==='CANCELLED'?'':' '+said[row.status]+' to '+plural(row.recipients.length,'person','people')+'.';
   return [{kind:'inventory',grouped:true,importance:'Information',priority:45,title:'Your daily briefing',
     happened:'What happened on '+span(row.from_day,row.day)+', and what needs you now.'+email,
     why:'StockChief writes it from your records each business day at the time you chose.',
     recommendation:row.status==='HELD'?'Read it here, then send the email or fix what stopped it.':'Read it and follow up on anything waiting.',
-    href:path+'?filter='+row.day,actionLabel:'Read the briefing',sourceId:'daily-briefing:'+row.day,createdAt:row.slot_at,at:row.slot_at}];
+    href:path+'?filter='+row.day,actionLabel:'Read the briefing',dismiss:{action:'/autopilot/briefings/'+row.day+'/dismiss',label:'Dismiss briefing'},sourceId:'daily-briefing:'+row.day,createdAt:row.slot_at,at:row.slot_at}];
 }
 
 // What the briefing page shows about delivery.
@@ -263,7 +266,20 @@ async function panel(db,ctx){
   return {job:JOB,action:'/autopilot/report-emails/'+JOB,revision:saved?.revision||0,mailboxes:boxes,chosen,stop,ownerStop,
     people:team.map(p=>({id:p.id,name:p.name,email:p.email,chosen:ids.includes(p.id)})),
     hour:Number(s.send_hour),minute:Number(s.send_minute),days:s.send_days,zone,next:saved?.next_send_at?mail().localTime(saved.next_send_at,zone):null,
-    latest,canSend:Boolean(latest?.status==='HELD'&&!ownerStop)};
+    latest,noticesEnabled:await noticesEnabled(db,ctx.workspaceId),canSend:Boolean(latest?.status==='HELD'&&!ownerStop)};
 }
 
-module.exports={JOB,ACTION,key,path,table,ready,slotAfter,ensureSchedule,nextAfterChange,enqueueDue,plan,letter,run,sendNow,emailAuthority,settle,inbox,panel};
+async function noticesEnabled(db,workspaceId){if(!await installed.has(db,'workspace_briefing_preferences'))return true;return (await db.query('SELECT show_in_needs FROM workspace_briefing_preferences WHERE workspace_id=$1',[workspaceId])).rows[0]?.show_in_needs!==false;}
+function noticeKey(day){return require('node:crypto').createHash('sha256').update(JSON.stringify(['inventory',path+'?filter='+day,'Your daily briefing'])).digest('hex').slice(0,32);}
+async function noticeDismissed(db,workspaceId,day){return Boolean((await db.query('SELECT 1 FROM needs_you_dismissals WHERE workspace_id=$1 AND entry_id=$2',[workspaceId,noticeKey(day)])).rowCount);}
+async function setNotices(db,ctx,enabled){await mail().requireOwner(db,ctx);if(typeof enabled!=='boolean')throw new ValidationError('Choose whether briefing notices are shown.');await db.query(`INSERT INTO workspace_briefing_preferences(workspace_id,show_in_needs,updated_by) VALUES($1,$2,$3)
+ ON CONFLICT(workspace_id) DO UPDATE SET show_in_needs=EXCLUDED.show_in_needs,updated_by=EXCLUDED.updated_by,updated_at=now()`,[ctx.workspaceId,enabled,ctx.actorId]);}
+async function dismiss(db,ctx,day){await mail().requireOwner(db,ctx);if(!/^\d{4}-\d{2}-\d{2}$/.test(day)||!Number.isFinite(Date.parse(day))||new Date(day).toISOString().slice(0,10)!==day)throw new ValidationError('Choose an existing briefing date.');
+ const found=(await db.query(`SELECT 1 FROM workspace_daily_digests WHERE workspace_id=$1 AND report_date=$2 AND summary::jsonb->>'format'='agent-brief'
+ UNION ALL SELECT 1 FROM ${table} WHERE workspace_id=$1 AND report_date=$2::date LIMIT 1`,[ctx.workspaceId,day])).rowCount;if(!found)throw new ValidationError('That briefing does not belong to this inventory.');
+ const entryKey=noticeKey(day);
+ await db.query(`INSERT INTO needs_you_dismissals(id,workspace_id,entry_id,dismissed_by_user_id,dismissed_at) VALUES($1,$2,$3,$4,$5)
+ ON CONFLICT(workspace_id,entry_id) DO UPDATE SET dismissed_by_user_id=EXCLUDED.dismissed_by_user_id,dismissed_at=EXCLUDED.dismissed_at`,[require('../lib/util').newId('nyd'),ctx.workspaceId,entryKey,ctx.actorId,new Date().toISOString()]);
+}
+
+module.exports={JOB,ACTION,key,path,table,ready,slotAfter,ensureSchedule,nextAfterChange,enqueueDue,plan,letter,run,sendNow,emailAuthority,settle,inbox,panel,noticesEnabled,setNotices,dismiss};

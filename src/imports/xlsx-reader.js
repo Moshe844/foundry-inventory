@@ -121,18 +121,20 @@ function readZip(buffer) {
   const cache = new Map();
   let expanded = 0;
   return {
-    get(name) {
-      if (cache.has(name)) return cache.get(name);
+    get(name, options = {}) {
+      const entryLimit = options.maxBytes === undefined ? LIMITS.maxEntryBytes : options.maxBytes;
+      if (!Number.isSafeInteger(entryLimit) || entryLimit < 1 || entryLimit > LIMITS.maxEntryBytes) throw new TypeError('Invalid ZIP entry read limit.');
       const entry = entries.get(name);
       if (!entry) return undefined;
-      if (entry.uncompressedSize > LIMITS.maxEntryBytes) {
+      if (entry.uncompressedSize > entryLimit) {
         throw new SpreadsheetError('One worksheet is larger than this deployment can safely process. Use a CSV export for larger inventories.');
       }
+      if (cache.has(name)) return cache.get(name);
       if (expanded + entry.uncompressedSize > LIMITS.maxTotalBytes) {
         throw new SpreadsheetError('The workbook expands beyond this deployment\'s safe processing capacity. Use a CSV export for larger inventories.');
       }
       const raw = buffer.subarray(entry.start, entry.start + entry.compressedSize);
-      const remaining = Math.min(LIMITS.maxEntryBytes, LIMITS.maxTotalBytes - expanded);
+      const remaining = Math.min(entryLimit, LIMITS.maxTotalBytes - expanded);
       if (remaining < 1 || (entry.method === 0 && raw.length > remaining)) {
         throw new SpreadsheetError('The workbook expands beyond this deployment\'s safe processing capacity. Use a CSV export for larger inventories.');
       }
@@ -154,6 +156,7 @@ function readZip(buffer) {
     // Expanded worksheet XML is transient. Keeping every decompressed sheet
     // after extracting its cells needlessly multiplies a workbook's memory.
     release(name) { cache.delete(name); },
+    has(name) { return entries.has(name); },
   };
 }
 

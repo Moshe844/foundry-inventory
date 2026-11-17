@@ -1,3 +1,4 @@
+<% if(result.reportEmail?.job===156){ %><%- include('daily-briefing',{result,csrfToken}) %><% }else{ %>
 <h1><%= result.label %></h1><p><%= result.summary %></p>
 <% if(result.breaker){ const b=result.breaker; %>
 <section class="card card-body stack" data-circuit-breaker>
@@ -222,3 +223,4 @@
 <% if(result.undoForm&&!result.activity){ %><%- include('daily-work',{result,csrfToken}) %><% } %>
 <% if(result.bankMatchForm){ %><%- include('bank-payment-matches',{result,csrfToken}) %><% } %>
 <% if(result.reminderForm){ %><%- include('invoice-reminders',{result,csrfToken}) %><% } %>
+<% } %>

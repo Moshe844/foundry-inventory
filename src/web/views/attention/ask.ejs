@@ -72,7 +72,20 @@
     if (column === 'operation') return helpers.operationLabel(value);
     if (column === 'expiresAt') return helpers.shortDate(value);
     if (typeof value === 'number' && Number.isFinite(value)) return helpers.qty(value);
+    // A recorded time or date reads as one, not as the database wrote it.
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value) && !Number.isNaN(Date.parse(value))) return helpers.dateTime(value);
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return helpers.shortDate(value);
     return String(value);
+  }
+  // A column lines up on the right only when every value in it is a number or an amount.
+  function numericColumns(result) {
+    var rows = result.rows.slice(0, 60);
+    return result.columns.map(function (column, position) {
+      if (!position) return false;
+      var seen = 0;
+      var numbers = rows.every(function (row) { var shown = cellValue(column, row[column]); if (shown === '—') return true; seen++; return /^[-−]?[$€£¥]?[\d,.]+%?$/.test(shown); });
+      return numbers && seen > 0;
+    });
   }
   function evidenceHref(href, label) {
     if (!href) return null;
@@ -87,7 +100,7 @@
   }
 %>
 
-<div class="sc-chat-workspace" <%- locals.autoSend?'data-ask-auto-send':'' %>><aside class="sc-chat-history" aria-label="Conversation history"><h2>Conversations</h2><% if((locals.recentRequests||[]).length>3){ %><label class="ask-filter"><span class="visually-hidden">Find a conversation</span><input class="input" type="search" data-chat-filter placeholder="Find a conversation" autocomplete="off"></label><% } %><div class="ask-chats" data-chat-list><% for(const group of (locals.chatGroups||[])){ %><section data-chat-group><h3><%= group.label %></h3><% for(const chat of group.rows){ %><%- include('chat-row',{chat}) %><% } %></section><% } %><p class="ask-chats__none" data-chat-none hidden>No conversation matches.</p></div><a href="/ask/history" class="ask-all">All conversations</a><details class="sc-ai-details"><summary>AI credits</summary><%- include('../partials/ai-spending-status') %></details><% if (currentUser && ['owner','manager','staff'].includes(currentUser.role)) { %><p class="sc-feedback"><a href="/autopilot/misses">Report a wrong answer or missing requirement</a></p><% } %>
+<div class="sc-chat-workspace" <%- locals.autoSend?'data-ask-auto-send':'' %>><aside class="sc-chat-history" aria-label="Conversation history"><div class="ask-rail__head"><h2>Conversations</h2></div><% if((locals.recentRequests||[]).length>3){ %><label class="ask-filter"><span class="visually-hidden">Find a conversation</span><input class="input" type="search" data-chat-filter placeholder="Find a conversation" autocomplete="off"></label><% } %><div class="ask-chats" data-chat-list><% for(const group of (locals.chatGroups||[])){ %><section data-chat-group><h3><%= group.label %></h3><% for(const chat of group.rows){ %><%- include('chat-row',{chat}) %><% } %></section><% } %><p class="ask-chats__none" data-chat-none hidden>No conversation matches.</p></div><div class="ask-rail__foot"><a href="/ask/history" class="ask-all"><%- helpers.icon('chat',{size:16}) %><span>All conversations</span></a><details class="sc-ai-details"><summary><%- helpers.icon('spark',{size:16}) %><span>AI credits</span></summary><%- include('../partials/ai-spending-status') %></details><% if (currentUser && ['owner','manager','staff'].includes(currentUser.role)) { %><p class="sc-feedback"><a href="/autopilot/misses"><%- helpers.icon('alert',{size:16}) %><span>Report a wrong answer</span></a></p><% } %></div>
 
 </aside>
 <div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>"><header class="rm-chat__bar"><h1 class="rm-chat__title">Ask StockChief</h1><div class="rm-chat__new"><% if(locals.currentChat){ %><%- include('ask-download',{base:'/ask/chats/'+encodeURIComponent(currentChat.chat_id)+'/download',formats:[['pdf','PDF'],['xlsx','Excel'],['csv','CSV'],['','Text']]}) %><% } %><a class="rm-btn rm-btn--ghost rm-btn--sm sc-chat-history-link" href="/ask/history">Conversations</a><form method="post" action="/ask/new"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">New conversation</button></form></div></header>
@@ -354,7 +367,7 @@
             </summary>
             <div class="rm-chat-evidence__rows">
               <%# Sixty, not twelve: "all products with their prices" is a list a person scrolls, not a sample. %>
-              <table class="ask-table"><thead><tr><% result.columns.forEach(function (column) { %><th scope="col"><%= result.columnLabels?.[column] || helpers.columnLabel(column) || column %></th><% }) %></tr></thead><tbody>
+              <% var numeric = numericColumns(result); %><table class="ask-table"><thead><tr><% result.columns.forEach(function (column, position) { %><th scope="col"<%- numeric[position] ? ' class="is-num"' : '' %>><%= result.columnLabels?.[column] || helpers.columnLabel(column) || column %></th><% }) %></tr></thead><tbody>
               <% result.rows.slice(0, 60).forEach(function (row) { %>
                 <%
                   var first = result.columns[0];
@@ -362,7 +375,7 @@
                   var linkHref = evidenceHref(row.href, label);
                 %>
                 <tr class="rm-chat-evidence__row">
-                  <% result.columns.forEach(function (column, position) { var shown = cellValue(column, row[column]); %><td class="<%= position && /^[-−]?[$€£¥]?[\d,.]+%?$/.test(shown) ? 'is-num' : '' %><%= column === 'late' && shown !== 'None' ? ' is-late' : '' %>"><% if (!position && linkHref) { %><a href="<%= linkHref %>"><%= shown %></a><% } else { %><%= shown %><% } %></td><% }) %>
+                  <% result.columns.forEach(function (column, position) { var shown = cellValue(column, row[column]); %><td class="<%= numeric[position] ? 'is-num' : '' %><%= column === 'late' && shown !== 'None' ? ' is-late' : '' %>"><% if (!position && linkHref) { %><a href="<%= linkHref %>"><%= shown %></a><% } else { %><%= shown %><% } %></td><% }) %>
                 </tr>
               <% }) %>
               </tbody></table>
@@ -494,4 +507,4 @@
 
 <script src="/ask-health.js?v=<%= locals.assetVersion || '' %>" defer></script>
 <script src="/voice-note.js?v=<%= locals.assetVersion || '' %>" defer></script>
-<script src="/ask-tools.js?v=<%= locals.assetVersion || '' %>" defer></script>
+<script src="/ask-tools.js?v=<%= locals.assetVersion || '' %>" defer></script><script src="/chat-rows.js?v=<%= locals.assetVersion || '' %>" defer></script>

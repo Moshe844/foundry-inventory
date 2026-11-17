@@ -164,7 +164,8 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     const approved=await agent.post(`${proposalHref}/approve`).type('form').send({_csrf:csrfFrom(review.text)});
     assert.equal(approved.status,303);
     const completed=await agent.get(proposalHref);
-    assert.match(completed.text,/EXECUTED/);
+    assert.match(completed.text,/<h1>Completed change<\/h1>/);
+    assert.equal((await database.query('SELECT status FROM stockchief_runtime.assistant_action_proposals WHERE id=$1',[proposalHref.split('/').pop()])).rows[0].status,'EXECUTED');
     assert.match(completed.text,/retries will not perform it twice/);
     const secondApproval=await agent.post(`${proposalHref}/approve`).type('form').send({_csrf:csrfFrom(completed.text)});
     assert.equal(secondApproval.status,303);

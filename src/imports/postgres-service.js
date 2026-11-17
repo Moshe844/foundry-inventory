@@ -445,7 +445,7 @@ async function assertImportRowCapacity(database,workspaceId,rowCount){
   const capacityScope=await entitlements.ownerScopeForWorkspace(database,workspaceId);
   const rowCapacity=await entitlements.meterState(database,capacityScope,'import_rows');
   if(rowCapacity.hardLimit!==null&&rowCount>rowCapacity.hardLimit)
-    throw new entitlements.EntitlementError(`This import has ${rowCount.toLocaleString()} rows. Your plan allows ${rowCapacity.hardLimit.toLocaleString()} rows per import.`,{meter:'import_rows',...rowCapacity});
+    throw new entitlements.EntitlementError(`This import has ${rowCount.toLocaleString()} rows. Your plan allows ${rowCapacity.hardLimit.toLocaleString()} rows per import. Upload a smaller file or upgrade your plan. No products or stock were imported.`,{meter:'import_rows',...rowCapacity,requiredRows:rowCount});
 }
 
 async function analyse(database, ctx, input) {
@@ -478,6 +478,10 @@ async function analyseInner(database, ctx, input) {
   }}):isPdf?await require('./pdf-table').parse(buffer):
     isImage?await require('./image-table').parse(buffer):
       parser.parse(buffer?{buffer,filename:input.filename,indexed:true}:{text,filename:input.filename,indexed:true});
+  // Reject an oversized selected source before relationship inference or AI.
+  // Expanded/combined output is checked again after interpretation below.
+  const selectedSource=parsedWorkbook.sheets[Number.isInteger(input.sheetIndex)?input.sheetIndex:parsedWorkbook.primarySheet];
+  if(selectedSource)await assertImportRowCapacity(database,ctx.workspaceId,selectedSource.rows.length);
   await input.onProgress?.({stage:'matching',worksheets:parsedWorkbook.sheets.length});
   if(parsedWorkbook.format==='image'||parsedWorkbook.visualSource)input={...input,imageSource:true};
   if(handwriting)input={...input,mappings:parsedWorkbook.mappings,allowModel:false};

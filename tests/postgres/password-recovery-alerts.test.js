@@ -91,8 +91,10 @@ test('real Chromium completes PostgreSQL password recovery without revealing whe
     assert.ok(await recovery.inspect(database,token));
     await page.locator('input[name="password"]').fill('new-browser-password');
     await page.getByLabel('Confirm new password').fill('new-browser-password');
-    await Promise.all([page.waitForURL(`${base}/login`),page.getByRole('button',{name:'Change password'}).click()]);
+    await Promise.all([page.waitForURL(`${base}/reset-password/success`),page.getByRole('button',{name:'Change password'}).click()]);
     assert.match(await page.locator('body').innerText(),/password has been changed/i);
+    assert.equal(await page.getByRole('heading',{name:'Password updated successfully',exact:true}).count(),1);
+    await Promise.all([page.waitForURL(`${base}/login`),page.getByRole('link',{name:'Sign in',exact:true}).click()]);
     await page.getByLabel('Email').fill(business.email);await page.locator('input[name="password"]').fill('new-browser-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('new-browser-password');
     const [response]=await Promise.all([page.waitForResponse((candidate)=>candidate.url()===`${base}/`),
       page.waitForURL(`${base}/`),page.getByRole('button',{name:'Sign in'}).click()]);

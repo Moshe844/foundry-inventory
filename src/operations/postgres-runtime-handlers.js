@@ -682,6 +682,7 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'agent.annual-stocktake.apply.v1':external(async(job,database)=>{if(!(await database.query('SELECT 1 FROM stockchief_runtime.agent_annual_count_teams WHERE workspace_id=$1 AND campaign_id=$2',[job.workspaceId,job.payload?.campaignId])).rowCount)throw new (require('../domain/errors').ValidationError)('This job is not an annual stocktake worksheet.');const result=await require('./postgres-count-campaigns').run(job,database);if(result?.status==='COMPLETED')await require('./agent-annual-stocktake-runs').settle(database,job.workspaceId,null,job.payload.campaignId);return result;},'bulk'),
   'agent.annual-stocktake.routine.v1':external((job,database)=>require('./agent-annual-stocktake-runs').routine(database,job.workspaceId),'maintenance'),
   'system.retention':external((job,database)=>require('./postgres-retention').run(database,{now:Number(job.payload?.now)||Date.now()}),'bulk'),
+  'system.shopify-privacy':external((job,database)=>require('../connections/postgres-shopify-privacy').processWork(database,job),'bulk'),
   'records.remove-import':external((job,database)=>require('../domain/postgres-record-removal').runImportRemoval(job,database),'bulk'),
   'records.remove-product':external((job,database)=>require('../domain/postgres-record-removal').runProductRemoval(job,database),'bulk'),
   'qualification.staging-load':external((job,database)=>require('./postgres-staging-qualification').run(job,database),'reading'),

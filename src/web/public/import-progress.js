@@ -1,5 +1,7 @@
 'use strict';
 (()=>{
+ if(window.StockChiefImportProgressLoaded)return;
+ window.StockChiefImportProgressLoaded=true;
  function nextStep(){
   const query=new URL(location.href).searchParams;if(query.has('page')||query.has('rows'))return;
   const active=document.querySelector('[data-preview-revision][data-revision-active="yes"]')||document.querySelector('[data-import-current-step] [data-import-detail]');
@@ -33,7 +35,9 @@
    try{await Promise.all([...sourceGroups].filter(([,entry])=>!entry.finished).map(async([endpoint,entry])=>{
     try{const response=await fetch(endpoint,{credentials:'same-origin',cache:'no-store',headers:{accept:'application/json'},signal:AbortSignal.timeout(10000)});if(!response.ok)throw new Error('unavailable');const state=await response.json();
      for(const panel of entry.panels){const set=(selector,text)=>{const node=panel.querySelector(selector);if(node)node.textContent=text;};set('[data-source-label]',state.label);
-      set('[data-source-rows]',(state.worksheets>1?state.worksheets+' sheets read · ':'')+(state.totalRows===null?'Counting the rows in your file…':(state.processedRows??0).toLocaleString()+' / '+state.totalRows.toLocaleString()+' rows checked and prepared'));
+      panel.dataset.sourceActive=state.active?'yes':'no';
+      set('[data-source-rows]',!state.active&&!state.ready?'Reading has stopped. No products or stock were imported.':(state.worksheets>1?state.worksheets+' sheets read · ':'')+(state.totalRows===null?'Counting the rows in your file…':(state.processedRows??0).toLocaleString()+' / '+state.totalRows.toLocaleString()+' rows checked and prepared'));
+      const plan=panel.querySelector('[data-source-plan]');if(plan)plan.hidden=!state.planBlocked;
       const meter=panel.querySelector('[data-source-meter]');if(meter){meter.max=state.totalRows||1;if(state.processedRows===null)meter.removeAttribute('value');else meter.value=state.processedRows;meter.hidden=!state.active&&!state.ready;}
       // The four plain steps a person sees, from the worker's finer stages.
       const rank={queued:-1,reading:0,matching:0,understanding:1,checking:2,saving:3,ready:4}[state.stage]??-1,stages=panel.querySelector('[data-source-stages]');

@@ -115,6 +115,7 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
     const currentConfig=parseJson(target.config);
     const safeConfig={...currentConfig};
     if(result.credentials?.shop)safeConfig.shop=result.credentials.shop;
+    if(connection.provider_type==='shopify')safeConfig.shopifyClientId=result.credentials?.shopifyClientId||require('../config').connections.shopify.clientId;
     if(result.credentials?.storeUrl)safeConfig.storeUrl=result.credentials.storeUrl;
     if(result.verifiedFact)safeConfig.verifiedFact=result.verifiedFact;
     const now=nowIso();
