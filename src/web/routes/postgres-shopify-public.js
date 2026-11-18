@@ -28,7 +28,7 @@ function createRouter(database,{publicOrigin}={}){
  async function show(req,res,error=null){
    let installation=null,choices=[],shopifyBilling=null;
    try{installation=await service.read(database,cookie(req));if(req.query.shop&&req.query.shop!==installation.shop)throw new AuthenticationError('This Shopify return belongs to another store.');if(req.account){shopifyBilling=await require('../../commercial/postgres-shopify-billing').installationState(database,req.account,installation);choices=await service.choices(database,req.account,installation);}}catch(problem){
-     if(req.path===path+'/connect'&&problem instanceof AuthenticationError){const shop=await recoveryShop(req);if(shop)return res.redirect(303,require('../../commercial/shopify-billing').recoveryUrl(shop));}
+     if(!installation&&req.path===path+'/connect'&&problem instanceof AuthenticationError){const shop=await recoveryShop(req);if(shop)return res.redirect(303,require('../../commercial/shopify-billing').recoveryUrl(shop));}
      error=problem.message;
    }
    return res.status(error?400:200).render('connections/shopify-public',{layout:false,title:'Connect Shopify',installation,choices,shopifyBilling,account:req.account||null,error,csrfToken:res.locals.csrfToken,assetVersion:res.locals.assetVersion});

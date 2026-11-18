@@ -179,7 +179,8 @@ test('public Shopify installation authenticates before sign-in and preserves pai
    const f=fixtures[2];await consent(f,'denied-fixture.myshopify.com');
    assert.equal((await claim(f,fixtures[1].owner.workspaceId)).status,400);
    await db.query("UPDATE users SET role='staff' WHERE id=$1",[f.owner.userId]);const denied=await claim(f);assert.equal(denied.status,400);assert.match(denied.text,/inventory you own|current inventory owner/);await db.query("UPDATE users SET role='owner' WHERE id=$1",[f.owner.userId]);
-   await db.query('UPDATE shopify_public_installs SET expires_at=now()-interval \'1 second\' WHERE shop=$1',['denied-fixture.myshopify.com']);assert.equal((await f.agent.get('/integrations/shopify/connect')).status,400);
+   await db.query('UPDATE shopify_public_installs SET expires_at=now()-interval \'1 second\' WHERE shop=$1',['denied-fixture.myshopify.com']);
+   const beforeRecovery=calls.length,expired=await f.agent.get('/integrations/shopify/connect');assert.equal(expired.status,303);assert.equal(expired.headers.location,'https://admin.shopify.com/store/denied-fixture/apps/stockchief');assert.equal(calls.length,beforeRecovery,'Expired proof only restarts authentication; it cannot exchange a grant or link a store');
    assert((await require('../../src/connections/postgres-shopify-public-install').purge(db))>0);
  });
  await t.test('two browsers cannot exchange competing grants or retire an owner-claimed connection',async()=>{
