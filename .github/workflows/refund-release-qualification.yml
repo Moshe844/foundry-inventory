@@ -2,6 +2,11 @@ name: Refund billing release qualification
 on:
   pull_request:
     paths:
+      - src/postgres-app.js
+      - src/operations/postgres-data-access.js
+      - src/operations/postgres-retention.js
+      - src/web/commercial-middleware.js
+      - src/db/postgres-migrations/*shopify*
       - src/commercial/stripe-request-classification.js
       - src/commercial/network.js
       - src/db/postgres-migrations/536-refund-http-cost-evidence.sql

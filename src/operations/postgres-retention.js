@@ -55,6 +55,8 @@ async function run(database,{now=Date.now(),budgetMs=10*60_000}={}){
  }
  out.personalData=await require('../connections/postgres-personal-data-retention').run(database,{now,budgetMs:Math.max(0,deadline-Date.now())});
  out.shopifyInstallHandoffs=await require('../connections/postgres-shopify-public-install').purge(database,{now});
+ out.dataAccessEvents=await require('./postgres-data-access').expire(database,{now,budgetMs:Math.max(0,deadline-Date.now())});
+ await require('./postgres-checkpoints').record(database,'security.retention','PASS',{policyVersion:'2026-11-18',counts:out},{checkedAt:new Date(now).toISOString()});
  return out;
 }
 

@@ -1,12 +1,14 @@
 'use strict';
 const express=require('express'),service=require('../../sales/agent-customer-order-pages'),{asyncRoute,rateLimit}=require('../middleware');
 function router(db){const r=express.Router();
+ async function disclose(req,q){await require('../../operations/postgres-data-access').record(db,{workspaceId:q.p.workspace_id},{channel:'PRIVATE_LINK',area:'customer_order',method:req.method,reference:q.p.id});return q;}
  r.use('/customer/order',rateLimit({windowMs:60000,max:60,maxBuckets:10000}),(req,res,next)=>{res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Robots-Tag':'noindex, nofollow'});next();});
  function failed(res,error){if(![400,402,403,404,409,422].includes(error.status))throw error;return res.status(error.status===404?404:error.status===402?200:400).render('public/customer-order-page',{unavailable:true,problem:[402,403,404].includes(error.status)?'This customer order page is unavailable. Please contact the business.':error.message,offer:null,preview:null,receipt:null});}
- r.get('/customer/order/:token',asyncRoute(async(req,res)=>{try{const q=await service.publicContext(db,req.params.token),saved=req.session?.customerOrderReceipt,receipt=saved?.pageId===q.p.id?saved:null;if(receipt)delete req.session.customerOrderReceipt;return res.render('public/customer-order-page',{unavailable:false,problem:null,offer:{...q,token:req.params.token},preview:null,receipt});}catch(e){return failed(res,e);}}));
- r.post('/customer/order/:token/review',asyncRoute(async(req,res)=>{try{const q=await service.quoteRequest(db,req.params.token,req.body);return res.render('public/customer-order-page',{unavailable:false,problem:null,offer:{...q,token:req.params.token},preview:q,receipt:null});}catch(e){return failed(res,e);}}));
+ r.get('/customer/order/:token',asyncRoute(async(req,res)=>{try{const q=await disclose(req,await service.publicContext(db,req.params.token)),saved=req.session?.customerOrderReceipt,receipt=saved?.pageId===q.p.id?saved:null;if(receipt)delete req.session.customerOrderReceipt;return res.render('public/customer-order-page',{unavailable:false,problem:null,offer:{...q,token:req.params.token},preview:null,receipt});}catch(e){return failed(res,e);}}));
+ r.post('/customer/order/:token/review',asyncRoute(async(req,res)=>{try{const q=await disclose(req,await service.quoteRequest(db,req.params.token,req.body));return res.render('public/customer-order-page',{unavailable:false,problem:null,offer:{...q,token:req.params.token},preview:q,receipt:null});}catch(e){return failed(res,e);}}));
  r.post('/customer/order/:token/submit',asyncRoute(async(req,res)=>{
   try{
+   await disclose(req,await service.publicContext(db,req.params.token));
    const result=await service.submit(db,req.params.token,req.body),q=await service.publicContext(db,req.params.token);
    const receipt={pageId:q.p.id,reference:String(req.body.reference),replayed:Boolean(result.replayed)};
    req.session.customerOrderReceipt=receipt;

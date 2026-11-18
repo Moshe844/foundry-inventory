@@ -98,6 +98,7 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
   await new Promise((resolve,reject)=>store.set(sid,{accountId:readonly.accountId,workspaceId:ctx.workspaceId,
     cookie:{maxAge:3600000,httpOnly:true,sameSite:'lax'}},error=>error?reject(error):resolve()));
   const app=require('../../src/postgres-app').createPostgresApp({database:readonly,resourceDatabase,sessionStore:store,
+    dataAccessDatabase:require('../../src/operations/postgres-data-access').scopedSink(database,{...ctx,accountId:readonly.accountId}),
     sessionSecret:secret,env:'test',aiProvider:blockedProvider,agentInspection:true,
     agentInspectionGuard:stagingAuthorization?(req,res,next)=>
       require('../../src/assistant/postgres-codex-pilot').access(database,ctx,{enabled:true}).then(()=>next(),next):null});

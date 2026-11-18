@@ -17,6 +17,39 @@ const tx=(db,fn)=>db.transaction(fn,{isolation:'SERIALIZABLE',retrySafe:true});
 const plural=(n,one,many)=>n+' '+(Number(n)===1?one:many);
 const audit=(c,ctx,entry)=>require('../operations/postgres-security-audit').record(c,ctx,entry);
 
+async function automaticCustomer(db,workspaceId,customerId,{lock=false}={}){
+ if(!await require('../db/schema-installed').has(db,'customers','automated_credit_decisions'))return true;
+ const row=(await db.query('SELECT automated_credit_decisions FROM customers WHERE workspace_id=$1 AND id=$2'+(lock?' FOR SHARE':''),[workspaceId,customerId])).rows[0];
+ return row?.automated_credit_decisions===true;
+}
+
+// A privacy choice is available on every plan. The current owner explicitly
+// releases rule-created holds when switching to manual decisions; holds placed
+// by a person and payment/deposit agreements are left for that person to review.
+async function saveCustomerChoice(db,ctx,customerId,input={}){
+ if(!await require('../db/schema-installed').has(db,'customers','automated_credit_decisions'))throw new ValidationError('Customer decision preferences are being upgraded. Use the order’s manual hold review until the upgrade finishes.');
+ if(!['manual','rules'].includes(input.mode)||!['true','false'].includes(input.expected))throw new ValidationError('Reload and choose how credit decisions are reviewed.');
+ return tx(db,async c=>{
+  const owner=(await c.query(`SELECT 1 FROM users u JOIN workspaces w ON w.id=u.workspace_id AND w.owner_account_id=u.account_id
+   WHERE w.id=$1 AND u.id=$2 AND u.role='owner' AND w.deletion_requested_at IS NULL`,[ctx.workspaceId,ctx.actorId])).rowCount;
+  if(!owner)throw new AuthorizationError('Only the current inventory owner can change this customer’s decision preference.');
+  const customer=(await c.query('SELECT automated_credit_decisions FROM customers WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,customerId])).rows[0];
+  if(!customer)throw new NotFoundError('That customer is not in this inventory.');
+  if(String(customer.automated_credit_decisions)!==input.expected)throw new ValidationError('This customer’s decision preference changed. Reload before saving.');
+  const enabled=input.mode==='rules';
+  await c.query('UPDATE customers SET automated_credit_decisions=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,customerId,enabled,nowIso()]);
+  let released=0;
+  if(!enabled){
+   const rows=(await c.query(`SELECT h.*,o.order_number FROM ${holds} h JOIN sales_orders o ON o.workspace_id=h.workspace_id AND o.id=h.sales_order_id
+    WHERE h.workspace_id=$1 AND h.customer_id=$2 AND h.status='HELD' AND h.placed_by_kind='RULE' ORDER BY h.id FOR UPDATE OF h`,[ctx.workspaceId,customerId])).rows;
+   for(const h of rows)if(await release(c,ctx,{id:h.sales_order_id,order_number:h.order_number},h,'PERSON','Customer requested manual credit decisions; owner released automatic hold.'))released++;
+  }
+  await audit(c,ctx,{action:'Customer automated credit decision preference changed',reference:customerId,
+   before:{automated:customer.automated_credit_decisions},after:{automated:enabled,releasedRuleHolds:released}});
+  return {automated:enabled,released};
+ });
+}
+
 async function rule(db,workspaceId){
   return (await db.query(`SELECT r.* FROM ${rules} r JOIN users u
     ON u.workspace_id=r.workspace_id AND u.id=r.authorized_by AND u.role='owner' WHERE r.workspace_id=$1`,[workspaceId])).rows[0]||null;
@@ -98,6 +131,7 @@ async function assertCanRelease(db,workspaceId,orderId){
   if(!r)return;
   const order=(await db.query('SELECT customer_id FROM sales_orders WHERE workspace_id=$1 AND id=$2',[workspaceId,orderId])).rows[0];
   if(!order)return;
+  if(!await automaticCustomer(db,workspaceId,order.customer_id))return;
   if((await lastHold(db,workspaceId,orderId))?.released_kind==='PERSON')return;
   const today=await require('../lib/business-time').today(db,workspaceId);
   if(decide(r,await position(db,workspaceId,order.customer_id,r.days_overdue,r.currency,today)).hold)
@@ -106,6 +140,9 @@ async function assertCanRelease(db,workspaceId,orderId){
 
 // Place or release the hold on one order. Replays change nothing.
 async function reconcile(c,workspaceId,orderId,r){
+  const target=(await c.query('SELECT customer_id FROM sales_orders WHERE workspace_id=$1 AND id=$2',[workspaceId,orderId])).rows[0];
+  if(!target)return {state:'missing'};
+  if(!await automaticCustomer(c,workspaceId,target.customer_id,{lock:true}))return {state:'manual-review'};
   await c.query('SELECT pg_advisory_xact_lock(hashtext($1))',['credit-hold:'+workspaceId+':'+orderId]);
   const order=(await c.query('SELECT id,order_number,status,customer_id FROM sales_orders WHERE workspace_id=$1 AND id=$2',[workspaceId,orderId])).rows[0];
   if(!order)return {state:'missing'};
@@ -167,6 +204,7 @@ async function watched(database,workspaceId,state){
     GROUP BY o.id,c.name ORDER BY o.id LIMIT 200`,[workspaceId,OPEN,require('../accounting/customer-money').addDays(today,-Number(r.days_overdue))]);
   let recorded=0;
   for(const o of rows){
+    if(!await automaticCustomer(database,workspaceId,o.customer_id))continue;
     const choice=decide(r,await position(database,workspaceId,o.customer_id,r.days_overdue,r.currency,today));
     if(!choice.hold)continue;
     const value=Math.max(0,Number(o.total_minor));
@@ -321,7 +359,7 @@ async function forOrderPage(db,ctx,order,state,user){
   if(!overdue.late&&!last)return null;
   return {overdue:overdue.late?{count:overdue.late,oldest:overdue.oldest}:null,
     released:last?{kind:last.released_kind,at:last.released_at,note:last.release_note}:null,
-    canHold:canHold&&overdue.late>0,automatic:policy.permits(plan,JOB,'automatic'),rule:describeRule(await rule(db,ctx.workspaceId))};
+    canHold:canHold&&overdue.late>0,automatic:policy.permits(plan,JOB,'automatic')&&await automaticCustomer(db,ctx.workspaceId,order.customer_id),rule:describeRule(await rule(db,ctx.workspaceId))};
 }
 
 // Needs you: every order on hold, so sales knows why it is not moving.
@@ -342,5 +380,5 @@ async function inbox(db,workspaceId){
 const activeHoldSql=(alias,installed=true)=>!installed?'false':`EXISTS(SELECT 1 FROM ${holds} credit_hold WHERE credit_hold.workspace_id=${alias}.workspace_id
   AND credit_hold.sales_order_id=${alias}.id AND credit_hold.status='HELD')`;
 
-module.exports={JOB,KIND,ACTION,rule,describeRule,configure,assertCanRelease,reconcileOrder,sweep,queueForCustomer,work,
+module.exports={JOB,KIND,ACTION,rule,describeRule,configure,saveCustomerChoice,assertCanRelease,reconcileOrder,sweep,queueForCustomer,work,
   releaseByPerson,holdByPerson,forOrderPage,inbox,activeHoldSql,ready};

@@ -21,7 +21,7 @@ function router(db){
     });
   }
   r.get(base+'/:token',asyncRoute(async(req,res)=>{
-    try{return render(res,{...await service.buyerPage(db,req.params.token),token:req.params.token});}
+    try{return render(res,{...await service.buyerPage(db,req.params.token,{onAccess:({workspaceId,reference})=>require('../../operations/postgres-data-access').record(db,{workspaceId},{channel:'PRIVATE_LINK',area:'customer_quote',method:req.method,reference})}),token:req.params.token});}
     catch(error){return failure(res,error,req.params.token);}
   }));
   r.post(base+'/:token/accept',asyncRoute(async(req,res)=>{

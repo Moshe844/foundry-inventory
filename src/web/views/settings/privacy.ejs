@@ -1,4 +1,6 @@
 <section class="rm-head"><div><p class="rm-eyebrow">Settings · Data</p><h1>Customer privacy requests</h1><p class="rm-lede">Provide customer exports, review deletion requests and record any legal retention requirement. These controls are available on every plan.</p></div></section>
+<p><a href="/settings/privacy/access">Review personal data access</a> · <a href="/security/data-protection">Retention and data protection policy</a></p>
+<p>To record a request for manual credit decisions, open <a href="/customers">Customers</a>, select the customer and use Customer privacy · Credit decisions. This control is available on every plan.</p>
 <% if(!requests.length){ %><section class="rm-card"><h2>You’re up to date</h2><p>No Shopify customer privacy requests have been received for this inventory.</p></section><% } %>
 <% requests.forEach(function(request){ %><section class="rm-card" style="margin-block:16px" aria-label="Customer privacy request">
  <div class="rm-card-head"><h2><%= request.topic==='customers/data_request'?'Customer data export':request.topic==='customers/redact'?'Delete customer personal data':'Delete connected store data' %></h2><span class="rm-badge"><%= ({PENDING:'Preparing',READY:'Ready to download',NEEDS_REVIEW:'Needs your review',HELD:'Legal retention hold',COMPLETED:'Completed'})[request.status] %></span></div>

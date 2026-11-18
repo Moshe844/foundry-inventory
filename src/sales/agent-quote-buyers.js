@@ -110,10 +110,11 @@ async function lookup(db,token,{lock=false}={}){
   return {ctx,q,link,receipt};
 }
 
-async function buyerPage(database,token){
+async function buyerPage(database,token,{onAccess}={}){
   return database.transaction(async db=>{
     const {ctx,q,link,receipt}=await lookup(db,token);
     await source.owner(db,ctx);
+    if(onAccess)await onAccess({workspaceId:ctx.workspaceId,reference:q.id});
     if(receipt&&receipt.state!=='WITHDRAWN')return {receipt:{quoteNumber:q.quote_number,acceptedAt:receipt.accepted_at}};
     await source.access(db,ctx);
     await exact(db,ctx,q,link);

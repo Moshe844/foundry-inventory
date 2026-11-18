@@ -75,6 +75,8 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   router.get('/status',asyncRoute(async(req,res)=>{if(['stockchief-staging-web.onrender.com','qualify.stockchiefhq.com'].includes(req.hostname))return res.redirect(302,'https://moshe844.github.io/stockchief-status/');let available=false;try{await database.query('SELECT 1');available=true;}catch{}return renderPublic(req,res,'public/operations-information',{title:'Service status',nav:'',kind:'/status',available,checkedAt:new Date().toISOString()});}));
   router.get('/privacy',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{
     title:'Privacy',heading:'Privacy notice',kind:'privacy',supportEmail:config.supportEmail})));
+  router.get('/security/data-protection',asyncRoute(async(req,res)=>renderPublic(req,res,'public/data-protection',{
+    title:'Data protection',nav:''})));
   router.get('/terms',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{
     title:'Terms',heading:'Terms of service',kind:'terms',supportEmail:config.supportEmail})));
   const support=require('../../operations/postgres-support');

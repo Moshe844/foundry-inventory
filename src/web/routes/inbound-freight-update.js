@@ -11,7 +11,7 @@ function router(db){
     next();
   });
   result.get(freight.publicPath+'/:token',asyncRoute(async(req,res)=>{
-    const data=await freight.publicPage(db,req.params.token);
+    const data=await freight.publicPage(db,req.params.token,{onAccess:({workspaceId,reference})=>require('../../operations/postgres-data-access').record(db,{workspaceId},{channel:'PRIVATE_LINK',area:'freight_update',method:req.method,reference})});
     res.render('public/inbound-freight-update',{...data,action:freight.publicPath+'/'+req.params.token,saved:req.query.saved==='1'});
   }));
   result.post(freight.publicPath+'/:token',asyncRoute(async(req,res)=>{

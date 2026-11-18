@@ -124,6 +124,15 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
   })));
   router.get('/settings',requireAuth,asyncRoute(async(req,res)=>settingsPage(database,req,res)));
   router.get('/settings/privacy',requireAuth,requireOwner,asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');return res.page('settings/privacy',{title:'Customer privacy requests',nav:'settings',room:true,backTo:{href:'/settings?section=data',label:'Data settings'},requests:await require('../../connections/postgres-shopify-privacy').list(database,req.ctx)});}));
+  router.get('/settings/privacy/access',requireAuth,requireOwner,asyncRoute(async(req,res)=>{
+    res.set('Cache-Control','no-store');return res.page('settings/data-access',{title:'Personal data access',nav:'settings',room:true,
+      access:await require('../../operations/postgres-data-access').review(database,req.ctx)});
+  }));
+  router.post('/settings/privacy/access-review',requireAuth,requireOwner,asyncRoute(async(req,res)=>{
+    if(req.body.reviewed!=='yes')throw new ValidationError('Confirm that you reviewed access and reported any concern.');
+    await require('../../operations/postgres-security-audit').record(database,req.ctx,{action:'Personal data access log reviewed',after:{policyVersion:'2026-11-18'}});
+    req.flash('success','Access review recorded.');return res.redirect(303,'/settings/privacy/access');
+  }));
   router.get('/settings/privacy/:id/export',requireAuth,requireOwner,asyncRoute(async(req,res)=>{const data=await require('../../connections/postgres-shopify-privacy').download(database,req.ctx,req.params.id);res.set({'Cache-Control':'no-store','Content-Type':'application/json','Content-Disposition':'attachment; filename="customer-privacy-export.json"','X-Content-Type-Options':'nosniff'});return res.send(JSON.stringify(data,null,2));}));
   router.post('/settings/privacy/:id/delivered',requireOwner,asyncRoute(async(req,res)=>{if(req.body.delivered!=='yes')throw new ValidationError('Confirm that you provided the export to the store owner.');await require('../../connections/postgres-shopify-privacy').completeExport(database,req.ctx,req.params.id);req.flash('success','Customer export marked delivered.');return res.redirect(303,'/settings/privacy');}));
   router.post('/settings/privacy/:id/erase',requireOwner,asyncRoute(async(req,res)=>{await require('../../connections/postgres-shopify-privacy').erase(database,req.ctx,req.params.id);req.flash('success','The covered personal data was erased. Stock and financial amounts were preserved.');return res.redirect(303,'/settings/privacy');}));
