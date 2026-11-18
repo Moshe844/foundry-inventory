@@ -72,6 +72,7 @@ test('production Stripe OAuth proves each paid plan, preserves billing and refus
   const config=JSON.parse(row.config);assert(qualification.valid(config.stripeConnectEvidence,f.accountId));
   assert.equal(row.credential_ref,null);assert(!JSON.stringify(row).includes('sk_live_child'));assert(!JSON.stringify(row).includes('rt_child'));
   assert.equal(await release.isOpen(db),true,'A qualified merchant must not close paid signup');
+  assert.deepEqual(await require('../../src/payments/postgres-collection').availableProviders(db,f.owner.workspaceId),['stripe']);
   const refreshed=await connect.refresh(db,f.owner.workspaceId);assert.equal(refreshed.liveMode,true,'V1 Account omits livemode; retain the verified OAuth mode');
   assert.equal(await release.isOpen(db),true);
   assert.deepEqual((await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows,before);
@@ -148,6 +149,7 @@ test('production Stripe OAuth proves each paid plan, preserves billing and refus
     assert.equal((await require('../../src/payments/stripe-return-refunds').queueDue(db,Date.now()+360000)).queued,1);
     assert.equal((await readRefund()).status,'REVIEW');
     process.env.STOCKCHIEF_STRIPE_CONNECT_PILOT_WORKSPACES='';
+    assert.deepEqual(await collection.availableProviders(db,f.owner.workspaceId),[],'Paused new requests must not show a working payment button');
    }
    const checked=await jobs.processOne(db,{'payment.refund-status':handlers['payment.refund-status']},{owner:'refund-read-'+f.plan,leaseMs:30000,now:Date.now()+480000});
    assert.equal(checked?.status,'COMPLETED',JSON.stringify(checked));

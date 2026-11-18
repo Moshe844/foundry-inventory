@@ -368,10 +368,16 @@ async function executeRefundEffect(database,workspaceId,effectId,options={}){
   }
 }
 
-async function availableProviders(database,workspaceId){return (await database.query(`SELECT a.provider FROM payment_connect_accounts a
+async function availableProviders(database,workspaceId){return (await database.query(`SELECT a.provider,a.provider_account_id,a.livemode,c.config,c.paused_at FROM payment_connect_accounts a
  LEFT JOIN workspace_connectors c ON c.workspace_id=a.workspace_id AND c.id=a.connector_id
  WHERE a.workspace_id=$1 AND a.charges_enabled=1 AND (c.status='connected' OR (a.provider='stripe' AND a.connector_id IS NULL)) ORDER BY a.provider`,[workspaceId])).rows
- .filter(r=>providerRegistry.has(r.provider)&&(r.provider!=='cardknox'||require('./postgres-cardknox').enabled())).map(r=>r.provider);}
+ .filter(r=>{
+  if(!providerRegistry.has(r.provider)||r.provider==='cardknox'&&!require('./postgres-cardknox').enabled())return false;
+  const q=require('./stripe-live-qualification');
+  if(r.provider==='stripe'&&q.production())return q.allowed(workspaceId)&&Number(r.livemode)===1&&!r.paused_at&&
+   q.valid(require('../connections/synchronization-policy').object(r.config).stripeConnectEvidence,r.provider_account_id);
+  return true;
+ }).map(r=>r.provider);}
 // Money a payment provider took is keyed by its request; it is refunded through
 // the provider, never voided by hand.
 function providerReceiptKey(providerName,requestId,cumulative){return `${providerName}:${requestId}:paid:${cumulative}`;}
