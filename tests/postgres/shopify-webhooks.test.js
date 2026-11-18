@@ -117,6 +117,8 @@ for(const {plan,legacyStart} of [{plan:'starter',legacyStart:false},{plan:'growt
     legacyShipment=false;
     assert.equal((await database.query('SELECT status FROM sales_orders WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,mapped.foundry_record_id])).rows[0].status,'FULFILLED');
+    for(const provider of ['stripe','cardknox'])await assert.rejects(require('../../src/payments/postgres-collection').queueRequest(database,ctx,mapped.foundry_record_id,{provider,purpose:'DEPOSIT'}),/Collect this Shopify order’s payment in Shopify/);
+    assert.equal(Number((await database.query('SELECT count(*) n FROM payment_requests WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),0,'Imported Shopify orders cannot be collected again through an external checkout');
     assert.equal(Number((await database.query(`SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),4);
     const shipmentJournal=(await database.query("SELECT posting_date FROM accounting_journal_entries WHERE workspace_id=$1 AND source_type='sale_fulfillment'",[ctx.workspaceId])).rows[0];

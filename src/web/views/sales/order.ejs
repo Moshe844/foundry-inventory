@@ -528,6 +528,7 @@
   </details>
 <% } %>
 
+<% if(locals.sourcePaymentAuthority){ %><div class="card section"><h2>Payment through Shopify</h2><p><%= sourcePaymentAuthority.message %></p><% if(sourcePaymentAuthority.url){ %><a class="btn btn--secondary" href="<%= sourcePaymentAuthority.url %>" target="_blank" rel="noopener">Open order in Shopify</a><% } %></div><% } %>
 <% if (locals.postgresPlacement && locals.paymentRequests && locals.paymentAccount && locals.paymentAccount.connected) { %>
   <%
     var providerRequest = paymentRequests.find(function (request) { return ['PENDING', 'REVIEW', 'OPEN'].includes(request.status); })

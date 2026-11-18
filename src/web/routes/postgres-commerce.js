@@ -220,8 +220,9 @@ async function salesOrderPage(database,workspaceId,id){
     journal_entry_id:latestAccounting.id,status:latestAccounting.status,outcome:accountingTotals}:{status:'DISABLED',outcome:{}};
   const fulfilmentState=totals.fulfilled===totals.ordered?require('../../sales/order-status').label('FULFILLED',totals.fulfilled,order.delivery_method):shipments.some((shipment)=>['PICKING','PACKED'].includes(shipment.status))
     ?'Being prepared':totals.allocated?'Ready to pick':totals.backordered?'Waiting for stock':totals.directCommitted?'Supplier delivering direct':'Not started';
-  const paymentProviders=await payments.availableProviders(database,workspaceId);
-  return {detail,order,shipments,pickable,money,accounting,directDeliveries:directRows.rows,paymentAccount:{...paymentAccount,connected:paymentAccount.connected||paymentProviders.length>0},paymentProviders,
+  const sourcePaymentAuthority=await payments.sourcePaymentAuthority(database,workspaceId,order.id);
+  const paymentProviders=sourcePaymentAuthority?[]:await payments.availableProviders(database,workspaceId);
+  return {detail,order,shipments,pickable,money,accounting,directDeliveries:directRows.rows,paymentAccount:{...paymentAccount,connected:paymentAccount.connected||paymentProviders.length>0},paymentProviders,sourcePaymentAuthority,
     fulfilment:{state:fulfilmentState,label:fulfilmentState,detail:shipments.length?`${shipments.length} shipment${shipments.length===1?'':'s'}`:null},
     customerNotices:communications.rows.map((notice)=>({...notice,shipmentId:notice.shipment_id,
       messageKind:notice.message_kind,status:notice.status,sentAt:notice.sent_at})),
@@ -1326,7 +1327,7 @@ function createPostgresCommerceRouter(database,options={}){
       directDeliveries:page.directDeliveries,canManageDirectShipping:req.user?.role==='owner',
       directShippingAllowed:plans.usesAgentTerms(agentState)&&plans.permits(agentState.plan,37,'draft'),
       customerReceipts:page.customerReceipts,paymentRequests:page.paymentRequests,paymentCompleted:req.query.payment==='paid',
-      openPaymentUrl:null,paymentProviders:page.paymentProviders,paymentAccount:page.paymentAccount,
+      openPaymentUrl:null,paymentProviders:page.paymentProviders,paymentAccount:page.paymentAccount,sourcePaymentAuthority:page.sourcePaymentAuthority,
       canManagePaymentAccount:req.user?.role==='owner',canSetAllocation:permissions.can(req.user,permissions.OPERATE),
       customers:page.customers,skus:page.skus,carriers:[],returns:returnRows,locations:locationRows,today:dateToday(req),
       returnFormKey:newId('return-form'),paymentRequestFormKey:newId('payment-request-form'),paymentFormKey:newId('payment-form')});
