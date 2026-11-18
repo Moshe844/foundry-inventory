@@ -56,8 +56,6 @@ async function lookup(db,token,lock=false,{includeCompleted=false,includeClosed=
         $3::boolean AND po.status IN ('RECEIVED','CANCELLED') OR $4::boolean AND po.status='RECEIVED')
       ${lock?'FOR UPDATE OF po,l':''}`,[hash(token),includeCompleted,includeClosed,includeReceived])).rows[0];
   if(!order) throw new NotFoundError('This supplier order link is no longer active.');
-  await require('../operations/postgres-data-access').record(db,{workspaceId:order.workspace_id},
-    {channel:'PRIVATE_LINK',area:'supplier_order',reference:order.id});
   return order;
 }
 

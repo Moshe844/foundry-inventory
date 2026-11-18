@@ -11,6 +11,12 @@ function router(db){
     res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Robots-Tag':'noindex, nofollow'});
     next();
   });
+  router.use('/supplier/order/:token',asyncRoute(async(req,res,next)=>{
+    if(!['GET','HEAD'].includes(req.method))return next();
+    const order=await link.lookup(db,req.params.token,false,{includeCompleted:true,includeClosed:true,includeReceived:true});
+    await require('../../operations/postgres-data-access').record(db,{workspaceId:order.workspace_id},{channel:'PRIVATE_LINK',area:'supplier_order',method:req.method,reference:order.id});
+    return next();
+  }));
   router.get('/supplier/order/:token',asyncRoute(async(req,res)=>{
     const order=await link.lookup(db,req.params.token,false,{includeReceived:true});
     if(order.delivery_kind==='CUSTOMER_DIRECT')return res.redirect(303,'/supplier/order/'+req.params.token+'/direct-shipment'+(req.query.saved==='1'?'?saved=1':''));

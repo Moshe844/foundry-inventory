@@ -101,6 +101,10 @@ jobs:
         run: |
           set -euo pipefail
           node --test --test-force-exit --test-concurrency=2 tests/unit/data-access-sink.test.js tests/postgres/shopify-data-protection.test.js tests/postgres/agent-credit-holds.test.js tests/postgres/retention-cleanup.test.js tests/postgres/shopify-privacy.test.js tests/postgres/shopify-privacy-orders.test.js tests/postgres/round16-security-audit.test.js tests/postgres/round10-refund-retention.test.js tests/postgres/private-owner-console.test.js tests/postgres/public-api-ui.test.js tests/postgres/agent-customer-order-pages.test.js tests/postgres/agent-buyer-quote-acceptance.test.js tests/postgres/shipstation-custom-store.test.js tests/postgres/cardknox-gateway.test.js tests/postgres/agent-inbound-freight.test.js 2>&1 | tee output/shopify-pilot-release/data-protection.log
+      - name: Verify legacy-schema and read-only privacy compatibility
+        run: |
+          set -euo pipefail
+          node --test --test-force-exit --test-concurrency=2 tests/postgres/agent-customer-order-page-boundaries.test.js tests/postgres/agent-direct-shipment-upgrade.test.js tests/postgres/agent-escalations.test.js tests/postgres/agent-incoming-evidence.test.js tests/postgres/agent-supplier-unavailability-mail.test.js 2>&1 | tee output/shopify-pilot-release/privacy-upgrade-compatibility.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

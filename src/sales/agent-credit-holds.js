@@ -18,6 +18,7 @@ const plural=(n,one,many)=>n+' '+(Number(n)===1?one:many);
 const audit=(c,ctx,entry)=>require('../operations/postgres-security-audit').record(c,ctx,entry);
 
 async function automaticCustomer(db,workspaceId,customerId,{lock=false}={}){
+ if(!await require('../db/schema-installed').has(db,'customers','automated_credit_decisions'))return true;
  const row=(await db.query('SELECT automated_credit_decisions FROM customers WHERE workspace_id=$1 AND id=$2'+(lock?' FOR SHARE':''),[workspaceId,customerId])).rows[0];
  return row?.automated_credit_decisions===true;
 }
@@ -26,6 +27,7 @@ async function automaticCustomer(db,workspaceId,customerId,{lock=false}={}){
 // releases rule-created holds when switching to manual decisions; holds placed
 // by a person and payment/deposit agreements are left for that person to review.
 async function saveCustomerChoice(db,ctx,customerId,input={}){
+ if(!await require('../db/schema-installed').has(db,'customers','automated_credit_decisions'))throw new ValidationError('Customer decision preferences are being upgraded. Use the order’s manual hold review until the upgrade finishes.');
  if(!['manual','rules'].includes(input.mode)||!['true','false'].includes(input.expected))throw new ValidationError('Reload and choose how credit decisions are reviewed.');
  return tx(db,async c=>{
   const owner=(await c.query(`SELECT 1 FROM users u JOIN workspaces w ON w.id=u.workspace_id AND w.owner_account_id=u.account_id

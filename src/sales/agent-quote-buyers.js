@@ -107,15 +107,14 @@ async function lookup(db,token,{lock=false}={}){
   if(!link?.enabled||link.token_hash!==digest)throw source.unavailable();
   const ctx={workspaceId:hit.workspace_id,actorId:link.published_by};
   const receipt=await accepted(db,ctx.workspaceId,q.id,{lock});
-  await require('../operations/postgres-data-access').record(db,{workspaceId:ctx.workspaceId},
-    {channel:'PRIVATE_LINK',area:'customer_quote',reference:q.id});
   return {ctx,q,link,receipt};
 }
 
-async function buyerPage(database,token){
+async function buyerPage(database,token,{onAccess}={}){
   return database.transaction(async db=>{
     const {ctx,q,link,receipt}=await lookup(db,token);
     await source.owner(db,ctx);
+    if(onAccess)await onAccess({workspaceId:ctx.workspaceId,reference:q.id});
     if(receipt&&receipt.state!=='WITHDRAWN')return {receipt:{quoteNumber:q.quote_number,acceptedAt:receipt.accepted_at}};
     await source.access(db,ctx);
     await exact(db,ctx,q,link);
