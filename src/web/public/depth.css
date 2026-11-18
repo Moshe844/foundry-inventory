@@ -1390,3 +1390,163 @@ html:root body details.ap-more.ap-more.ap-more > summary::before { content:none 
 html:root body details.ap-more.ap-more.ap-more > summary::after { content:""; width:6px; height:6px; border-right:1.5px solid #4338CA; border-bottom:1.5px solid #4338CA; transform:rotate(45deg) translateY(-2px); transition:transform .15s; }
 html:root body details.ap-more[open].ap-more.ap-more > summary::after { transform:rotate(225deg) translateY(-1px); }
 html:root body .ap-more__body { display:flex; flex-direction:column; gap:14px; margin-top:12px; }
+
+/* ---- Connections list ----------------------------------------------------------------- */
+/* Connected accounts: one row each — who, state, last sync, action; any problem underneath. */
+html:root body .sc-connected-list { border:0; border-radius:14px; background:#fff; box-shadow:var(--d-1); }
+html:root body .sc-connected-list .sc-connected-row { grid-template-columns:minmax(0,1fr) auto auto auto; column-gap:16px; row-gap:6px; padding:16px 20px; border-bottom:1px solid #EEF0F5; }
+html:root body .sc-connected-list .sc-connected-row:last-child { border-bottom:0; }
+html:root body .sc-connected-row .sc-connected-identity { grid-column:1; grid-row:1; }
+html:root body .sc-connected-row .sc-connected-identity img { width:36px; height:36px; padding:6px; border-radius:10px; background:#F5F6FA; }
+html:root body .sc-connected-row .sc-connected-identity strong { font-size:14.5px; font-weight:600 !important; color:var(--d-ink); }
+html:root body .sc-connected-row > .badge { grid-column:2; grid-row:1; margin:0; border-radius:999px; font-size:11.5px; font-weight:600; }
+html:root body .sc-connected-row > :is(.sc-connected-sync,span:not(.badge)) { grid-column:3; grid-row:1; font-size:12.5px; color:var(--d-muted); white-space:nowrap; }
+html:root body .sc-connected-row > :is(a.btn,button.btn) { grid-column:4; grid-row:1; }
+html:root body .sc-connected-row > .sc-connection-error { grid-column:1 / 4; grid-row:2; margin:0 0 0 48px; font-size:12.5px; color:var(--d-urgent); }
+
+/* Provider cards: two to a row, one height, the action at the bottom. */
+html:root body .sc-provider-grid { align-items:stretch; gap:14px; }
+html:root body .rm-canvas .sc-provider-grid .sc-provider-card { display:flex; flex-direction:column; gap:10px; height:auto; margin:0; padding:18px; border-radius:14px; }
+html:root body .sc-provider-grid .sc-provider-card > .rm-provider__h { display:grid; grid-template-columns:40px minmax(0,1fr); grid-template-rows:auto auto; align-items:center; column-gap:12px; row-gap:3px; margin:0; }
+html:root body .sc-provider-card > .rm-provider__h > :is(img,svg) { grid-row:1 / span 2; width:40px; height:40px; padding:7px; border-radius:11px; background:#F5F6FA; color:#5A6379; object-fit:contain; box-sizing:border-box; }
+html:root body .sc-provider-card .rm-provider__n { grid-column:2; grid-row:1; align-self:end; min-width:0; font-size:15px; font-weight:600 !important; line-height:1.25; color:var(--d-ink); }
+html:root body .sc-provider-card > .rm-provider__h > .badge { grid-column:2; grid-row:2; align-self:start; justify-self:start; margin:0; border-radius:999px; font-size:11.5px; font-weight:600; }
+html:root body .sc-provider-card .badge--success { background:#ECFDF3; color:#05603A; box-shadow:none; }
+html:root body .sc-provider-card .badge--danger { background:#FEF3F2; color:#B42318; box-shadow:none; }
+html:root body .sc-provider-card .badge:not(.badge--success):not(.badge--danger) { background:#F3F4F8; color:#5A6379; box-shadow:none; }
+html:root body .sc-provider-card .sc-provider-description { margin:0; font-size:13.5px !important; line-height:1.5; color:var(--d-text) !important; }
+html:root body .sc-provider-card > .sc-connection-error { margin:0; font-size:12.5px; color:var(--d-urgent); }
+html:root body .sc-provider-card .sc-provider-action { display:flex; flex-direction:column; gap:8px; margin-top:auto; padding-top:4px; }
+html:root body .sc-provider-card .sc-provider-action :is(.btn,form) { width:100%; margin:0; }
+html:root body .sc-provider-card .sc-provider-action .btn { justify-content:center; box-sizing:border-box; }
+html:root body .sc-provider-card .sc-coming-soon { margin:0; font-size:12.5px; line-height:1.45; color:var(--d-muted); }
+/* A mailbox's reply preparation: one switch row at the foot of its card. */
+html:root body .sc-provider-card .sc-reply-prep { margin:2px 0 0; padding:12px 0 0; border-top:1px solid #EEF0F5; }
+html:root body .sc-reply-prep__body { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:4px 12px; }
+html:root body .sc-reply-prep__body > * { grid-column:1 / -1; margin:0; }
+html:root body .sc-reply-prep__body > p { font-size:12.5px; line-height:1.4; color:var(--d-muted); }
+html:root body .sc-reply-prep__body > p.sc-reply-prep__title { grid-column:1; grid-row:1; font-size:13.5px; font-weight:600; color:var(--d-ink); }
+html:root body .sc-reply-prep__body > :is(form,.sc-mail-toggle) { grid-column:2; grid-row:1; }
+html:root body .sc-reply-prep__body > p strong { font-weight:500 !important; color:var(--d-text); }
+html:root body .sc-reply-prep__body > [data-mail-preparation-log] p { margin:0; font-size:12px; color:#8A92A8; }
+@media (max-width:640px) {
+ html:root body .sc-connected-list .sc-connected-row { grid-template-columns:minmax(0,1fr) auto; padding:14px 16px; }
+ html:root body .sc-connected-row > :is(.sc-connected-sync,span:not(.badge)) { grid-column:1; grid-row:2; margin-left:48px; }
+ html:root body .sc-connected-row > .sc-connection-error { grid-column:1 / -1; grid-row:3; }
+ html:root body .sc-connected-row > :is(a.btn,button.btn) { grid-column:1 / -1; grid-row:4; justify-content:center; }
+}
+
+/* ---- One connection: a summary header, then the work and its settings side by side ----- */
+html:root body .cx { display:flex; flex-direction:column; gap:16px; padding-bottom:40px; }
+html:root body .cx-head { padding:20px 22px; border-radius:14px; background:#fff; box-shadow:var(--d-1); }
+html:root body .cx .cx-head__top { margin:0; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+html:root body .cx-logo { display:grid; place-items:center; flex:none; width:52px; height:52px; border-radius:13px; background:#F5F6FA; color:#6A7188; }
+html:root body .cx-logo img { width:32px; height:32px; object-fit:contain; }
+html:root body .cx-head__id { flex:1 1 260px; min-width:0; }
+html:root body .cx-head__id h1 { margin:0; font-size:22px; font-weight:650; letter-spacing:-.015em; line-height:1.2; color:var(--d-ink); }
+html:root body .cx-head__id p { margin:3px 0 0; font-size:13.5px; color:var(--d-muted); overflow-wrap:anywhere; }
+html:root body .cx .cx-status { display:inline-flex; align-items:center; gap:7px; height:28px; padding:0 12px; border-radius:999px; font-size:12.5px; font-weight:600; white-space:nowrap; }
+html:root body .cx .cx-status::before { opacity:1; content:""; width:7px; height:7px; border-radius:50%; background:currentColor; }
+html:root body .cx .cx-status.is-ok { background:#ECFDF3; color:#05603A; }
+html:root body .cx .cx-status.is-bad { background:#FEF3F2; color:#B42318; }
+html:root body .cx .cx-status.is-wait { background:#F3F4F8; color:#5A6379; }
+html:root body .cx-btn { display:inline-flex; align-items:center; height:36px; padding:0 14px; border-radius:9px; font-size:13.5px; font-weight:500; text-decoration:none; }
+html:root body .cx-btn--primary { background:var(--d-action) #4F46E5; color:#fff; box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 2px 5px rgba(55,48,163,.3); }
+html:root body .cx-facts { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px 18px; margin:16px 0 0; padding:14px 0 0; border-top:1px solid #EEF0F5; }
+html:root body .cx-facts > div { min-width:0; }
+html:root body .cx-facts dt { margin:0; font-size:12px; font-weight:500; color:var(--d-muted); }
+html:root body .cx-facts dd { margin:3px 0 0; font-size:14px; font-weight:500; color:var(--d-ink); overflow-wrap:anywhere; }
+html:root body .cx-facts__bad a { color:var(--d-urgent); font-weight:600; text-decoration:none; }
+/* Is it working: the steps in one strip under the facts (beats the shared card look). */
+html:root body .cx .cx-head .setup-journey { margin:16px 0 0; padding:14px 0 0; border:0; border-top:1px solid #EEF0F5 !important; border-radius:0; background:none; box-shadow:none; animation:none; }
+html:root body .cx .cx-head .setup-journey__head { margin:0 0 10px; padding:0; }
+html:root body .cx .cx-head .setup-journey__eyebrow { display:none; }
+html:root body .cx .cx-head .setup-journey__head h2 { margin:0; font-size:14px; font-weight:600; color:var(--d-ink); }
+html:root body .cx .cx-head .setup-journey__head p { margin:2px 0 0; font-size:12.5px; line-height:1.45; color:var(--d-muted); }
+html:root body .cx .cx-head .setup-steps { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:8px; }
+html:root body .cx .cx-head .setup-step { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:start; gap:4px 10px; margin:0; padding:12px; border:1px solid #E6E8F0; border-radius:11px; background:#FAFAFC; box-shadow:none; }
+html:root body .cx .cx-head .setup-step__number { display:grid; place-items:center; grid-row:span 2; width:24px; height:24px; border-radius:50%; background:#EEF0F5; color:#5A6379; font-size:12px; font-weight:700; }
+html:root body .cx .cx-head .setup-step > div { min-width:0; }
+html:root body .cx .cx-head .setup-step strong { display:block; font-size:13px; font-weight:600 !important; color:var(--d-ink); }
+html:root body .cx .cx-head .setup-step p { margin:2px 0 0; font-size:12px; line-height:1.4; color:var(--d-muted); display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
+html:root body .cx .cx-head .setup-step__state { grid-column:2; justify-self:start; margin:4px 0 0; padding:2px 8px; border-radius:999px; background:#F3F4F8; color:#5A6379; font-size:11.5px; font-weight:600; }
+html:root body .cx .cx-head .setup-step--done { border-color:#C6F0D9; background:#F6FEF9; }
+html:root body .cx .cx-head .setup-step--done .setup-step__number { background:#12B76A; color:#fff; }
+html:root body .cx .cx-head .setup-step--done .setup-step__state { background:#ECFDF3; color:#05603A; }
+html:root body .cx .cx-head .setup-step--current { border-color:#C7CBFA; background:#F5F6FF; }
+html:root body .cx .cx-head .setup-step--current .setup-step__number { background:#4F46E5; color:#fff; }
+html:root body .cx .cx-head .setup-step--current .setup-step__state { background:#EEF0FF; color:#3730A3; }
+/* One banner for a problem, with its fix beside it. */
+html:root body .cx-alert { display:flex; align-items:center; gap:16px; padding:14px 18px; border:1px solid #DCE0EA; border-radius:14px; background:#fff; }
+html:root body .cx-alert.is-bad { border-color:#FECDCA; background:#FEF3F2; }
+html:root body .cx-alert__text { flex:1; min-width:0; }
+html:root body .cx-alert__text strong { display:block; font-size:14px; font-weight:600 !important; color:var(--d-ink); }
+html:root body .cx-alert.is-bad .cx-alert__text > strong { color:#B42318; }
+html:root body .cx-alert__text p { margin:2px 0 0; font-size:13.5px; line-height:1.45; color:var(--d-text); }
+html:root body .cx-alert form { flex:none; margin:0; }
+/* The two columns. Every card here has the same edge, heading and spacing. */
+html:root body .cx-cols { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:16px; align-items:start; }
+html:root body :is(.cx-main,.cx-side) { display:flex; flex-direction:column; gap:16px; min-width:0; }
+html:root body .cx > :is(.notice,.rm-note,form) { margin:0; }
+html:root body .cx :is(.cx-main,.cx-side) > :is(.card,section,details) { margin:0; border:0; border-radius:14px; background:#fff; box-shadow:var(--d-1); overflow:hidden; }
+html:root body .cx :is(.cx-main,.cx-side) .card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:16px 20px; border-bottom:1px solid #EEF0F5; }
+html:root body .cx :is(.cx-main,.cx-side) .card-head :is(h2,h3) { margin:0; font-size:15px; font-weight:600; color:var(--d-ink); }
+html:root body .cx :is(.cx-main,.cx-side) .card-head .muted { margin:3px 0 0; font-size:13px; line-height:1.45; color:var(--d-muted); }
+html:root body .cx :is(.cx-main,.cx-side) .card-head .badge { flex:none; border-radius:999px; font-size:11.5px; font-weight:600; }
+html:root body .cx :is(.cx-main,.cx-side) .card-body { padding:16px 20px; }
+html:root body .cx :is(.cx-main,.cx-side) .card-body :is(p,li,dd) { font-size:14px; line-height:1.55; color:var(--d-text); }
+html:root body .cx :is(.cx-main,.cx-side) .card-body p strong { font-weight:600 !important; color:var(--d-ink); }
+html:root body .cx :is(.cx-main,.cx-side) .card-body :is(p.hint,.hint) { font-size:12.5px; line-height:1.5; color:#8A92A8; }
+html:root body .cx :is(.cx-main,.cx-side) .card-body h3 { margin:0 0 2px; font-size:14px; font-weight:600; color:var(--d-ink); }
+html:root body .cx :is(.cx-main,.cx-side) > details > summary { padding:14px 20px; font-size:14px; font-weight:600; color:var(--d-ink); cursor:pointer; }
+html:root body .cx .cx-side > details > summary.card-head { border-bottom:0; }
+html:root body .cx .cx-side > details[open] > summary.card-head { border-bottom:1px solid #EEF0F5; }
+html:root body .cx .cx-side > details > summary.card-head h2 { font-size:14px; }
+/* What needs attention: one block per problem; empty page links take no room. */
+html:root body .cx #connection-issues article { display:grid; gap:4px; padding:0 0 14px; border-bottom:1px solid #EEF0F5; }
+html:root body .cx #connection-issues article:last-of-type { padding-bottom:0; border-bottom:0; }
+html:root body .cx #connection-issues article p { margin:0; }
+html:root body .cx #connection-issues nav.form-actions:not(:has(a)) { display:none; }
+/* Settings column: smaller text, fields two across. */
+html:root body .cx .cx-side .form-actions { display:flex; flex-wrap:wrap; gap:8px; }
+html:root body .cx .cx-side .form-actions form { margin:0; }
+html:root body .cx .cx-side [data-connection-synchronization] form.form-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:end; }
+html:root body .cx .cx-side [data-connection-synchronization] form.form-actions > :is(.checkbox,button) { grid-column:1 / -1; }
+html:root body .cx .cx-side [data-connection-synchronization] .checkbox { display:flex; align-items:flex-start; gap:8px; font-size:12.5px; line-height:1.45; font-weight:400; color:var(--d-text); }
+html:root body .cx .cx-side [data-connection-synchronization] .checkbox input { flex:none; margin-top:2px; }
+html:root body .cx .cx-side [data-connection-synchronization] dl.grid { display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; margin:0; }
+html:root body .cx .cx-side [data-connection-synchronization] dl.grid dt { font-size:12px; color:var(--d-muted); }
+html:root body .cx .cx-side [data-connection-synchronization] dl.grid dd { margin:2px 0 0; font-size:13px; font-weight:500; color:var(--d-ink); }
+html:root body .cx .cx-side [data-connection-synchronization] [data-connection-sync-progress] { font-weight:500; color:var(--d-ink); }
+html:root body .cx .cx-side .btn--danger { color:#B42318; }
+/* Products and locations: the three counts as one strip at the top of the card. */
+html:root body .cx .cx-stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:0 0 14px; }
+html:root body .cx .cx-stats .stat { display:flex; flex-direction:column-reverse; gap:2px; min-height:0; margin:0; padding:12px 14px; border:0; border-radius:11px; background:#F5F6FA; box-shadow:none; }
+html:root body .cx .cx-stats .stat strong { font-size:22px; font-weight:650 !important; line-height:1.1; color:var(--d-ink); }
+html:root body .cx .cx-stats .stat span { font-size:12px; font-weight:500; letter-spacing:0; text-transform:none; color:var(--d-muted); }
+html:root body .cx .cx-stats .stat.is-warn { background:#FFF6E6; }
+html:root body .cx .cx-stats .stat.is-warn strong { color:#B54708; }
+@media (max-width:1000px) {
+ html:root body .cx-cols { grid-template-columns:minmax(0,1fr); }
+}
+@media (max-width:640px) {
+ html:root body .cx-head { padding:16px; }
+ html:root body .cx-head__id h1 { font-size:19px; }
+ html:root body .cx-alert { flex-direction:column; align-items:stretch; }
+ html:root body .cx-alert form .btn { width:100%; justify-content:center; }
+ html:root body .cx .cx-stats .stat strong { font-size:18px; }
+ html:root body .cx :is(.cx-main,.cx-side) :is(.card-head,.card-body) { padding-left:16px; padding-right:16px; }
+}
+/* Inside connection cards a form is part of the card, not a page footer: no rule above it. */
+html:root body .cx :is(.cx-main,.cx-side) .card-body .form-actions { margin-top:0; padding-top:0; border-top:0; }
+html:root body .cx .cx-stats .stat::before { display:none; }
+html:root body .sc-connected-row > .badge--danger { background:#FEF3F2; color:#B42318; box-shadow:none; }
+html:root body .cx :is(.cx-main,.cx-side) .card-body.grid { gap:12px; }
+html:root body .cx :is(.cx-main,.cx-side) .card-body.grid > p { margin:0; }
+@media (max-width:640px) {
+ html:root body .cx form[role=search].form-actions { display:grid; grid-template-columns:minmax(0,1fr); gap:10px; }
+ html:root body .cx form[role=search].form-actions :is(.field,.input,.btn) { width:100%; box-sizing:border-box; }
+ html:root body .cx form[role=search].form-actions .btn { justify-content:center; }
+}
+/* Narrow cards: a long action wraps as a neat two-line button instead of spilling. */
+html:root body .sc-provider-card .sc-provider-action .btn { height:auto; min-height:36px; padding:8px 12px; white-space:normal; line-height:1.25; text-align:center; }

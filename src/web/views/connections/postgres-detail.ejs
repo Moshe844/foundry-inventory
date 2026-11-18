@@ -12,19 +12,62 @@
   const proven=connected&&connection.publicStatus==='Connected'&&(!canDiscover||(hasCatalogue&&!connection.itemsNeedingMapping))&&hasEvent;
 %>
 
-<header class="page-head">
-  <div class="titles">
-    <div class="breadcrumbs"><a href="/settings/connections">Connections</a><span>›</span><span><%= connection.display_name %></span></div>
-    <h1><%= connection.display_name %></h1>
-    <p class="page-sub"><%= providerName %><%= connection.provider_account_name?' · '+connection.provider_account_name:'' %> · <%= connection.provides.length?connection.provides.join(', '):'no business events proven yet' %></p>
+<% const logo=helpers.connectionPresentation.logo(connection.provider_type);
+   const statusTone=displayStatus==='Connected'?'is-ok':displayStatus==='Error'?'is-bad':'is-wait';
+   // Only completed provider evidence counts: a mailbox check that finished, or an event that was processed.
+   const checkLabel=isMailbox?'Last completed mailbox check':'Last provider event processed';
+   const lastCheck=isMailbox?(mailboxLastPollAt?helpers.timeAgo(mailboxLastPollAt):'No mailbox check has completed yet'):(proof.event_at?helpers.dateTime(proof.event_at):'No provider event has been processed yet'); %>
+<div class="cx">
+<header class="cx-head">
+  <div class="cx-head__top page-head">
+    <span class="cx-logo" aria-hidden="true"><% if(logo){ %><img src="/provider-logos/<%= logo %>.svg" alt="" width="36" height="36"><% }else{ %><%- helpers.icon('link',{size:22}) %><% } %></span>
+    <div class="cx-head__id"><h1><%= connection.display_name %></h1><p><%= providerName %><%= connection.provider_account_name?' · '+connection.provider_account_name:'' %></p></div>
+    <span class="cx-status badge <%= statusTone %>"><%= displayStatus %></span>
+    <% if(isMailbox){ %><a class="cx-btn cx-btn--primary" href="/mail">Open Mail</a><% } %>
   </div>
-  <div class="form-actions"><% if(isMailbox){ %><a class="btn btn--primary" href="/mail">Open Mail</a><% } %>
-    <span class="badge <%= displayStatus==='Connected'?'badge--ok':displayStatus==='Error'?'badge--warn':'badge--muted' %>"><%= displayStatus %></span></div>
+  <dl class="cx-facts">
+    <div><dt>Account</dt><dd><%= connection.provider_account_name||'Not returned yet' %></dd></div>
+    <div><dt><%= checkLabel %></dt><dd><%= lastCheck %></dd></div>
+    <% if(!isMailbox){ %><div><dt>Last sync</dt><dd><%= connection.last_synced_at?helpers.timeAgo(connection.last_synced_at):'Not yet' %></dd></div><% } %>
+    <% if(connection.openIssues){ %><div><dt>Needs you</dt><dd class="cx-facts__bad"><a href="#connection-issues"><%= connection.openIssues %> <%= Number(connection.openIssues)===1?'problem':'problems' %></a></dd></div><% } %>
+  </dl>
+<% if(!accounting){ %>
+<section class="setup-journey section">
+  <div class="setup-journey__head"><div class="setup-journey__head-copy"><span class="setup-journey__eyebrow">Is it working?</span>
+    <h2><%= proven?'Account and activity verified':'Verify setup before relying on automatic updates' %></h2>
+    <p><%= isMailbox?'StockChief verifies the connected account and records completed mailbox checks separately.':'Connected is not the same as working. StockChief records the account, catalogue and first real event separately.' %></p></div></div>
+  <div class="setup-steps">
+    <div class="setup-step <%= connected?'setup-step--done':'setup-step--current' %>"><span class="setup-step__number"><%= connected?'✓':'1' %></span><div><strong>Sign in to the right account</strong><p><%= connection.provider_account_name||'The provider has not returned an account identity yet.' %></p></div><span class="setup-step__state"><%= connected?'Verified':'Waiting' %></span></div>
+    <% if(canDiscover){ %><div class="setup-step <%= hasCatalogue?'setup-step--done':connected?'setup-step--current':'' %>"><span class="setup-step__number"><%= hasCatalogue?'✓':'2' %></span><div><strong>Read products and locations</strong><p>Identity records are read first; old sales are never replayed into current stock.</p></div><span class="setup-step__state"><%= hasCatalogue?'Recorded':'Refresh below' %></span></div><% } %>
+    <div class="setup-step <%= currentActivity?'setup-step--done':connected?'setup-step--current':'' %>"><span class="setup-step__number"><%= currentActivity?'✓':canDiscover?'3':'2' %></span><div><strong><%= isMailbox?'Complete a mailbox check':'Receive and process a provider event' %></strong><p><%= isMailbox?(connected?'A scheduled check must finish successfully.':'Sign in again before StockChief can check for new mail. Previous checks remain in history.'):'Event delivery and individual sales, payments and inventory workflows are verified separately. Signing in alone does not prove delivery.' %></p></div><span class="setup-step__state"><%= currentActivity?(isMailbox?'Checked':'Received once'):isMailbox&&!connected?'Waiting for sign-in':'Not yet' %></span></div>
+  </div>
+</section>
+<% } %>
 </header>
 
-<% if(displayStatus==='Error'){ const retryAt=Date.parse(connection.config?.syncRetryAt||''); %><div class="notice notice--warn section" role="status"><div><strong>This connection needs attention.</strong><p><%= helpers.connectionPresentation.issue(connection) %></p><% if(Number.isFinite(retryAt)&&retryAt>Date.now()){ %><p>Next automatic retry: <time data-local-time datetime="<%= new Date(retryAt).toISOString() %>"><%= helpers.dateTime(new Date(retryAt)) %></time>.</p><% } %></div></div><% } %>
-<% if(connection.provider_type==='woocommerce'&&currentUser.role==='owner'){ %><details class="card" id="reauthorize-woocommerce"><summary>Update WooCommerce authorization</summary><div class="card-body"><%- include('woocommerce-connect',{provider,postgresMode:true,csrfToken}) %></div></details><% } %>
-<% if(isMailbox){ %><%- include('mail-preparation',{mailPreparation,connection}) %><% } %>
+<% const canRestore=needsAuthorization&&currentUser.role==='owner'&&provider?.available; %>
+<% if(displayStatus==='Error'||canRestore){ const retryAt=Date.parse(connection.config?.syncRetryAt||''); %>
+<section class="cx-alert<%= displayStatus==='Error'?' is-bad':'' %>" role="status" aria-label="<%= canRestore?'Restore provider authorization':'Connection needs attention' %>">
+  <div class="cx-alert__text">
+    <% if(displayStatus==='Error'){ %><strong>This connection needs attention.</strong><p><%= helpers.connectionPresentation.issue(connection) %><%= canRestore?' Your records, matches and history are kept.':'' %></p><% if(Number.isFinite(retryAt)&&retryAt>Date.now()){ %><p>Next automatic retry: <time data-local-time datetime="<%= new Date(retryAt).toISOString() %>"><%= helpers.dateTime(new Date(retryAt)) %></time>.</p><% } %>
+    <% }else{ %><strong>Sign in again to <%= providerName %></strong><p>This restores the existing connection. Its records, mappings and history are kept.</p><% } %>
+    <% if(canRestore&&provider.authorizationPrerequisite){ %><p><strong>Account sign-in needed.</strong> <%= provider.authorizationPrerequisite.message %> <a href="<%= provider.authorizationPrerequisite.href %>" target="_blank" rel="noopener noreferrer"><%= provider.authorizationPrerequisite.label %></a></p><% } %>
+  </div>
+  <% if(canRestore){ %>
+    <form method="post" action="/settings/connections/<%= encodeURIComponent(connection.provider_type) %>/authorize" data-oauth-connect="<%= connection.provider_type %>" data-provider-name="<%= providerName %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="connectorId" value="<%= connection.id %>">
+      <% if(connection.config.shop){ %><input type="hidden" name="shop" value="<%= connection.config.shop %>"><% } %><% if(connection.config.storeUrl){ %><input type="hidden" name="storeUrl" value="<%= connection.config.storeUrl %>"><% } %>
+      <button class="btn btn--primary" type="submit">Sign in again to <%= providerName %></button>
+    </form>
+  <% } %>
+</section>
+<% } %>
+<% if(connected&&currentUser.role==='owner'&&proof.push_setup_failed){ %>
+<form method="post" action="/settings/connections/<%= encodeURIComponent(connection.id) %>/retry-events" class="section"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--secondary" type="submit">Retry event setup</button></form>
+<% } %>
+<% if(newConnectionToken){ %><div class="notice notice--warn section"><div><strong>Copy this secure connection key now. StockChief will not show it again.</strong><input class="input mono" aria-label="Connection token" value="<%= newConnectionToken %>" readonly onclick="this.select()"></div></div><% } %>
+
+<div class="cx-cols">
+<div class="cx-main">
 <% if(locals.connectionIssues&&(connectionIssues.total||connectionIssues.focused)){ %>
 <section class="card section" id="connection-issues" aria-label="Connection issues">
   <div class="card-head"><h2>What needs attention</h2><span class="badge badge--warn"><%= connectionIssues.total %> open</span></div>
@@ -42,86 +85,6 @@
     </nav>
   </div>
 </section><% } %>
-<% if(connected&&currentUser.role==='owner'&&proof.push_setup_failed){ %>
-<form method="post" action="/settings/connections/<%= encodeURIComponent(connection.id) %>/retry-events" class="section"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--secondary" type="submit">Retry event setup</button></form>
-<% } %>
-<% if(locals.pendingWebhooks?.length){ const receiptLabels={RECEIVED:'Queued',PROCESSING:'Processing',RETRY_PENDING:'Waiting to retry',NEEDS_MAPPING:'Needs a match',NEEDS_REVIEW:'Needs review'}; %>
-<section class="card section" aria-label="Retained provider events">
-  <div class="card-head"><h2>Events still being resolved</h2></div>
-  <div class="card-body"><p>Original provider evidence is retained securely. Completed operations are kept; resuming handles the remaining steps only.</p>
-  <% pendingWebhooks.forEach(function(receipt){ %><div class="section">
-    <strong><%= receiptLabels[receipt.status]||'Waiting' %></strong> · Received <time datetime="<%= new Date(receipt.received_at).toISOString() %>" title="<%= new Date(receipt.received_at).toISOString() %>"><time data-local-time datetime="<%= receipt.received_at %>"><%= helpers.dateTime(receipt.received_at) %></time></time>
-    <% if(currentUser.role==='owner'&&(['NEEDS_MAPPING','NEEDS_REVIEW','RETRY_PENDING'].includes(receipt.status)||(receipt.status==='PROCESSING'&&new Date(receipt.lease_until||0).getTime()<=Date.now()))){ %>
-    <form method="post" action="/settings/connections/<%= encodeURIComponent(connection.id) %>/receipts/<%= encodeURIComponent(receipt.id) %>/resume">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--secondary btn--sm" type="submit">Resume after resolving</button>
-    </form><% } %>
-  </div><% }) %></div>
-</section><% } %>
-<% if(needsAuthorization&&currentUser.role==='owner'&&provider?.available){ %>
-  <section class="rm-note" aria-label="Restore provider authorization"><p><strong>Sign in again to <%= providerName %></strong></p><p>This restores the existing connection. Its records, mappings and history are kept.</p>
-    <% if(provider.authorizationPrerequisite){ %><p><strong>Account sign-in needed.</strong> <%= provider.authorizationPrerequisite.message %> <a href="<%= provider.authorizationPrerequisite.href %>" target="_blank" rel="noopener noreferrer"><%= provider.authorizationPrerequisite.label %></a></p><% } %>
-    <form method="post" action="/settings/connections/<%= encodeURIComponent(connection.provider_type) %>/authorize" data-oauth-connect="<%= connection.provider_type %>" data-provider-name="<%= providerName %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="connectorId" value="<%= connection.id %>">
-      <% if(connection.config.shop){ %><input type="hidden" name="shop" value="<%= connection.config.shop %>"><% } %><% if(connection.config.storeUrl){ %><input type="hidden" name="storeUrl" value="<%= connection.config.storeUrl %>"><% } %>
-      <button class="btn btn--primary" type="submit">Sign in again to <%= providerName %></button>
-    </form>
-  </section>
-<% } %>
-<% if(newConnectionToken){ %><div class="notice notice--warn section"><div><strong>Copy this secure connection key now. StockChief will not show it again.</strong><input class="input mono" aria-label="Connection token" value="<%= newConnectionToken %>" readonly onclick="this.select()"></div></div><% } %>
-
-<% if(['shopify','square','clover','woocommerce','bigcommerce'].includes(connection.provider_type)){ %>
-<section class="card section" aria-label="Stock and price synchronization"><div class="card-head"><h2>Stock and price synchronization</h2></div><div class="card-body">
-<p>Outgoing stock is costed, uncommitted stock available to sell. Incoming count differences need physical confirmation. Conflicts are held for review; a queued delivery is complete only after provider read-back.</p>
-  <% if(!locals.commercePositions?.length){ %><p>No stock or price write-back has been authorized yet. Ask StockChief to prepare the direction and starting source for the products and locations you want to synchronize.</p><% }else{ %>
-  <div class="table-scroll"><table class="table"><thead><tr><th>SKU</th><th>Location</th><th>Field</th><th>Direction</th><th>Last verified values</th><th>Delivery</th></tr></thead><tbody>
-  <% commercePositions.forEach(function(p){ const show=function(v){return v===null?'Unknown':typeof v==='object'?helpers.money(v.amount,v.currency):v;}; %>
-  <tr><td><%= p.code %></td><td><%= p.location %></td><td><%= p.field==='quantity'?'Sellable units':'Selling price' %></td><td><%= {off:'Off',inbound:'Provider → StockChief',outbound:'StockChief → provider',two_way:'Both directions'}[p.mode] %></td><td>StockChief: <%= show(p.baseline_local) %><br>Provider: <%= show(p.baseline_provider) %></td><td><% if(p.review_issue_id){ %><a href="?issue=<%= encodeURIComponent(p.review_issue_id) %>#connection-issues">Needs review: <%= p.review_title %></a><% }else{ %><%= p.mode==='off'?'Off':p.pending_effect_id?({PENDING:'Queued',RUNNING:'Verifying with provider',AMBIGUOUS:'Needs review: delivery uncertain',FAILED:'Needs review: delivery failed'}[p.delivery_status]||'Awaiting provider verification'):p.last_verified_at?'Verified':'Awaiting first check' %><% } %></td></tr>
-  <% }); %></tbody></table></div><% } %><p><a href="/ask?from=<%= encodeURIComponent('/settings/connections/'+connection.id) %>">Ask StockChief to review or change these settings</a></p>
-</div></section><% } %>
-<% const sync=connection.synchronization; if(sync?.supported){ %>
-<section class="card section" aria-label="Automatic synchronization" data-connection-synchronization="<%= connection.id %>" data-last-check="<%= sync.lastCheckAt||'' %>" data-products-mapped="<%= connection.productsMapped %>" data-locations-mapped="<%= connection.locationsMapped %>">
-  <div class="card-head"><div><h2>Automatic synchronization</h2><p class="muted"><%= sync.scope==='mailbox'?'Check for new business email.':'Check products, variants, prices and provider stock observations. Sales and accounting follow their verified event and approval workflows.' %></p></div><span class="badge <%= sync.mode==='active'?'badge--ok':'badge--muted' %>"><%= {active:'On',paused:'Paused',off:'Off',disconnected:'Sign-in needed'}[sync.mode] %></span></div>
-  <div class="card-body grid">
-    <p role="status" aria-live="polite" data-connection-sync-progress><%= sync.mode==='active'?'Automatic checks are on.':sync.mode==='paused'?'Automatic updates are temporarily paused.':sync.mode==='off'?'Automatic updates are off.':'Sign in to start automatic updates.' %></p>
-    <a class="btn" href="/settings/connections/<%= connection.id %>" data-connection-sync-updated hidden>View updated products and matches</a>
-    <dl class="grid"><div><dt>Last completed check</dt><dd data-sync-last><% if(sync.lastCheckAt){ %><time datetime="<%= new Date(sync.lastCheckAt).toISOString() %>"><time data-local-time datetime="<%= sync.lastCheckAt %>"><%= helpers.dateTime(sync.lastCheckAt) %></time></time><% }else{ %>Waiting for the first check<% } %></dd></div>
-      <div><dt>Next check</dt><dd data-sync-next><%= sync.retryAt?'Waiting for the provider until '+helpers.dateTime(sync.retryAt):sync.nextCheckAt?helpers.dateTime(sync.nextCheckAt):sync.mode==='disconnected'?'Sign in to resume updates':sync.mode==='off'?'Automatic updates are off':'Resume to schedule updates' %></dd></div></dl>
-    <% if(sync.providerLimitNote){ %><p class="hint"><%= sync.providerLimitNote %></p><% } %>
-    <p class="hint">Supported webhooks are processed as they arrive. Scheduled checks provide a fallback; provider limits and retries can delay them. Stock observations do not create receipts or inventory cost. Accounting posting and other consequential actions keep their existing authority checks.</p>
-    <% if(currentUser.role==='owner'){ %><form method="post" action="/settings/connections/<%= connection.id %>/synchronization" class="form-actions">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <label class="field"><span class="field-label">Automatic updates</span><select class="select" name="mode"><option value="on" <%= sync.mode!=='off'?'selected':'' %>>On</option><option value="off" <%= sync.mode==='off'?'selected':'' %>>Off</option></select></label>
-      <label class="field"><span class="field-label">Check frequency</span><select class="select" name="minutes"><% const choices=[...new Set([1,5,10,15,30,60,sync.requestedMinutes])].sort((a,b)=>a-b); choices.forEach(function(minutes){ %><option value="<%= minutes %>" <%= sync.requestedMinutes===minutes?'selected':'' %>>Every <%= minutes %> minute<%= minutes===1?'':'s' %></option><% }); %></select></label>
-      <% if(canDiscover&&!accounting){ %><label class="checkbox"><input type="checkbox" name="autoImportCatalog" value="1" <%= connection.config.autoImportCatalog===true?'checked':'' %>> Automatically import new products, initial prices, locations and their reported opening stock once. Do not invent missing quantities, inventory cost or supplier bills.</label><% } %>
-      <button class="btn btn--primary" type="submit">Save synchronization</button>
-    </form><% } %>
-  </div>
-</section>
-<script src="/connection-sync.js?v=<%= assetVersion %>" defer></script>
-<% } %>
-
-<% if(!accounting){ %>
-<% if(canDiscover){ %><div class="stats-row section">
-  <div class="stat"><strong><%= connection.productsMapped %></strong><span>products mapped</span></div>
-  <div class="stat"><strong><%= connection.locationsMapped %></strong><span>locations mapped</span></div>
-  <div class="stat"><strong><%= connection.itemsNeedingMapping %></strong><span>need matching</span></div>
-  <div class="stat"><strong><%= eventAt?helpers.timeAgo(eventAt):'None yet' %></strong><span><%= isMailbox?'last mailbox check':'last event processed' %></span></div>
-</div>
-<% } %><% if(!isMailbox){ %><p class="rm-sub">Products mapped <strong><%= connection.productsMapped %></strong> · Locations mapped <strong><%= connection.locationsMapped %></strong> · Need your match <strong><%= connection.itemsNeedingMapping %></strong>.</p><% } %>
-
-<section class="setup-journey section">
-  <div class="setup-journey__head"><div class="setup-journey__head-copy"><span class="setup-journey__eyebrow">Is it working?</span>
-    <h2><%= proven?'Account and activity verified':'Verify setup before relying on automatic updates' %></h2>
-    <p><%= isMailbox?'StockChief verifies the connected account and records completed mailbox checks separately.':'Connected is not the same as working. StockChief records the account, catalogue and first real event separately.' %></p></div></div>
-  <div class="setup-steps">
-    <div class="setup-step <%= connected?'setup-step--done':'setup-step--current' %>"><span class="setup-step__number"><%= connected?'✓':'1' %></span><div><strong>Sign in to the right account</strong><p><%= connection.provider_account_name||'The provider has not returned an account identity yet.' %></p></div><span class="setup-step__state"><%= connected?'Verified':'Waiting' %></span></div>
-    <% if(canDiscover){ %><div class="setup-step <%= hasCatalogue?'setup-step--done':connected?'setup-step--current':'' %>"><span class="setup-step__number"><%= hasCatalogue?'✓':'2' %></span><div><strong>Read products and locations</strong><p>Identity records are read first; old sales are never replayed into current stock.</p></div><span class="setup-step__state"><%= hasCatalogue?'Recorded':'Refresh below' %></span></div><% } %>
-    <div class="setup-step <%= currentActivity?'setup-step--done':connected?'setup-step--current':'' %>"><span class="setup-step__number"><%= currentActivity?'✓':canDiscover?'3':'2' %></span><div><strong><%= isMailbox?'Complete a mailbox check':'Receive and process a provider event' %></strong><p><%= isMailbox?(connected?'A scheduled check must finish successfully.':'Sign in again before StockChief can check for new mail. Previous checks remain in history.'):'Event delivery and individual sales, payments and inventory workflows are verified separately. Signing in alone does not prove delivery.' %></p></div><span class="setup-step__state"><%= currentActivity?(isMailbox?'Checked':'Received once'):isMailbox&&!connected?'Waiting for sign-in':'Not yet' %></span></div>
-  </div>
-</section>
-<% } %>
-
-<div class="grid grid--sidebar section">
-  <div class="grid">
   <% if(accounting){ const externalAccounts=accounting.latestShadow?.externalSnapshot?.accounts||[]; %>
     <p class="page-sub">Accounting control</p>
     <% if(!accounting.canVerifyWrites){ %><p class="notice">This connection supports read-only accounting and comparison. Verified posting is not available for this provider.</p><% } %>
@@ -168,15 +131,63 @@
           <p class="hint">Last completed check: <%= mailboxLastPollAt?helpers.timeAgo(mailboxLastPollAt):'not yet' %>. Queuing a check is not proof that it completed.</p>
         </div>
       </section>
+      <%- include('mail-preparation',{mailPreparation,connection}) %>
     <% } %>
-    <section class="card"><div class="card-head"><div><h2>What this connection is doing</h2><p class="muted">Only successful provider evidence counts.</p></div></div><div class="card-body grid"><div class="list-row"><div><strong>Provider account</strong><p><%= connection.provider_account_name||'Not returned yet' %></p></div><span class="badge <%= connected?'badge--ok':'badge--muted' %>"><%= connected?'Connected':'Not connected' %></span></div><div class="list-row"><div><strong><%= isMailbox?'Last completed mailbox check':'Last provider event processed' %></strong><p><%= isMailbox?(mailboxLastPollAt?helpers.timeAgo(mailboxLastPollAt):'No mailbox check has completed yet'):(proof.event_at?helpers.dateTime(proof.event_at):'No provider event has been processed yet') %></p></div></div></div></section>
-  <% } %>
+<% } %>
+    <% if(canDiscover){ %><section class="card"><div class="card-head"><div><h2>Products and locations</h2><p class="muted">Exact matches happen automatically. Ambiguous records stay unchanged. Organization-wide balances need a location match before stock is imported.</p></div></div><div class="card-body">
+<div class="stats-row cx-stats">
+  <div class="stat"><span>Products mapped</span><strong><%= connection.productsMapped %></strong></div>
+  <div class="stat"><span>Locations mapped</span><strong><%= connection.locationsMapped %></strong></div>
+  <div class="stat<%= connection.itemsNeedingMapping?' is-warn':'' %>"><span>Need your match</span><strong><%= connection.itemsNeedingMapping %></strong></div>
+</div><% if(query&&query.refresh==='queued'){ %><div class="notice notice--success">Catalogue refresh queued.</div><% } %><% if(connected){ %><form method="post" action="/settings/connections/<%= connection.id %>/refresh"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Refresh now</button></form><% } %></div></section><% } %>
     <% if(catalogueReview){ %><%- include('catalogue-matching', {catalogueReview,connection}) %><% } %>
-    <% if(canDiscover){ %><section class="card"><div class="card-head"><div><h2>Products and locations</h2><p class="muted">Exact matches happen automatically. Ambiguous records stay unchanged. Organization-wide balances need a location match before stock is imported.</p></div></div><div class="card-body"><% if(query&&query.refresh==='queued'){ %><div class="notice notice--success">Catalogue refresh queued.</div><% } %><% if(connected){ %><form method="post" action="/settings/connections/<%= connection.id %>/refresh"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Refresh now</button></form><% } %></div></section><% } %>
+<% if(['shopify','square','clover','woocommerce','bigcommerce'].includes(connection.provider_type)){ %>
+<section class="card section" aria-label="Stock and price synchronization"><div class="card-head"><h2>Stock and price synchronization</h2></div><div class="card-body">
+<p>Outgoing stock is costed, uncommitted stock available to sell. Incoming count differences need physical confirmation. Conflicts are held for review; a queued delivery is complete only after provider read-back.</p>
+  <% if(!locals.commercePositions?.length){ %><p>No stock or price write-back has been authorized yet. Ask StockChief to prepare the direction and starting source for the products and locations you want to synchronize.</p><% }else{ %>
+  <div class="table-scroll"><table class="table"><thead><tr><th>SKU</th><th>Location</th><th>Field</th><th>Direction</th><th>Last verified values</th><th>Delivery</th></tr></thead><tbody>
+  <% commercePositions.forEach(function(p){ const show=function(v){return v===null?'Unknown':typeof v==='object'?helpers.money(v.amount,v.currency):v;}; %>
+  <tr><td><%= p.code %></td><td><%= p.location %></td><td><%= p.field==='quantity'?'Sellable units':'Selling price' %></td><td><%= {off:'Off',inbound:'Provider → StockChief',outbound:'StockChief → provider',two_way:'Both directions'}[p.mode] %></td><td>StockChief: <%= show(p.baseline_local) %><br>Provider: <%= show(p.baseline_provider) %></td><td><% if(p.review_issue_id){ %><a href="?issue=<%= encodeURIComponent(p.review_issue_id) %>#connection-issues">Needs review: <%= p.review_title %></a><% }else{ %><%= p.mode==='off'?'Off':p.pending_effect_id?({PENDING:'Queued',RUNNING:'Verifying with provider',AMBIGUOUS:'Needs review: delivery uncertain',FAILED:'Needs review: delivery failed'}[p.delivery_status]||'Awaiting provider verification'):p.last_verified_at?'Verified':'Awaiting first check' %><% } %></td></tr>
+  <% }); %></tbody></table></div><% } %><p><a href="/ask?from=<%= encodeURIComponent('/settings/connections/'+connection.id) %>">Ask StockChief to review or change these settings</a></p>
+</div></section><% } %>
+<% if(locals.pendingWebhooks?.length){ const receiptLabels={RECEIVED:'Queued',PROCESSING:'Processing',RETRY_PENDING:'Waiting to retry',NEEDS_MAPPING:'Needs a match',NEEDS_REVIEW:'Needs review'}; %>
+<section class="card section" aria-label="Retained provider events">
+  <div class="card-head"><h2>Events still being resolved</h2></div>
+  <div class="card-body"><p>Original provider evidence is retained securely. Completed operations are kept; resuming handles the remaining steps only.</p>
+  <% pendingWebhooks.forEach(function(receipt){ %><div class="section">
+    <strong><%= receiptLabels[receipt.status]||'Waiting' %></strong> · Received <time datetime="<%= new Date(receipt.received_at).toISOString() %>" title="<%= new Date(receipt.received_at).toISOString() %>"><time data-local-time datetime="<%= receipt.received_at %>"><%= helpers.dateTime(receipt.received_at) %></time></time>
+    <% if(currentUser.role==='owner'&&(['NEEDS_MAPPING','NEEDS_REVIEW','RETRY_PENDING'].includes(receipt.status)||(receipt.status==='PROCESSING'&&new Date(receipt.lease_until||0).getTime()<=Date.now()))){ %>
+    <form method="post" action="/settings/connections/<%= encodeURIComponent(connection.id) %>/receipts/<%= encodeURIComponent(receipt.id) %>/resume">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--secondary btn--sm" type="submit">Resume after resolving</button>
+    </form><% } %>
+  </div><% }) %></div>
+</section><% } %>
+</div>
+<aside class="cx-side">
+<% const sync=connection.synchronization; if(sync?.supported){ %>
+<section class="card section" aria-label="Automatic synchronization" data-connection-synchronization="<%= connection.id %>" data-last-check="<%= sync.lastCheckAt||'' %>" data-products-mapped="<%= connection.productsMapped %>" data-locations-mapped="<%= connection.locationsMapped %>">
+  <div class="card-head"><div><h2>Automatic synchronization</h2><p class="muted"><%= sync.scope==='mailbox'?'Check for new business email.':'Check products, variants, prices and provider stock observations. Sales and accounting follow their verified event and approval workflows.' %></p></div><span class="badge <%= sync.mode==='active'?'badge--ok':'badge--muted' %>"><%= {active:'On',paused:'Paused',off:'Off',disconnected:'Sign-in needed'}[sync.mode] %></span></div>
+  <div class="card-body grid">
+    <p role="status" aria-live="polite" data-connection-sync-progress><%= sync.mode==='active'?'Automatic checks are on.':sync.mode==='paused'?'Automatic updates are temporarily paused.':sync.mode==='off'?'Automatic updates are off.':'Sign in to start automatic updates.' %></p>
+    <a class="btn" href="/settings/connections/<%= connection.id %>" data-connection-sync-updated hidden>View updated products and matches</a>
+    <dl class="grid"><div><dt>Last completed check</dt><dd data-sync-last><% if(sync.lastCheckAt){ %><time datetime="<%= new Date(sync.lastCheckAt).toISOString() %>"><time data-local-time datetime="<%= sync.lastCheckAt %>"><%= helpers.dateTime(sync.lastCheckAt) %></time></time><% }else{ %>Waiting for the first check<% } %></dd></div>
+      <div><dt>Next check</dt><dd data-sync-next><%= sync.retryAt?'Waiting for the provider until '+helpers.dateTime(sync.retryAt):sync.nextCheckAt?helpers.dateTime(sync.nextCheckAt):sync.mode==='disconnected'?'Sign in to resume updates':sync.mode==='off'?'Automatic updates are off':'Resume to schedule updates' %></dd></div></dl>
+    <% if(sync.providerLimitNote){ %><p class="hint"><%= sync.providerLimitNote %></p><% } %>
+    <p class="hint">Supported webhooks are processed as they arrive. Scheduled checks provide a fallback; provider limits and retries can delay them. Stock observations do not create receipts or inventory cost. Accounting posting and other consequential actions keep their existing authority checks.</p>
+    <% if(currentUser.role==='owner'){ %><form method="post" action="/settings/connections/<%= connection.id %>/synchronization" class="form-actions">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="field"><span class="field-label">Automatic updates</span><select class="select" name="mode"><option value="on" <%= sync.mode!=='off'?'selected':'' %>>On</option><option value="off" <%= sync.mode==='off'?'selected':'' %>>Off</option></select></label>
+      <label class="field"><span class="field-label">Check frequency</span><select class="select" name="minutes"><% const choices=[...new Set([1,5,10,15,30,60,sync.requestedMinutes])].sort((a,b)=>a-b); choices.forEach(function(minutes){ %><option value="<%= minutes %>" <%= sync.requestedMinutes===minutes?'selected':'' %>>Every <%= minutes %> minute<%= minutes===1?'':'s' %></option><% }); %></select></label>
+      <% if(canDiscover&&!accounting){ %><label class="checkbox"><input type="checkbox" name="autoImportCatalog" value="1" <%= connection.config.autoImportCatalog===true?'checked':'' %>> Automatically import new products, initial prices, locations and their reported opening stock once. Do not invent missing quantities, inventory cost or supplier bills.</label><% } %>
+      <button class="btn btn--primary" type="submit">Save synchronization</button>
+    </form><% } %>
   </div>
-
-  <aside class="grid">
+</section>
+<script src="/connection-sync.js?v=<%= assetVersion %>" defer></script>
+<% } %>
+<% if(connection.provider_type==='woocommerce'&&currentUser.role==='owner'){ %><details class="card" id="reauthorize-woocommerce"><summary>Update WooCommerce authorization</summary><div class="card-body"><%- include('woocommerce-connect',{provider,postgresMode:true,csrfToken}) %></div></details><% } %>
     <section class="card"><div class="card-head"><h2>Connection control</h2></div><div class="card-body"><p class="hint">Pausing is reversible. Disconnecting removes the encrypted credential while keeping mappings and audit history.</p><div class="form-actions"><% if(connection.paused_at){ %><form method="post" action="/settings/connections/<%= connection.id %>/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Resume</button></form><% } else if(connection.status==='connected'){ %><form method="post" action="/settings/connections/<%= connection.id %>/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Pause</button></form><% } %><% if(connection.status!=='disconnected'){ %><form method="post" action="/settings/connections/<%= connection.id %>/disconnect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--danger" type="submit">Disconnect and remove credentials</button></form><% } %></div></div></section>
     <details class="card"><summary class="card-head"><h2>Advanced diagnostics</h2></summary><div class="card-body"><p class="mono">Connection <%= connection.id %></p><p>Provider: <%= connection.provider_type %></p><p>Setup: <%= connection.setup_status %></p><p>Open issues: <%= connection.openIssues %></p><p>Last processed event: <%= proof.event_at||'none' %></p><p>Last successful sync: <%= connection.last_synced_at||'none' %></p></div></details>
-  </aside>
+</aside>
+</div>
 </div>
