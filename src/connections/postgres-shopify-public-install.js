@@ -105,19 +105,31 @@ async function completeLocked(database,cookie,query){
    return client.query("UPDATE shopify_public_installs SET status='EXCHANGING' WHERE id=$1 AND status='AUTHORIZING' AND expires_at>now() RETURNING id",[row.id]);
  },{isolation:'SERIALIZABLE',retrySafe:true});
  if(!taken.rows.length)throw new AuthenticationError('This Shopify response was already used. Open StockChief from Shopify again.');
+ let phase='TOKEN_EXCHANGE';
  try{
    const result=await require('./shopify-install-authorization').run(database,row,()=>adapter.exchangeAuthorization({query,metadata:metadata(row)})),nextMetadata=metadata(row);
    if(process.env.STOCKCHIEF_RUNTIME_ENV==='production'&&require('../commercial/shopify-billing').configured()){
+    phase='STORE_IDENTITY';
     const identity=await require('../commercial/shopify-billing').readIdentity(result.credentials,row.shop);
-    if(!pilotShop(row.shop)&&!identity.developmentStore&&!launch.publicShopifyEnabled())throw new AuthorizationError('Public-store connections open after Shopify approval. This store is not a development store.');
+    phase='STORE_ADMISSION';
+    if(!pilotShop(row.shop)&&!identity.developmentStore&&!launch.publicShopifyEnabled())throw Object.assign(new AuthorizationError('Public-store connections open after Shopify approval. This store is not a development store.'),{shopifyInstallationReason:'STORE_REQUIRES_APPROVAL'});
     nextMetadata.shopifyInstallationIdentity=identity;result.credentials.shopifyShopId=identity.shopId;
    }
    approvedShop(row.shop,{...row,status:'AUTHORIZED',metadata:nextMetadata});
    const sealed=credentials.encrypt(result);
+   phase='SAVE_HANDOFF';
    const saved=await database.query(`UPDATE shopify_public_installs SET status='AUTHORIZED',ciphertext=$2,iv=$3,auth_tag=$4,metadata=$5
      WHERE id=$1 AND status='EXCHANGING' AND expires_at>now() RETURNING id`,[row.id,sealed.ciphertext,sealed.iv,sealed.authTag,JSON.stringify(nextMetadata)]);
    if(!saved.rows.length)throw new AuthenticationError('This Shopify connection expired before authorization finished. Start again.');
- }catch(error){await database.query("UPDATE shopify_public_installs SET status='FAILED',ciphertext=NULL,iv=NULL,auth_tag=NULL WHERE id=$1",[row.id]);throw error;}
+ }catch(error){
+   // Fixed categories only: never log the OAuth query, grant, provider body,
+   // browser proof, or arbitrary provider error text.
+   const reasons=new Set(['STORE_REQUIRES_APPROVAL','IDENTITY_QUERY_REJECTED','IDENTITY_MISMATCH']);
+   console.warn('SHOPIFY_INSTALLATION_FAILED '+JSON.stringify({phase,
+     reason:reasons.has(error.shopifyInstallationReason)?error.shopifyInstallationReason:'OPERATION_REJECTED',
+     ...(error.shopifyIdentityChecks?{identityChecks:error.shopifyIdentityChecks}:{})}));
+   await database.query("UPDATE shopify_public_installs SET status='FAILED',ciphertext=NULL,iv=NULL,auth_tag=NULL WHERE id=$1",[row.id]);throw error;
+ }
  return PATH+'/connect';
 }
 async function choices(database,account,row){

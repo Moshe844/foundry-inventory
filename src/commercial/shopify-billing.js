@@ -36,8 +36,10 @@ function money(value){
 function shopDomain(value){const shop=String(value||'');if(!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shop))throw new ValidationError('Shopify did not identify a valid store.');return shop;}
 function identity(data,expectedShop){
  const c=configuration(),shop=data?.shop,app=data?.currentAppInstallation?.app;
- if(shopDomain(shop?.myshopifyDomain)!==shopDomain(expectedShop)||!/^gid:\/\/shopify\/Shop\/\d+$/.test(shop?.id||'')||app?.id!==c.appId||app?.apiKey!==c.clientId||!/^[-a-z0-9]+$/.test(app?.handle||''))
-   throw new ValidationError('Shopify billing belongs to another app or store. No subscription was changed.');
+ const checks={domainMatches:shop?.myshopifyDomain===shopDomain(expectedShop),validShopId:/^gid:\/\/shopify\/Shop\/\d+$/.test(shop?.id||''),
+   appMatches:app?.id===c.appId,clientMatches:app?.apiKey===c.clientId,validHandle:/^[-a-z0-9]+$/.test(app?.handle||'')};
+ if(Object.values(checks).some(value=>!value))
+   throw Object.assign(new ValidationError('Shopify billing belongs to another app or store. No subscription was changed.'),{shopifyInstallationReason:'IDENTITY_MISMATCH',shopifyIdentityChecks:checks});
  return {shopId:shop.id,shop:shop.myshopifyDomain,appId:c.appId,appHandle:app.handle,developmentStore:shop.plan?.partnerDevelopment===true};
 }
 function selectionUrl(value){return 'https://admin.shopify.com/store/'+shopDomain(value.shop).slice(0,-'.myshopify.com'.length)+'/charges/'+encodeURIComponent(value.appHandle)+'/pricing_plans';}
@@ -46,7 +48,7 @@ async function readIdentity(credentials,expectedShop){
  if(credentials?.shopifyProfile!=='public'||credentials.shopifyClientId!==configuration().clientId||credentials.shop!==shopDomain(expectedShop))throw new ValidationError('The Shopify billing authorization belongs to another app or store.');
  if(Date.parse(credentials.accessTokenExpiresAt||'')<=Date.now()+60000)throw new ValidationError('Reconnect Shopify before starting a new billing selection.');
  const response=await providerFetch('https://'+shopDomain(expectedShop)+'/admin/api/'+API_VERSION+'/graphql.json',{method:'POST',headers:{'Content-Type':'application/json','X-Shopify-Access-Token':credentials.accessToken},body:JSON.stringify({query:IDENTITY_QUERY})},{provider:'StockChief Billing',retries:0});
- const body=await response.json();if(!response.ok||body.errors?.length)throw new ValidationError('Shopify could not verify this billing installation.');
+ const body=await response.json();if(!response.ok||body.errors?.length)throw Object.assign(new ValidationError('Shopify could not verify this billing installation.'),{shopifyInstallationReason:'IDENTITY_QUERY_REJECTED'});
  return identity(body.data,expectedShop);
 }
 function contract(value,owner,{now=Date.now()}={}){

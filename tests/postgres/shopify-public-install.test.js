@@ -15,7 +15,7 @@ test('public Shopify installation authenticates before sign-in and preserves pai
  const auth=require('../../src/domain/postgres-auth-service'),ent=require('../../src/commercial/entitlements'),adapter=require('../../src/connections/providers/shopify'),store=require('../../src/connections/postgres-credential-store');
  const calls=[],scopes=['read_orders','read_products','read_locations','read_inventory','read_fulfillments','write_products','write_inventory'];
  global.fetch=async(value,options)=>{
-   const url=new URL(value);assert.match(url.hostname,/^(?:browser-)?(starter|growth|pro|legacy|other|denied|full|lifecycle)-fixture\.myshopify\.com$/,'Only synthetic providers are contacted');
+   const url=new URL(value);assert.match(url.hostname,/^(?:browser-)?(starter|growth|pro|legacy|other|denied|full|lifecycle|diagnostic)-fixture\.myshopify\.com$/,'Only synthetic providers are contacted');
    calls.push({path:url.pathname,body:options.body});
    if(url.pathname==='/admin/oauth/access_token'){
      const form=new URLSearchParams(options.body);assert.equal(form.get('client_id'),'public-app');assert.equal(form.get('client_secret'),'public-secret');
@@ -146,6 +146,51 @@ test('public Shopify installation authenticates before sign-in and preserves pai
      assert.equal(gate.admit(current,'https://starter-fixture.myshopify.com/admin/oauth/access_token',token),true);
      assert.equal(gate.admit(current,'https://starter-fixture.myshopify.com/admin/oauth/access_token',token),false,'The code exchange is one-use');
    });
+ });
+ await t.test('callback failures preserve their reason and log only fixed diagnostic categories',async()=>{
+   const configuredKeys=['SHOPIFY_PARTNER_ID','SHOPIFY_PUBLIC_APP_ID','SHOPIFY_PARTNER_ACCESS_TOKEN'];
+   const previous=Object.fromEntries(configuredKeys.map(key=>[key,process.env[key]]));
+   Object.assign(process.env,{SHOPIFY_PARTNER_ID:'5146412',SHOPIFY_PUBLIC_APP_ID:'448446889985',SHOPIFY_PARTNER_ACCESS_TOKEN:'fixture-partner-token'});
+   const providerFetch=global.fetch,warn=console.warn,diagnostics=[];
+   const f={agent:request.agent(app),shop:'diagnostic-fixture.myshopify.com'};
+   const before={subscriptions:(await db.query('SELECT * FROM account_subscriptions ORDER BY account_id')).rows,
+     connections:(await db.query('SELECT id,status FROM workspace_connectors ORDER BY id')).rows};
+   console.warn=(...values)=>{if(String(values[0]).startsWith('SHOPIFY_INSTALLATION_FAILED '))diagnostics.push(values[0]);else warn(...values);};
+   try{
+     for(const fixture of [
+       {kind:'token',phase:'TOKEN_EXCHANGE',reason:'OPERATION_REJECTED',message:'Fixture permission exchange was rejected.'},
+       {kind:'identity-query',phase:'STORE_IDENTITY',reason:'IDENTITY_QUERY_REJECTED',message:'Shopify could not verify this billing installation.'},
+       {kind:'identity',phase:'STORE_IDENTITY',reason:'IDENTITY_MISMATCH',message:'Shopify billing belongs to another app or store. No subscription was changed.'},
+       {kind:'admission',phase:'STORE_ADMISSION',reason:'STORE_REQUIRES_APPROVAL',message:'Public-store connections open after Shopify approval. This store is not a development store.'}
+     ]){
+       global.fetch=async(value,options)=>{
+         const url=new URL(value);
+         assert.equal(url.hostname,f.shop,'Only the synthetic review fixture may be contacted');
+         if(url.pathname==='/admin/oauth/access_token')return fixture.kind==='token'
+           ?Response.json({error_description:fixture.message},{status:403}):providerFetch(value,options);
+         assert.equal(url.pathname,'/admin/api/2026-07/graphql.json');
+         assert.match(JSON.parse(options.body).query,/StockChiefBillingIdentity/);
+         if(fixture.kind==='identity-query')return Response.json({errors:[{message:'Fixture access denied'}]});
+         return Response.json({data:{shop:{id:'gid://shopify/Shop/123456',myshopifyDomain:f.shop,plan:{partnerDevelopment:false}},
+           currentAppInstallation:{app:{id:fixture.kind==='identity'?'gid://shopify/App/999':'gid://shopify/App/448446889985',apiKey:'public-app',handle:'stockchief'}}}});
+       };
+       const start=await begin(f);assert.equal(start.status,303,start.text);
+       const response=await f.agent.get('/integrations/shopify/callback').query(callback(start.headers.location));
+       assert.equal(response.status,400);assert(response.text.includes(fixture.message),response.text);
+       const row=(await db.query('SELECT status,ciphertext FROM shopify_public_installs WHERE shop=$1 ORDER BY created_at DESC LIMIT 1',[f.shop])).rows[0];
+       assert.equal(row.status,'FAILED');assert.equal(row.ciphertext,null);
+       const diagnostic=JSON.parse(diagnostics.at(-1).slice('SHOPIFY_INSTALLATION_FAILED '.length));
+       assert.equal(diagnostic.phase,fixture.phase);assert.equal(diagnostic.reason,fixture.reason);
+       if(fixture.kind==='identity')assert.deepEqual(diagnostic.identityChecks,{domainMatches:true,validShopId:true,appMatches:false,clientMatches:true,validHandle:true});
+     }
+     assert.equal(diagnostics.length,4);
+     assert(!/public-secret|public-access-|public-refresh-|fixture-code|fixture-partner-token|hmac|state=|myshopify/.test(diagnostics.join('\n')),'Diagnostics must contain no provider secrets, URLs, or browser proofs');
+     assert.deepEqual((await db.query('SELECT * FROM account_subscriptions ORDER BY account_id')).rows,before.subscriptions);
+     assert.deepEqual((await db.query('SELECT id,status FROM workspace_connectors ORDER BY id')).rows,before.connections);
+   }finally{
+     global.fetch=providerFetch;console.warn=warn;
+     for(const key of configuredKeys){if(previous[key]===undefined)delete process.env[key];else process.env[key]=previous[key];}
+   }
  });
  await t.test('invalid entry points cannot create a handoff or call a provider',async()=>{
    const before=calls.length,count=(await db.query('SELECT count(*)::int n FROM shopify_public_installs')).rows[0].n,f=fixtures[0];
