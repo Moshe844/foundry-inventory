@@ -5,6 +5,19 @@ on:
       - src/commercial/release.js
       - src/commercial/connector-request-cost.js
       - src/commercial/operations.js
+      - src/commercial/*shopify*
+      - src/commercial/entitlements.js
+      - src/commercial/service.js
+      - src/commercial/plan-navigation.js
+      - src/db/postgres-migrations/*shopify*
+      - src/web/routes/postgres-shopify-public.js
+      - src/web/routes/postgres-auth.js
+      - src/web/routes/postgres-commercial.js
+      - src/web/views/commercial/shopify-billing.ejs
+      - src/web/public/shopify-billing.css
+      - src/operations/postgres-runtime-handlers.js
+      - tests/unit/shopify-managed-billing.test.js
+      - tests/postgres/shopify-managed-billing*.test.js
       - src/connections/postgres-event-ingestion.js
       - src/connections/postgres-webhook-inbox.js
       - src/connections/providers/shopify.js
@@ -66,7 +79,7 @@ jobs:
           set -euo pipefail
           mkdir -p output/shopify-pilot-release
           git rev-parse HEAD:src | tee output/shopify-pilot-release/application-tree.txt
-          node --test --test-force-exit --test-concurrency=2 tests/postgres/shopify-public-install.test.js tests/postgres/shopify-webhooks.test.js tests/unit/commercial-connector-request-cost.test.js tests/unit/commercial-launch-provider-policy.test.js tests/unit/shopify-token-lifecycle.test.js tests/unit/provider-sync-failure.test.js tests/postgres/commercial-provider-costs.test.js tests/postgres/subscription-guarantee.test.js tests/postgres/capacity-topups-browser.test.js tests/postgres/commercial-lifecycle-ui.test.js 2>&1 | tee output/shopify-pilot-release/checks.log
+          node --test --test-force-exit --test-concurrency=2 tests/postgres/shopify-public-install.test.js tests/postgres/shopify-webhooks.test.js tests/postgres/shopify-managed-billing.test.js tests/postgres/shopify-managed-billing-ui.test.js tests/unit/shopify-managed-billing.test.js tests/unit/commercial-connector-request-cost.test.js tests/unit/commercial-launch-provider-policy.test.js tests/unit/shopify-token-lifecycle.test.js tests/unit/provider-sync-failure.test.js tests/postgres/commercial-provider-costs.test.js tests/postgres/subscription-guarantee.test.js tests/postgres/capacity-topups-browser.test.js tests/postgres/commercial-lifecycle-ui.test.js 2>&1 | tee output/shopify-pilot-release/checks.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

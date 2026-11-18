@@ -165,6 +165,7 @@ async function runtimeSweep(job,client,options={}){
   const now=milliseconds(job.payload?.now);const at=new Date(now).toISOString();
   await client.query('DELETE FROM connection_authorization_states WHERE id IN (SELECT id FROM connection_authorization_states WHERE used_at IS NULL AND expires_at::timestamptz<$1::timestamptz ORDER BY expires_at LIMIT 500)',[at]);
   await require('../assistant/postgres-credit-maintenance').reconcile(client,{olderThan:new Date(now-30*60_000).toISOString()});
+  await require('../commercial/postgres-shopify-billing').enqueueDue(client,{now});
   await require('../commercial/ai-spending-notifications').sweep(client);
   await require('../reports/postgres-scheduling').enqueueDue(client,at);
   // Job 156: the daily briefing at each business's chosen time.
@@ -878,6 +879,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'commercial.auto-top-up':external((job,database)=>require('../commercial/addons').runTopup(database,
     {accountId:job.payload.accountId,workspaceId:job.workspaceId},job.payload.category,options.commercialOptions||{})),
   'commercial.subscription-guarantee':external((job,database)=>require('../commercial/subscription-guarantee').process(database,job,options.commercialOptions||{})),
+  'commercial.shopify-reconcile':external((job,database)=>require('../commercial/postgres-shopify-billing').reconcile(database,job.payload.accountId)),
+  'commercial.shopify-guarantee':external((job,database)=>require('../commercial/postgres-shopify-billing').processGuarantee(database,job)),
   'commercial.subscription-refund-cancel':external((job,database)=>require('../commercial/subscription-refund-retention').cancel(database,job,options.commercialOptions||{})),
   'commercial.refund-retention-delete':external((job,database)=>require('../commercial/subscription-refund-retention').remove(database,job)),
   'commercial.stripe-financial-sync':external((job,database)=>require('../commercial/stripe-financials').sync(database,job,options.commercialOptions||{})),

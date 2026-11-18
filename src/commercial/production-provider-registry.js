@@ -35,6 +35,9 @@ const classification=Object.freeze({
  'attention/interpretation-service.js':'NOT_PG_ENABLED',
  'commercial/model.js':'METERED',
  'commercial/stripe-billing.js':'PLATFORM_BILLING_RECONCILED',
+ // Partner subscription verification/cancellation and authenticated shop
+ // identity reads manage platform billing; they do not consume merchant AI.
+ 'commercial/shopify-billing.js':'PLATFORM_BILLING_RECONCILED',
  'connections/postgres-reply-drafting.js':'METERED',
  // Job 188: chat answers use the commercial model wrapper, and every reply is
  // sent inside its registered Slack, Teams or WhatsApp operation.
