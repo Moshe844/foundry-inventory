@@ -21,14 +21,28 @@ async function isOpen(database){const release=await state(database);
  // Approved private pilots do not grant provider access to public signups.
  // Shopify additionally binds the exception to its exact authorized store.
  const launchPolicy=require('../connections/launch-policy');
- const unqualified=(await database.query(`SELECT 1 FROM workspace_connectors
-   WHERE status='connected' AND paused_at IS NULL
-   AND provider_type=ANY($1::text[])
-   AND NOT ((provider_type='microsoft365' AND COALESCE(workspace_id=ANY($2::text[]),false))
-    OR (provider_type='shopify' AND COALESCE(($3::jsonb->workspace_id) ? provider_account_id,false)))
-   UNION ALL SELECT 1 FROM payment_connect_accounts WHERE charges_enabled=1
+ // This is provider-derived evidence of the merchant's fee arrangement, not
+ // permission to activate a new connection. Pausing new Connect sign-ins must
+ // not shut subscription checkout for already qualified merchant contracts.
+ const certifiedStripe=`p.provider='stripe' AND p.livemode=1 AND c.provider_type='stripe'
+   AND c.provider_account_id=p.provider_account_id AND c.workspace_id=p.workspace_id
+   AND c.config::jsonb#>>'{stripeConnectEvidence,source}'=$5
+   AND c.config::jsonb#>>'{stripeConnectEvidence,platformAccountId}'=$4
+   AND c.config::jsonb#>>'{stripeConnectEvidence,merchantAccountId}'=p.provider_account_id
+   AND c.config::jsonb#>>'{stripeConnectEvidence,live}'='true'
+   AND c.config::jsonb#>>'{stripeConnectEvidence,feesPayer}'='account'
+   AND c.config::jsonb#>>'{stripeConnectEvidence,lossesPayer}'='stripe'
+   AND c.config::jsonb#>>'{stripeConnectEvidence,dashboard}'='full'`;
+ const unqualified=(await database.query(`SELECT 1 FROM workspace_connectors c
+   WHERE c.status='connected' AND c.paused_at IS NULL
+   AND c.provider_type=ANY($1::text[])
+   AND NOT ((c.provider_type='microsoft365' AND COALESCE(c.workspace_id=ANY($2::text[]),false))
+    OR (c.provider_type='shopify' AND COALESCE(($3::jsonb->c.workspace_id) ? c.provider_account_id,false))
+    OR (c.provider_type='stripe' AND EXISTS(SELECT 1 FROM payment_connect_accounts p WHERE p.connector_id=c.id AND ${certifiedStripe})))
+   UNION ALL SELECT 1 FROM payment_connect_accounts p LEFT JOIN workspace_connectors c ON c.id=p.connector_id
+     WHERE p.charges_enabled=1 AND NOT COALESCE((${certifiedStripe}),false)
    LIMIT 1`,
-  [[...Object.keys(launchPolicy.EXCLUDED),'stripe','supplier_email'],launchPolicy.productionOutlookWorkspaces(),JSON.stringify(launchPolicy.productionShopifyPilots())])).rows.length;
+  [[...Object.keys(launchPolicy.EXCLUDED),'stripe','supplier_email'],launchPolicy.productionOutlookWorkspaces(),JSON.stringify(launchPolicy.productionShopifyPilots()),config.commercial.stripeAccountId,require('../payments/stripe-live-qualification').SOURCE])).rows.length;
  return unqualified===0;}
 async function assertCheckoutOpen(database,options={}){
   // Only isolated tests may exercise provider contracts while the live release is closed.

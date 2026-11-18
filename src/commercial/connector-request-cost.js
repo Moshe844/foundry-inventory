@@ -16,12 +16,20 @@ const shopify={
  basis:'NO_INCREMENTAL_SHOPIFY_ADMIN_API_REQUEST_FEE',
  source:'https://shopify.dev/docs/api/usage/limits; https://shopify.dev/docs/apps/launch/distribution/revenue-share; merchant subscriptions and app platform/revenue-share charges remain separate',
 };
+const stripe={basis:'NO_INCREMENTAL_STRIPE_CONNECT_API_REQUEST_FEE',source:'https://stripe.com/connect/pricing; https://docs.stripe.com/connect/saas; HTTP request attempts have no separate fee. Merchant Payments and Invoicing fees remain payable by the connected Standard account; platform Billing charges are separate.'};
 
 function classify(def, url, method='GET'){
  if(!url)return null;
  const {origin,pathname}=new URL(url);
  const verb=String(method).toUpperCase();
  const target=new URL(url);
+ if(def.provider==='stripe'){
+  if(def.version==='unversioned'&&origin==='https://connect.stripe.com'&&verb==='POST'&&/^\/oauth\/(token|deauthorize)$/.test(pathname))return stripe;
+  if(def.version==='v1'&&origin==='https://api.stripe.com'){
+   if(verb==='GET'&&/^\/v1\/(?:accounts\/acct_[A-Za-z0-9]+|invoices\/in_[A-Za-z0-9]+|charges\/ch_[A-Za-z0-9]+|payment_intents\/pi_[A-Za-z0-9]+|refunds(?:\/re_[A-Za-z0-9]+)?|balance_transactions\/txn_[A-Za-z0-9]+)$/.test(pathname))return stripe;
+   if(verb==='POST'&&(/^\/v1\/(?:customers|invoices|invoiceitems|refunds)$/.test(pathname)||/^\/v1\/invoices\/in_[A-Za-z0-9]+\/(?:finalize|void)$/.test(pathname)))return stripe;
+  }
+ }
  if(def.provider==='shopify'&&origin===`https://${target.hostname}`&&/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(target.hostname)){
   if(def.version==='2026-07'&&verb==='POST'&&pathname==='/admin/api/2026-07/graphql.json')return shopify;
   if(def.version==='unversioned'&&((verb==='POST'&&pathname==='/admin/oauth/access_token')||

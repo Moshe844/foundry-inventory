@@ -1,0 +1,70 @@
+name: Stripe merchant release qualification
+on:
+  pull_request:
+    paths:
+      - src/payments/**
+      - src/commercial/release.js
+      - src/commercial/connector-request-cost.js
+      - src/commercial/operations.js
+      - src/operations/postgres-runtime-handlers.js
+      - src/web/routes/postgres-operations.js
+      - src/web/routes/postgres-commerce.js
+      - src/web/views/settings/postgres-provider-effect.ejs
+      - src/web/views/sales/postgres-return.ejs
+      - tests/postgres/stripe-live-connect.test.js
+      - tests/unit/stripe-live-qualification.test.js
+      - tests/unit/stripe-webhook-rotation.test.js
+      - .github/workflows/stripe-merchant-qualification.yml
+permissions:
+  contents: read
+jobs:
+  stripe-merchant:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      NODE_ENV: test
+      FOUNDRY_SKIP_LOCAL_ENV: '1'
+      STOCKCHIEF_POSTGRES_BIN: /usr/lib/postgresql/17/bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install PostgreSQL with bounded downloads
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'Acquire::Retries "2";' 'Acquire::http::Timeout "30";' 'Acquire::https::Timeout "30";' | sudo tee /etc/apt/apt.conf.d/99-stockchief-ci-network > /dev/null
+          if [ -f /etc/apt/apt-mirrors.txt ] && getent ahosts archive.ubuntu.com >/dev/null; then
+            sudo sed -i -E 's|https?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          fi
+          sudo install -d /usr/share/postgresql-common/pgdg
+          if ! sudo curl --fail --connect-timeout 15 --max-time 90 --retry 2 --retry-all-errors --retry-delay 2 -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc; then
+            sudo curl --fail --connect-timeout 15 --max-time 90 --retry 2 --retry-all-errors --retry-delay 2 -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://apt.postgresql.org/pub/repos/apt/ACCC4CF8.asc
+          fi
+          fingerprint="$(gpg --batch --show-keys --with-colons /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc 2>/dev/null | awk -F: '$1 == "fpr" {print $10; exit}')"
+          test "$fingerprint" = B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8
+          printf '%s\n' 'Types: deb' 'URIs: https://apt.postgresql.org/pub/repos/apt' 'Suites: noble-pgdg' 'Components: main' 'Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc' | sudo tee /etc/apt/sources.list.d/pgdg.sources > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y postgresql-17
+      - run: npm ci
+      - name: Install Chromium
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          npx playwright install chromium
+          if ! node -e 'require("playwright").chromium.launch().then(b=>b.close()).catch(()=>process.exit(1))'; then
+            npx playwright install-deps chromium
+          fi
+      - name: Verify merchant payments, refunds, permissions and existing billing
+        run: |
+          set -euo pipefail
+          mkdir -p output/stripe-merchant-release
+          git rev-parse HEAD:src | tee output/stripe-merchant-release/application-tree.txt
+          node --test --test-force-exit --test-concurrency=2 tests/postgres/stripe-live-connect.test.js tests/unit/stripe-live-qualification.test.js tests/unit/stripe-webhook-rotation.test.js tests/unit/stripe-payment-identities.test.js tests/unit/commercial-connector-request-cost.test.js tests/postgres/payments-ui.test.js tests/postgres/payments-connect-ui.test.js tests/postgres/payment-provenance-reconciliation.test.js tests/postgres/payment-read-scope.test.js tests/postgres/agent-exact-return-refunds.test.js tests/postgres/subscription-guarantee.test.js tests/postgres/shopify-public-install.test.js 2>&1 | tee output/stripe-merchant-release/checks.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stripe-merchant-qualification
+          path: output/stripe-merchant-release

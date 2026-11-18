@@ -15,6 +15,10 @@ function createPostgresPaymentWebhooks(database,options={}){
     const secret=typeof options.webhookSecret==='function'?options.webhookSecret(providerName):
       (options.webhookSecret||process.env.STRIPE_WEBHOOK_SECRET);
     const event=provider.verifyEvent(raw,req.headers,{webhookSecret:secret});
+    if(providerName==='stripe'&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'&&event.livemode!==true){
+      if(event.livemode===false)return res.status(200).json({ok:true,ignored:'test_event'});
+      throw new ValidationError('The Stripe event does not confirm live mode.');
+    }
     const providerAccountId=String(event?.account||'').trim();
     if(!providerAccountId)throw new ValidationError('That payment event does not identify the merchant account it belongs to.');
     const matches=await database.query(`SELECT workspace_id FROM payment_connect_accounts

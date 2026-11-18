@@ -61,7 +61,7 @@ function createPostgresConnectionsRouter(database,options={}){
     const providerContext=await require('../../connections/launch-policy').resolveWorkspaceContext(database,req.ctx);
     const connectionRuntime=process.env.STOCKCHIEF_RUNTIME_ENV||process.env.NODE_ENV;
     const providerCatalog=(inventorySetup?registry.inventorySources(providerContext,{oauthOnly:true}):registry.catalog(providerContext,{oauthOnly:true})).filter(p=>require('../presentation/connections').availableForCustomer(p,connectionRuntime));
-    const qualifiedTestConnect=require('../../payments/connect-availability').qualified(options);
+    const qualifiedTestConnect=require('../../payments/connect-availability').qualified(options,req.ctx);
     const launchTicket=crypto.randomBytes(24).toString('base64url');
     req.session.connectionLaunch={ticket:launchTicket,workspaceId:req.ctx.workspaceId,expiresAt:Date.now()+30*60000};
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
@@ -208,7 +208,7 @@ function createPostgresConnectionsRouter(database,options={}){
     if(!await connectionAllowed(req,res,'stripe'))return;
     const current=await paymentConnect.describe(database,req.ctx.workspaceId);
     if((process.env.STOCKCHIEF_RUNTIME_ENV||process.env.NODE_ENV)==='production'&&!current.liveMode)return oauthReturnPage(res,{connected:false,providerName:'Stripe',requestOrigin:`${req.protocol}://${req.get('host')}`,popup:req.query.popup==='1',message:'Live Stripe authorization is not configured. Your existing records remain available.'});
-    if(!current.connected&&!require('../../payments/connect-availability').qualified(options))
+    if(!current.connected&&!require('../../payments/connect-availability').qualified(options,req.ctx))
       return res.status(403).send('New Stripe connections are not enabled on this installation. Existing payment records remain available.');
     const launch=req.session.connectionLaunch;
     if(!launch||launch.workspaceId!==req.ctx.workspaceId||launch.expiresAt<Date.now()

@@ -255,11 +255,12 @@ function refundEvidence(refund,identity){
     amountMinor:refund.amount,currency:refund.currency,status:refund.status};
 }
 
-async function refundPayment(ctx, { externalPaymentId, amountMinor, idempotencyKey, verifyExact=false }) {
+async function refundPayment(ctx, { externalPaymentId, amountMinor, idempotencyKey, verifyExact=false, reference=null }) {
   const identity=paymentIdentity(externalPaymentId);
   if(!identity)throw new ValidationError('The original payment identity needs review before a provider refund.');
   const refund = await call(ctx, '/refunds', {
-    values: { [identity.startsWith('pi_')?'payment_intent':'charge']: identity, amount: amountMinor ? Math.round(Number(amountMinor)) : undefined },
+    values: { [identity.startsWith('pi_')?'payment_intent':'charge']: identity, amount: amountMinor ? Math.round(Number(amountMinor)) : undefined,
+      ...(reference?{'metadata[stockchief_refund_request_id]':reference}:{}) },
     idempotencyKey: verifyExact?idempotencyKey:`foundry-refund:${externalPaymentId}:${amountMinor || 'all'}`,
     exact:verifyExact,
   });
@@ -272,6 +273,16 @@ async function retrieveRefund(ctx,{externalRefundId,externalPaymentId}){
   const refund=await call(ctx,'/refunds/'+encodeURIComponent(externalRefundId),{method:'GET',exact:true});
   if(refund.id!==externalRefundId)throw new ValidationError('Stripe returned a different refund identity.');
   return refundEvidence(refund,identity);
+}
+
+async function findRefund(ctx,{reference,externalPaymentId}){
+  const identity=paymentIdentity(externalPaymentId);
+  if(!identity||!reference)throw new ValidationError('The original refund reference is required.');
+  const query=new URLSearchParams({[identity.startsWith('pi_')?'payment_intent':'charge']:identity,limit:'100'});
+  const page=await call(ctx,'/refunds?'+query,{method:'GET',exact:true});
+  const matches=(page.data||[]).filter(r=>r.metadata?.stockchief_refund_request_id===reference);
+  if(page.has_more||matches.length!==1)throw new ValidationError('Stripe has not identified one complete refund for this approved request. Nothing was resent.');
+  return refundEvidence(matches[0],identity);
 }
 
 /**
@@ -287,17 +298,15 @@ function verifyEvent(raw, headers = {}, options = {}) {
   if (!secret) throw new ValidationError('Set the Stripe webhook signing secret before accepting events.');
   if (!signature) throw new AuthenticationError('That event arrived without a Stripe signature.');
 
-  const parts = Object.fromEntries(String(signature).split(',')
-    .map((piece) => piece.split('=', 2)).filter((pair) => pair.length === 2));
-  const timestamp = parts.t;
-  const provided = parts.v1;
-  if (!timestamp || !provided) throw new AuthenticationError('That Stripe signature is not in a form StockChief can check.');
+  const parts = String(signature).split(',').map(piece=>piece.trim().split('=',2));
+  const times=parts.filter(([name])=>name==='t').map(([,value])=>value);
+  const timestamp=times[0],provided=parts.filter(([name,value])=>name==='v1'&&/^[a-f0-9]{64}$/i.test(value||'')).map(([,value])=>value);
+  if(times.length!==1||!/^\d+$/.test(timestamp||'')||!provided.length)throw new AuthenticationError('That Stripe signature is not in a form StockChief can check.');
 
   const body = typeof raw === 'string' ? raw : JSON.stringify(raw);
   const expected = crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
-  const a = Buffer.from(expected);
-  const b = Buffer.from(provided);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+  const a = Buffer.from(expected,'hex');
+  if (!provided.some(value=>crypto.timingSafeEqual(a,Buffer.from(value,'hex')))) {
     throw new AuthenticationError('That event did not come from Stripe.');
   }
 
@@ -391,7 +400,7 @@ function readEvent(event) {
 
 module.exports = {
   readInvoice, eventFromInvoice,
-  createCustomer, createInvoice, getHostedPaymentUrl, refundPayment, retrieveRefund, verifyEvent, readEvent,
+  createCustomer, createInvoice, getHostedPaymentUrl, refundPayment, retrieveRefund, findRefund, verifyEvent, readEvent,
   // Exported for tests; nothing above this file should reach for them.
   __internal: { call, form, credentials },
 };
