@@ -100,7 +100,7 @@ jobs:
       - name: Verify data protection, all-plan privacy rights and existing private disclosures
         run: |
           set -euo pipefail
-          node --test --test-force-exit --test-concurrency=2 tests/postgres/shopify-data-protection.test.js tests/postgres/agent-credit-holds.test.js tests/postgres/retention-cleanup.test.js tests/postgres/shopify-privacy.test.js tests/postgres/shopify-privacy-orders.test.js tests/postgres/round16-security-audit.test.js tests/postgres/round10-refund-retention.test.js tests/postgres/private-owner-console.test.js tests/postgres/public-api-ui.test.js tests/postgres/agent-customer-order-pages.test.js tests/postgres/agent-buyer-quote-acceptance.test.js tests/postgres/shipstation-custom-store.test.js tests/postgres/cardknox-gateway.test.js tests/postgres/agent-inbound-freight.test.js 2>&1 | tee output/shopify-pilot-release/data-protection.log
+          node --test --test-force-exit --test-concurrency=2 tests/unit/data-access-sink.test.js tests/postgres/shopify-data-protection.test.js tests/postgres/agent-credit-holds.test.js tests/postgres/retention-cleanup.test.js tests/postgres/shopify-privacy.test.js tests/postgres/shopify-privacy-orders.test.js tests/postgres/round16-security-audit.test.js tests/postgres/round10-refund-retention.test.js tests/postgres/private-owner-console.test.js tests/postgres/public-api-ui.test.js tests/postgres/agent-customer-order-pages.test.js tests/postgres/agent-buyer-quote-acceptance.test.js tests/postgres/shipstation-custom-store.test.js tests/postgres/cardknox-gateway.test.js tests/postgres/agent-inbound-freight.test.js 2>&1 | tee output/shopify-pilot-release/data-protection.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

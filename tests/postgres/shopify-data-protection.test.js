@@ -51,6 +51,24 @@ test('privacy controls and scoped access review work on Starter, Growth and Pro 
  const checkpoint=await require('../../src/operations/postgres-checkpoints').get(db,'security.retention');
  assert.equal(checkpoint.status,'PASS');assert.equal(checkpoint.detail.policyVersion,'2026-11-18');
  assert((await db.query('SELECT id FROM stockchief_runtime.data_access_events WHERE id=$1',[current])).rowCount);
+ // Exercise the actual rendered controls on desktop and phone, including a
+ // read-only subscription, without using a real merchant account or provider.
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()});
+ const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
+ const chrome=await require('playwright').chromium.launch();
+ f.cleanup(async()=>{await chrome.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await app.locals.sessionStore.close();});
+ const origin='http://127.0.0.1:'+server.address().port,fs=require('node:fs'),path=require('node:path'),folder=path.join(process.cwd(),'output','shopify-data-protection');fs.mkdirSync(folder,{recursive:true});
+ for(const [name,viewport] of [['desktop',{width:1366,height:900}],['phone',{width:390,height:844}]]){
+  const page=await chrome.newPage({viewport});page.setDefaultTimeout(15000);
+  await page.goto(origin+'/login');await page.getByLabel('Work email',{exact:true}).fill(f.email);await page.locator('[name=password]').fill(f.password);
+  await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Sign in',exact:true}).click()]);
+  for(const [route,heading,file] of [['/sales/customers/fixture-customer','Customer privacy · Credit decisions','customer'],['/settings/privacy/access','Personal data access','access'],['/security/data-protection','Data protection policy','policy']]){
+   await page.goto(origin+route);assert(await page.getByRole('heading',{name:heading,exact:true}).isVisible());
+   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),route+' overflows on '+name);
+   await page.screenshot({path:path.join(folder,file+'-'+name+'.png'),fullPage:true});
+  }
+  await page.close();
+ }
 });
 
 test('a failed access-log write prevents authenticated disclosure and leaves public health and webhooks independent',{timeout:300000},async t=>{
