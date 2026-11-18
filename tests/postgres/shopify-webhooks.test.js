@@ -23,7 +23,7 @@ const signedAdapter={...shopify,normalizeWebhook(input){const events=shopify.nor
 const providers={get(type){return type==='shopify'?signedAdapter:null;},catalog(){return [];}};
 const sign=(body)=>crypto.createHmac('sha256',webhookSecret).update(body).digest('base64');
 
-for(const legacyStart of [true,false])test('real Chromium qualifies signed Shopify order creation, fulfillment and cancellation on PostgreSQL: '+(legacyStart?'interrupted shipment handoff':'fresh complete handoff'),
+for(const {plan,legacyStart} of [{plan:'starter',legacyStart:false},{plan:'growth',legacyStart:false},{plan:'pro',legacyStart:false},{plan:'growth',legacyStart:true}])test('real Chromium qualifies signed Shopify order creation, fulfillment and cancellation on PostgreSQL: '+plan+' '+(legacyStart?'interrupted shipment handoff':'fresh complete handoff'),
   {timeout:180000},async(context)=>{
     const oldSecret=process.env.SHOPIFY_CLIENT_SECRET,oldClient=process.env.SHOPIFY_CLIENT_ID,oldFetch=global.fetch;process.env.SHOPIFY_CLIENT_SECRET=webhookSecret;process.env.SHOPIFY_CLIENT_ID='fixture-shopify-client';let providerRequests=0;
     global.fetch=async(value,options)=>{const url=new URL(value);if(url.hostname==='127.0.0.1')return oldFetch(value,options);assert.equal(url.hostname,'shopify-store-1.myshopify.com','The wire fixture must never contact an actual store');providerRequests++;const id=JSON.parse(options.body).variables.id,node=/\/Order\/(1001|1002)$/.test(id)?{id}:/\/Fulfillment\/700[12]$/.test(id)?{id,order:{id:'gid://shopify/Order/'+(id.endsWith('7002')?'1002':'1001')}}:/\/Refund\/800[1-4]$/.test(id)?{id,order:{id:'gid://shopify/Order/'+(id.endsWith('8002')?'1001':'1002'),displayFinancialStatus:id.endsWith('8002')?'PAID':'VOIDED'}}:null;return Response.json({data:{node}});};
@@ -46,6 +46,8 @@ for(const legacyStart of [true,false])test('real Chromium qualifies signed Shopi
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id WHERE a.email='shopify-webhook@example.test'`)).rows[0];
     const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
+    const subscription=(await database.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,current_period_start,current_period_end) SELECT $3,owner_account_id,$2,(SELECT id FROM commercial_plan_versions WHERE plan_id=$2 AND status='ACTIVE' ORDER BY version_number DESC LIMIT 1),'ACTIVE',now(),now()+interval '1 month' FROM workspaces WHERE id=$1 RETURNING *",[ctx.workspaceId,plan,crypto.randomUUID()])).rows;
+    assert.equal(subscription.length,1);assert.equal(subscription[0].plan_id,plan);
     const location=await locations.createLocation(database,ctx,{name:'Shopify Warehouse',kind:'warehouse'});
     const item=await catalog.createItem(database,ctx,{name:'Shopify Bottle',baseCode:'SHOP-BOTTLE',trackingMode:'quantity',unitLabel:'unit'});
     // Use ordered past instants, rather than today's noon in UTC (which is
@@ -57,8 +59,9 @@ for(const legacyStart of [true,false])test('real Chromium qualifies signed Shopi
       startDate:businessTime.context('America/New_York',new Date(eventAt(0))).calendarDate,currency:'USD'});
     const received=await inventory.receive(database,ctx,{skuId:item.skuIds[0],locationId:location.id,quantity:6,
       occurredAt:eventAt(0),reference:'OPENING',idempotencyKey:'shopify-webhook-opening'});
-    await database.transaction((client)=>costing.receiveInTransaction(client,ctx,{movementId:received.movementId,
+    const establishCost=()=>database.transaction((client)=>costing.receiveInTransaction(client,ctx,{movementId:received.movementId,
       unitCostMinor:500,sourceType:'opening_inventory',sourceRecordId:received.movementId}));
+    if(plan!=='starter')await establishCost();
     const connectorId=newId('con');const at=nowIso();
     await database.query(`INSERT INTO workspace_connectors
       (id,workspace_id,connector_key,display_name,provider_type,status,capabilities,provides,config,
@@ -95,10 +98,27 @@ for(const legacyStart of [true,false])test('real Chromium qualifies signed Shopi
     const fulfillmentBody=JSON.stringify({id:7001,order_id:1001,location_id:44,created_at:eventAt(2000),tracking_company:'Test carrier',tracking_number:'TEST-7001',tracking_url:'https://example.test/tracking/7001',
       updated_at:eventAt(2000),line_items:[{id:10011,variant_id:501,product_id:50,sku:'SHOP-BOTTLE',quantity:2}]});
     legacyShipment=legacyStart;const fulfilled=await send(fulfillmentBody,'fulfillments/create','shopify-fulfill-1001');
-    assert.equal(fulfilled.status,202);const fulfilledResult=await require('../helpers/provider-webhook-worker').result(database,fulfilled,providers);const fulfillmentFailure=fulfilledResult.accepted===1?null:(await database.query('SELECT error_code,error_message FROM connection_webhook_receipts WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,fulfilledResult.receiptId])).rows[0];assert.equal(fulfilledResult.accepted,1,JSON.stringify({fulfilledResult,fulfillmentFailure}));
+    assert.equal(fulfilled.status,202);let fulfilledResult=await require('../helpers/provider-webhook-worker').result(database,fulfilled,providers);
+    if(plan==='starter'){
+      assert.equal(fulfilledResult.processingStatus,'NEEDS_REVIEW');
+      const held=(await database.query('SELECT error_code,error_message FROM connection_webhook_receipts WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,fulfilledResult.receiptId])).rows[0];
+      assert.equal(held.error_code,'opening_inventory_cost_required');assert.match(held.error_message,/verified purchase or opening-stock costs/);
+      assert.equal((await database.query('SELECT status FROM sales_orders WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,mapped.foundry_record_id])).rows[0].status,'CONFIRMED');
+      assert.equal(Number((await database.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),6);
+      await establishCost();
+      await require('../../src/connections/postgres-webhook-inbox').resume(database,ctx,connectorId,fulfilledResult.receiptId);
+      fulfilledResult=await require('../helpers/provider-webhook-worker').result(database,fulfilled,providers);
+    }
+    const fulfillmentFailure=fulfilledResult.accepted===1?null:(await database.query('SELECT error_code,error_message FROM connection_webhook_receipts WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,fulfilledResult.receiptId])).rows[0];assert.equal(fulfilledResult.accepted,1,JSON.stringify({fulfilledResult,fulfillmentFailure}));
+    assert.equal(Number((await database.query("SELECT count(*) n FROM commercial_critical_warnings WHERE code='MISSING_COST_RATE' AND status='OPEN' AND detail->>'provider'='shopify' AND detail->>'operation'='commerce_webhook_verify'")).rows[0].n),0,'A verified local ownership-read wrapper must not close subscription checkout');
+    const wrapper=(await database.query("SELECT amount_minor,detail FROM commercial_cost_events WHERE provider='shopify' AND operation='commerce_webhook_verify' LIMIT 1")).rows[0];
+    assert.equal(Number(wrapper.amount_minor),0);assert.equal(wrapper.detail.feeResponsibility,'NO_EXTRA_PROVIDER_CALL_FOR_WRAPPER');
+    assert.deepEqual((await database.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[subscription[0].account_id])).rows,subscription);
     legacyShipment=false;
     assert.equal((await database.query('SELECT status FROM sales_orders WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,mapped.foundry_record_id])).rows[0].status,'FULFILLED');
+    for(const provider of ['stripe','cardknox'])await assert.rejects(require('../../src/payments/postgres-collection').queueRequest(database,ctx,mapped.foundry_record_id,{provider,purpose:'DEPOSIT'}),/Collect this Shopify order’s payment in Shopify/);
+    assert.equal(Number((await database.query('SELECT count(*) n FROM payment_requests WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),0,'Imported Shopify orders cannot be collected again through an external checkout');
     assert.equal(Number((await database.query(`SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),4);
     const shipmentJournal=(await database.query("SELECT posting_date FROM accounting_journal_entries WHERE workspace_id=$1 AND source_type='sale_fulfillment'",[ctx.workspaceId])).rows[0];

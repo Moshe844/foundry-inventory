@@ -55,6 +55,21 @@ async function get(database,workspaceId,id){const row=(await database.query(
   'SELECT * FROM payment_requests WHERE workspace_id=$1 AND id=$2',[workspaceId,id])).rows[0];
   if(!row)throw new NotFoundError('That payment request was not found.');return hydrate(row);}
 
+async function sourcePaymentAuthority(database,workspaceId,orderId){
+  const row=(await database.query(`SELECT c.provider_account_id,m.external_id FROM connection_mappings m
+    JOIN workspace_connectors c ON c.workspace_id=m.workspace_id AND c.id=m.connector_id
+    WHERE m.workspace_id=$1 AND m.entity_type='sales_order' AND m.foundry_record_id=$2
+      AND c.provider_type='shopify' LIMIT 1`,[workspaceId,orderId])).rows[0];
+  if(!row)return null;
+  const shop=String(row.provider_account_id||''),externalId=String(row.external_id||'').split('/').at(-1);
+  return {provider:'shopify',message:'Collect this Shopify order’s payment in Shopify. StockChief keeps the order linked to its original checkout.',
+    url:/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shop)&&/^\d+$/.test(externalId)?'https://'+shop+'/admin/orders/'+externalId:null};
+}
+async function assertPaymentRequestAllowed(database,workspaceId,orderId){
+  const source=await sourcePaymentAuthority(database,workspaceId,orderId);
+  if(source)throw new ValidationError(source.message);
+}
+
 async function queueRequest(database,ctx,orderId,input={}){
   const providerName=String(input.provider||'stripe').toLowerCase();
   const purpose=['DEPOSIT','BALANCE','FULL'].includes(input.purpose)?input.purpose:'BALANCE';
@@ -65,6 +80,7 @@ async function queueRequest(database,ctx,orderId,input={}){
       FROM sales_orders orders JOIN customers customer ON customer.id=orders.customer_id
       WHERE orders.workspace_id=$1 AND orders.id=$2 FOR UPDATE OF orders`,[ctx.workspaceId,orderId])).rows[0];
     if(!order)throw new NotFoundError('That sales order was not found.');
+    await assertPaymentRequestAllowed(client,ctx.workspaceId,orderId);
     if(!order.customer_email)throw new ValidationError(`${order.customer_name} needs an email address before StockChief can prepare a payment link.`);
     const invoice=purpose==='DEPOSIT'?null:(await client.query(`SELECT * FROM accounting_customer_invoices
       WHERE workspace_id=$1 AND sales_order_id=$2 AND status IN ('OPEN','PARTIALLY_PAID')
@@ -131,6 +147,7 @@ async function executeRequestEffect(database,workspaceId,effectId,options={}){
       WHERE request.workspace_id=$1 AND request.id=$2`,[workspaceId,input.requestId])).rows[0];
     if(!request||request.status!=='PENDING')throw Object.assign(new ValidationError('That payment request is no longer pending.'),
       {code:'payment_request_not_pending',status:409});
+    await assertPaymentRequestAllowed(database,workspaceId,request.sales_order_id);
     const account=await accountFor(database,workspaceId,effect.provider);
     const provider=options.provider||providerRegistry.get(effect.provider);
     const ctx=await providerContext(account,options,database);
@@ -382,7 +399,7 @@ async function availableProviders(database,workspaceId){return (await database.q
 // the provider, never voided by hand.
 function providerReceiptKey(providerName,requestId,cumulative){return `${providerName}:${requestId}:paid:${cumulative}`;}
 function isProviderReceipt(sourceKey){return /^[^:]+:[^:]+:paid:\d+$/.test(String(sourceKey||''));}
-module.exports={providerReceiptKey,isProviderReceipt,hydrate,get,listForOrder,accountFor,providerContext,queueRequest,executeRequestEffect,receiveVerifiedEvent,availableProviders,
+module.exports={providerReceiptKey,isProviderReceipt,hydrate,get,listForOrder,accountFor,providerContext,sourcePaymentAuthority,queueRequest,executeRequestEffect,receiveVerifiedEvent,availableProviders,
   queueCustomerReturnRefund,executeRefundEffect};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{queueRequest:'payments.customer',
   executeRequestEffect:'payments.customer',executeRefundEffect:'payments.customer'});
