@@ -32,9 +32,10 @@ test('privacy controls and scoped access review work on Starter, Growth and Pro 
  await assert.rejects(holds.saveCustomerChoice(db,ctx,'fixture-customer',{mode:'manual',expected:'false'}),/changed/);
  await db.query("UPDATE account_subscriptions SET status='CANCELLED' WHERE account_id=$1",[f.owner.accountId]);
  const readonly=await browser.get('/sales/customers/fixture-customer').expect(200);
- await browser.post('/sales/customers/fixture-customer/decision-preference').type('form').send({_csrf:f.csrf(readonly.text),mode:'manual',expected:'true'}).expect(303);
+ await browser.post('/sales/customers/fixture-customer/decision-preference').type('form').send({_csrf:f.csrf(readonly.text),mode:'manual',expected:'true'}).expect(303).expect('Location','/sales/customers/fixture-customer');
+ assert.equal((await db.query("SELECT automated_credit_decisions FROM customers WHERE workspace_id=$1 AND id='fixture-customer'",[ctx.workspaceId])).rows[0].automated_credit_decisions,false,'Read-only privacy requests must actually change the preference, rather than redirect to an upgrade.');
  const readonlyReview=await browser.get('/settings/privacy/access').expect(200);
- await browser.post('/settings/privacy/access-review').type('form').send({_csrf:f.csrf(readonlyReview.text),reviewed:'yes'}).expect(303);
+ await browser.post('/settings/privacy/access-review').type('form').send({_csrf:f.csrf(readonlyReview.text),reviewed:'yes'}).expect(303).expect('Location','/settings/privacy/access');
  assert.equal((await db.query('SELECT status FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows[0].status,'CANCELLED','Privacy rights cannot reactivate billing.');
 
  // Verify no anonymous token/URL is copied into the event and recent history is

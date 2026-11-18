@@ -22,6 +22,9 @@ const ROUTES=Object.freeze([
 ]);
 function middleware(database){return async(req,res,next)=>{try{
  if(!req.ctx)return next();
+ // A privacy preference is not paid sales authority. Its handler still checks
+ // the current owner, customer scope, CSRF and the exact saved preference.
+ if(/^\/sales\/customers\/[^/]+\/decision-preference$/.test(req.path))return next();
  if(['GET','HEAD','OPTIONS'].includes(req.method)&&!/\/(?:launch|callback|return)$/.test(req.path))return next();
  for(const [pattern,capability] of ROUTES){if(pattern.test(req.path))await entitlements.assertCapability(database,
   {accountId:req.workspace.owner_account_id,workspaceId:req.ctx.workspaceId},capability);}
