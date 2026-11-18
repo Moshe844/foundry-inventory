@@ -13,7 +13,7 @@ test('production Stripe OAuth proves each paid plan, preserves billing and refus
  await require('../../src/db/migrate-postgres').migratePostgres(db);
  const connect=require('../../src/payments/postgres-connect'),release=require('../../src/commercial/release');
  const auth=require('../../src/domain/postgres-auth-service'),qualification=require('../../src/payments/stripe-live-qualification');
- const accounts=new Map(),grants=new Map(),calls=[],invoices=new Map();
+ const accounts=new Map(),grants=new Map(),calls=[],invoices=new Map(),refunds=new Map();
  global.fetch=async(input,options={})=>{
   const url=new URL(input);assert(['api.stripe.com','connect.stripe.com'].includes(url.hostname),'Synthetic fixture forbids all other provider calls');
   calls.push({host:url.hostname,path:url.pathname,method:options.method||'GET'});
@@ -26,12 +26,21 @@ test('production Stripe OAuth proves each paid plan, preserves billing and refus
   }
   if(url.hostname==='api.stripe.com'){
    const merchant=options.headers['Stripe-Account'];assert(accounts.has(merchant),'Every financial API request must belong to its own merchant');
-   assert(options.headers['Idempotency-Key'],'Financial writes require idempotency');
+   if((options.method||'GET')!=='GET')assert(options.headers['Idempotency-Key'],'Financial writes require idempotency');
    const form=new URLSearchParams(options.body);
    if(url.pathname==='/v1/customers')return Response.json({id:merchant.replace(/^acct_/,'cus_')});
    if(url.pathname==='/v1/invoices'){const id=merchant.replace(/^acct_/,'in_');invoices.set(id,{id,total:0,status:'draft'});return Response.json({id});}
    if(url.pathname==='/v1/invoiceitems'){const invoice=invoices.get(form.get('invoice'));assert(invoice);invoice.total=Number(form.get('amount'));return Response.json({id:'ii_'+merchant});}
    if(url.pathname==='/v1/invoices/'+merchant.replace(/^acct_/,'in_')+'/finalize'){const invoice=invoices.get(merchant.replace(/^acct_/,'in_'));invoice.status='open';return Response.json({...invoice,hosted_invoice_url:'https://invoice.stripe.com/i/'+invoice.id});}
+   if(url.pathname==='/v1/refunds'&&options.method==='POST'){
+    const plan=merchant.replace('acct_Merchant',''),id=merchant.replace(/^acct_/,'re_');
+    assert.equal(form.get('payment_intent'),'pi_'+plan);assert.equal(Number(form.get('amount')),1200);assert(form.get('metadata[stockchief_refund_request_id]'));
+    const r={id,amount:1200,currency:'usd',payment_intent:'pi_'+plan,status:plan==='growth'?'pending':'succeeded',metadata:{stockchief_refund_request_id:form.get('metadata[stockchief_refund_request_id]')}};refunds.set(id,r);
+    if(plan==='pro')throw new TypeError('Synthetic response lost after Stripe created the refund');
+    return Response.json(r);
+   }
+   if(url.pathname==='/v1/refunds')return Response.json({data:[...refunds.values()].filter(r=>r.payment_intent===url.searchParams.get('payment_intent')),has_more:false});
+   if(url.pathname.startsWith('/v1/refunds/')){const r=refunds.get(url.pathname.split('/').at(-1));assert(r);return Response.json(r);}
   }
   throw Error('Unexpected Stripe operation '+url.pathname);
  };
@@ -98,6 +107,64 @@ test('production Stripe OAuth proves each paid plan, preserves billing and refus
   assert.equal((await collection.get(db,f.owner.workspaceId,queued.request.id)).paidMinor,2400);
   assert.equal(Number((await db.query('SELECT count(*) AS n FROM accounting_payments WHERE workspace_id=$1 AND sales_order_id=$2',[f.owner.workspaceId,order.salesOrderId])).rows[0].n),1);
   assert.equal(await release.isOpen(db),true,'Financial requests and signed reconciliation must not close subscription signup');
+  assert.deepEqual((await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows,before);
+  const returns=require('../../src/operations/postgres-returns'),quarantine=await locations.createLocation(db,f.ctx,{name:'Returns',kind:'staging',parentLocationId:location.id});
+  const requested=await returns.requestCustomerReturn(db,f.ctx,{salesOrderId:order.salesOrderId,quarantineLocationId:quarantine.id,resolution:'REFUND',reason:'Provider qualification',lines:[{salesOrderLineId:order.lineIds[0],quantity:1}],idempotencyKey:'return-'+f.plan});
+  await returns.authorizeCustomerReturn(db,f.ctx,requested.customerReturnId,{idempotencyKey:'authorize-return-'+f.plan});
+  const returned=await returns.getCustomerReturn(db,f.owner.workspaceId,requested.customerReturnId),lineId=returned.lines[0].id;
+  await returns.receiveCustomerReturn(db,f.ctx,requested.customerReturnId,{lines:[{lineId,quantity:1}],idempotencyKey:'receive-return-'+f.plan});
+  await returns.inspectCustomerReturn(db,f.ctx,requested.customerReturnId,{lines:[{lineId,restock:1,scrap:0,repair:0,restockLocationId:location.id}],idempotencyKey:'inspect-return-'+f.plan});
+  const queuedRefund=await collection.queueCustomerReturnRefund(db,f.ctx,requested.customerReturnId,{});assert(queuedRefund.queued);
+  const handlers=require('../../src/operations/postgres-runtime-handlers').create(),jobs=require('../../src/operations/postgres-job-queue');
+  await jobs.processOne(db,{'provider.effect':handlers['provider.effect']},{owner:'refund-'+f.plan,leaseMs:30000});
+  const readRefund=async()=>(await db.query('SELECT * FROM payment_refund_requests WHERE id=$1',[queuedRefund.refund.id])).rows[0];
+  const postings=async()=>Number((await db.query('SELECT count(*) AS n FROM accounting_sale_refunds WHERE workspace_id=$1',[f.owner.workspaceId])).rows[0].n);
+  if(f.plan!=='starter'){
+   const held=await readRefund();assert.equal(held.status,'REVIEW',held.last_error);assert.equal(await postings(),0,'Pending or lost responses cannot invent cash refunds');
+   const r=refunds.get(f.accountId.replace(/^acct_/,'re_'));r.status='succeeded';
+   if(f.plan==='growth'){
+    const recovery=require('../../src/payments/stripe-return-refunds');
+    await assert.rejects(recovery.verify(db,fixtures[0].owner.workspaceId,queuedRefund.effectId,{system:true}),/not found/i);
+    await assert.rejects(recovery.verify(db,f.owner.workspaceId,queuedRefund.effectId,{actorId:'not-an-owner'}),/current owner/i);
+    await db.query("UPDATE users SET role='viewer' WHERE workspace_id=$1 AND id=$2",[f.owner.workspaceId,f.owner.userId]);
+    await assert.rejects(recovery.verify(db,f.owner.workspaceId,queuedRefund.effectId,{actorId:f.owner.userId}),/current owner/i);
+    await db.query("UPDATE users SET role='owner' WHERE workspace_id=$1 AND id=$2",[f.owner.workspaceId,f.owner.userId]);
+    for(const change of [{amount:1199},{currency:'eur'},{payment_intent:'pi_Different'}]){
+     const original={...r};Object.assign(r,change);
+     await assert.rejects(recovery.verify(db,f.owner.workspaceId,queuedRefund.effectId,{actorId:f.owner.userId}),/does not match/i);
+     assert.equal(await postings(),0);Object.assign(r,original);
+    }
+    r.status='failed';
+    const failed=await recovery.verify(db,f.owner.workspaceId,queuedRefund.effectId,{actorId:f.owner.userId});
+    assert.equal(failed.needsReview,true);assert.equal(await postings(),0);
+    r.status='succeeded';
+    const notification=await webhook({id:'evt_refund_growth',account:f.accountId,livemode:true,type:'refund.updated',data:{object:r}});assert.equal(notification.status,200,notification.text);
+   }else{
+    // Reproduce a worker stopping between the provider response and the saved
+    // return update. The maintenance sweep must discover the original request.
+    await db.query("UPDATE payment_refund_requests SET status='PENDING' WHERE id=$1",[queuedRefund.refund.id]);
+    await db.query("UPDATE stockchief_runtime.provider_effects SET error_code='worker_interrupted',updated_at=now()-interval '2 minutes' WHERE id=$1",[queuedRefund.effectId]);
+    await db.query("UPDATE stockchief_runtime.jobs SET status='COMPLETED' WHERE kind='payment.refund-status' AND payload->>'effectId'=$1",[queuedRefund.effectId]);
+    assert.equal((await require('../../src/payments/stripe-return-refunds').queueDue(db,Date.now()+360000)).queued,1);
+    assert.equal((await readRefund()).status,'REVIEW');
+    process.env.STOCKCHIEF_STRIPE_CONNECT_PILOT_WORKSPACES='';
+   }
+   const checked=await jobs.processOne(db,{'payment.refund-status':handlers['payment.refund-status']},{owner:'refund-read-'+f.plan,leaseMs:30000,now:Date.now()+480000});
+   assert.equal(checked?.status,'COMPLETED',JSON.stringify(checked));
+   process.env.STOCKCHIEF_STRIPE_CONNECT_PILOT_WORKSPACES=fixtures.map(x=>x.owner.workspaceId).join(',');
+  }
+  const settled=await readRefund();assert.equal(settled.status,'SUCCEEDED',settled.last_error);assert.equal(await postings(),1);
+  assert.equal(calls.filter(c=>c.path==='/v1/refunds'&&c.method==='POST').length,['starter','growth','pro'].indexOf(f.plan)+1,'Recovery must not send a second refund');
+  const replayed=await require('../../src/payments/stripe-return-refunds').verify(db,f.owner.workspaceId,queuedRefund.effectId,{system:true});assert.equal(replayed.replayed,true);assert.equal(await postings(),1);
+  if(f.plan==='starter'){
+   const r=refunds.get(f.accountId.replace(/^acct_/,'re_'));
+   const lateFailure={id:'evt_bank_returned_starter',account:f.accountId,livemode:true,type:'refund.failed',data:{object:{...r,status:'failed'}}};
+   assert.equal((await webhook(lateFailure)).status,200);
+   assert.equal((await webhook(lateFailure)).status,200);
+   assert.equal(Number((await db.query("SELECT count(*) AS n FROM connection_issues WHERE workspace_id=$1 AND issue_type='PAYMENT_REFUND_FAILED'",[f.owner.workspaceId])).rows[0].n),1);
+   assert.equal(await postings(),1,'A late failure creates an owner exception, never a duplicate or invented accounting reversal');
+  }
+  assert.equal(await release.isOpen(db),true,'Refund verification resolves the original usage hold without closing signup');
   assert.deepEqual((await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows,before);
  });
  await t.test('signed test events are ignored and deauthorization cannot be reversed by a later profile update',async()=>{

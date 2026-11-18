@@ -1356,7 +1356,7 @@ function createPostgresCommerceRouter(database,options={}){
     const [customerReturn,locationRows,refundRequestResult,managedRefund,refundAccess]=await Promise.all([
       returns.getCustomerReturn(database,req.ctx.workspaceId,req.params.id),
       commerce.locations(database,req.ctx.workspaceId),
-      database.query(`SELECT refund.*,effect.status AS effect_status,effect.error_message AS effect_error_message
+      database.query(`SELECT refund.*,effect.id AS effect_id,effect.status AS effect_status,effect.error_code AS effect_error_code,effect.error_message AS effect_error_message
         FROM payment_refund_requests refund LEFT JOIN stockchief_runtime.provider_effects effect
           ON effect.workspace_id=refund.workspace_id AND effect.kind='payment.refund.create'
           AND effect.payload->>'refundRequestId'=refund.id

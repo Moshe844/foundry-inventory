@@ -171,6 +171,7 @@ async function runtimeSweep(job,client,options={}){
   await require('../autopilot/briefing-email').enqueueDue(client,at);
   await require('../custody/postgres-billing').enqueueDue(client);
   await require('../payments/postgres-provenance').queueMissing(scopedDatabase(client));
+  await require('../payments/stripe-return-refunds').queueDue(scopedDatabase(client),now);
   const staleImportAt=new Date(now-15*60_000).toISOString();
   const staleEmailAt=new Date(now-5*60_000).toISOString();
   const paused=(await client.query(require('./paused-jobs-source').source())).rows;
@@ -884,6 +885,8 @@ function create(providers=defaultProviders,options={}){return {'webhook.deliver'
   'payment.provenance':external((job,database)=>require('../payments/postgres-provenance').reconcile(database,job.workspaceId,job.payload.requestId,{
     providerResolver:options.paymentProviderResolver,accountContext:options.paymentAccountContext,sourceEventId:job.payload.sourceEventId})),
   'provider.effect':external((job,database)=>providerEffect(job,database,options,providers)),
+  'payment.refund-status':external((job,database)=>require('../payments/stripe-return-refunds').verify(database,job.workspaceId,job.payload.effectId,{
+    system:true,providerResolver:options.paymentProviderResolver,accountContext:options.paymentAccountContext})),
   [require('./agent-return-refund-protocol').JOB]:external((job,database)=>providerEffect(job,database,options,providers)),
   ...Object.fromEntries(require('./agent-mail-protocol').kinds.map(kind=>[kind,external(async(job,database)=>{require('./agent-mail-protocol').assertJob(await providerEffects.get(database,job.workspaceId,job.payload?.effectId),job.kind);return providerEffect(job,database,options,providers);})])),
   'agent.mail.supplier_direct_purchase.v1':external(async(job,database)=>{

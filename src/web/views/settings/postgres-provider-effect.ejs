@@ -10,6 +10,9 @@
     <% if(effect.kind==='accounting.journal.export'&&effect.status==='AMBIGUOUS'&&effect.providerReference?.externalId&&effect.providerReference?.journalSnapshot){ %>
       <form method="post" action="/settings/operations/provider-effects/<%= effect.id %>/verify"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button type="submit" class="btn btn--primary">Verify existing accounting record</button></form>
     <% } %>
+    <% if(effect.kind==='payment.refund.create'&&effect.provider==='stripe'&&effect.status==='AMBIGUOUS'&&!effect.payload.agentRefundPartId&&!effect.payload.customerCreditPartId){ %>
+      <form method="post" action="/settings/operations/provider-effects/<%= effect.id %>/verify"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button type="submit" class="btn btn--primary">Check original Stripe refund</button></form>
+    <% } %>
   </div>
   <p class="rm-disclose"><a href="/settings/operations#dead-letters">Open operations</a><a href="/needs-you">Back to Needs you</a></p>
 </section>

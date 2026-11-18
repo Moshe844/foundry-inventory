@@ -20,7 +20,11 @@ function createPostgresOperationsRouter(database){
       backTo:{href:'/needs-you',label:'Needs you'},effect});
   }));
   router.post('/settings/operations/provider-effects/:id/verify',asyncRoute(async(req,res)=>{
-    try{await require('../../accounting/postgres-integration-sync').verifyExistingExport(database,req.ctx,req.params.id);req.flash('success','The existing provider record matches the canonical journal. Nothing was resent.');}
+    try{const effect=await providerEffects.get(database,req.ctx.workspaceId,req.params.id);
+      if(effect.kind==='payment.refund.create'&&effect.provider==='stripe'&&!effect.payload.agentRefundPartId&&!effect.payload.customerCreditPartId){
+        const result=await require('../../payments/stripe-return-refunds').verify(database,req.ctx.workspaceId,effect.id,{actorId:req.ctx.actorId});
+        req.flash(result.financialPostingCreated||result.replayed?'success':'info',result.financialPostingCreated||result.replayed?'The original Stripe refund was confirmed. Nothing was resent.':'The original Stripe refund is still awaiting confirmation. Nothing was resent.');
+      }else{await require('../../accounting/postgres-integration-sync').verifyExistingExport(database,req.ctx,req.params.id);req.flash('success','The existing provider record matches the canonical journal. Nothing was resent.');}}
     catch(error){req.flash('warn','Verification is still pending. No operation was resent. '+(Number(error.status)<500?error.message:'Try verifying again when the provider is available.'));}
     return res.redirect(303,'/settings/operations/provider-effects/'+encodeURIComponent(req.params.id));
   }));

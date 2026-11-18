@@ -210,6 +210,7 @@ async function receiveVerifiedEvent(database,workspaceId,providerName,event,opti
       payment_id=$3,processed_at=$4 WHERE id=$1`,[eventId,outcome,paymentId,nowIso()]);
       return {applied:Boolean(paymentId),replayed:false,outcome,paymentId,requestId:request?.id||null};};
     const stripeEventType=String(event.type||'').replace(/^v\d+\./,'');
+    if(providerName==='stripe'&&await require('./stripe-return-refunds').queueEvent(scopedDatabase(client),workspaceId,event))return finish('Queued verification of the original Stripe refund. No new refund was sent.');
     if(providerName==='stripe'&&['account.updated','account.application.deauthorized'].includes(stripeEventType)){
       const account=(await client.query("SELECT p.*,c.config FROM payment_connect_accounts p JOIN workspace_connectors c ON c.id=p.connector_id AND c.workspace_id=p.workspace_id WHERE p.workspace_id=$1 AND p.provider='stripe' AND p.provider_account_id=$2 FOR UPDATE OF p,c",[workspaceId,event.account])).rows[0];
       if(!account)return finish('The merchant connection changed; no account state was replaced.');
@@ -325,6 +326,7 @@ async function executeRefundEffect(database,workspaceId,effectId,options={}){
   const current=await providerEffects.get(database,workspaceId,effectId);
   if(current.payload.agentRefundPartId)return require('../operations/agent-return-refunds').executeProviderPart(database,current,options);
   if(current.payload.customerCreditPartId)return require('../accounting/agent-customer-credits').executeProviderPart(database,current,options);
+  if(current.provider==='stripe'&&require('./stripe-live-qualification').production())return require('./stripe-return-refunds').execute(database,current,options);
   const claimed=await providerEffects.claim(database,workspaceId,effectId);
   if(claimed.replayed)return {refundId:claimed.effect.result?.refundId||null,replayed:true};
   const effect=claimed.effect;let providerCalled=false;
