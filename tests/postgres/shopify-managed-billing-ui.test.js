@@ -59,7 +59,7 @@ test('Shopify billing returns activate verified plans and recover expired handof
     await page.goto(base+'/login');await page.locator('input[name="email"]').fill(lastAccount.email);await page.locator('input[name="password"]').fill(lastAccount.password);await page.locator('form[action="/login"] button[type="submit"]').click();
     await page.goto(base+'/settings/billing');await page.getByRole('heading',{name:'Plan & billing',exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'Manage plan in Shopify',exact:true}).count(),1);assert.equal(await page.locator('form[action="/billing/checkout"]').count(),0);
     await page.screenshot({path:'output/shopify-managed-billing-pro-browser.png',fullPage:true});
-    await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'Close menu',exact:true}).click();await page.screenshot({path:'output/shopify-managed-billing-pro-mobile.png',fullPage:true});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true,'Billing fits a mobile screen');
+    await page.setViewportSize({width:390,height:844});await page.waitForFunction(()=>document.querySelector('.sc-sidebar').getBoundingClientRect().right<=0);await page.screenshot({path:'output/shopify-managed-billing-pro-mobile.png',fullPage:true});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true,'Billing fits a mobile screen');
    }finally{if(browser)await browser.close();await new Promise(resolve=>server.close(resolve));}
   });
  }finally{global.fetch=oldFetch;await app.locals.sessionStore.close();await db.close();await cluster.stop();process.env=env;}
