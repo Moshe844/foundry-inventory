@@ -18,15 +18,21 @@ function browser(value){
 }
 function pilotShop(shop){return Object.values(launch.productionShopifyPilots()).some(shops=>shops.includes(shop));}
 const metadata=row=>typeof row.metadata==='string'?JSON.parse(row.metadata):row.metadata||{};
-function approvedShop(shop,row){
+function approvedShop(shop,row,{allowHandoff=false}={}){
  if(process.env.STOCKCHIEF_RUNTIME_ENV!=='production'||pilotShop(shop)||launch.publicShopifyEnabled())return;
- // A signed start may authorize first. No catalog, inventory or billing is
- // admitted until Shopify itself verifies the development store identity.
+ // Authentication precedes operational admission. Shopify's own installer
+ // checks can use non-development stores; a verified handoff may show sign-in
+ // without admitting any inventory, catalogue, or billing operation.
  if(row&&['AUTHORIZING','EXCHANGING'].includes(row.status))return;
  const proof=row&&metadata(row).shopifyInstallationIdentity;
- if(proof?.developmentStore===true&&proof.shop===shop&&proof.appId===require('../commercial/shopify-billing').configuration().appId)return;
+ if(proof?.shop===shop&&proof.appId===require('../commercial/shopify-billing').configuration().appId){
+   if(proof.developmentStore===true)return;
+   if(allowHandoff&&row.status==='AUTHORIZED'&&row.ciphertext&&proof.developmentStore===false&&/^gid:\/\/shopify\/Shop\/\d+$/.test(proof.shopId||''))return;
+ }
  throw new AuthorizationError('This app is currently available to verified Shopify development stores for review. Public-store connections open after Shopify approval.');
 }
+function assertActivationApproved(row){approvedShop(row.shop,{...row,status:'ACTIVATING'});}
+function activationPending(row){try{assertActivationApproved(row);return false;}catch(error){if(error instanceof AuthorizationError)return true;throw error;}}
 async function existingReviewIdentity(database,existing,shop){
  if(process.env.STOCKCHIEF_RUNTIME_ENV!=='production'||pilotShop(shop)||launch.publicShopifyEnabled())return null;
  const b=(await database.query(`SELECT b.app_id,b.shop_id,b.shop,b.development_store FROM commercial_shopify_subscriptions b JOIN workspaces w ON w.owner_account_id=b.account_id
@@ -80,7 +86,7 @@ async function read(database,cookie){
  const row=(await database.query('SELECT * FROM shopify_public_installs WHERE id=$1 AND browser_hash=$2 AND expires_at>now()',[value.id,value.proof])).rows[0];
  if(!row)throw new AuthenticationError('This Shopify connection has expired. Open StockChief from Shopify again.');
  if(row.client_id!==profiles.profile('public').clientId)throw new AuthenticationError('The Shopify application changed. Start again from Shopify.');
- approvedShop(row.shop,row);return row;
+ approvedShop(row.shop,row,{allowHandoff:true});return {...row,activationPending:activationPending(row)};
 }
 async function complete(database,cookie,query){
  const row=await read(database,cookie);
@@ -111,11 +117,8 @@ async function completeLocked(database,cookie,query){
    if(process.env.STOCKCHIEF_RUNTIME_ENV==='production'&&require('../commercial/shopify-billing').configured()){
     phase='STORE_IDENTITY';
     const identity=await require('../commercial/shopify-billing').readIdentity(result.credentials,row.shop);
-    phase='STORE_ADMISSION';
-    if(!pilotShop(row.shop)&&!identity.developmentStore&&!launch.publicShopifyEnabled())throw Object.assign(new AuthorizationError('Public-store connections open after Shopify approval. This store is not a development store.'),{shopifyInstallationReason:'STORE_REQUIRES_APPROVAL'});
     nextMetadata.shopifyInstallationIdentity=identity;result.credentials.shopifyShopId=identity.shopId;
    }
-   approvedShop(row.shop,{...row,status:'AUTHORIZED',metadata:nextMetadata});
    const sealed=credentials.encrypt(result);
    phase='SAVE_HANDOFF';
    const saved=await database.query(`UPDATE shopify_public_installs SET status='AUTHORIZED',ciphertext=$2,iv=$3,auth_tag=$4,metadata=$5
@@ -144,7 +147,8 @@ async function attach(database,account,cookie,workspaceId,options={}){
 }
 async function attachLocked(database,account,cookie,workspaceId,{requestOrigin}={}){
  if(!account?.email_verified_at)throw new AuthorizationError('Verify your StockChief email before connecting a store.');
- const row=await read(database,cookie),choice=(await choices(database,account,row)).find(w=>w.id===workspaceId);
+ const row=await read(database,cookie);assertActivationApproved(row);
+ const choice=(await choices(database,account,row)).find(w=>w.id===workspaceId);
  if(!choice)throw new AuthorizationError('Choose an inventory you own. Restricted team members cannot connect this store.');
  const ctx={workspaceId,actorId:choice.actor_id,accountId:account.id};
  const linked=await database.transaction(async client=>{
@@ -182,4 +186,4 @@ async function attachLocked(database,account,cookie,workspaceId,{requestOrigin}=
  await require('../operations/postgres-job-queue').enqueue(database,{workspaceId,kind:'provider.catalog-sync',idempotencyKey:`shopify-public-install:${row.id}`,payload:{connectorId,source:'authorization'},priority:25,maxAttempts:5});
  return connection;
 }
-module.exports={PATH,TTL_MS,begin,read,complete,choices,attach,purge};
+module.exports={PATH,TTL_MS,begin,read,complete,choices,attach,purge,assertActivationApproved};

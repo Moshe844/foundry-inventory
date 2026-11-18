@@ -9,6 +9,7 @@
  <p>Shopify access is approved. Choose where to use this store in StockChief.</p>
  <% if(!account){ %><a class="sc-shopify-action" href="/login?next=%2Fintegrations%2Fshopify%2Fconnect">Sign in to StockChief</a><p>Use the owner account for your inventory, or <a href="/register">create your StockChief account</a>.</p>
  <% }else if(!account.email_verified_at){ %><p>Verify your StockChief email before connecting this store.</p><a class="sc-shopify-action" href="/verify-email/pending">Verify my email</a>
+ <% }else if(installation.activationPending){ %><p>Your Shopify store is authorized. New live-store connections will be available after Shopify approves StockChief. Your existing inventory and subscription are unchanged.</p><a class="sc-shopify-action" href="/settings/connections">Return to connections</a>
  <% }else if(choices.length&&!(locals.shopifyBilling?.source==='SHOPIFY'&&!locals.shopifyBilling?.canOperate)){ %>
  <form method="post" action="/integrations/shopify/connect" class="sc-shopify-form">
  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><label for="shopify-inventory">Your inventory</label>

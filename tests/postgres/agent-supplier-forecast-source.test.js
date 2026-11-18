@@ -7,7 +7,7 @@ test('a supplier forecast holds only that supplier’s products, our owned stock
  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx}=f,source=require('../../src/purchasing/supplier-forecast-source'),forecast=require('../../src/forecasting/agent-demand-forecast');
  const {addDays}=require('../../src/accounting/customer-money'),today=await require('../../src/lib/business-time').today(db,ctx.workspaceId),sku=f.item.skuIds[0],at=new Date().toISOString();
  await db.query("UPDATE suppliers SET email='planner@example.test' WHERE workspace_id=$1 AND id='fixture-supplier'",[ctx.workspaceId]);
- const catalog=require('../../src/domain/postgres-catalog-service'),fresh=await catalog.createItem(db,ctx,{name:'New product with no history',baseCode:'NEW-'+randomUUID().slice(0,6),trackingMode:'quantity'});
+ const catalog=require('../../src/domain/postgres-catalog-service'),fresh=await catalog.createItem(db,ctx,{name:'New product with no history',baseCode:'NEW-1200-'+randomUUID().slice(0,6),trackingMode:'quantity'});
  const other=await catalog.createItem(db,ctx,{name:'Bought elsewhere',baseCode:'ELSE-'+randomUUID().slice(0,6),trackingMode:'quantity'}),dropped=await catalog.createItem(db,ctx,{name:'No longer bought',baseCode:'OLD-'+randomUUID().slice(0,6),trackingMode:'quantity'});
  await db.query("INSERT INTO suppliers(id,workspace_id,name,status,currency,created_at,updated_at) VALUES('other-supplier',$1,'Other supplier','active','USD',$2,$2)",[ctx.workspaceId,at]);
  const link=(supplier,skuId,active=1)=>db.query(`INSERT INTO supplier_items(id,workspace_id,supplier_id,sku_id,is_active,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$6)
@@ -39,7 +39,14 @@ test('a supplier forecast holds only that supplier’s products, our owned stock
   assert.equal(row.total,Math.round(row.weeks.reduce((n,w)=>n+w.quantity,0)*100)/100);assert.equal(row.method,fitted.label);
   assert.equal(unknown.total,null);assert(unknown.weeks.every(w=>w.quantity===null));assert.equal(unknown.method,null);
   assert.equal(p.recipient,'planner@example.test');assert.equal(p.weekStart,source.monday(today));assert.equal(p.historyThrough,addDays(today,-1));
-  assert.equal(JSON.stringify(p).includes('1200'),false,'No prices');assert.equal(JSON.stringify(p).includes('Receiver'),false,'No customers');
+  // Product identifiers may legitimately contain the same digits as a price.
+  // Reject financial fields and the actual numeric price, not identifier text.
+  const noPrices=value=>{if(!value||typeof value!=='object')return;for(const [key,child] of Object.entries(value)){
+    assert(!/price|cost/i.test(key),'No financial field: '+key);
+    if(typeof child==='number')assert.notEqual(child,1200,'No numeric unit price');
+    noPrices(child);
+  }};
+  noPrices(p);assert.equal(JSON.stringify(p).includes('Receiver'),false,'No customers');
  }
  await db.query("UPDATE users SET role='clerk' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);await assert.rejects(source.access(db,ctx),/Only the inventory owner/);
  assert.equal(await f.balance(),stock,'Reading the forecast changes no stock');
