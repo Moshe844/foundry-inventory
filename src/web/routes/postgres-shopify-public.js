@@ -54,7 +54,9 @@ function createRouter(database,{publicOrigin}={}){
      if(!req.user&&choices.length===1){req.session.workspaceId=choices[0].id;res.locals.csrfToken=require('../middleware').scopedCsrfToken(req.session);}
    }}catch(problem){
      if(!installation&&req.path===path+'/connect'&&problem instanceof AuthenticationError){const shop=await recoveryShop(req);if(shop)return res.redirect(303,require('../../commercial/shopify-billing').recoveryUrl(shop));}
-     error=problem.message;
+     // Keep the callback's actual failure. A rejected handoff is deliberately
+     // no longer usable, so rereading it must not replace the useful reason.
+     if(!error)error=problem.message;
    }
    return res.status(error?400:200).render('connections/shopify-public',{layout:false,title:'Connect Shopify',installation,choices,shopifyBilling,account:req.account||null,error,csrfToken:res.locals.csrfToken,assetVersion:res.locals.assetVersion});
  }
