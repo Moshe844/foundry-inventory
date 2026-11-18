@@ -39,6 +39,8 @@ test('managed Shopify billing activates exact plans, preserves Stripe ownership 
   });
   await t.test('foreign provider evidence and unsigned or unknown plan values cannot activate an account',async()=>{
    const f=await fixture('growth');await service.reserve(db,f.account,f.owner);
+   await db.query("UPDATE commercial_shopify_subscriptions SET reserved_until=now()-interval '2 days' WHERE account_id=$1",[f.account.id]);
+   await assert.rejects(()=>require('../../src/commercial/service').beginCheckout(db,f.account,{planId:'starter',interval:'monthly'}),/managed through Shopify/,'A delayed Shopify return cannot open a second Stripe checkout after its browser reservation expires');
    await assert.rejects(()=>service.apply(db,f.account.id,f.owner,{...f.remote,shop:{...f.remote.shop,id:'gid://shopify/Shop/999999'}},f.events),/another store/);
    await assert.rejects(()=>service.apply(db,f.account.id,f.owner,f.remote,[{...f.events[0],subject:{id:'gid://shopify/App/0'}}]),/another subscription/);
    assert.equal(await ent.subscriptionFor(db,f.account.id),null);

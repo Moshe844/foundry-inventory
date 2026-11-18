@@ -11,14 +11,16 @@ async function get(db,accountId){return (await db.query('SELECT * FROM commercia
 async function assertNoStripe(db,accountId){
  const sub=(await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[accountId])).rows[0];
  if(sub?.stripe_subscription_id)throw new ValidationError('Your StockChief subscription is billed through Stripe. Keep using that subscription; a second Shopify subscription was not requested.');
- if((await db.query("SELECT 1 FROM commercial_checkout_attempts WHERE account_id=$1 AND status IN('CREATED','OPEN') AND created_at>now()-interval '1 day' LIMIT 1",[accountId])).rows.length)
+ if((await db.query("SELECT 1 FROM commercial_checkout_attempts WHERE account_id=$1 AND status IN('CREATED','OPEN') LIMIT 1",[accountId])).rows.length)
    throw new ValidationError('A Stripe checkout is already in progress. Finish or close it before choosing Shopify billing.');
  return sub;
 }
 async function assertNoShopify(db,accountId){
  const row=await get(db,accountId);
  const sub=(await db.query('SELECT source FROM account_subscriptions WHERE account_id=$1',[accountId])).rows[0];
- if(sub?.source==='SHOPIFY'||row&&(row.status==='ACTIVE'||row.status==='PENDING'&&new Date(row.reserved_until)>new Date()))throw new ValidationError('This subscription is managed through Shopify. Use Shopify to manage the plan; no second Stripe checkout was created.');
+ // An expired browser reservation is not evidence that Shopify never charged.
+ // Keep provider ownership until an explicit, reviewed migration clears it.
+ if(sub?.source==='SHOPIFY'||row)throw new ValidationError('This subscription is managed through Shopify. Use Shopify to manage the plan; no second Stripe checkout was created.');
 }
 async function reserve(db,account,owner){
  if(!account?.email_verified_at)throw new AuthorizationError('Verify your StockChief email before choosing a Shopify plan.');
