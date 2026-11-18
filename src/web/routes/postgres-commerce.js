@@ -1138,7 +1138,12 @@ function createPostgresCommerceRouter(database,options={}){
     return res.page('sales/postgres-customer',{title:customer.name,nav:'sales',customer,habits,
       orders:orders.rows,balanceMinor:Number(balance.rows[0].minor),currency:settings.rows[0]?.base_currency||'USD',
       terms,depositInput:terms?.deposit_minor==null?'':require('../../domain/currency').fromMinor(terms.deposit_minor,terms.deposit_currency||settings.rows[0]?.base_currency||'USD'),
-      canEditTerms:req.user?.role==='owner'&&customer.record_state==='ACTIVE'});
+      canEditPrivacy:req.user?.role==='owner',canEditTerms:req.user?.role==='owner'&&customer.record_state==='ACTIVE'});
+  }));
+  router.post('/sales/customers/:id/decision-preference',requirePermission(permissions.ADMIN,'manage customer privacy choices'),asyncRoute(async(req,res)=>{
+    const result=await require('../../sales/agent-credit-holds').saveCustomerChoice(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.automated?'Customer preference saved. Existing plan, authority and payment rules still apply.':'Manual credit review saved. Automatic rule holds released: '+result.released+'. Holds placed by a person and agreed payment terms still require your review.');
+    return res.redirect(303,'/sales/customers/'+encodeURIComponent(req.params.id));
   }));
   router.post('/sales/customers/:id/payment-terms',requirePermission(permissions.ADMIN,'save agreed customer terms'),asyncRoute(async(req,res)=>{
     await database.transaction(async c=>{

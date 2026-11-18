@@ -20,6 +20,8 @@ const OPERATIONAL_BYPASSES=[
   /^\/support\/(?:requests(?:\/|$)|agreement\/accept$)/,
   /^\/auth\/company\/(?:start|callback)$/,
   /^\/settings\/company-sign-in\/disable$/,
+  /^\/settings\/privacy(?:\/|$)/,
+  /^\/sales\/customers\/[^/]+\/decision-preference$/,
   /^\/verify-email(?:\/|$)/,
   /^\/reset-password$/,
   /^\/settings\/connections\/[^/]+\/(?:disconnect|pause)$/,

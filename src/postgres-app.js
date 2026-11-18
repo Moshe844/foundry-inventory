@@ -49,7 +49,7 @@ const postgresProjections = require('./projections/postgres-service');
 const postgresExploration = require('./onboarding/postgres-exploration');
 const { requireOperationalSubscription } = require('./web/commercial-middleware');
 
-function createPostgresApp({database,requestTracker=null,resourceDatabase=database,probeDatabase=database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,audioTranscriber=null,
+function createPostgresApp({database,requestTracker=null,resourceDatabase=database,probeDatabase=database,dataAccessDatabase=database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,audioTranscriber=null,
   connectionProviders=null,connectionPublicOrigin=null,shippingOptions=null,paymentOptions=null,agentInspection=false,agentInspectionGuard=null,
   commercialOptions=null,ssoOptions=null,ownerConsoleOptions=null,probeCacheMs={health:5000,readiness:1000},probeNow=Date.now,
   assetVersion=process.env.FOUNDRY_ASSET_VERSION||config.operations.releaseRef}={}) {
@@ -218,6 +218,7 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.use(require('./web/routes/postgres-mfa').createRouter(database));
   app.use(require('./web/routes/postgres-warehouse-stock').protection(database));
   app.use(require('./web/routes/postgres-company-sign-in').scopeProtection(database));
+  app.use(require('./operations/postgres-data-access').middleware(dataAccessDatabase));
   app.use(require('./commercial/enforcement').contextMiddleware(database));
   app.use(async(req,res,next)=>{try{const commercialAccountId=req.workspace?.owner_account_id||req.account?.id;
     res.locals.commercial=req.account

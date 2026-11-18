@@ -11,6 +11,15 @@
   </div><div class="card-foot"><button class="btn btn--primary" type="submit">Save customer</button></div></form>
   <section class="card"><div class="card-head"><h2>Order history</h2></div><div class="card-body"><% if(!orders.length){ %><p class="muted">No orders yet.</p><% } else { %><div class="list-rows"><% orders.forEach(function(order){ %><a class="list-row" href="/orders/<%= order.id %>"><strong><%= order.order_number %></strong><span><%= helpers.shortDate(order.order_date) %> · <%= order.status.replaceAll('_',' ') %></span></a><% }); %></div><% } %></div></section>
 </div>
+<section class="card section" id="decision-preference"><div class="card-head"><h2>Customer privacy · Credit decisions</h2></div><div class="card-body">
+<p><%= customer.automated_credit_decisions?'This customer can be included in overdue-order rules you authorize.':'This customer has opted for manual credit decisions. Automatic overdue-order holds and releases are stopped.' %></p>
+<p>Customers can request a person’s review through the business or <a href="mailto:support@stockchiefhq.com">StockChief support</a>. A person can review and contest a credit hold on the order.</p>
+<% if(locals.canEditPrivacy){ %><form class="form-stack" method="post" action="/sales/customers/<%= customer.id %>/decision-preference">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expected" value="<%= customer.automated_credit_decisions %>">
+<label>Credit decisions <select name="mode"><option value="manual" <%= !customer.automated_credit_decisions?'selected':'' %>>Manual review for this customer</option><option value="rules" <%= customer.automated_credit_decisions?'selected':'' %>>Allow authorized overdue-order rules</option></select></label>
+<p class="field-help">Choosing manual review releases holds placed by the automatic overdue rule. Review outstanding orders now. Holds placed by a person, deposits and agreed payment terms remain. Re-enabling rules does not change your plan or authorize a new rule.</p>
+<button class="btn" type="submit">Save decision preference</button></form><% } %>
+</div></section>
 <% if(locals.habits){ const h=habits.habit; %>
 <section class="card section" id="customer-habits" data-customer-habits><div class="card-head"><h2>Habits</h2></div><div class="card-body">
 <% if(habits.locked){ %><p class="cell-sub">Learning each customer’s habits comes with Growth. <a href="/billing">Review plans</a></p>

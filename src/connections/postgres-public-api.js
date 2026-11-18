@@ -74,6 +74,8 @@ async function authenticate(database,authorization,requiredScope){
       error.status=403;throw error;
     }
     await client.query('UPDATE public_api_clients SET last_used_at=$2 WHERE id=$1',[row.id,nowIso()]);
+    await require('../operations/postgres-data-access').record(client,{workspaceId:row.workspace_id,accountId:row.account_id,actorId:row.created_by_user_id},
+      {channel:'API',area:'public_api',reference:row.id});
     return {clientId:row.id,workspaceId:row.workspace_id,actorId:row.created_by_user_id,
       accountId:row.account_id,scopes:granted};
   },{isolation:'READ COMMITTED'});

@@ -158,6 +158,7 @@ async function portal(db,token){
 
 async function publicPage(db,token){
   const found=await portal(db,token),row=await get(db,found.workspace_id,found.id);
+  await require('../operations/postgres-data-access').record(db,{workspaceId:found.workspace_id},{channel:'PRIVATE_LINK',area:'freight_update',reference:found.id});
   return {reference:row.reference,mode:row.mode,status:row.status,eta:row.eta,revision:row.revision,statusLabels};
 }
 

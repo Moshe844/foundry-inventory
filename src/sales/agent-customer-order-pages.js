@@ -72,7 +72,8 @@ async function renew(db,ctx,id,input){return tx(db,async c=>{await owner(c,ctx,t
 async function publicContext(c,token,{lock=false}={}){
  if(typeof token!=='string'||! /^[A-Za-z0-9_-]{43}$/.test(token))throw new NotFoundError('This customer order link is unavailable. Contact the business.');
  const p=(await c.query('SELECT * FROM stockchief_runtime.agent_customer_order_pages WHERE token_hash=$1 AND enabled AND expires_at>clock_timestamp()'+(lock?' FOR UPDATE':''),[tokenHash(token)])).rows[0];if(!p)throw new NotFoundError('This customer order link is unavailable. Contact the business.');
- const ctx={workspaceId:p.workspace_id,actorId:p.authorized_by};await owner(c,ctx);await access(c,ctx,{lock:false,preorder:p.preorder_enabled});const f=await basis(c,ctx,p);if(f.hash!==p.source_hash)throw new ValidationError('The published order details need review by the business. Please contact them before sending a request.');return {p,ctx,f};
+ const ctx={workspaceId:p.workspace_id,actorId:p.authorized_by};await owner(c,ctx);await access(c,ctx,{lock:false,preorder:p.preorder_enabled});const f=await basis(c,ctx,p);if(f.hash!==p.source_hash)throw new ValidationError('The published order details need review by the business. Please contact them before sending a request.');
+ await require('../operations/postgres-data-access').record(c,{workspaceId:ctx.workspaceId},{channel:'PRIVATE_LINK',area:'customer_order',reference:p.id});return {p,ctx,f};
 }
 function requestLines(p,products,raw){
  if(!Array.isArray(raw)||!raw.length||raw.length>100)throw new ValidationError('Choose one to 100 listed products.');

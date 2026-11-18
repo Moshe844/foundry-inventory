@@ -107,6 +107,8 @@ async function lookup(db,token,{lock=false}={}){
   if(!link?.enabled||link.token_hash!==digest)throw source.unavailable();
   const ctx={workspaceId:hit.workspace_id,actorId:link.published_by};
   const receipt=await accepted(db,ctx.workspaceId,q.id,{lock});
+  await require('../operations/postgres-data-access').record(db,{workspaceId:ctx.workspaceId},
+    {channel:'PRIVATE_LINK',area:'customer_quote',reference:q.id});
   return {ctx,q,link,receipt};
 }
 

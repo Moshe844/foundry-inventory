@@ -5,6 +5,7 @@ function createCardknoxPublicRouter(database){const router=express.Router();
  router.use('/pay/cardknox',(req,res,next)=>{res.set('Cache-Control','no-store');res.set('Referrer-Policy','no-referrer');next();});
  router.get('/pay/cardknox/:token',asyncRoute(async(req,res)=>{
   const s=await gateway.session(database,req.params.token),held=await gateway.context(database,{workspace_id:s.workspace_id,connector_id:s.connector_id,provider_account_id:s.merchant_account_id});
+  await require('../../operations/postgres-data-access').record(database,{workspaceId:s.workspace_id},{channel:'PRIVATE_LINK',area:'payment_page',reference:s.id});
   const attempt=(await database.query('SELECT status FROM cardknox_payment_attempts WHERE workspace_id=$1 AND session_id=$2',[s.workspace_id,s.id])).rows[0];
   return res.render('payments/cardknox',{title:'Secure payment',business:s.business_name,amount:require('../../domain/currency').format(s.amount_minor,s.currency),
    token:req.params.token,ifieldsKey:held.ifieldsKey,status:s.request_status==='PAID'?'PAID':s.request_status!=='OPEN'?'CLOSED':attempt?.status||'READY',enabled:gateway.enabled(),message:null});

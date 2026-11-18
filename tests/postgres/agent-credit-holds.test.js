@@ -8,6 +8,29 @@ const modes=require('../../src/autopilot/job-modes');
 const autopilot=require('../../src/autopilot/postgres-service');
 const waves=require('../../src/operations/postgres-fulfillment-waves');
 
+test('customer manual processing releases automatic holds, preserves human decisions and survives worker replay',{timeout:300000},async t=>{
+ const f=await setup(t),{db,ctx}=f;await f.subscribe('pro');
+ await autopilot.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
+ const automatic=await f.order(),manual=await f.order();
+ await holds.holdByPerson(db,ctx,manual.salesOrderId);
+ await holds.configure(db,ctx,{mode:'on',days:'30'});
+ await holds.sweep(db,f.ws);assert.ok(await f.held(automatic.salesOrderId));
+ const termsBefore=(await db.query('SELECT * FROM customer_payment_terms WHERE workspace_id=$1',[f.ws])).rows;
+ const changed=await holds.saveCustomerChoice(db,ctx,'fixture-customer',{mode:'manual',expected:'true'});
+ assert(changed.released>0);assert.equal(await f.held(automatic.salesOrderId),undefined);
+ assert.equal((await f.held(manual.salesOrderId)).placed_by_kind,'PERSON');
+ await holds.sweep(db,f.ws);await f.work();
+ assert.equal(await f.held(automatic.salesOrderId),undefined,'A queued worker cannot reinstate the automatic decision.');
+ const fresh=await f.order();await f.work();await holds.sweep(db,f.ws);
+ await holds.assertCanRelease(db,f.ws,fresh.salesOrderId);
+ assert.equal(await f.held(fresh.salesOrderId),undefined);
+ await assert.rejects(holds.assertCanRelease(db,f.ws,manual.salesOrderId),/on credit hold/);
+ assert.deepEqual((await db.query('SELECT * FROM customer_payment_terms WHERE workspace_id=$1',[f.ws])).rows,termsBefore);
+ await f.subscribe('starter');
+ await holds.saveCustomerChoice(db,ctx,'fixture-customer',{mode:'rules',expected:'false'});
+ assert.equal((await holds.sweep(db,f.ws)).watching,true,'Re-enabling a privacy preference cannot grant paid automation.');
+});
+
 // One shipped parcel leaves the fixture customer a $12.00 invoice that the
 // test makes 40 days overdue. Each new order is a 1-unit pickup or parcel.
 async function setup(t){

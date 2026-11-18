@@ -2,6 +2,14 @@ name: Private Shopify release qualification
 on:
   pull_request:
     paths:
+      - src/postgres-app.js
+      - src/operations/postgres-data-access.js
+      - src/operations/postgres-retention.js
+      - src/sales/agent-credit-holds.js
+      - src/web/commercial-middleware.js
+      - src/web/views/public/data-protection.ejs
+      - src/web/views/public/legal.ejs
+      - tests/postgres/shopify-data-protection.test.js
       - src/commercial/release.js
       - src/commercial/connector-request-cost.js
       - src/commercial/operations.js
@@ -46,7 +54,7 @@ permissions:
 jobs:
   shopify-pilot:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       NODE_ENV: test
       FOUNDRY_SKIP_LOCAL_ENV: '1'
@@ -89,6 +97,10 @@ jobs:
           mkdir -p output/shopify-pilot-release
           git rev-parse HEAD:src | tee output/shopify-pilot-release/application-tree.txt
           node --test --test-force-exit --test-concurrency=2 tests/postgres/shopify-public-install.test.js tests/postgres/connection-popup-return.test.js tests/postgres/shopify-uninstall.test.js tests/postgres/shopify-refund-authority.test.js tests/postgres/shopify-webhooks.test.js tests/postgres/shopify-managed-billing.test.js tests/postgres/shopify-development-reactivation.test.js tests/postgres/shopify-managed-billing-ui.test.js tests/unit/shopify-managed-billing.test.js tests/unit/commercial-connector-request-cost.test.js tests/unit/commercial-launch-provider-policy.test.js tests/unit/shopify-token-lifecycle.test.js tests/unit/provider-sync-failure.test.js tests/postgres/commercial-provider-costs.test.js tests/postgres/subscription-guarantee.test.js tests/postgres/capacity-topups-browser.test.js tests/postgres/commercial-lifecycle-ui.test.js 2>&1 | tee output/shopify-pilot-release/checks.log
+      - name: Verify data protection, all-plan privacy rights and existing private disclosures
+        run: |
+          set -euo pipefail
+          node --test --test-force-exit --test-concurrency=2 tests/postgres/shopify-data-protection.test.js tests/postgres/agent-credit-holds.test.js tests/postgres/retention-cleanup.test.js tests/postgres/shopify-privacy.test.js tests/postgres/shopify-privacy-orders.test.js tests/postgres/round16-security-audit.test.js tests/postgres/round10-refund-retention.test.js tests/postgres/private-owner-console.test.js tests/postgres/public-api-ui.test.js tests/postgres/agent-customer-order-pages.test.js tests/postgres/agent-buyer-quote-acceptance.test.js tests/postgres/shipstation-custom-store.test.js tests/postgres/cardknox-gateway.test.js tests/postgres/agent-inbound-freight.test.js 2>&1 | tee output/shopify-pilot-release/data-protection.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
