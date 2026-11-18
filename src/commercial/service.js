@@ -64,6 +64,7 @@ async function validatePromotion(database,codeInput,planId,options={}){
 }
 
 async function beginCheckout(database, account, input, options = {}) {
+  await require('./postgres-shopify-billing').assertNoShopify(database,account.id);
   await release.assertSubscriptionCheckoutOpen(database,options);
   const plan=await getSelfServicePlan(database,input.planId);const interval=assertInterval(input.interval);
   const priceId=interval==='ANNUAL'?plan.stripe_annual_price_id:plan.stripe_monthly_price_id;
@@ -83,6 +84,8 @@ async function beginCheckout(database, account, input, options = {}) {
   if(current?.refunded_at&&(await database.query("SELECT 1 FROM commercial_subscription_refund_retention WHERE account_id=$1 AND status<>'PURGED' LIMIT 1",[account.id])).rows.length)throw new ValidationError('Your refunded inventories are read-only during their retention period. Export your records before the displayed deletion date. A new subscription can start after deletion finishes; no card has been charged.');
   const attemptId=newId('checkout');const promoCode=String(input.promoCode||'').trim().toUpperCase();let promotion=null;
   await database.transaction(async(client)=>{
+    await client.query('SELECT id FROM accounts WHERE id=$1 FOR UPDATE',[account.id]);
+    await require('./postgres-shopify-billing').assertNoShopify(client,account.id);
     if(promoCode){promotion=await validatePromotion(client,promoCode,plan.id,{lock:true});
       await client.query('UPDATE commercial_promo_codes SET redeemed_count=redeemed_count+1 WHERE code=$1',[promoCode]);}
     await client.query(`INSERT INTO commercial_checkout_attempts
@@ -223,6 +226,7 @@ async function upsertSubscription(client, data, options={}) {
   if(!requestedPlanId||!accountId)return null;
   const providerCreatedAt=options.providerCreatedAt||null;
   const existing=(await client.query('SELECT * FROM account_subscriptions WHERE account_id=$1 FOR UPDATE',[accountId])).rows[0];
+  if(existing?.source==='SHOPIFY')throw new ValidationError('This account is billed through Shopify. The Stripe event cannot replace its verified subscription.');
   const customerId=typeof data.customer==='string'?data.customer:data.customer?.id;
   if(existing?.stripe_customer_id&&existing.stripe_customer_id!==customerId)
     throw new ValidationError('Stripe customer does not match the subscription owner.');

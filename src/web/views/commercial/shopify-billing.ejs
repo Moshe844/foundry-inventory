@@ -1,0 +1,24 @@
+<link rel="stylesheet" href="/shopify-billing.css?v=<%= locals.assetVersion||'current' %>">
+<div class="sc-shopify-billing">
+<header class="page-head"><div><h1>Plan &amp; billing</h1><p>Your StockChief subscription is managed through Shopify.</p></div></header>
+<% if(billingError){ %><div class="notice notice--warn" role="status"><%= billingError %> Your last verified plan is shown below.</div><% } %>
+<section class="rm-panel sc-sb-card" aria-labelledby="shopify-plan-title">
+ <div class="sc-sb-plan"><div><p class="sc-sb-eyebrow">Your plan</p><h2 id="shopify-plan-title"><%= summary.subscription.plan_name %></h2></div><span class="sc-sb-status"><%= summary.subscription.status==='CANCELLED'?'Cancelled':summary.subscription.cancel_at_period_end?'Renewal cancelled':'Active' %></span></div>
+ <% if(binding.development_store){ %><p class="sc-sb-test">Development-store test subscription. <strong>$0 — Shopify does not charge this store.</strong></p><% } %>
+ <dl class="sc-sb-details"><div><dt>Billing store</dt><dd><%= binding.shop %></dd></div><% if(summary.subscription.current_period_end){ %><div><dt>Current period ends</dt><dd><%= helpers.dateTime(summary.subscription.current_period_end) %></dd></div><% } %></dl>
+ <% if(!guarantee?.request){ %><div class="sc-sb-actions">
+ <form method="post" action="/billing/portal"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--primary" type="submit">Manage plan in Shopify</button></form>
+ <% if(!summary.subscription.cancel_at_period_end&&summary.subscription.status!=='CANCELLED'){ %><form method="post" action="/billing/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--secondary" type="submit">Cancel renewal</button></form><% } %>
+ </div><% } %>
+ <p class="sc-sb-help">Shopify confirms plan changes before StockChief updates your access. For more capacity, choose a larger plan. Additional capacity purchases are not currently configured for Shopify billing.</p>
+</section>
+<section class="rm-panel sc-sb-card"><h2><%= binding.development_store?'Cancel your test subscription':'14-day money-back guarantee' %></h2>
+ <% if(guarantee?.request){ const state=guarantee.request.status; %>
+ <p role="status"><strong><%= state==='REFUNDED'?'Shopify confirmed your refund.':state==='NO_CHARGE'?'The test subscription was cancelled. No payment was taken or refunded.':state==='PARTIAL'?'Shopify has confirmed part of your refund. The remaining amount is being checked.':'Your cancellation and refund request is saved.' %></strong></p>
+ <% if(!['REFUNDED','NO_CHARGE'].includes(state)){ %><p>Our billing team completes eligible refunds or removes unpaid charges through Shopify. This page will show a refund as confirmed only after Shopify reports it.</p><% } %>
+ <p><a href="/support/request?topic=subscription-refund">Get refund help</a></p>
+ <% }else if(guarantee?.eligible){ %><p><% if(binding.development_store){ %>This test has no payment to refund. You can test cancellation within the verified 14-day window.<% }else{ %>Request cancellation and a full refund within 14 days of your first verified Shopify subscription. Paid app charges are refunded through Shopify; unpaid charges are reviewed for removal.<% } %></p><p class="sc-sb-help">Request by <strong><%= helpers.dateTime(guarantee.deadline) %></strong>.</p><form class="sc-sb-refund" method="post" action="/billing/refund"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label><input type="checkbox" name="confirm" value="refund" required><span><%= binding.development_store?'Cancel my free test subscription.':'Cancel my subscription and request my eligible refund.' %></span></label><button class="rm-btn rm-btn--secondary" type="submit"><%= binding.development_store?'Cancel test subscription':'Cancel and request refund' %></button></form>
+ <% }else{ %><p>The verified 14-day refund window is not currently available. <a href="/support/request?topic=subscription-refund">Contact billing support</a> if Shopify is still confirming your subscription history.</p><% } %>
+</section>
+<section class="rm-panel sc-sb-card"><h2>Your included capacity</h2><dl class="sc-sb-limits"><% summary.meters.filter(m=>['products','active_skus','import_rows','members','ai_work_credits','agent_documents'].includes(m.meter)).forEach(m=>{ %><div><dt><%= m.label %></dt><dd><%= m.hardLimit===null?'By contract':Number(m.hardLimit).toLocaleString('en-US') %></dd></div><% }); %></dl><p><a href="/pricing">Compare StockChief plans</a></p></section>
+</div>

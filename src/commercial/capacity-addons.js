@@ -16,7 +16,7 @@ async function catalog(db,{subscription,agentOffer=false}={}){
 async function list(db,accountId){return (await db.query(`SELECT o.*,p.label,p.meter,p.units_per_pack,p.monthly_amount_minor FROM commercial_capacity_orders o JOIN commercial_capacity_products p ON p.id=o.product_id WHERE o.account_id=$1 ORDER BY o.created_at DESC`,[accountId])).rows;}
 async function begin(db,scope,input,options={}){
  await require('./release').assertSubscriptionCheckoutOpen(db,options);await require('./wallet').assertScope(db,scope);
- const sub=await entitlements.subscriptionFor(db,scope.accountId);if(!sub?.stripe_customer_id||!entitlements.operationalAccess(sub).canOperate||sub.cancel_at_period_end)throw new ValidationError('An active renewing subscription is required to add capacity.');
+ const sub=await entitlements.subscriptionFor(db,scope.accountId);if(sub?.source==='SHOPIFY')throw new ValidationError('Manage capacity through Shopify. No second Stripe subscription was created.');if(!sub?.stripe_customer_id||!entitlements.operationalAccess(sub).canOperate||sub.cancel_at_period_end)throw new ValidationError('An active renewing subscription is required to add capacity.');
  const product=(await db.query('SELECT * FROM commercial_capacity_products WHERE id=$1 AND active=true',[input.productId])).rows[0],quantity=Number(input.quantity);
  if(product?.eligible_plans && (!product.eligible_plans.includes(sub.plan_id) || (sub.plan_id!=='enterprise' && sub.plan_configuration?.offerId!=='agent-v3'))) throw new ValidationError('This add-on is not available under your current plan terms.');
  if(product && !product.eligible_plans && sub.plan_configuration?.offerId==='agent-v3') throw new ValidationError('Choose an add-on included in your current plan offer.');

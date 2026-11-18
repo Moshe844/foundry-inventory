@@ -7,7 +7,7 @@
  <p><strong><%= installation.shop %></strong></p>
  <% if(installation.status==='AUTHORIZED'||installation.status==='LINKED'){ %>
  <p>Shopify access is approved. Choose where to use this store in StockChief.</p>
- <% if(!account){ %><a class="sc-shopify-action" href="/login?next=%2Fintegrations%2Fshopify%2Fconnect">Sign in to StockChief</a><p>Use the owner account for your inventory.</p>
+ <% if(!account){ %><a class="sc-shopify-action" href="/login?next=%2Fintegrations%2Fshopify%2Fconnect">Sign in to StockChief</a><p>Use the owner account for your inventory, or <a href="/register">create your StockChief account</a>.</p>
  <% }else if(!account.email_verified_at){ %><p>Verify your StockChief email before connecting this store.</p><a class="sc-shopify-action" href="/verify-email/pending">Verify my email</a>
  <% }else if(choices.length){ %>
  <form method="post" action="/integrations/shopify/connect" class="sc-shopify-form">
@@ -16,6 +16,7 @@
  <p>StockChief will read the store catalog for review. Connecting does not create a subscription or place orders. Your plan’s limits and approval rules still apply.</p>
  <button type="submit" class="sc-shopify-action"><%= installation.status==='LINKED'?'Open connection':'Connect Shopify' %></button>
  </form>
+ <% }else if(locals.shopifyBilling?.canChoosePlan){ %><p>Choose Starter, Growth or Pro in Shopify. After Shopify confirms your subscription, StockChief activates the matching plan and prepares your inventory.</p><form method="post" action="/integrations/shopify/billing/start"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="sc-shopify-action" type="submit">Choose a plan in Shopify</button></form>
  <% }else{ %><p>No inventory you own is available. Sign in with its owner account or finish setting up your StockChief account.</p><a class="sc-shopify-action" href="/inventories">View my inventories</a><% } %>
  <% }else if(!error){ %><p>Shopify authorization has not finished. Open StockChief from Shopify to try again.</p><% } %>
  <% } %>

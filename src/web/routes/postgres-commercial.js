@@ -109,6 +109,12 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   router.get('/usage',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const scope=commercialScope(req),summary=await entitlements.summary(database,scope);for(const meter of ['ai_work_credits','emails_sent'])if(!summary.meters.some(row=>row.meter===meter))summary.meters.push(await entitlements.meterState(database,scope,meter,{subscription:summary.subscription}));res.page('commercial/usage',{title:'Usage and add more',nav:null,room:true,summary,aiActions:(await database.query("SELECT occurred_at,units,status,detail->>'operation' operation,detail->>'failedReportBuild' failed_report FROM commercial_usage_events WHERE account_id=$1 AND workspace_id IS NOT DISTINCT FROM $2 AND meter='ai_work_credits' ORDER BY occurred_at DESC,id DESC LIMIT 50",[scope.accountId,scope.workspaceId||null])).rows,packs:addons.currentPacks(await addons.packs(database,scope)),purchaseKey:newId('purchasekey'),checkoutOpen:await release.isSubscriptionCheckoutOpen(database)});}));
   router.get('/billing',requireAccount,requireBillingOwner,(req,res)=>res.redirect(301,'/settings/billing'+(req.url.includes('?')?req.url.slice(req.url.indexOf('?')):'')));
   router.get('/settings/billing',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const scope=commercialScope(req);
+    const shopify=require('../../commercial/postgres-shopify-billing'),existing=await entitlements.subscriptionFor(database,scope.accountId);
+    if(existing?.source==='SHOPIFY'){
+      let billingError=null;const binding=await shopify.get(database,scope.accountId);
+      if(!binding?.verified_at||Date.now()-new Date(binding.verified_at)>60000)try{await shopify.reconcile(database,scope.accountId);}catch(error){billingError=error.message;}
+      return res.page('commercial/shopify-billing',{title:'Plan & billing',nav:'settings',room:true,summary:await entitlements.summary(database,scope),binding:await shopify.get(database,scope.accountId),guarantee:await shopify.quote(database,scope.accountId),billingError});
+    }
     let summary=await entitlements.summary(database,scope);let usageWarnings=await commercialControl.usageWarnings(database,scope,{summary});
     const pendingChanges=(await database.query(`SELECT change.*,plan.public_name AS target_plan_name
       FROM commercial_subscription_changes change JOIN commercial_plans plan ON plan.id=change.to_plan_id
@@ -210,18 +216,29 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     return req.session.save(()=>res.redirect(303,'/billing'));}));
   router.post('/billing/refund',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
     if(req.body.confirm!=='refund')throw new ValidationError('Confirm that you want to cancel now and refund your subscription payments.');
+    if((await entitlements.subscriptionFor(database,commercialScope(req).accountId))?.source==='SHOPIFY'){
+      await require('../../commercial/postgres-shopify-billing').requestRefund(database,commercialScope(req).accountId);
+      req.flash('success','Your Shopify cancellation and 14-day refund request is saved. This page shows Shopify’s verified outcome.');return res.redirect(303,'/billing');
+    }
     await require('../../commercial/subscription-guarantee').request(database,commercialScope(req).accountId);
     req.flash('success','Your cancellation and 14-day refund request is saved. This page shows the confirmed Stripe outcome.');
     return res.redirect(303,'/billing');
   }));
   router.post('/billing/cancel',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
+    if((await entitlements.subscriptionFor(database,commercialScope(req).accountId))?.source==='SHOPIFY'){
+      await require('../../commercial/postgres-shopify-billing').cancellation(database,commercialScope(req).accountId);
+      req.flash('success','Shopify confirmed cancellation at the end of the paid period.');return res.redirect(303,'/billing');
+    }
     await commercial.setSubscriptionCancellation(database,commercialScope(req).accountId,true,{provider,providerOptions:options.providerOptions});
     req.flash('success','Cancellation is scheduled for the end of the paid period. Your records remain available.');
     return req.session.save(()=>res.redirect(303,'/billing'));}));
   router.post('/billing/reactivate',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
+    if((await entitlements.subscriptionFor(database,commercialScope(req).accountId))?.source==='SHOPIFY')return res.redirect(303,'/settings/billing');
     await commercial.setSubscriptionCancellation(database,commercialScope(req).accountId,false,{provider,providerOptions:options.providerOptions});
     req.flash('success','Your subscription will renew normally.');return req.session.save(()=>res.redirect(303,'/billing'));}));
   router.post('/billing/portal',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const scope=commercialScope(req);
+    const shopify=await require('../../commercial/postgres-shopify-billing').get(database,scope.accountId);
+    if(shopify&&(await entitlements.subscriptionFor(database,scope.accountId))?.source==='SHOPIFY')return res.redirect(303,require('../../commercial/shopify-billing').selectionUrl(require('../../commercial/postgres-shopify-billing').ownerFor(shopify)));
     const subscription=await entitlements.subscriptionFor(database,scope.accountId);
     if(!subscription?.stripe_customer_id)throw new ValidationError('A billing account has not been created yet.');
     const returnUrl=`${options.publicOrigin==='request'?res.locals.origin:(options.publicOrigin||config.connections.publicOrigin||res.locals.origin)}/billing`;

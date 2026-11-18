@@ -56,7 +56,9 @@ function createPostgresAuthRouter(database,options={}) {
         next:safeNext(req.body.next),email:req.body.email || '',appName:res.locals.appName,
         origin:res.locals.origin,
       });
+      const shopifyInstallReturn=req.session.shopifyInstallReturn==='/integrations/shopify/connect';
       await sessionCall(req,'regenerate');
+      if(shopifyInstallReturn)req.session.shopifyInstallReturn='/integrations/shopify/connect';
       req.session.accountId=account.id;req.session.accountAccessRevision=Number(account.platform_access_revision||0);
       try{require('../../domain/auth-service').checkPasswordStrength(req.body.password);}
       catch{req.session.passwordUpgradeRequired=true;req.session.passwordUpgradeNoticeDismissed=true;req.session.flash=[{type:'warning',message:'Please strengthen your password in Settings → Password to meet the current security requirements.'}];}
@@ -120,7 +122,9 @@ function createPostgresAuthRouter(database,options={}) {
       if(paidRequired&&String(req.body.promoCode||'').trim())await commercial.validatePromotion(database,req.body.promoCode,
         requestedPlanId);
       const created=paidRequired?await auth.createPendingAccount(database,req.body):await auth.createBusiness(database,req.body);
+      const shopifyInstallReturn=req.session.shopifyInstallReturn==='/integrations/shopify/connect';
       await sessionCall(req,'regenerate');
+      if(shopifyInstallReturn)req.session.shopifyInstallReturn='/integrations/shopify/connect';
       req.session.accountId=created.accountId||created.id;req.session.accountAccessRevision=0;
       if(created.workspaceId)req.session.workspaceId=created.workspaceId;
       req.session.commercialSelection={planId:requestedPlanId,interval:req.body.interval==='annual'?'annual':'monthly',
@@ -159,7 +163,8 @@ function createPostgresAuthRouter(database,options={}) {
     return res.render('auth/verify-pending',{title:'Verify your email',csrfToken:res.locals.csrfToken,
       flash:res.locals.flash,account:req.account,origin:res.locals.origin});
   });
-  router.get('/complete-signup',async(req,res)=>{if(!req.account)return res.redirect('/login');if(req.user&&req.account.plan!=='commercial_pending'&&req.account.plan!=='trial'){const current=await require('../../commercial/entitlements').subscriptionFor(database,req.account.id);if(current?.stripe_subscription_id)return res.redirect('/billing');}
+  router.get('/complete-signup',async(req,res)=>{if(!req.account)return res.redirect('/login');if(req.user&&req.account.plan!=='commercial_pending'&&req.account.plan!=='trial'){const current=await require('../../commercial/entitlements').subscriptionFor(database,req.account.id);if(current?.stripe_subscription_id||current?.source==='SHOPIFY')return res.redirect('/billing');}
+    if(req.session.shopifyInstallReturn==='/integrations/shopify/connect')return res.redirect(req.account.email_verified_at?'/integrations/shopify/connect':'/verify-email/pending');
     const plans=await commercial.listPlans(database);
     const selection=pendingSelection(req.account,req.session.commercialSelection||req.session.checkoutSelection);
     const requested=selfServiceSelection(plans,String(req.query.plan||''));

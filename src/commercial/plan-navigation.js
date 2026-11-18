@@ -6,6 +6,7 @@ function destination(plan,{account=null,subscription=null,interval='monthly',che
   const billing=interval==='annual'?'annual':'monthly';
   if(plan.sales_only)return '/contact?plan='+encodeURIComponent(plan.id);
   if(!account)return checkoutOpen?'/register?plan='+encodeURIComponent(plan.id)+'&interval='+billing:'/contact?plan='+encodeURIComponent(plan.id);
+  if(subscription?.source==='SHOPIFY')return '/settings/billing';
   if(subscription?.stripe_subscription_id&&!subscription.refunded_at){
     if(subscription.plan_id===plan.id&&String(subscription.billing_interval).toLowerCase()===billing)return '/settings/billing';
     return '/billing/change?plan='+encodeURIComponent(plan.id)+'&interval='+billing;

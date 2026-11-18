@@ -26,6 +26,7 @@ async function beginPurchase(database,scope,input,options={}){
  await release.assertSubscriptionCheckoutOpen(database,options);await wallet.assertScope(database,scope);
  if(!scope.workspaceId)throw new ValidationError('Choose the inventory receiving this usage pack.');
  const subscription=await entitlements.subscriptionFor(database,scope.accountId);
+ if(subscription?.source==='SHOPIFY')throw new ValidationError('Manage your plan through Shopify. No Stripe usage-pack payment was requested.');
  if(!subscription?.stripe_customer_id||!entitlements.operationalAccess(subscription).canOperate)throw new ValidationError('An operational subscription is required to purchase additional usage.');
  const pack=await packFor(database,input.packId,{...options,scope});
  if(pack.category==='ai_work_credits'&&Number(pack.version)>=3&&(await require('./ai-credit-policy').policy(database,scope)).scale!==Number(pack.credit_unit_scale||1))throw new ValidationError('This pack uses the updated plan credit definition. Review and accept the updated plan terms before buying it.');
@@ -83,6 +84,7 @@ async function saveTopup(database,scope,input,options={}){
 }
 async function runTopup(database,scope,category,options={}){
  await release.assertSubscriptionCheckoutOpen(database,options);await wallet.assertScope(database,scope);
+ if((await entitlements.subscriptionFor(database,scope.accountId))?.source==='SHOPIFY')return {skipped:'shopify_billing'};
  const created=await database.transaction(async(client)=>{await wallet.lock(client,scope,category);
   const settings=(await client.query('SELECT * FROM commercial_auto_topups WHERE account_id=$1 AND workspace_id=$2 AND category=$3 FOR UPDATE',
    [scope.accountId,scope.workspaceId,category])).rows[0];if(!settings?.enabled)return null;
