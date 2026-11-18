@@ -9,6 +9,7 @@ const facts = require('../commerce-facts');
 const appProfiles=require('../shopify-app-profile');
 
 const API_VERSION = '2026-07';
+const UNINSTALL_IDENTITY_QUERY='query StockChiefUninstallIdentity { shop { id myshopifyDomain } currentAppInstallation { app { apiKey } } }';
 const SCOPES = ['read_orders', 'read_products', 'read_locations', 'read_inventory', 'read_fulfillments','write_products','write_inventory'];
 const SUPPORTED_SCOPES = new Set([...SCOPES,'write_products','write_inventory','write_orders',
   'write_fulfillments','write_merchant_managed_fulfillment_orders']);
@@ -43,6 +44,7 @@ async function grantedScopes(body,credentials) {
 
 function metadata() {
   return { type: 'shopify', name: 'Shopify', mark: 'S', category: 'selling', authMode: 'oauth', available: appProfiles.available(),
+    shopifyInstallMode:appProfiles.initialProfile(),
     description: 'Automatically receive Shopify orders, cancellations, fulfillment, returns, products, SKUs, and locations.',
     provides: ['customer orders', 'cancellations', 'fulfillment', 'returns', 'products, SKUs and locations'],
     unavailableReason: appProfiles.available() ? null : 'StockChief’s Shopify app credentials have not been configured on this installation.',
@@ -133,16 +135,16 @@ async function tryDirectAuthorization({ input }) {
   }
 }
 
-async function refreshCredentials(credentials) {
+async function refreshCredentials(credentials,{timeoutMs,retries}={}) {
   if(credentials?.shopifyProfile==='public'){
     const app=appProfiles.forGrant(credentials);
     const validUntil=Date.parse(credentials.accessTokenExpiresAt||'');
     if(Number.isFinite(validUntil)&&validUntil>Date.now()+5*60_000)return {credentials,expiresAt:credentials.accessTokenExpiresAt,refreshed:false};
     if(!credentials.refreshToken||Date.parse(credentials.refreshTokenExpiresAt||'')<=Date.now())throw new AuthenticationError('Reconnect Shopify to renew this store’s authorization.');
     const {body}=await jsonRequest(`https://${normalizeShop(credentials.shop)}/admin/oauth/access_token`,{
-      method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},parseErrorBody:oauthErrorBody,
+      method:'POST',timeoutMs,retries,headers:{'content-type':'application/x-www-form-urlencoded'},parseErrorBody:oauthErrorBody,
       body:new URLSearchParams({client_id:app.clientId,client_secret:app.clientSecret,grant_type:'refresh_token',refresh_token:credentials.refreshToken}).toString()});
-    const next=publicCredentials(body,credentials.shop,app);
+    const next={...credentials,...publicCredentials(body,credentials.shop,app,credentials.authorizedAt),...(credentials.shopifyShopId?{shopifyShopId:credentials.shopifyShopId}:{})};
     return {credentials:next,expiresAt:next.accessTokenExpiresAt,refreshed:true};
   }
   if (credentials?.authMode !== 'client_credentials') return { credentials, refreshed: false };
@@ -164,11 +166,11 @@ function verifyOAuthQuery(query,profile='legacy',{fresh=false}={}) {
   if(fresh&&(!/^\d{10}$/.test(query.timestamp||'')||Math.abs(Date.now()/1000-Number(query.timestamp))>300))throw new AuthenticationError('This Shopify request has expired. Open StockChief from Shopify again.');
 }
 
-function publicCredentials(body,shop,app){
+function publicCredentials(body,shop,app,authorizedAt){
  const seconds=Number(body.expires_in),refreshSeconds=Number(body.refresh_token_expires_in);
  if(!body.access_token||!body.refresh_token||!Number.isFinite(seconds)||seconds<=0||!Number.isFinite(refreshSeconds)||refreshSeconds<=0)
    throw new AuthenticationError('Shopify did not confirm renewable authorization. Please start the connection again.');
- return {accessToken:body.access_token,refreshToken:body.refresh_token,shop,shopifyProfile:'public',shopifyClientId:app.clientId,
+  return {accessToken:body.access_token,refreshToken:body.refresh_token,shop,shopifyProfile:'public',shopifyClientId:app.clientId,...(authorizedAt?{authorizedAt}:{}),
    accessTokenExpiresAt:new Date(Date.now()+seconds*1000).toISOString(),refreshTokenExpiresAt:new Date(Date.now()+refreshSeconds*1000).toISOString()};
 }
 
@@ -184,6 +186,7 @@ async function exchangeAuthorization({ query, metadata: stateMeta }) {
     code: String(query.code || ''),
   });
   if(app.name==='public')form.set('expiring','1');
+  const authorizedAt=new Date().toISOString();
   const { body } = await jsonRequest(`https://${shop}/admin/oauth/access_token`, {
     method: 'POST',
     parseErrorBody:oauthErrorBody,
@@ -192,7 +195,7 @@ async function exchangeAuthorization({ query, metadata: stateMeta }) {
   });
   if(!body.access_token)throw new ValidationError('Shopify did not return an access token.');
   if(app.name==='public'&&!(typeof body.scope==='string'&&body.scope.trim()))throw new AuthenticationError('Shopify did not confirm this installation’s permissions. Start again.');
-  const credential=app.name==='public'?publicCredentials(body,shop,app):{accessToken:body.access_token,shop},scopes=await grantedScopes(body,credential);
+  const credential=app.name==='public'?publicCredentials(body,shop,app,authorizedAt):{accessToken:body.access_token,shop,authorizedAt},scopes=await grantedScopes(body,credential);
   if(missingScopes(scopes,stateMeta.requestedScopes||SCOPES).length)throw new ValidationError(
     'Shopify has not approved all requested permissions. Review the permission prompt for this store and try again.');
   return { credentials:credential,...(credential.accessTokenExpiresAt?{expiresAt:credential.accessTokenExpiresAt}:{}),accountId:shop,
@@ -206,6 +209,25 @@ async function graphql(credentials, query, variables = {}) {
   });
   if (body.errors?.length) throw new Error(body.errors.map((e) => e.message).join('; '));
   return body.data;
+}
+
+// First read the exact saved access token. Only a canonical 401 is a denial;
+// the lifecycle helper separately verifies a known expired token's family.
+async function probeGrant(credentials,{clientId,shop,shopId,timeoutMs=2000}){
+  const app=appProfiles.forGrant(credentials);
+  if(app.clientId!==clientId||credentials.shop!==shop||!credentials.accessToken)throw new ValidationError('The Shopify grant probe does not match its application and store.');
+  let body;
+  try{({body}=await jsonRequest(`https://${normalizeShop(shop)}/admin/api/${API_VERSION}/graphql.json`,{
+    method:'POST',provider:'StockChief Billing',timeoutMs,retries:0,
+    headers:{'content-type':'application/json','x-shopify-access-token':credentials.accessToken},body:JSON.stringify({query:UNINSTALL_IDENTITY_QUERY}),
+  }));}catch(error){
+    if(error.status===401&&typeof error.providerBody?.errors==='string'&&/^\[API\] Invalid API key or access token\b/i.test(error.providerBody.errors))return {authorized:false};
+    throw error;
+  }
+  const identity=body.data?.shop,installedApp=body.data?.currentAppInstallation?.app;
+  if(body.errors?.length||identity?.myshopifyDomain!==shop||identity?.id!=='gid://shopify/Shop/'+String(shopId).replace(/^gid:\/\/shopify\/Shop\//,'')||installedApp?.apiKey!==clientId)
+    throw new ValidationError('Shopify did not confirm the exact application and store for this grant.');
+  return {authorized:true};
 }
 
 async function bootstrapSnapshot({ credentials, onVariant }) {
@@ -444,7 +466,7 @@ function normalizeWebhook({ headers, body }) {
     data: { externalProductId: shopifyGid('Product', body.id), name: body.title, variants: body.variants || [] } }];
   if (topic.startsWith('locations/')) return [{ eventId: delivery, type: 'location.changed', version, occurredAt,
     data: { externalLocationId: shopifyGid('Location', body.id), name: body.name } }];
-  if (topic === 'app/uninstalled') return [];
+  if (topic === 'app/uninstalled') throw new ValidationError('Shopify uninstall events require lifecycle processing before commerce normalization.');
   throw new ValidationError(`Shopify topic ${topic || '(missing)'} is not supported.`);
 }
 
@@ -452,3 +474,4 @@ module.exports = { catalogueCapabilities:Object.freeze(['products','skus','stock
   verifyOAuthQuery, exchangeAuthorization, discover, bootstrapSnapshot, registerWebhooks, historySummary, verifyWebhook,
   normalizeWebhook, hydrateWebhook, graphql, API_VERSION };
 Object.assign(module.exports,require('./commerce-position').adapter('shopify',{graphql}));
+Object.assign(module.exports,{probeGrant,UNINSTALL_IDENTITY_QUERY});

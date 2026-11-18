@@ -317,7 +317,14 @@ async function queueCustomerReturnRefund(database,ctx,customerReturnId,input={})
         AND request.paid_minor>0 ORDER BY request.paid_at DESC,request.created_at DESC FOR UPDATE OF request`,
     [ctx.workspaceId,row.sales_order_id,requestedProvider])).rows.find((candidate)=>
       Number(candidate.paid_minor)-Number(candidate.refunded_minor)>=amountMinor);
-    if(!paid){const original=(await client.query('SELECT 1 FROM payment_requests WHERE workspace_id=$1 AND sales_order_id=$2 AND paid_minor>0 LIMIT 1',[ctx.workspaceId,row.sales_order_id])).rows[0];
+    if(!paid){
+      // Imported Shopify payments are connector observations, not necessarily
+      // StockChief payment requests. Their absence cannot authorize an offline
+      // cash settlement of an order owned by Shopify's original processor.
+      const source=await sourcePaymentAuthority(client,ctx.workspaceId,row.sales_order_id);
+      if(source)throw new ValidationError('Open this order in Shopify and refund through its original payment processor. No cash refund was recorded in StockChief.',
+        {provider:source.provider,url:source.url});
+      const original=(await client.query('SELECT 1 FROM payment_requests WHERE workspace_id=$1 AND sales_order_id=$2 AND paid_minor>0 LIMIT 1',[ctx.workspaceId,row.sales_order_id])).rows[0];
       if(original)throw new ValidationError('The original provider payments need review before this refund. A cash refund will not be substituted.');
       return {queued:false,replayed:false,noProviderPayment:true,amountMinor};}
     const providerName=paid.provider;

@@ -25,4 +25,12 @@ test('Shopify period expiry independently closes operational access without wait
 test('Shopify plan navigation never sends a Shopify-paid account into Stripe checkout',()=>{
  assert.equal(require('../../src/commercial/plan-navigation').destination({id:'pro'},{account:{id:'acc'},subscription:{source:'SHOPIFY',plan_id:'starter'}}),'/settings/billing');
 });
+test('Shopify billing request cost evidence is limited to the configured pinned APIs',()=>{
+ const prior=process.env.SHOPIFY_PARTNER_ID;process.env.SHOPIFY_PARTNER_ID='5146412';
+ try{
+  for(const url of ['https://fixture.myshopify.com/admin/api/2026-07/graphql.json','https://fixture.myshopify.com/admin/oauth/access_token','https://partners.shopify.com/5146412/api/2026-07/graphql.json'])assert.equal(billing.requestEvidence(url,'POST').provider,'shopify_billing');
+  for(const url of ['http://fixture.myshopify.com/admin/api/2026-07/graphql.json','https://fixture.myshopify.com/admin/api/2025-01/graphql.json','https://partners.shopify.com/99/api/2026-07/graphql.json','https://partners.shopify.com.attacker.test/5146412/api/2026-07/graphql.json','https://fixture.myshopify.com/admin/api/2026-07/graphql.json?other=1','https://user:secret@fixture.myshopify.com/admin/api/2026-07/graphql.json'])assert.equal(billing.requestEvidence(url,'POST'),null);
+  assert.equal(billing.requestEvidence('https://partners.shopify.com/5146412/api/2026-07/graphql.json','GET'),null);
+ }finally{if(prior===undefined)delete process.env.SHOPIFY_PARTNER_ID;else process.env.SHOPIFY_PARTNER_ID=prior;}
+});
 module.exports={owner,contract};

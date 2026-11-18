@@ -25,9 +25,34 @@ function createRouter(database,{publicOrigin}={}){
      WHERE w.owner_account_id=$1 AND c.provider_type='shopify' AND c.status='connected' AND c.config::jsonb->>'shopifyProfile'='public' LIMIT 2`,[req.account.id])).rows;
    return rows.length===1&&valid(rows[0].shop)?rows[0].shop:null;
  }
+ router.get(path+'/open',asyncRoute(async(req,res)=>{
+   if(!req.account)return res.redirect(303,'/login?next='+encodeURIComponent(path+'/open'));
+   if(!req.account.email_verified_at)return res.redirect(303,'/verify-email/pending');
+   // Only server-owned store identities are offered. Installation begins in
+   // Shopify; a typed domain or an arbitrary return query is not admission.
+   const rows=(await database.query(`SELECT DISTINCT c.provider_account_id AS shop FROM workspace_connectors c JOIN workspaces w ON w.id=c.workspace_id
+     JOIN users u ON u.workspace_id=w.id AND u.account_id=$1 AND u.role='owner' AND u.revoked_at IS NULL
+     WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL AND c.provider_type='shopify'
+     AND c.config::jsonb->>'shopifyProfile'='public' AND c.config::jsonb->>'shopifyClientId'=$2`,[req.account.id,process.env.SHOPIFY_PUBLIC_CLIENT_ID||''])).rows;
+   const binding=await require('../../commercial/postgres-shopify-billing').get(database,req.account.id);
+   const appId=String(process.env.SHOPIFY_PUBLIC_APP_ID||'').replace(/^gid:\/\/shopify\/App\//,'');
+   if(/^\d+$/.test(appId)&&binding?.app_id==='gid://shopify/App/'+appId)rows.push({shop:binding.shop});
+   const owned=(await database.query(`SELECT w.id FROM workspaces w JOIN users u ON u.workspace_id=w.id AND u.account_id=$1 AND u.role='owner' AND u.revoked_at IS NULL
+     WHERE w.owner_account_id=$1 AND w.deletion_requested_at IS NULL`,[req.account.id])).rows;
+   const pilots=require('../../connections/launch-policy').productionShopifyPilots();
+   for(const w of owned)for(const shop of pilots[w.id]||[])rows.push({shop});
+   const shops=[...new Set(rows.map(r=>r.shop).filter(s=>typeof s==='string'&&/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(s)))];
+   if(shops.length===1)return res.redirect(303,require('../../commercial/shopify-billing').recoveryUrl(shops[0]));
+   return res.render('connections/shopify-open',{layout:false,title:'Open Shopify',shops:shops.map(shop=>({shop,url:require('../../commercial/shopify-billing').recoveryUrl(shop)})),publicApproved:require('../../connections/launch-policy').publicShopifyEnabled(),assetVersion:res.locals.assetVersion});
+ }));
  async function show(req,res,error=null){
    let installation=null,choices=[],shopifyBilling=null;
-   try{installation=await service.read(database,cookie(req));if(req.query.shop&&req.query.shop!==installation.shop)throw new AuthenticationError('This Shopify return belongs to another store.');if(req.account){shopifyBilling=await require('../../commercial/postgres-shopify-billing').installationState(database,req.account,installation);choices=await service.choices(database,req.account,installation);}}catch(problem){
+   try{installation=await service.read(database,cookie(req));if(req.query.shop&&req.query.shop!==installation.shop)throw new AuthenticationError('This Shopify return belongs to another store.');if(req.account){shopifyBilling=await require('../../commercial/postgres-shopify-billing').installationState(database,req.account,installation);choices=await service.choices(database,req.account,installation);
+     // A verified billing return can create the first workspace after loadUser
+     // ran. Scope this form to that new inventory before publishing its CSRF
+     // token, so the immediate Connect click passes the next request's checks.
+     if(!req.user&&choices.length===1){req.session.workspaceId=choices[0].id;res.locals.csrfToken=require('../middleware').scopedCsrfToken(req.session);}
+   }}catch(problem){
      if(!installation&&req.path===path+'/connect'&&problem instanceof AuthenticationError){const shop=await recoveryShop(req);if(shop)return res.redirect(303,require('../../commercial/shopify-billing').recoveryUrl(shop));}
      error=problem.message;
    }

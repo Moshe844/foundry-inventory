@@ -124,13 +124,31 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
     const delta=await require('../commercial/connection-capacity').activationDelta(client,target.workspace_id,target.id);
     await require('../commercial/connection-capacity').assertActivation(client,scope,target.provider_type,delta);
     if(target._pending)await intents.insert(client,target);
-    await credentials.put(client,target.workspace_id,target.id,'provider',result.credentials,result.expiresAt||null);
-    const currentConfig=parseJson(target.config);
+    let providerCredentials=result.credentials,currentConfig=parseJson(target.config);
+    if(target.provider_type==='shopify'){
+      // Reconnect exchanges fresh tokens without another identity read. Carry
+      // only the verified Shop ID, and only for this exact persisted app/store.
+      // Read under this transaction rather than trusting an earlier UI row.
+      const saved=(await client.query('SELECT provider_account_id,config FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[target.workspace_id,target.id])).rows[0];
+      currentConfig=parseJson(saved?.config);
+      if(providerCredentials?.shopifyProfile==='public'&&!providerCredentials.shopifyShopId&&
+        saved?.provider_account_id===result.accountId&&providerCredentials.shop===result.accountId&&
+        (!currentConfig.shop||currentConfig.shop===result.accountId)&&currentConfig.shopifyProfile==='public'&&
+        currentConfig.shopifyClientId&&currentConfig.shopifyClientId===providerCredentials.shopifyClientId){
+        const previous=await credentials.get(client,target.workspace_id,target.id,'provider');
+        const sameGrant=!previous||(previous.shop===result.accountId&&previous.shopifyProfile==='public'&&previous.shopifyClientId===providerCredentials.shopifyClientId);
+        const remembered=previous?.shopifyShopId||currentConfig.shopifyShopId;
+        if(sameGrant&&/^(?:gid:\/\/shopify\/Shop\/)?\d{1,30}$/.test(String(remembered||'')))providerCredentials={...providerCredentials,shopifyShopId:remembered};
+      }
+    }
+    await credentials.put(client,target.workspace_id,target.id,'provider',providerCredentials,result.expiresAt||null);
     const safeConfig={...currentConfig};
     if(result.credentials?.shop)safeConfig.shop=result.credentials.shop;
     if(connection.provider_type==='shopify'){
       safeConfig.shopifyClientId=result.credentials?.shopifyClientId||require('../config').connections.shopify.clientId;
       if(result.credentials?.shopifyProfile)safeConfig.shopifyProfile=result.credentials.shopifyProfile;
+      delete safeConfig.shopifyShopId;
+      if(providerCredentials?.shopifyShopId)safeConfig.shopifyShopId=providerCredentials.shopifyShopId;
     }
     if(result.credentials?.storeUrl)safeConfig.storeUrl=result.credentials.storeUrl;
     if(result.verifiedFact)safeConfig.verifiedFact=result.verifiedFact;

@@ -21,6 +21,8 @@ async function isOpen(database){const release=await state(database);
  // Approved private pilots do not grant provider access to public signups.
  // Shopify additionally binds the exception to its exact authorized store.
  const launchPolicy=require('../connections/launch-policy');
+ const publicApp=String(process.env.SHOPIFY_PUBLIC_APP_ID||'').replace(/^gid:\/\/shopify\/App\//,'');
+ const publicAppId=/^\d{1,30}$/.test(publicApp)?'gid://shopify/App/'+publicApp:null;
  // This is provider-derived evidence of the merchant's fee arrangement, not
  // permission to activate a new connection. Pausing new Connect sign-ins must
  // not shut subscription checkout for already qualified merchant contracts.
@@ -37,12 +39,15 @@ async function isOpen(database){const release=await state(database);
    WHERE c.status='connected' AND c.paused_at IS NULL
    AND c.provider_type=ANY($1::text[])
    AND NOT ((c.provider_type='microsoft365' AND COALESCE(c.workspace_id=ANY($2::text[]),false))
-    OR (c.provider_type='shopify' AND COALESCE(($3::jsonb->c.workspace_id) ? c.provider_account_id,false))
+    OR (c.provider_type='shopify' AND (COALESCE(($3::jsonb->c.workspace_id) ? c.provider_account_id,false)
+      OR COALESCE((c.config::jsonb->>'shopifyProfile'='public' AND $6::text<>'' AND c.config::jsonb->>'shopifyClientId'=$6
+       AND ($8::boolean OR EXISTS(SELECT 1 FROM workspaces w JOIN commercial_shopify_subscriptions b ON b.account_id=w.owner_account_id
+        WHERE w.id=c.workspace_id AND b.app_id=$7 AND b.shop=c.provider_account_id AND b.development_store=true))),false)))
     OR (c.provider_type='stripe' AND EXISTS(SELECT 1 FROM payment_connect_accounts p WHERE p.connector_id=c.id AND ${certifiedStripe})))
    UNION ALL SELECT 1 FROM payment_connect_accounts p LEFT JOIN workspace_connectors c ON c.id=p.connector_id
      WHERE p.charges_enabled=1 AND NOT COALESCE((${certifiedStripe}),false)
    LIMIT 1`,
-  [[...Object.keys(launchPolicy.EXCLUDED),'stripe','supplier_email'],launchPolicy.productionOutlookWorkspaces(),JSON.stringify(launchPolicy.productionShopifyPilots()),config.commercial.stripeAccountId,require('../payments/stripe-live-qualification').SOURCE])).rows.length;
+  [[...Object.keys(launchPolicy.EXCLUDED),'stripe','supplier_email'],launchPolicy.productionOutlookWorkspaces(),JSON.stringify(launchPolicy.productionShopifyPilots()),config.commercial.stripeAccountId,require('../payments/stripe-live-qualification').SOURCE,process.env.SHOPIFY_PUBLIC_CLIENT_ID||'',publicAppId,launchPolicy.publicShopifyEnabled()])).rows.length;
  return unqualified===0;}
 async function assertCheckoutOpen(database,options={}){
   // Only isolated tests may exercise provider contracts while the live release is closed.

@@ -17,6 +17,16 @@ function configuration(){
  return {partnerId,appId:'gid://shopify/App/'+appId,clientId:process.env.SHOPIFY_PUBLIC_CLIENT_ID,token};
 }
 function configured(){try{configuration();return true;}catch{return false;}}
+function requestEvidence(url,method){
+ const u=new URL(url);
+ if(String(method||'GET').toUpperCase()!=='POST'||u.protocol!=='https:'||u.port||u.username||u.password||u.search||u.hash)return null;
+ const admin=/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(u.hostname)&&['/admin/api/'+API_VERSION+'/graphql.json','/admin/oauth/access_token'].includes(u.pathname);
+ const partner=/^\d{1,30}$/.test(String(process.env.SHOPIFY_PARTNER_ID||''))&&u.hostname==='partners.shopify.com'&&u.pathname==='/'+process.env.SHOPIFY_PARTNER_ID+'/api/'+API_VERSION+'/graphql.json';
+ if(!admin&&!partner)return null;
+ return {provider:'shopify_billing',basis:'NO_INCREMENTAL_SHOPIFY_BILLING_API_REQUEST_FEE',
+  source:'https://shopify.dev/docs/api/usage/limits; https://shopify.dev/docs/apps/launch/distribution/revenue-share',
+  resourcePattern:partner?'Partner API '+API_VERSION:u.pathname==='/admin/oauth/access_token'?'Shopify OAuth token exchange':'Admin GraphQL '+API_VERSION};
+}
 function money(value){
  const m=String(value).match(/^(\d{1,12})(?:\.(\d{1,2}))?$/);
  if(!m)throw new ValidationError('Shopify returned an invalid subscription price.');
@@ -85,4 +95,4 @@ async function cancel(owner,{defer=true}={}){
    throw new ValidationError('Shopify did not confirm this subscription cancellation. Support can check the saved request.');
  return s;
 }
-module.exports={API_VERSION,PRICES,IDENTITY_QUERY,SUBSCRIPTION_QUERY,HISTORY_QUERY,CANCEL_MUTATION,configuration,configured,money,identity,readIdentity,contract,selectionUrl,recoveryUrl,active,history,cancel};
+module.exports={API_VERSION,PRICES,IDENTITY_QUERY,SUBSCRIPTION_QUERY,HISTORY_QUERY,CANCEL_MUTATION,configuration,configured,requestEvidence,money,identity,readIdentity,contract,selectionUrl,recoveryUrl,active,history,cancel};
