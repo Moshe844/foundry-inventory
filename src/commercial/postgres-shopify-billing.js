@@ -114,22 +114,17 @@ async function quote(db,accountId,{now=Date.now()}={}){
  const start=row.first_subscription_at?new Date(row.first_subscription_at).getTime():NaN,deadline=Number.isFinite(start)?new Date(start+DAYS):null;
  return {provider:'shopify',request,deadline,eligible:row.status==='ACTIVE'&&Boolean(deadline)&&now>=start&&now<=deadline.getTime(),developmentStore:row.development_store,subscription:row};
 }
-async function requestRefund(db,accountId,{provider:p=provider}={}){
- const initial=await quote(db,accountId);if(initial?.request)return initial.request;
- if(!initial?.eligible)throw new ValidationError('The verified 14-day Shopify refund window is not available. Support can check a payment still being confirmed.');
- // Upgrades and the first recurring charge can arrive after activation. Save
- // current provider history, rather than refunding only the cached first charge.
- const events=await p.history(ownerFor(initial.subscription));
- return db.transaction(async c=>{
+const refundInstructions=(id,shop,charges)=>'Eligible refund request '+id+' for '+shop+'. Cancel renewal and issue refunds for paid app charges or credits removing unpaid charges in Shopify Partner Dashboard. Confirm provider evidence before resolving. Charges: '+JSON.stringify(charges);
+async function requestRefund(db,accountId){const receivedAt=Date.now();return db.transaction(async c=>{
  await c.query('SELECT id FROM accounts WHERE id=$1 FOR UPDATE',[accountId]);await assertNoStripe(c,accountId);
- const state=await quote(c,accountId);if(state?.request)return state.request;
+ const state=await quote(c,accountId,{now:receivedAt});if(state?.request)return state.request;
  if(!state?.eligible)throw new ValidationError('The verified 14-day Shopify refund window is not available. Support can check a payment still being confirmed.');
- const owner=state.subscription,history=verifiedHistory(events,{appId:owner.app_id,shopId:owner.shop_id,shop:owner.shop});
- const row=(await c.query(`INSERT INTO commercial_shopify_guarantees(id,account_id,subscription_started_at,charges) VALUES($1,$2,$3,$4::jsonb) RETURNING *`,[newId('shopifyrefund'),accountId,owner.first_subscription_at,JSON.stringify(history.charges)])).rows[0];
+ const owner=state.subscription,history=verifiedHistory(owner.provider_state?.history||[],{appId:owner.app_id,shopId:owner.shop_id,shop:owner.shop});
+ const row=(await c.query(`INSERT INTO commercial_shopify_guarantees(id,account_id,subscription_started_at,charges,requested_at) VALUES($1,$2,$3,$4::jsonb,$5) RETURNING *`,[newId('shopifyrefund'),accountId,owner.first_subscription_at,JSON.stringify(history.charges),new Date(receivedAt).toISOString()])).rows[0];
  const account=(await c.query('SELECT email FROM accounts WHERE id=$1',[accountId])).rows[0];
  await c.query(`INSERT INTO support_requests(id,account_id,request_key,contact_email,subject,body,source_path,requester_hash)
   VALUES($1,$2,$3,$4,'Shopify 14-day subscription refund',$5,'/billing/refund',$6) ON CONFLICT(request_key) DO NOTHING`,[newId('support'),accountId,'shopify-guarantee:'+row.id,account.email,
-  'Eligible refund request '+row.id+' for '+owner.shop+'. Cancel renewal and issue refunds for paid app charges or credits removing unpaid charges in Shopify Partner Dashboard. Confirm provider evidence before resolving. Charges: '+JSON.stringify(history.charges),require('node:crypto').createHash('sha256').update('shopify-guarantee:'+accountId).digest('hex')]);
+  refundInstructions(row.id,owner.shop,history.charges),require('node:crypto').createHash('sha256').update('shopify-guarantee:'+accountId).digest('hex')]);
  await require('../operations/postgres-job-queue').enqueue(scoped(c),{kind:'commercial.shopify-guarantee',idempotencyKey:row.id,payload:{accountId,requestId:row.id},maxAttempts:12});return row;
 },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function cancellation(db,accountId,{defer=true,provider:p=provider}={}){
@@ -148,8 +143,13 @@ async function processGuarantee(db,job,options={}){
  if(new Date(row.requested_at)-new Date(row.subscription_started_at)>DAYS)throw new ValidationError('The saved Shopify refund request is outside the 14-day window.');
  await cancellation(db,row.account_id,{defer:false,provider:options.provider||provider});
  const binding=await get(db,row.account_id),owner={appId:binding.app_id,shopId:binding.shop_id,shop:binding.shop,developmentStore:binding.development_store};
- const events=await (options.provider||provider).history(owner);verifiedHistory(events,owner);
- const charged=row.charges.filter(c=>c.amountMinor>0),refunds=events.filter(e=>e.eventType==='EARNING_REFUND'&&charged.some(c=>c.id===e.earningChargeId)&&e.grossAmount?.currencyCode==='USD');
+ const events=await (options.provider||provider).history(owner),history=verifiedHistory(events,owner);
+ // Keep the request durable even when Shopify is unavailable at submission.
+ // Refresh charge identities here so later upgrade charges are included too.
+ const charges=[...new Map([...row.charges,...history.charges].map(c=>[c.id,c])).values()];
+ await db.query('UPDATE commercial_shopify_guarantees SET charges=$2::jsonb WHERE id=$1',[row.id,JSON.stringify(charges)]);
+ await db.query('UPDATE support_requests SET body=$2 WHERE request_key=$1',['shopify-guarantee:'+row.id,refundInstructions(row.id,owner.shop,charges)]);
+ const charged=charges.filter(c=>c.amountMinor>0),refunds=events.filter(e=>e.eventType==='EARNING_REFUND'&&charged.some(c=>c.id===e.earningChargeId)&&e.grossAmount?.currencyCode==='USD');
  const refunded=charged.length>0&&charged.every(c=>refunds.filter(r=>r.earningChargeId===c.id).reduce((sum,r)=>sum+provider.money(String(r.grossAmount.amount).replace(/^-/,'')),0)>=c.amountMinor);
  const status=refunded?'REFUNDED':binding.development_store&&!charged.length?'NO_CHARGE':refunds.length?'PARTIAL':'AWAITING_SHOPIFY';
  await db.query('UPDATE commercial_shopify_guarantees SET status=$2,provider_evidence=$3::jsonb,updated_at=now() WHERE id=$1',[row.id,status,JSON.stringify(refunds)]);

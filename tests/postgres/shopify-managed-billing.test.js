@@ -22,7 +22,7 @@ test('managed Shopify billing activates exact plans, preserves Stripe ownership 
    const q=await service.quote(db,f.account.id);assert(q.eligible);assert.equal(new Date(q.deadline)-new Date(q.subscription.first_subscription_at),14*86400000);
    assert.equal((await service.quote(db,f.account.id,{now:new Date(q.deadline).getTime()})).eligible,true);assert.equal((await service.quote(db,f.account.id,{now:new Date(q.deadline).getTime()+1})).eligible,false);
    assert.equal((await service.quote(db,f.account.id,{now:Date.now()+15*86400000})).eligible,false,'Renewal cannot reset the saved first-subscription deadline');
-   const request=await service.requestRefund(db,f.account.id,{provider:{history:async()=>f.events}});assert.equal((await service.requestRefund(db,f.account.id)).id,request.id,'Repeat clicks retain one request');
+   const request=await service.requestRefund(db,f.account.id);assert.equal((await service.requestRefund(db,f.account.id)).id,request.id,'Repeat clicks retain one request');
    let active=true,cancels=0;const fake={active:async()=>active?provider.contract(f.remote,f.owner):null,cancel:async()=>{cancels++;active=false;return {cancelledAt:new Date().toISOString()};},history:async()=>f.events};
    const job={payload:{accountId:f.account.id,requestId:request.id}};
    assert.equal((await service.processGuarantee(db,job,{provider:fake})).status,'AWAITING_SHOPIFY');assert.equal(ent.operationalAccess(await ent.subscriptionFor(db,f.account.id)).canOperate,false);

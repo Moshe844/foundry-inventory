@@ -63,5 +63,13 @@ test('Shopify billing returns activate verified plans and recover expired handof
     await page.setViewportSize({width:390,height:844});await page.waitForFunction(()=>document.querySelector('.sc-sidebar').getBoundingClientRect().right<=0);await page.screenshot({path:'output/shopify-managed-billing-pro-mobile.png',fullPage:true});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true,'Billing fits a mobile screen');
    }finally{if(browser)await browser.close();await new Promise(resolve=>server.close(resolve));}
   });
+  await t.test('an eligible refund request is saved even while the Partner API is unavailable',async()=>{
+   const agent=request.agent(app),login=await agent.get('/login');await agent.post('/login').type('form').send({_csrf:csrf(login.text),...lastAccount});
+   const bill=await agent.get('/settings/billing');global.fetch=async()=>{throw Error('Simulated Partner API outage');};
+   const result=await agent.post('/billing/refund').type('form').send({_csrf:csrf(bill.text),confirm:'refund'});assert.equal(result.status,303,result.text);
+   const row=(await db.query('SELECT r.* FROM commercial_shopify_guarantees r JOIN accounts a ON a.id=r.account_id WHERE a.email=$1',[lastAccount.email])).rows[0];assert.equal(row.status,'REQUESTED');
+   assert.equal((await db.query('SELECT count(*)::int n FROM support_requests WHERE request_key=$1',['shopify-guarantee:'+row.id])).rows[0].n,1);
+   assert.equal((await db.query("SELECT count(*)::int n FROM stockchief_runtime.jobs WHERE kind='commercial.shopify-guarantee' AND payload->>'requestId'=$1",[row.id])).rows[0].n,1);
+  });
  }finally{global.fetch=oldFetch;await app.locals.sessionStore.close();await db.close();await cluster.stop();process.env=env;}
 });
