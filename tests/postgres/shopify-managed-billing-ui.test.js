@@ -4,7 +4,10 @@ const csrf=html=>html.match(/name="_csrf" value="([^"]+)"/)?.[1];
 test('Shopify billing returns activate verified plans and recover expired handoffs without trusting return parameters',{timeout:360000},async t=>{
  const env={...process.env},oldFetch=global.fetch;
  Object.assign(process.env,{STOCKCHIEF_RUNTIME_ENV:'production',STOCKCHIEF_PRODUCTION_SHOPIFY_PILOTS:'{}',STOCKCHIEF_SHOPIFY_PUBLIC_APPROVED:'0',SHOPIFY_PARTNER_ID:'5146412',SHOPIFY_PUBLIC_APP_ID:'448446889985',SHOPIFY_PARTNER_ACCESS_TOKEN:'fixture-token',SHOPIFY_PUBLIC_CLIENT_ID:'fixture-public-client',SHOPIFY_PUBLIC_CLIENT_SECRET:'fixture-public-secret'});
+ Object.assign(process.env,{STOCKCHIEF_CHECKOUT_ENABLED:'true',STOCKCHIEF_BILLING_AUTOMATIC_TAX:'false',STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID:require('../../src/commercial/stripe-live-fee-evidence').accountId});
  const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);await require('../../src/db/migrate-postgres').migratePostgres(db);
+ await db.query('UPDATE commercial_release_control SET checkout_enabled=true,economics_approved_at=now(),readiness_approved_at=now() WHERE singleton=true');await db.query("UPDATE commercial_critical_warnings SET status='RESOLVED'");
+ const release=require('../../src/commercial/release');assert.equal(await release.isOpen(db),true,'The independently approved Stripe checkout starts open');
  const auth=require('../../src/domain/postgres-auth-service'),billing=require('../../src/commercial/shopify-billing'),ent=require('../../src/commercial/entitlements');
  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:crypto.randomUUID(),connectionPublicOrigin:'https://app.stockchiefhq.com'});
  let activeFixture=null,lastAccount=null;const calls=[];
@@ -44,6 +47,7 @@ test('Shopify billing returns activate verified plans and recover expired handof
    const sub=await ent.subscriptionFor(db,account.id);assert.equal(sub.plan_id,plan,'Unsigned return parameters cannot change the verified provider plan');assert.equal(sub.source,'SHOPIFY');assert.equal(sub.stripe_subscription_id,null);
    const linked=await agent.post('/integrations/shopify/connect').type('form').send({_csrf:csrf(returned.text),workspaceId:sub.workspace_id||(await db.query('SELECT id FROM workspaces WHERE owner_account_id=$1',[account.id])).rows[0].id});assert.equal(linked.status,303,linked.text);
    const connector=(await db.query("SELECT c.* FROM workspace_connectors c JOIN workspaces w ON w.id=c.workspace_id WHERE w.owner_account_id=$1 AND c.provider_type='shopify'",[account.id])).rows[0];assert.equal(connector.status,'connected','A fresh reviewer store can attach without a hard-coded pilot entry');
+   assert.equal(await release.isOpen(db),true,plan+' reviewer attachment must preserve independently approved public Stripe checkout');
    const grant=await require('../../src/connections/postgres-credential-store').get(db,connector.workspace_id,connector.id,'provider');assert.equal(grant.shopifyShopId,shopId,'The trusted identity is retained for signed uninstall delivery');
    const context=await require('../../src/connections/launch-policy').resolveWorkspaceContext(db,{workspaceId:connector.workspace_id,actorId:connector.created_by});assert.equal(require('../../src/connections/launch-policy').reason('shopify',context),null);
    await assert.rejects(()=>require('../../src/connections/launch-policy').assertWorkspaceConnection(db,'shopify',context,{shop:'foreign-review.myshopify.com'}),/assigned|private Shopify test/);
@@ -53,6 +57,21 @@ test('Shopify billing returns activate verified plans and recover expired handof
    const bill=await agent.get('/settings/billing');assert.equal(bill.status,200,bill.text);assert.match(bill.text,/subscription is managed through Shopify/);assert.match(bill.text,/Development-store test subscription/);assert(!bill.text.includes('action="/billing/checkout"'));
    const portal=await agent.post('/billing/portal').type('form').send({_csrf:csrf(bill.text)});assert.equal(portal.headers.location,selection.headers.location);
    assert.equal((await agent.get('/complete-signup')).headers.location,'/billing','A Shopify-paid account never returns to the card entry form');
+  });
+  await t.test('checkout qualification requires the exact public app, store and workspace owner identity',async()=>{
+   const connector=(await db.query("SELECT * FROM workspace_connectors WHERE provider_type='shopify' AND provider_account_id='ui-billing-1.myshopify.com'")).rows[0],binding=(await db.query('SELECT * FROM commercial_shopify_subscriptions WHERE shop=$1',[connector.provider_account_id])).rows[0];
+   assert.equal(await release.isOpen(db),true);
+   for(const change of [{field:'app_id',value:'gid://shopify/App/0'},{field:'shop',value:'foreign-binding.myshopify.com'},{field:'development_store',value:false}]){
+    await db.query('UPDATE commercial_shopify_subscriptions SET '+change.field+'=$2 WHERE account_id=$1',[binding.account_id,change.value]);assert.equal(await release.isOpen(db),false,change.field+' mismatch must close checkout');
+    await db.query('UPDATE commercial_shopify_subscriptions SET '+change.field+'=$2 WHERE account_id=$1',[binding.account_id,binding[change.field]]);assert.equal(await release.isOpen(db),true);
+   }
+   const foreign=await auth.createPendingAccount(db,{name:'Foreign billing owner',email:'foreign-billing-owner@example.test',businessName:'Foreign billing',password:'ForeignBillingFixture!42',planId:'starter'});
+   await db.query('UPDATE commercial_shopify_subscriptions SET account_id=$2 WHERE account_id=$1',[binding.account_id,foreign.id]);assert.equal(await release.isOpen(db),false,'Another account billing identity cannot qualify this workspace');await db.query('UPDATE commercial_shopify_subscriptions SET account_id=$2 WHERE account_id=$1',[foreign.id,binding.account_id]);assert.equal(await release.isOpen(db),true);
+   await db.query('UPDATE commercial_shopify_subscriptions SET development_store=false WHERE account_id=$1',[binding.account_id]);process.env.STOCKCHIEF_SHOPIFY_PUBLIC_APPROVED='1';assert.equal(await release.isOpen(db),true,'Approved public distribution may qualify a correctly bound public app without a development-store exception');
+   for(const change of [{shopifyClientId:'foreign-client'},{shopifyProfile:'legacy'},{shopifyClientId:null},{shopifyProfile:null}]){await db.query('UPDATE workspace_connectors SET config=$2 WHERE id=$1',[connector.id,JSON.stringify({...JSON.parse(connector.config),...change})]);assert.equal(await release.isOpen(db),false,'Public approval requires an exact client and public profile, including for missing values');await db.query('UPDATE workspace_connectors SET config=$2 WHERE id=$1',[connector.id,connector.config]);}
+   process.env.STOCKCHIEF_SHOPIFY_PUBLIC_APPROVED='0';assert.equal(await release.isOpen(db),false);await db.query('UPDATE commercial_shopify_subscriptions SET development_store=true WHERE account_id=$1',[binding.account_id]);assert.equal(await release.isOpen(db),true);
+   await db.query("UPDATE commercial_shopify_subscriptions SET status='CANCELLED' WHERE account_id=$1",[binding.account_id]);assert.equal(await release.isOpen(db),true,'A cancelled reviewer subscription retains its qualified provider identity without closing other customer checkout');
+   await db.query('UPDATE workspaces SET deletion_requested_at=now() WHERE id=$1',[connector.workspace_id]);assert.equal(await release.isOpen(db),true,'Pending workspace deletion does not erase the matched fee identity or close checkout globally');await db.query('UPDATE workspaces SET deletion_requested_at=NULL WHERE id=$1',[connector.workspace_id]);await db.query('UPDATE commercial_shopify_subscriptions SET status=$2 WHERE account_id=$1',[binding.account_id,binding.status]);
   });
   await t.test('fresh signed live stores and a foreign app cannot pass the development review gate',async()=>{
    const prior=activeFixture;
