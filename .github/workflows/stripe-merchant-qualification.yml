@@ -14,6 +14,9 @@ on:
       - tests/postgres/stripe-live-connect.test.js
       - tests/unit/stripe-live-qualification.test.js
       - tests/unit/stripe-webhook-rotation.test.js
+      - tests/postgres/native-connection-inspection.test.js
+      - tests/postgres/connection-synchronization.test.js
+      - scripts/certify-stripe-merchant-sandbox.js
       - .github/workflows/stripe-merchant-qualification.yml
 permissions:
   contents: read
@@ -62,7 +65,7 @@ jobs:
           set -euo pipefail
           mkdir -p output/stripe-merchant-release
           git rev-parse HEAD:src | tee output/stripe-merchant-release/application-tree.txt
-          node --test --test-force-exit --test-concurrency=2 tests/postgres/stripe-live-connect.test.js tests/unit/stripe-live-qualification.test.js tests/unit/stripe-webhook-rotation.test.js tests/unit/stripe-payment-identities.test.js tests/unit/commercial-connector-request-cost.test.js tests/postgres/payments-ui.test.js tests/postgres/payments-connect-ui.test.js tests/postgres/payment-provenance-reconciliation.test.js tests/postgres/payment-read-scope.test.js tests/postgres/agent-exact-return-refunds.test.js tests/postgres/subscription-guarantee.test.js tests/postgres/shopify-public-install.test.js 2>&1 | tee output/stripe-merchant-release/checks.log
+          node --test --test-force-exit --test-concurrency=2 tests/postgres/stripe-live-connect.test.js tests/unit/stripe-live-qualification.test.js tests/unit/stripe-webhook-rotation.test.js tests/unit/stripe-payment-identities.test.js tests/unit/commercial-connector-request-cost.test.js tests/postgres/payments-ui.test.js tests/postgres/payments-connect-ui.test.js tests/postgres/payment-provenance-reconciliation.test.js tests/postgres/payment-read-scope.test.js tests/postgres/agent-exact-return-refunds.test.js tests/postgres/subscription-guarantee.test.js tests/postgres/shopify-public-install.test.js tests/postgres/native-connection-inspection.test.js tests/postgres/connection-synchronization.test.js 2>&1 | tee output/stripe-merchant-release/checks.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

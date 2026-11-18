@@ -100,9 +100,10 @@ async function complete(database,query={},options={}){const state=await provider
     await entitlements.assertMeterCapacity(client,commercialScope,'connections',delta);
     if(target._pending)await intents.insert(client,target);
     await client.query(`UPDATE workspace_connectors
-      SET status='connected',paused_at=NULL,setup_status='CONNECTED',last_error=NULL,provider_account_id=$3,
+      SET status='connected',paused_at=NULL,setup_status='CONNECTED',last_error=NULL,expected_interval_minutes=0,provider_account_id=$3,
       provider_account_name=$4,updated_at=$5,config=(config::jsonb||$6::jsonb)::text WHERE workspace_id=$1 AND id=$2`,
     [state.workspace_id,connectorId,accountId,displayName,at,JSON.stringify(evidence?{stripeConnectEvidence:evidence,stripeConnectRevoked:false,stripeConnectLastEventCreated:Math.floor(Date.parse(at)/1000)}:{})]);
+    await resolveQuietMerchantWarning(client,state.workspace_id,connectorId,at);
     await client.query(`INSERT INTO payment_connect_accounts
       (id,workspace_id,connector_id,provider,provider_account_id,display_name,charges_enabled,livemode,
        checked_at,connected_by_user_id,created_at,updated_at)
@@ -137,8 +138,24 @@ async function refresh(database,workspaceId,options={}){const row=await rowFor(d
   const at=nowIso();await database.query(`UPDATE payment_connect_accounts SET charges_enabled=$3,livemode=$4,
     display_name=$5,checked_at=$6,updated_at=$6 WHERE workspace_id=$1 AND provider=$2`,
   [workspaceId,PROVIDER,legacy.canTakeCharges(account)?1:0,liveMode?1:0,name,at]);
-  if(evidence&&row.connector_id)await database.query("UPDATE workspace_connectors SET config=(config::jsonb||$3::jsonb)::text WHERE workspace_id=$1 AND id=$2",[workspaceId,row.connector_id,JSON.stringify({stripeConnectEvidence:evidence})]);
+  if(row.connector_id){
+    await database.query("UPDATE workspace_connectors SET expected_interval_minutes=0,config=(config::jsonb||$3::jsonb)::text WHERE workspace_id=$1 AND id=$2",[workspaceId,row.connector_id,JSON.stringify(evidence?{stripeConnectEvidence:evidence}:{})]);
+    await resolveQuietMerchantWarning(database,workspaceId,row.connector_id,at);
+  }
   return describe(database,workspaceId);}
+
+// Stripe delivers payment/account events when something changes; a quiet
+// merchant has no catalogue polling deadline. Resolve only the old activity
+// warning after an actual successful account read or OAuth verification.
+// Authorization errors and unrelated issues retain their own evidence.
+async function resolveQuietMerchantWarning(database,workspaceId,connectorId,at){
+  await database.query(`UPDATE connection_issues SET status='RESOLVED',resolved_at=$3,updated_at=$3
+    WHERE workspace_id=$1 AND fingerprint=$2 AND issue_type='stale_connection' AND status='OPEN'
+      AND EXISTS(SELECT 1 FROM workspace_connectors c WHERE c.workspace_id=$1 AND c.id=$4
+        AND c.provider_type='stripe' AND c.status='connected' AND c.last_error IS NULL
+        AND COALESCE((c.config::jsonb->>'stripeConnectRevoked')::boolean,false)=false)`,
+    [workspaceId,'connector-stale:'+connectorId,at,connectorId]);
+}
 
 async function disconnect(database,ctx,options={}){const row=await rowFor(database,ctx.workspaceId);
   if(!row)throw new NotFoundError('No Stripe account is connected to this inventory.');const held=legacy.platform();

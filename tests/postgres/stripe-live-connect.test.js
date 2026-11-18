@@ -69,6 +69,7 @@ test('production Stripe OAuth proves each paid plan, preserves billing and refus
   const f=await fixture(plan),before=(await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows;
   const done=await complete(f);assert.equal(done.connected,true);assert.equal(done.liveMode,true);assert.equal(done.chargesEnabled,true);
   const row=(await db.query('SELECT * FROM workspace_connectors WHERE id=$1',[done.connectorId])).rows[0];
+  assert.equal(Number(row.expected_interval_minutes),0,'Webhook-driven Stripe must not require periodic sales');
   const config=JSON.parse(row.config);assert(qualification.valid(config.stripeConnectEvidence,f.accountId));
   assert.equal(row.credential_ref,null);assert(!JSON.stringify(row).includes('sk_live_child'));assert(!JSON.stringify(row).includes('rt_child'));
   assert.equal(await release.isOpen(db),true,'A qualified merchant must not close paid signup');
@@ -76,6 +77,33 @@ test('production Stripe OAuth proves each paid plan, preserves billing and refus
   const refreshed=await connect.refresh(db,f.owner.workspaceId);assert.equal(refreshed.liveMode,true,'V1 Account omits livemode; retain the verified OAuth mode');
   assert.equal(await release.isOpen(db),true);
   assert.deepEqual((await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows,before);
+ });
+ await t.test('a verified quiet merchant clears only its obsolete activity warning while revoked and other issues stay visible',async()=>{
+  const f=fixtures[0],row=await connect.rowFor(db,f.owner.workspaceId),id=row.connector_id;
+  const issue=async(kind,fingerprint)=>db.query(`INSERT INTO connection_issues
+   (id,workspace_id,connector_id,issue_type,fingerprint,title,detail,resolution_hint,status,created_at,updated_at)
+   VALUES($1,$2,$3,$4,$5,'Fixture warning','Fixture warning','Review','OPEN',now(),now())`,
+   [crypto.randomUUID(),f.owner.workspaceId,id,kind,fingerprint]);
+  await db.query("UPDATE workspace_connectors SET expected_interval_minutes=1,created_at=$2,last_activity_at=NULL,last_synced_at=NULL WHERE id=$1",[id,new Date(Date.now()-86400000).toISOString()]);
+  await issue('stale_connection','connector-stale:'+id);
+  await issue('PAYMENT_REFUND_FAILED','real-refund-failure:'+id);
+  await connect.refresh(db,f.owner.workspaceId);
+  const status=async fingerprint=>(await db.query('SELECT status FROM connection_issues WHERE workspace_id=$1 AND fingerprint=$2',[f.owner.workspaceId,fingerprint])).rows[0]?.status;
+  assert.equal(await status('connector-stale:'+id),'RESOLVED');
+  assert.equal(await status('real-refund-failure:'+id),'OPEN','A real financial exception must survive a healthy account read');
+  const connector=(await db.query('SELECT * FROM workspace_connectors WHERE id=$1',[id])).rows[0];
+  const service=require('../../src/connections/postgres-service');
+  assert.equal(service.publicHealth({...connector,open_issues:0},Date.now()+86400000).status,'Connected');
+  assert.equal(service.publicHealth({...connector,open_issues:1}).status,'Needs attention');
+  assert(service.publicHealth({...connector,provider_type:'square',expected_interval_minutes:1,open_issues:0}).reasons.includes('ACTIVITY_OVERDUE'),'Polling sources retain their freshness deadline');
+  await db.query("UPDATE workspace_connectors SET status='error',last_error='Authorization revoked',config=(config::jsonb||'{\"stripeConnectRevoked\":true}'::jsonb)::text WHERE id=$1",[id]);
+  await db.query("UPDATE connection_issues SET status='OPEN',resolved_at=NULL WHERE workspace_id=$1 AND fingerprint=$2",[f.owner.workspaceId,'connector-stale:'+id]);
+  await connect.refresh(db,f.owner.workspaceId);
+  assert.equal(await status('connector-stale:'+id),'OPEN','A refresh must not clear a revoked connection warning');
+  assert.equal((await service.get(db,f.owner.workspaceId,id)).publicStatus,'Needs attention');
+  await db.query("UPDATE workspace_connectors SET status='connected',last_error=NULL,config=(config::jsonb||'{\"stripeConnectRevoked\":false}'::jsonb)::text WHERE id=$1",[id]);
+  await connect.refresh(db,f.owner.workspaceId);
+  await db.query('DELETE FROM connection_issues WHERE workspace_id=$1 AND fingerprint=$2',[f.owner.workspaceId,'real-refund-failure:'+id]);
  });
  async function webhook(event,valid=true){
   const raw=JSON.stringify(event),timestamp=String(Math.floor(Date.now()/1000));

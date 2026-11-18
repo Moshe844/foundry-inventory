@@ -50,9 +50,12 @@ assert(!JSON.stringify(snapshot).includes('PRIVATE_'));assert(snapshot.verificat
  t.diagnostic(JSON.stringify({connectedIsNotPosting:true,grantedScopeIsNotAuthority:true,canonicalAccountingStateReused:true,secretAndTenantIsolation:true,adminDetailsRestricted:true,noProviderEffects:true,modelCalls:0}));
 });
 
-test('shared connection health keeps canonical priority and mail grace without exposing error text',()=>{
+test('shared connection health keeps canonical priority and two check windows without exposing error text',()=>{
  const {publicHealth,publicStatus}=require('../../src/connections/postgres-service'),now=Date.parse('2026-01-02T00:00:00Z'),base={status:'connected',provider_type:'shopify',created_at:'2026-01-01T23:59:00Z',expected_interval_minutes:1};
- assert.equal(publicHealth(base,now).status,'Connected');const overdue={...base,created_at:'2026-01-01T23:58:30Z'};assert.deepEqual(publicHealth(overdue,now).reasons,['ACTIVITY_OVERDUE']);assert.equal(publicStatus(overdue,now),'Needs attention');assert.equal(publicStatus({...overdue,provider_type:'gmail'},now),'Connected');assert.equal(publicStatus({...overdue,provider_type:'microsoft365'},now),'Connected');
- const all=publicHealth({...overdue,status:'disconnected',last_error:'PRIVATE_ERROR_VALUE',paused_at:'2026-01-01',open_issues:1},now);assert.equal(all.status,'Disconnected');assert.deepEqual(all.reasons,['DISCONNECTED','RECORDED_ERROR','PAUSED','OPEN_ISSUES','ACTIVITY_OVERDUE']);assert(!JSON.stringify(all).includes('PRIVATE_ERROR_VALUE'));
+ assert.equal(publicHealth(base,now).status,'Connected');assert.equal(publicStatus({...base,created_at:'2026-01-01T23:58:30Z'},now),'Connected');
+ const overdue={...base,created_at:'2026-01-01T23:57:30Z'};assert.deepEqual(publicHealth(overdue,now).reasons,['ACTIVITY_OVERDUE']);assert.equal(publicStatus(overdue,now),'Needs attention');
+ assert.equal(publicStatus({...overdue,provider_type:'gmail'},now),'Needs attention');assert.equal(publicStatus({...overdue,provider_type:'microsoft365'},now),'Needs attention');
+ assert.equal(publicStatus({...overdue,plan_sync_seconds:300},now),'Connected','Freshness uses the actual plan cadence');
+ const all=publicHealth({...overdue,status:'disconnected',last_error:'PRIVATE_ERROR_VALUE',paused_at:'2026-01-01',open_issues:1},now);assert.equal(all.status,'Disconnected');assert.deepEqual(all.reasons,['DISCONNECTED','RECORDED_ERROR','PAUSED','OPEN_ISSUES']);assert(!JSON.stringify(all).includes('PRIVATE_ERROR_VALUE'));
  assert.equal(publicStatus({...base,expected_interval_minutes:0,created_at:null},now),'Connected');
 });
