@@ -102,13 +102,17 @@ async function processReceipt(database,workspaceId,receiptId,providers=providers
   }
   return result;
  }catch(error){
+  const missingCost=connection.provider_type==='shopify'&&error instanceof ValidationError&&
+    error.message==='Inventory was issued before its receipt cost was established.';
+  if(missingCost){error.code='opening_inventory_cost_required';error.message=
+    'This shipment is saved and waiting for verified purchase or opening-stock costs. Add the missing costs, then retry this saved event. StockChief will not invent inventory costs.';}
   const waitingForSquareAddress=error.code==='square_order_destination_pending'&&row.attempt_count<5;
   if(waitingForSquareAddress)error.retryAfterMs=60_000;
   const transient=waitingForSquareAddress||error.transient||error.retryable||Number(error.status)===429||Number(error.status)>=500,status=transient?'RETRY_PENDING':'NEEDS_REVIEW',result={processingStatus:status,accepted:applied.filter(r=>r.accepted).length,replayed:applied.filter(r=>r.replayed).length,needsMapping:0,requiresReview:!transient,results:applied,receiptId};
   await database.transaction(async c=>{
    const retained=await c.query('UPDATE connection_webhook_receipts SET status=$3,result=$4::jsonb,lease_until=NULL,claim_token=NULL,error_code=$5,error_message=$6,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND claim_token=$7 RETURNING id',[workspaceId,receiptId,status,JSON.stringify(result),String(error.code||'provider_event_processing').slice(0,100),String(error.message||'Provider event processing failed.').slice(0,500),claimToken]);
    if(!retained.rows.length)return;
-   if(!transient){const at=new Date().toISOString();await c.query("INSERT INTO connection_issues(id,workspace_id,connector_id,external_event_id,issue_type,fingerprint,title,detail,resolution_hint,candidate_matches,status,created_at,updated_at) VALUES($1,$2,$3,$4,'PROVIDER_EVENT_REVIEW',$5,'A provider event needs reconciliation',$6,$7,'[]','OPEN',$8,$8) ON CONFLICT(workspace_id,fingerprint) DO UPDATE SET status='OPEN',resolved_at=NULL,detail=EXCLUDED.detail,updated_at=EXCLUDED.updated_at",[newId('conissue'),workspaceId,connection.id,row.delivery_id,'webhook-review:'+receiptId,error instanceof DomainError?error.message:'A safety check stopped the remaining provider operations. The original evidence and completed effects are retained.','Review the provider record and completed effects, resolve the discrepancy, then resume this retained receipt.',at]);}
+   if(!transient){const at=new Date().toISOString();await c.query("INSERT INTO connection_issues(id,workspace_id,connector_id,external_event_id,issue_type,fingerprint,title,detail,resolution_hint,candidate_matches,status,created_at,updated_at) VALUES($1,$2,$3,$4,'PROVIDER_EVENT_REVIEW',$5,$6,$7,$8,'[]','OPEN',$9,$9) ON CONFLICT(workspace_id,fingerprint) DO UPDATE SET status='OPEN',resolved_at=NULL,title=EXCLUDED.title,detail=EXCLUDED.detail,resolution_hint=EXCLUDED.resolution_hint,updated_at=EXCLUDED.updated_at",[newId('conissue'),workspaceId,connection.id,row.delivery_id,'webhook-review:'+receiptId,missingCost?'Shipment needs inventory costs':'A provider event needs reconciliation',error instanceof DomainError?error.message:'A safety check stopped the remaining provider operations. The original evidence and completed effects are retained.',missingCost?'Add verified purchase or opening-stock costs for the products in this shipment, then retry this saved event.':'Review the provider record and completed effects, resolve the discrepancy, then resume this retained receipt.',at]);}
   },{isolation:'SERIALIZABLE',retrySafe:true});
   if(transient)throw error;
   return result;
