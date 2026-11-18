@@ -73,15 +73,26 @@ test('Shopify billing returns activate verified plans and recover expired handof
    await db.query("UPDATE commercial_shopify_subscriptions SET status='CANCELLED' WHERE account_id=$1",[binding.account_id]);assert.equal(await release.isOpen(db),true,'A cancelled reviewer subscription retains its qualified provider identity without closing other customer checkout');
    await db.query('UPDATE workspaces SET deletion_requested_at=now() WHERE id=$1',[connector.workspace_id]);assert.equal(await release.isOpen(db),true,'Pending workspace deletion does not erase the matched fee identity or close checkout globally');await db.query('UPDATE workspaces SET deletion_requested_at=NULL WHERE id=$1',[connector.workspace_id]);await db.query('UPDATE commercial_shopify_subscriptions SET status=$2 WHERE account_id=$1',[binding.account_id,binding.status]);
   });
-  await t.test('fresh signed live stores and a foreign app cannot pass the development review gate',async()=>{
+  await t.test('verified live-store authorization reaches UI while activation stays gated and foreign apps fail',async()=>{
    const prior=activeFixture;
    const before=(await db.query('SELECT count(*)::int n FROM workspace_connectors')).rows[0].n;
    for(const variant of [{developmentStore:false},{appId:'gid://shopify/App/0'}]){
     activeFixture={shop:'rejected-review.myshopify.com',shopId:'gid://shopify/Shop/900',...variant};const agent=request.agent(app);
     const start=await agent.get('/integrations/shopify/install').query(sign({shop:activeFixture.shop,timestamp:String(Math.floor(Date.now()/1000))}));assert.equal(start.status,303,start.text);
     const query=sign({shop:activeFixture.shop,state:new URL(start.headers.location).searchParams.get('state'),code:'untrusted-review-code',timestamp:String(Math.floor(Date.now()/1000))});
-    const done=await agent.get('/integrations/shopify/callback').query(query);assert.equal(done.status,400,done.text);assert.match(done.text,/approval|another app or store/);
-    const row=(await db.query('SELECT status,ciphertext FROM shopify_public_installs WHERE shop=$1 ORDER BY created_at DESC LIMIT 1',[activeFixture.shop])).rows[0];assert.equal(row.status,'FAILED');assert.equal(row.ciphertext,null);
+    const done=await agent.get('/integrations/shopify/callback').query(query);
+    const row=(await db.query('SELECT * FROM shopify_public_installs WHERE shop=$1 ORDER BY created_at DESC LIMIT 1',[activeFixture.shop])).rows[0];
+    if(variant.appId){assert.equal(done.status,400,done.text);assert.match(done.text,/another app or store/);assert.equal(row.status,'FAILED');assert.equal(row.ciphertext,null);}
+    else{
+     assert.equal(done.status,303,done.text);assert.equal(done.headers.location,'/integrations/shopify/connect');
+     const page=await agent.get(done.headers.location);assert.equal(page.status,200,page.text);assert.match(page.text,/Sign in to StockChief/);
+     assert.equal(row.status,'AUTHORIZED');assert(row.ciphertext,'A verified handoff retains its encrypted grant until its ordinary expiry');
+     const proof=start.headers['set-cookie'].find(c=>c.startsWith('stockchief_shopify_install=')).split(';')[0].split('=')[1];
+     const owner=(await db.query('SELECT * FROM accounts WHERE email=$1',[lastAccount.email])).rows[0];
+     await assert.rejects(require('../../src/connections/postgres-shopify-public-install').attach(db,owner,proof,'unapproved-workspace'),/Shopify approval/);
+     await assert.rejects(require('../../src/commercial/postgres-shopify-billing').startInstallation(db,owner,row),/Shopify approval/);
+     assert.equal(await release.isOpen(db),true,'An authentication-only reviewer handoff cannot close existing Stripe checkout');
+    }
    }
    assert.equal((await db.query('SELECT count(*)::int n FROM workspace_connectors')).rows[0].n,before);
    activeFixture=prior;

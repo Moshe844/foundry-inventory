@@ -15,7 +15,7 @@ test('public Shopify installation authenticates before sign-in and preserves pai
  const auth=require('../../src/domain/postgres-auth-service'),ent=require('../../src/commercial/entitlements'),adapter=require('../../src/connections/providers/shopify'),store=require('../../src/connections/postgres-credential-store');
  const calls=[],scopes=['read_orders','read_products','read_locations','read_inventory','read_fulfillments','write_products','write_inventory'];
  global.fetch=async(value,options)=>{
-   const url=new URL(value);assert.match(url.hostname,/^(?:browser-)?(starter|growth|pro|legacy|other|denied|full|lifecycle|diagnostic)-fixture\.myshopify\.com$/,'Only synthetic providers are contacted');
+   const url=new URL(value);assert.match(url.hostname,/^(?:browser-)?(starter|growth|pro|legacy|other|denied|full|lifecycle|diagnostic|review)-fixture\.myshopify\.com$/,'Only synthetic providers are contacted');
    calls.push({path:url.pathname,body:options.body});
    if(url.pathname==='/admin/oauth/access_token'){
      const form=new URLSearchParams(options.body);assert.equal(form.get('client_id'),'public-app');assert.equal(form.get('client_secret'),'public-secret');
@@ -160,8 +160,7 @@ test('public Shopify installation authenticates before sign-in and preserves pai
      for(const fixture of [
        {kind:'token',phase:'TOKEN_EXCHANGE',reason:'OPERATION_REJECTED',message:'Fixture permission exchange was rejected.'},
        {kind:'identity-query',phase:'STORE_IDENTITY',reason:'IDENTITY_QUERY_REJECTED',message:'Shopify could not verify this billing installation.'},
-       {kind:'identity',phase:'STORE_IDENTITY',reason:'IDENTITY_MISMATCH',message:'Shopify billing belongs to another app or store. No subscription was changed.'},
-       {kind:'admission',phase:'STORE_ADMISSION',reason:'STORE_REQUIRES_APPROVAL',message:'Public-store connections open after Shopify approval. This store is not a development store.'}
+       {kind:'identity',phase:'STORE_IDENTITY',reason:'IDENTITY_MISMATCH',message:'Shopify billing belongs to another app or store. No subscription was changed.'}
      ]){
        global.fetch=async(value,options)=>{
          const url=new URL(value);
@@ -183,13 +182,61 @@ test('public Shopify installation authenticates before sign-in and preserves pai
        assert.equal(diagnostic.phase,fixture.phase);assert.equal(diagnostic.reason,fixture.reason);
        if(fixture.kind==='identity')assert.deepEqual(diagnostic.identityChecks,{domainMatches:true,validShopId:true,appMatches:false,clientMatches:true,validHandle:true});
      }
-     assert.equal(diagnostics.length,4);
+     assert.equal(diagnostics.length,3);
      assert(!/public-secret|public-access-|public-refresh-|fixture-code|fixture-partner-token|hmac|state=|myshopify/.test(diagnostics.join('\n')),'Diagnostics must contain no provider secrets, URLs, or browser proofs');
      assert.deepEqual((await db.query('SELECT * FROM account_subscriptions ORDER BY account_id')).rows,before.subscriptions);
      assert.deepEqual((await db.query('SELECT id,status FROM workspace_connectors ORDER BY id')).rows,before.connections);
    }finally{
      global.fetch=providerFetch;console.warn=warn;
      for(const key of configuredKeys){if(previous[key]===undefined)delete process.env[key];else process.env[key]=previous[key];}
+   }
+ });
+ await t.test('verified non-development review stores reach sign-in while activation and billing stay gated',async()=>{
+   const keys=['SHOPIFY_PARTNER_ID','SHOPIFY_PUBLIC_APP_ID','SHOPIFY_PARTNER_ACCESS_TOKEN','STOCKCHIEF_SHOPIFY_PUBLIC_APPROVED'];
+   const previous=Object.fromEntries(keys.map(key=>[key,process.env[key]])),providerFetch=global.fetch;
+   Object.assign(process.env,{SHOPIFY_PARTNER_ID:'5146412',SHOPIFY_PUBLIC_APP_ID:'448446889985',SHOPIFY_PARTNER_ACCESS_TOKEN:'fixture-partner-token',STOCKCHIEF_SHOPIFY_PUBLIC_APPROVED:'0'});
+   const f={...fixtures[0],agent:request.agent(app),shop:'review-fixture.myshopify.com'},stripe=await business('growth');
+   await db.query("UPDATE account_subscriptions SET stripe_subscription_id='sub_review_preserved',stripe_customer_id='cus_review_preserved' WHERE account_id=$1",[stripe.owner.accountId]);
+   const before={subscriptions:(await db.query('SELECT * FROM account_subscriptions ORDER BY account_id')).rows,
+     connections:(await db.query('SELECT id,status FROM workspace_connectors ORDER BY id')).rows,
+     checkouts:(await db.query('SELECT * FROM commercial_checkout_attempts ORDER BY id')).rows,
+     credentials:(await db.query('SELECT count(*)::int n FROM connection_credentials')).rows[0].n};
+   let tokenExchanges=0,identityReads=0;
+   global.fetch=async(value,options)=>{
+     const url=new URL(value);assert.equal(url.hostname,f.shop,'The reviewer handoff cannot contact another store or a billing provider');
+     if(url.pathname==='/admin/oauth/access_token'){tokenExchanges++;return providerFetch(value,options);}
+     assert.equal(url.pathname,'/admin/api/2026-07/graphql.json');assert.match(JSON.parse(options.body).query,/StockChiefBillingIdentity/);identityReads++;
+     return Response.json({data:{shop:{id:'gid://shopify/Shop/987654',myshopifyDomain:f.shop,plan:{partnerDevelopment:false}},
+       currentAppInstallation:{app:{id:'gid://shopify/App/448446889985',apiKey:'public-app',handle:'stockchief'}}}});
+   };
+   try{
+     const start=await begin(f);assert.equal(start.status,303,start.text);
+     const token=start.headers['set-cookie'].find(c=>c.startsWith('stockchief_shopify_install=')).split(';')[0].split('=')[1];
+     const response=await f.agent.get('/integrations/shopify/callback').query(callback(start.headers.location));
+     assert.equal(response.status,303,response.text);assert.equal(response.headers.location,'/integrations/shopify/connect');
+     const ready=await f.agent.get(response.headers.location);assert.equal(ready.status,200,ready.text);assert.match(ready.text,/Sign in to StockChief/);
+     assert(!ready.text.includes('public-access-'));assert(!ready.text.includes('public-refresh-'));
+     const service=require('../../src/connections/postgres-shopify-public-install'),billing=require('../../src/commercial/postgres-shopify-billing');
+     const installation=await service.read(db,token);assert.equal(installation.status,'AUTHORIZED');assert.equal(installation.activationPending,true);
+     const account=(await db.query('SELECT * FROM accounts WHERE id=$1',[f.owner.accountId])).rows[0];
+     const stripeAccount=(await db.query('SELECT * FROM accounts WHERE id=$1',[stripe.owner.accountId])).rows[0];
+     await assert.rejects(service.attach(db,account,token,f.owner.workspaceId),/Shopify approval/);
+     await assert.rejects(billing.startInstallation(db,account,installation),/Shopify approval/);
+     await assert.rejects(billing.startInstallation(db,stripeAccount,installation),/billed through Stripe/);
+     await login(f);const pending=await f.agent.get('/integrations/shopify/connect');assert.equal(pending.status,200,pending.text);
+     assert.match(pending.text,/New live-store connections will be available after Shopify approves StockChief/);
+     assert(!pending.text.includes('action="/integrations/shopify/connect"'));assert(!pending.text.includes('action="/integrations/shopify/billing/start"'));
+     process.env.STOCKCHIEF_SHOPIFY_PUBLIC_APPROVED='1';
+     assert.equal((await service.read(db,token)).activationPending,false);
+     const admitted=await f.agent.get('/integrations/shopify/connect');assert.equal(admitted.status,200,admitted.text);
+     assert.match(admitted.text,/action="\/integrations\/shopify\/connect"/);assert(!admitted.text.includes('Choose a plan in Shopify'),'Existing paid access must not request another subscription');
+     assert.equal(tokenExchanges,1);assert.equal(identityReads,1,'Viewing and signing in cannot call catalog, inventory, billing or reauthorize the store');
+     assert.deepEqual((await db.query('SELECT * FROM account_subscriptions ORDER BY account_id')).rows,before.subscriptions);
+     assert.deepEqual((await db.query('SELECT id,status FROM workspace_connectors ORDER BY id')).rows,before.connections);
+     assert.deepEqual((await db.query('SELECT * FROM commercial_checkout_attempts ORDER BY id')).rows,before.checkouts);
+     assert.equal((await db.query('SELECT count(*)::int n FROM connection_credentials')).rows[0].n,before.credentials);
+   }finally{
+     global.fetch=providerFetch;for(const key of keys){if(previous[key]===undefined)delete process.env[key];else process.env[key]=previous[key];}
    }
  });
  await t.test('invalid entry points cannot create a handoff or call a provider',async()=>{

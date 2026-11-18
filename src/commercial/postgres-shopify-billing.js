@@ -105,6 +105,7 @@ async function reconcile(db,accountId,options={}){
 async function startInstallation(db,account,installation){
  if(!account?.email_verified_at)throw new AuthorizationError('Verify your StockChief email before choosing a Shopify plan.');
  await assertNoStripe(db,account.id);
+ require('../connections/postgres-shopify-public-install').assertActivationApproved(installation);
  const existing=await get(db,account.id);
  const request=(await db.query('SELECT * FROM commercial_shopify_guarantees WHERE account_id=$1',[account.id])).rows[0];
  if(request&&!reusableDevelopmentCancellation(existing,request))throw new ValidationError('Your Shopify refund request is being handled. Contact support before choosing another plan.');
