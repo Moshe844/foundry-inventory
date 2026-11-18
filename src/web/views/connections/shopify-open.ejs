@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open Shopify · StockChief</title><link rel="stylesheet" href="/shopify-public-install.css?v=<%= assetVersion %>"></head>
+<body class="sc-shopify-install"><main class="sc-shopify-card">
+<a class="sc-shopify-brand" href="/"><span aria-hidden="true"><%- include('../components/brand-symbol') %></span><span>StockChief</span></a>
+<h1>Open StockChief in Shopify</h1>
+<% if(shops.length){ %><p>Choose your store. Shopify will verify access before you return to StockChief.</p><div class="sc-shopify-form"><% shops.forEach(store=>{ %><a class="sc-shopify-action" href="<%= store.url %>"><%= store.shop %></a><% }); %></div>
+<% }else if(publicApproved){ %><p>Install StockChief from its Shopify App Store listing. After approving access, return here to sign in and choose your inventory.</p><a class="sc-shopify-action" href="https://apps.shopify.com/stockchief">View StockChief on Shopify</a>
+<% }else{ %><p>StockChief’s Shopify app is being prepared for App Store review. Public installation opens after Shopify approval.</p><p>If you are reviewing the app on a development store, open the installation link provided in Shopify’s Dev Dashboard. Complete Shopify authorization before signing in here.</p><% } %>
+<p><a href="/settings/connections">Back to connections</a> · <a href="mailto:support@stockchiefhq.com">Contact support</a></p>
+</main></body></html>

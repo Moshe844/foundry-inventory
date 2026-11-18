@@ -44,6 +44,27 @@ function verifiedHistory(events,owner){
  const created=events.filter(e=>e.eventType==='SUBSCRIPTION_CREATED').map(e=>Date.parse(e.occurredAt)).filter(Number.isFinite).sort((a,b)=>a-b)[0];
  return {firstSubscriptionAt:created?new Date(created).toISOString():null,charges:events.filter(e=>e.eventType==='CHARGE_RECURRING'&&e.chargeId&&e.amount?.currencyCode==='USD').map(e=>({id:e.chargeId,occurredAt:e.occurredAt,amountMinor:provider.money(e.amount.amount),planId:e.planHandle}))};
 }
+function reusableDevelopmentCancellation(binding,request){
+ return binding?.development_store===true&&request?.status==='NO_CHARGE'
+  &&Array.isArray(request.charges)&&request.charges.every(charge=>charge.amountMinor===0)
+  &&Array.isArray(request.provider_evidence)&&request.provider_evidence.length===0;
+}
+async function retireDevelopmentCancellation(c,accountId,binding,request,contract,history){
+ if(!reusableDevelopmentCancellation(binding,request)||!contract.developmentStore||contract.amountMinor!==0
+  ||history.charges.some(charge=>charge.amountMinor!==0))throw new ValidationError('Your Shopify cancellation and refund request is being handled. Contact support before subscribing again.');
+ // Trial normalization can synthesize periodStart=now. Require Shopify's actual
+ // new billing cycle, so rereading a cancelled trial cannot reactivate access.
+ const start=Date.parse(contract.providerState.currentBillingCycle?.startTime),requested=new Date(request.requested_at).getTime();
+ if(contract.status!=='ACTIVE'||!Number.isFinite(start)||!Number.isFinite(requested)||start<=requested||start!==Date.parse(contract.periodStart))
+  throw Object.assign(new ValidationError('Choose a new development-store test plan in Shopify before StockChief can reactivate access.'),{code:'shopify_development_plan_pending'});
+ const audit='\n\nRetired no-charge development cancellation after a verified new $0 Shopify cycle: '+JSON.stringify({
+  requestId:request.id,status:request.status,requestedAt:request.requested_at,subscriptionStartedAt:request.subscription_started_at,
+  charges:request.charges,providerEvidence:request.provider_evidence,lastError:request.last_error,updatedAt:request.updated_at,
+  newPlanId:contract.planId,newPeriodStart:contract.periodStart});
+ const saved=await c.query("UPDATE support_requests SET body=body||$3,updated_at=now() WHERE account_id=$1 AND request_key=$2 AND status='RESOLVED' RETURNING id",[accountId,'shopify-guarantee:'+request.id,audit]);
+ if(saved.rows.length!==1)throw new ValidationError('Your completed Shopify test cancellation needs its resolved support record before you can subscribe again.');
+ await c.query('DELETE FROM commercial_shopify_guarantees WHERE account_id=$1 AND id=$2',[accountId,request.id]);
+}
 async function apply(db,accountId,owner,remote,events,options={}){
  const contract=remote===null?null:provider.contract(remote.providerState||remote,owner,options);
  const history=verifiedHistory(events,owner);
@@ -60,11 +81,12 @@ async function apply(db,accountId,owner,remote,events,options={}){
    await c.query("UPDATE commercial_shopify_subscriptions SET status=CASE WHEN status='PENDING' THEN status ELSE 'CANCELLED' END,verified_at=now(),provider_state='null',updated_at=now() WHERE account_id=$1",[accountId]);return {active:false};
   }
   const plan=await require('./service').getSelfServicePlan(scoped(c),contract.planId);
-  if(Object.keys(await require('./control-service').resourceExcess(scoped(c),{accountId,workspaceId:null},plan.id)).length)throw new ValidationError('Your existing inventory exceeds this Shopify plan. Choose a plan that covers your saved resources.');
-  if(current?.refunded_at)throw new ValidationError('This refunded account is read-only during its retention period. Contact support before subscribing again.');
-  if((await c.query('SELECT 1 FROM commercial_shopify_guarantees WHERE account_id=$1 LIMIT 1',[accountId])).rows.length)throw new ValidationError('Your Shopify cancellation and refund request is being handled. Contact support before subscribing again.');
   const acceptedVersion=(current?.plan_id===plan.id?current.plan_version_id:null)||plan.active_plan_version_id;
   if(!acceptedVersion)throw new ValidationError('The accepted StockChief plan version could not be verified.');
+  if(Object.keys(await require('./control-service').resourceExcess(scoped(c),{accountId,workspaceId:null},plan.id,{planVersionId:acceptedVersion})).length)throw new ValidationError('Your existing inventory exceeds this Shopify plan. Choose a plan that covers your saved resources.');
+  if(current?.refunded_at)throw new ValidationError('This refunded account is read-only during its retention period. Contact support before subscribing again.');
+  const request=(await c.query('SELECT * FROM commercial_shopify_guarantees WHERE account_id=$1 FOR UPDATE',[accountId])).rows[0];
+  if(request)await retireDevelopmentCancellation(c,accountId,row,request,contract,history);
   await c.query(`INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,billing_interval,current_period_start,current_period_end,trial_ends_at,cancel_at_period_end,source,provider_state)
    VALUES($1,$2,$3,$4,$5,'MONTHLY',$6,$7,$8,$9,'SHOPIFY',$10::jsonb)
    ON CONFLICT(account_id) DO UPDATE SET plan_id=EXCLUDED.plan_id,plan_version_id=EXCLUDED.plan_version_id,status=EXCLUDED.status,billing_interval='MONTHLY',current_period_start=EXCLUDED.current_period_start,current_period_end=EXCLUDED.current_period_end,trial_ends_at=EXCLUDED.trial_ends_at,cancel_at_period_end=EXCLUDED.cancel_at_period_end,source='SHOPIFY',provider_state=EXCLUDED.provider_state,updated_at=now()`,
@@ -84,7 +106,8 @@ async function startInstallation(db,account,installation){
  if(!account?.email_verified_at)throw new AuthorizationError('Verify your StockChief email before choosing a Shopify plan.');
  await assertNoStripe(db,account.id);
  const existing=await get(db,account.id);
- if((await db.query('SELECT 1 FROM commercial_shopify_guarantees WHERE account_id=$1 LIMIT 1',[account.id])).rows.length)throw new ValidationError('Your Shopify refund request is being handled. Contact support before choosing another plan.');
+ const request=(await db.query('SELECT * FROM commercial_shopify_guarantees WHERE account_id=$1',[account.id])).rows[0];
+ if(request&&!reusableDevelopmentCancellation(existing,request))throw new ValidationError('Your Shopify refund request is being handled. Contact support before choosing another plan.');
  if(existing){if(existing.shop!==installation.shop||existing.app_id!==provider.configuration().appId||provider.configuration().clientId!==installation.client_id)throw new AuthorizationError('This installation belongs to another billing store.');return provider.selectionUrl(ownerFor(existing));}
  if(installation.status!=='AUTHORIZED'||!installation.ciphertext)throw new ValidationError('Complete a fresh Shopify authorization before choosing billing.');
  const result=require('../connections/credentials').decrypt(installation);
@@ -96,10 +119,11 @@ async function installationState(db,account,installation){
  const binding=await get(db,account.id);
  if(binding){
   if(binding.shop!==installation.shop)throw new AuthorizationError('Choose the Shopify store that manages this account’s billing.');
-  await reconcile(db,account.id);
+  try{await reconcile(db,account.id);}catch(error){if(error.code!=='shopify_development_plan_pending')throw error;}
  }
  const sub=await entitlements.subscriptionFor(db,account.id);
- return {source:sub?.source||null,canOperate:entitlements.operationalAccess(sub).canOperate,canChoosePlan:provider.configured()&&!sub?.stripe_subscription_id&&(!entitlements.operationalAccess(sub).canOperate||sub?.source==='SHOPIFY'),bound:Boolean(binding)};
+ const guarantee=binding?await quote(db,account.id):null;
+ return {source:sub?.source||null,canOperate:entitlements.operationalAccess(sub).canOperate,canChoosePlan:provider.configured()&&!sub?.stripe_subscription_id&&(!guarantee?.request||guarantee.canChoosePlan)&&(!entitlements.operationalAccess(sub).canOperate||sub?.source==='SHOPIFY'),bound:Boolean(binding)};
 }
 async function enqueueDue(db,{now=Date.now()}={}){
  const rows=(await db.query("SELECT account_id FROM commercial_shopify_subscriptions WHERE status='ACTIVE' AND (verified_at IS NULL OR verified_at<now()-interval '5 minutes') ORDER BY verified_at NULLS FIRST LIMIT 30")).rows;
@@ -112,7 +136,7 @@ async function quote(db,accountId,{now=Date.now()}={}){
  const row=await get(db,accountId);if(!row)return null;
  const request=(await db.query('SELECT * FROM commercial_shopify_guarantees WHERE account_id=$1',[accountId])).rows[0]||null;
  const start=row.first_subscription_at?new Date(row.first_subscription_at).getTime():NaN,deadline=Number.isFinite(start)?new Date(start+DAYS):null;
- return {provider:'shopify',request,deadline,eligible:row.status==='ACTIVE'&&Boolean(deadline)&&now>=start&&now<=deadline.getTime(),developmentStore:row.development_store,subscription:row};
+ return {provider:'shopify',request,deadline,eligible:row.status==='ACTIVE'&&Boolean(deadline)&&now>=start&&now<=deadline.getTime(),canChoosePlan:!request||reusableDevelopmentCancellation(row,request),developmentStore:row.development_store,subscription:row};
 }
 const refundInstructions=(id,shop,charges)=>'Eligible refund request '+id+' for '+shop+'. Cancel renewal and issue refunds for paid app charges or credits removing unpaid charges in Shopify Partner Dashboard. Confirm provider evidence before resolving. Charges: '+JSON.stringify(charges);
 async function requestRefund(db,accountId){const receivedAt=Date.now();return db.transaction(async c=>{

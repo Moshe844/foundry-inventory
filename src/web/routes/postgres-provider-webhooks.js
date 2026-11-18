@@ -64,8 +64,9 @@ function createPostgresProviderWebhooks(database,options={}){
   const handler=async(req,res)=>{
     try{
       const providerType=String(req.params.providerType||'').toLowerCase();
+      const uninstall=providerType==='shopify'&&req.headers['x-shopify-topic']==='app/uninstalled';
       const rows=(await database.query(`SELECT * FROM workspace_connectors WHERE id=$1 AND provider_type=$2
-        AND status='connected' AND paused_at IS NULL`,[req.params.connectorId,providerType])).rows;
+        ${uninstall?'':"AND status='connected' AND paused_at IS NULL"}`,[req.params.connectorId,providerType])).rows;
       if(!rows.length)return res.status(404).json({error:{code:'connection_not_found',
         message:`No active ${providerType} connection matched this webhook.`}});
       const connection={...rows[0],config:typeof rows[0].config==='string'?JSON.parse(rows[0].config||'{}'):(rows[0].config||{})};
@@ -79,11 +80,11 @@ function createPostgresProviderWebhooks(database,options={}){
       if(!adapter?.verifyWebhook||!adapter?.normalizeWebhook)return res.status(503).json({error:{code:'provider_unavailable',
         message:`${providerType} webhook handling is not configured.`}});
       const providerCredentials=await credentials.get(database,connection.workspace_id,connection.id,'provider');
-      if(!providerCredentials)return res.status(409).json({error:{code:'credentials_missing',
+      if(!providerCredentials&&!uninstall)return res.status(409).json({error:{code:'credentials_missing',
         message:'Reconnect this provider before accepting its events.'}});
       const body=parseBody(rawBody);
       const webhookUrl=`${requestOrigin(req,options.publicOrigin)}${req.originalUrl}`;
-      adapter.verifyWebhook({headers:req.headers,rawBody,webhookUrl,credentials:providerCredentials,connection,body});
+      adapter.verifyWebhook({headers:req.headers,rawBody,webhookUrl,credentials:providerCredentials||{},connection,body});
       const receipt=await webhookInbox.receive(database,connection,{headers:req.headers,rawBody,body});
       // Acknowledge only after the encrypted receipt and durable job commit.
       // Provider API reads and business execution belong to the worker, so

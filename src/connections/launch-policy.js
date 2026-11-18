@@ -16,7 +16,10 @@ const EXCLUDED=Object.freeze({
 });
 
 const accountPilot=Symbol('verified connection pilot owner');
+const shopifyReview=Symbol('verified Shopify development billing owner');
 const configured=name=>String(process.env[name]||'').split(',').map(value=>value.trim()).filter(Boolean);
+function publicShopifyEnabled(){return process.env.STOCKCHIEF_RUNTIME_ENV==='production'&&process.env.STOCKCHIEF_SHOPIFY_PUBLIC_APPROVED==='1';}
+function publicAppId(){const value=String(process.env.SHOPIFY_PUBLIC_APP_ID||'').replace(/^gid:\/\/shopify\/App\//,'');return /^\d+$/.test(value)?'gid://shopify/App/'+value:null;}
 
 // Workspace IDs in the deployment configuration anchor an approved account.
 // Resolve ownership from PostgreSQL for every request and callback: another
@@ -24,6 +27,11 @@ const configured=name=>String(process.env[name]||'').split(',').map(value=>value
 // This grants provider availability only, never membership, plan capacity,
 // credentials or authority to use another inventory's connections.
 async function resolveWorkspaceContext(database,ctx={}){
+ if(process.env.STOCKCHIEF_RUNTIME_ENV==='production'&&ctx.workspaceId&&!Object.hasOwn(productionShopifyPilots(),ctx.workspaceId)&&publicAppId()&&process.env.SHOPIFY_PUBLIC_CLIENT_ID){
+  const row=(await database.query(`SELECT b.shop,b.shop_id FROM workspaces w JOIN commercial_shopify_subscriptions b ON b.account_id=w.owner_account_id
+   WHERE w.id=$1 AND w.deletion_requested_at IS NULL AND b.app_id=$2 AND b.development_store=true LIMIT 1`,[ctx.workspaceId,publicAppId()])).rows[0];
+  if(row){const resolved={...ctx};Object.defineProperty(resolved,shopifyReview,{value:Object.freeze({workspaceId:ctx.workspaceId,shop:row.shop,appId:publicAppId(),clientId:process.env.SHOPIFY_PUBLIC_CLIENT_ID})});return resolved;}
+ }
  const seeds=configured('STOCKCHIEF_STAGING_CONNECTION_WORKSPACES');
  if(process.env.STOCKCHIEF_RUNTIME_ENV!=='staging'||!ctx.workspaceId||!seeds.length||seeds.includes(ctx.workspaceId))return ctx;
  const approved=await database.query(`SELECT 1 FROM workspaces target
@@ -64,21 +72,22 @@ function pilotAllowed(providerType,ctx={}){
  const approved=seeds.includes(ctx.workspaceId)||grant?.workspaceId===ctx.workspaceId&&grant.seeds===seeds.join('\0');
  return approved&&configured('STOCKCHIEF_STAGING_CONNECTION_PROVIDERS').includes(type)&&['shopify','clover','quickbooks','xero','microsoft365','bigcommerce'].includes(type);
 }
-function reason(providerType,ctx){return pilotAllowed(providerType,ctx)?null:EXCLUDED[String(providerType||'').toLowerCase()]||null;}
+function reviewAllowed(ctx){const grant=ctx?.[shopifyReview];return grant?.workspaceId===ctx?.workspaceId&&grant?.appId===publicAppId()&&grant?.clientId===process.env.SHOPIFY_PUBLIC_CLIENT_ID;}
+function reason(providerType,ctx){const type=String(providerType||'').toLowerCase();return type==='shopify'&&(publicShopifyEnabled()||reviewAllowed(ctx))?null:pilotAllowed(type,ctx)?null:EXCLUDED[type]||null;}
 function assertNewConnection(providerType,ctx){const denied=reason(providerType,ctx);
  if(denied)throw new ValidationError(denied);}
 function assertCallbackProvider(providerType){
  // Pilot callbacks resolve and recheck the inventory from stored OAuth state.
  if(process.env.STOCKCHIEF_RUNTIME_ENV==='staging'||(providerType==='microsoft365'&&productionOutlookWorkspaces().length)||
-  (providerType==='shopify'&&Object.keys(productionShopifyPilots()).length))return;
+  (providerType==='shopify'&&(Object.keys(productionShopifyPilots()).length||publicShopifyEnabled())))return;
  assertNewConnection(providerType);
 }
 async function assertWorkspaceConnection(database,providerType,ctx,input={}){
  if(!EXCLUDED[String(providerType||'').toLowerCase()])return;
- assertNewConnection(providerType,await resolveWorkspaceContext(database,ctx));
+ ctx=await resolveWorkspaceContext(database,ctx);assertNewConnection(providerType,ctx);
  if(providerType==='shopify'&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'){
   const shop=require('./providers/shopify').normalizeShop(input.shop);
-  if(!productionShopifyPilots()[ctx.workspaceId]?.includes(shop))throw new ValidationError(
+  if(!publicShopifyEnabled()&&!(reviewAllowed(ctx)&&ctx[shopifyReview].shop===shop)&&!productionShopifyPilots()[ctx.workspaceId]?.includes(shop))throw new ValidationError(
    'This private Shopify test is approved only for the store assigned to this inventory. Check the store address or contact support.');
   const inventory=await database.query('SELECT id FROM workspaces WHERE id=$1 AND deletion_requested_at IS NULL FOR SHARE',[ctx.workspaceId]);
   if(!inventory.rows.length)throw new ValidationError('The approved Shopify test inventory is no longer available.');
@@ -87,4 +96,4 @@ async function assertWorkspaceConnection(database,providerType,ctx,input={}){
 function metadata(meta,ctx){const denied=reason(meta.type,ctx);
  return denied?{...meta,available:false,launchRestricted:true,unavailableReason:denied}:{...meta,pilot:pilotAllowed(meta.type,ctx)};}
 
-module.exports={EXCLUDED,reason,assertNewConnection,assertCallbackProvider,assertWorkspaceConnection,resolveWorkspaceContext,metadata,pilotAllowed,productionOutlookWorkspaces,productionShopifyPilots};
+module.exports={EXCLUDED,reason,assertNewConnection,assertCallbackProvider,assertWorkspaceConnection,resolveWorkspaceContext,metadata,pilotAllowed,productionOutlookWorkspaces,productionShopifyPilots,publicShopifyEnabled};

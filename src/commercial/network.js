@@ -80,13 +80,13 @@ async function after(context,attempt,success,detail){
  {meter:'connected_operations',idempotencyKey:attempt.key});else await entitlements.reverseUsage(context.database,context.scope,
  {meter:'connected_operations',idempotencyKey:attempt.key,reason:'The provider request failed.'});}
  const gmail=attempt.url?gmailQuota(attempt.url,attempt.method):null;
- const billingClassification=attempt.billing?require('./stripe-request-classification').classify(attempt.url):null;
+ const billingClassification=attempt.billing?(require('./stripe-request-classification').classify(attempt.url)||require('./shopify-billing').requestEvidence(attempt.url,attempt.method)):null;
  const connectorClassification=attempt.billing?null:require('./connector-request-cost').classify(attempt.def,attempt.url,attempt.method);
  const gmailNoIncrementalFee=gmail&&attempt.def.host==='gmail.googleapis.com'?{
    basis:'VERIFIED_NO_INCREMENTAL_GMAIL_API_FEE_BELOW_RESERVED_DAILY_THRESHOLD',
    source:'https://developers.google.com/workspace/gmail/api/reference/quota',
    projectDailySafetyCeiling:GMAIL_PROJECT_DAILY_SAFE_CEILING}:null;
- await control.recordCost(context.database,context.scope||{},{provider:attempt.billing?'stripe_billing':attempt.def.provider,
+ await control.recordCost(context.database,context.scope||{},{provider:attempt.billing?(billingClassification?.provider||'stripe_billing'):attempt.def.provider,
  operation:gmail?'gmail_api_quota':'http_request',unit:gmail?'quota_unit':'request',quantity:gmail?.units||1,
  providerVersion:attempt.def.version,idempotencyKey:attempt.key,
  ...(billingClassification?{amountMinor:0,costBasis:billingClassification.basis,costConfidence:'HIGH',
@@ -99,7 +99,7 @@ async function after(context,attempt,success,detail){
    ...(attempt.billing&&attempt.url?{providerPath:new URL(attempt.url).pathname,
      providerMethod:String(attempt.method||'GET').toUpperCase()}:{}),
    ...(billingClassification?{feeResponsibility:'NO_INCREMENTAL_HTTP_REQUEST_FEE',
-     evidence:billingClassification,otherStripeFees:'Reconcile actual balance transactions and Billing volume charges separately.'}:{}),
+     evidence:billingClassification,...(billingClassification.provider==='shopify_billing'?{otherShopifyFees:'Shopify subscription revenue-share, processing fees and merchant charges remain separate.'}:{otherStripeFees:'Reconcile actual balance transactions and Billing volume charges separately.'})}:{}),
    ...(gmailNoIncrementalFee?{feeResponsibility:'NO_INCREMENTAL_GMAIL_API_FEE_BELOW_DAILY_THRESHOLD',
      evidence:gmailNoIncrementalFee}:{}),
    providerOperation:gmail?.method||null,quotaSource:gmail?'https://developers.google.com/workspace/gmail/api/reference/quota':null}});}

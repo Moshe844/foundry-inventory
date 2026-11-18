@@ -3,7 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),crypto=requ
 const csrf=html=>html.match(/name="_csrf" value="([^"]+)"/)?.[1];
 test('Shopify billing returns activate verified plans and recover expired handoffs without trusting return parameters',{timeout:360000},async t=>{
  const env={...process.env},oldFetch=global.fetch;
- Object.assign(process.env,{SHOPIFY_PARTNER_ID:'5146412',SHOPIFY_PUBLIC_APP_ID:'448446889985',SHOPIFY_PARTNER_ACCESS_TOKEN:'fixture-token',SHOPIFY_PUBLIC_CLIENT_ID:'fixture-public-client',SHOPIFY_PUBLIC_CLIENT_SECRET:'fixture-public-secret'});
+ Object.assign(process.env,{STOCKCHIEF_RUNTIME_ENV:'production',STOCKCHIEF_PRODUCTION_SHOPIFY_PILOTS:'{}',STOCKCHIEF_SHOPIFY_PUBLIC_APPROVED:'0',SHOPIFY_PARTNER_ID:'5146412',SHOPIFY_PUBLIC_APP_ID:'448446889985',SHOPIFY_PARTNER_ACCESS_TOKEN:'fixture-token',SHOPIFY_PUBLIC_CLIENT_ID:'fixture-public-client',SHOPIFY_PUBLIC_CLIENT_SECRET:'fixture-public-secret'});
  const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);await require('../../src/db/migrate-postgres').migratePostgres(db);
  const auth=require('../../src/domain/postgres-auth-service'),billing=require('../../src/commercial/shopify-billing'),ent=require('../../src/commercial/entitlements');
  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:crypto.randomUUID(),connectionPublicOrigin:'https://app.stockchiefhq.com'});
@@ -19,7 +19,9 @@ test('Shopify billing returns activate verified plans and recover expired handof
   }
   assert.equal(u.hostname,activeFixture.shop,'Only synthetic Shopify stores are contacted');
   if(u.pathname==='/admin/oauth/access_token')return Response.json({access_token:'fixture-access',refresh_token:'fixture-refresh',expires_in:3600,refresh_token_expires_in:7776000,scope:'read_orders,read_products,read_locations,read_inventory,read_fulfillments,write_products,write_inventory'});
-  if(body.query===billing.IDENTITY_QUERY)return Response.json({data:{shop:{id:activeFixture.shopId,myshopifyDomain:activeFixture.shop,plan:{partnerDevelopment:true}},currentAppInstallation:{app:{id:'gid://shopify/App/448446889985',apiKey:'fixture-public-client',handle:'stockchief'}}}});
+  if(body.query===billing.IDENTITY_QUERY)return Response.json({data:{shop:{id:activeFixture.shopId,myshopifyDomain:activeFixture.shop,plan:{partnerDevelopment:activeFixture.developmentStore!==false}},currentAppInstallation:{app:{id:activeFixture.appId||'gid://shopify/App/448446889985',apiKey:'fixture-public-client',handle:'stockchief'}}}});
+  if(body.query.includes('StockChiefWebhooks'))return Response.json({data:{webhookSubscriptions:{nodes:[]}}});
+  if(body.query.includes('AddWebhook'))return Response.json({data:{webhookSubscriptionCreate:{userErrors:[],webhookSubscription:{id:'gid://shopify/WebhookSubscription/'+calls.length}}}});
   throw Error('Unexpected Admin operation');
  };
  try{
@@ -40,9 +42,30 @@ test('Shopify billing returns activate verified plans and recover expired handof
    const returned=await agent.get('/integrations/shopify/connect').query({shop,plan_handle:plan==='pro'?'starter':'pro',charge_id:'unsigned-untrusted-value'});assert.equal(returned.status,200,returned.text);assert.match(returned.text,/Your inventory/);
    const mismatched=await agent.get('/integrations/shopify/connect').query({shop:'different-owner.myshopify.com'});assert.equal(mismatched.status,400);assert(!mismatched.headers.location,'A valid proof for another store must be rejected, not recovered');
    const sub=await ent.subscriptionFor(db,account.id);assert.equal(sub.plan_id,plan,'Unsigned return parameters cannot change the verified provider plan');assert.equal(sub.source,'SHOPIFY');assert.equal(sub.stripe_subscription_id,null);
+   const linked=await agent.post('/integrations/shopify/connect').type('form').send({_csrf:csrf(returned.text),workspaceId:sub.workspace_id||(await db.query('SELECT id FROM workspaces WHERE owner_account_id=$1',[account.id])).rows[0].id});assert.equal(linked.status,303,linked.text);
+   const connector=(await db.query("SELECT c.* FROM workspace_connectors c JOIN workspaces w ON w.id=c.workspace_id WHERE w.owner_account_id=$1 AND c.provider_type='shopify'",[account.id])).rows[0];assert.equal(connector.status,'connected','A fresh reviewer store can attach without a hard-coded pilot entry');
+   const grant=await require('../../src/connections/postgres-credential-store').get(db,connector.workspace_id,connector.id,'provider');assert.equal(grant.shopifyShopId,shopId,'The trusted identity is retained for signed uninstall delivery');
+   const context=await require('../../src/connections/launch-policy').resolveWorkspaceContext(db,{workspaceId:connector.workspace_id,actorId:connector.created_by});assert.equal(require('../../src/connections/launch-policy').reason('shopify',context),null);
+   await assert.rejects(()=>require('../../src/connections/launch-policy').assertWorkspaceConnection(db,'shopify',context,{shop:'foreign-review.myshopify.com'}),/assigned|private Shopify test/);
+   const connectPage=await agent.get('/settings/connections');assert(!/name="shop"/.test(connectPage.text),'Customers do not have to type their Shopify domain');
+   const open=await agent.get('/integrations/shopify/open?shop=foreign-review.myshopify.com');assert.equal(open.status,303,open.text);assert.equal(open.headers.location,'https://admin.shopify.com/store/ui-billing-'+n+'/apps/stockchief','Only the server-owned store is offered');
+   const reopen=await agent.get('/integrations/shopify/install').query(sign({shop,timestamp:String(Math.floor(Date.now()/1000))}));assert.equal(reopen.headers.location,'/integrations/shopify/connect','A connected development store reopens without minting a second grant');
    const bill=await agent.get('/settings/billing');assert.equal(bill.status,200,bill.text);assert.match(bill.text,/subscription is managed through Shopify/);assert.match(bill.text,/Development-store test subscription/);assert(!bill.text.includes('action="/billing/checkout"'));
    const portal=await agent.post('/billing/portal').type('form').send({_csrf:csrf(bill.text)});assert.equal(portal.headers.location,selection.headers.location);
    assert.equal((await agent.get('/complete-signup')).headers.location,'/billing','A Shopify-paid account never returns to the card entry form');
+  });
+  await t.test('fresh signed live stores and a foreign app cannot pass the development review gate',async()=>{
+   const prior=activeFixture;
+   const before=(await db.query('SELECT count(*)::int n FROM workspace_connectors')).rows[0].n;
+   for(const variant of [{developmentStore:false},{appId:'gid://shopify/App/0'}]){
+    activeFixture={shop:'rejected-review.myshopify.com',shopId:'gid://shopify/Shop/900',...variant};const agent=request.agent(app);
+    const start=await agent.get('/integrations/shopify/install').query(sign({shop:activeFixture.shop,timestamp:String(Math.floor(Date.now()/1000))}));assert.equal(start.status,303,start.text);
+    const query=sign({shop:activeFixture.shop,state:new URL(start.headers.location).searchParams.get('state'),code:'untrusted-review-code',timestamp:String(Math.floor(Date.now()/1000))});
+    const done=await agent.get('/integrations/shopify/callback').query(query);assert.equal(done.status,400,done.text);assert.match(done.text,/approval|another app or store/);
+    const row=(await db.query('SELECT status,ciphertext FROM shopify_public_installs WHERE shop=$1 ORDER BY created_at DESC LIMIT 1',[activeFixture.shop])).rows[0];assert.equal(row.status,'FAILED');assert.equal(row.ciphertext,null);
+   }
+   assert.equal((await db.query('SELECT count(*)::int n FROM workspace_connectors')).rows[0].n,before);
+   activeFixture=prior;
   });
   await t.test('expired or missing browser proof recovers through Shopify instead of granting access from a charge ID',async()=>{
    const before=(await db.query('SELECT count(*)::int n FROM account_subscriptions')).rows[0].n;
@@ -54,6 +77,8 @@ test('Shopify billing returns activate verified plans and recover expired handof
    assert.equal((await db.query('SELECT count(*)::int n FROM account_subscriptions')).rows[0].n,before);
   });
   assert(calls.every(c=>c.host!=='api.stripe.com'),'No Shopify registration or payment return calls Stripe');
+  const billingCosts=(await db.query("SELECT provider,amount_minor,detail FROM commercial_cost_events WHERE provider IN('shopify_billing','stripe_billing')")).rows;assert(billingCosts.length>0);assert(billingCosts.every(c=>c.provider==='shopify_billing'&&Number(c.amount_minor)===0&&c.amount_minor!==null),'Shopify billing reads are recorded separately with request-fee evidence, without inventing Stripe cost warnings');
+  assert.equal((await db.query("SELECT count(*)::int n FROM commercial_critical_warnings WHERE code='MISSING_COST_RATE' AND status='OPEN' AND detail->>'provider' IN('stripe_billing','shopify_billing')")).rows[0].n,0);
   await t.test('Shopify billing renders usable controls in Chromium',async()=>{
    const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));const base='http://127.0.0.1:'+server.address().port;
    let browser;try{browser=await require('playwright').chromium.launch();const page=await browser.newPage({viewport:{width:1280,height:900}});await page.route('**/*',route=>new URL(route.request().url()).origin===base?route.continue():route.abort());

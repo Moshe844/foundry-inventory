@@ -1,6 +1,7 @@
 'use strict';
 const {newId}=require('../lib/util'),{ValidationError,InvariantError,DomainError}=require('../domain/errors');
 const vault=require('./credentials'),jobs=require('../operations/postgres-job-queue'),providersDefault=require('./providers/registry'),ingestion=require('./postgres-event-ingestion'),providerService=require('./postgres-provider-service'),facts=require('./commerce-facts');
+const shopifyUninstall=require('./postgres-shopify-uninstall');
 const headersAllowed=['x-shopify-topic','x-shopify-webhook-id','x-shopify-event-id','x-shopify-shop-domain','x-shopify-triggered-at','x-wc-webhook-topic','x-wc-webhook-resource','x-wc-webhook-event','x-wc-webhook-source','x-wc-webhook-delivery-id','x-wc-delivery-id'];
 function scoped(client){return {query:(sql,values)=>client.query(sql,values),transaction:fn=>fn(client)};}
 function deliveryId(provider,headers,body,rawBody){const id=provider==='bigcommerce'?facts.effectKey(provider,body.producer,body.scope,body.hash):String(headers['x-shopify-webhook-id']||headers['x-shopify-event-id']||headers['x-wc-webhook-delivery-id']||headers['x-wc-delivery-id']||body.event_id||body.id||facts.hash(rawBody.toString('base64')));return id.length<=160?id:provider+':'+facts.hash(id);}
@@ -20,11 +21,22 @@ function squareRevisionDelivery(original,input,next){
  return facts.effectKey('square','order-notification-revision',input.event_id,next.version);
 }
 async function receive(database,connection,input){
+ if(shopifyUninstall.applies(connection,input.headers)){
+  shopifyUninstall.verify(connection,input);
+  return shopifyUninstall.run(database,connection,(db,bound)=>receiveLocked(db,connection,input,bound));
+ }
+ return receiveLocked(database,connection,input);
+}
+async function receiveLocked(database,connection,input,uninstallIdentity=null){
  const headers=Object.fromEntries(headersAllowed.filter(k=>input.headers[k]!=null).map(k=>[k,String(input.headers[k]).slice(0,1024)])),originalDelivery=deliveryId(connection.provider_type,input.headers,input.body,input.rawBody),payloadHash=facts.hash({headers,body:input.body});
  const outcome=await database.transaction(async c=>{
-  if(!(await c.query('SELECT 1 FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 AND status=$3 AND paused_at IS NULL',[connection.workspace_id,connection.id,'connected'])).rows.length)throw new ValidationError('That connection is not active in this business.');
+  if(uninstallIdentity){
+   connection=(await c.query('SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[connection.workspace_id,connection.id])).rows[0];
+   if(!connection)throw new ValidationError('That Shopify installation no longer exists.');
+   shopifyUninstall.verify(connection,input);
+  }else if(!(await c.query('SELECT 1 FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 AND status=$3 AND paused_at IS NULL',[connection.workspace_id,connection.id,'connected'])).rows.length)throw new ValidationError('That connection is not active in this business.');
   const storedBody=await require('./postgres-shopify-privacy').filterBody(c,connection,input.body);
-  const sealed=vault.encrypt({headers,rawBody:(connection.provider_type==='shopify'?Buffer.from(JSON.stringify(storedBody)):input.rawBody).toString('base64')});
+  const sealed=vault.encrypt({headers,rawBody:(connection.provider_type==='shopify'?Buffer.from(JSON.stringify(storedBody)):input.rawBody).toString('base64'),...(uninstallIdentity?{shopifyUninstall:uninstallIdentity}:{})});
   async function retain(delivery){
     const params=[connection.workspace_id,connection.id,delivery];
     const inserted=await c.query("INSERT INTO connection_webhook_receipts(id,workspace_id,connector_id,delivery_id,payload_hash,ciphertext,iv,auth_tag) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING RETURNING id,status,result,payload_hash",[newId('whreceipt'),...params,payloadHash,sealed.ciphertext,sealed.iv,sealed.authTag]);
@@ -45,9 +57,14 @@ async function receive(database,connection,input){
    await c.query("INSERT INTO connection_issues(id,workspace_id,connector_id,external_event_id,issue_type,fingerprint,title,detail,resolution_hint,candidate_matches,status,created_at,updated_at) VALUES($1,$2,$3,$4,'EVENT_IDENTITY_CONFLICT',$5,'Conflicting webhook evidence needs reconciliation',$6,'Compare the retained provider records before authorizing any correction.','[]','OPEN',now(),now()) ON CONFLICT(workspace_id,fingerprint) DO UPDATE SET status='OPEN',resolved_at=NULL,updated_at=now()",[newId('conissue'),connection.workspace_id,connection.id,delivery,'webhook-delivery-conflict:'+connection.id+':'+delivery,reason]);
    return {integrityConflict:true};
   }
-  if(inserted)await jobs.enqueue(scoped(c),{workspaceId:connection.workspace_id,kind:'provider.webhook-process',idempotencyKey:'webhook-receipt:'+row.id,payload:{receiptId:row.id},priority:30,maxAttempts:8});
+  if(uninstallIdentity&&row.status!=='COMPLETED'){
+   const lifecycle=await shopifyUninstall.apply(c,connection,headers,input.body,row.id,uninstallIdentity);
+   const result={processingStatus:'COMPLETED',accepted:0,replayed:0,needsMapping:0,results:[],receiptId:row.id,...lifecycle};
+   await c.query("UPDATE connection_webhook_receipts SET status='COMPLETED',result=$3::jsonb,lease_until=NULL,claim_token=NULL,error_code=NULL,error_message=NULL,updated_at=now() WHERE workspace_id=$1 AND id=$2",[connection.workspace_id,row.id,JSON.stringify(result)]);
+   row.status='COMPLETED';row.result=result;
+  }else if(inserted)await jobs.enqueue(scoped(c),{workspaceId:connection.workspace_id,kind:'provider.webhook-process',idempotencyKey:'webhook-receipt:'+row.id,payload:{receiptId:row.id},priority:30,maxAttempts:8});
   return {receiptId:row.id,workspaceId:connection.workspace_id,replayed:!inserted,status:row.status,result:row.result};
- },{isolation:'SERIALIZABLE',retrySafe:true});
+ },uninstallIdentity?{isolation:'READ COMMITTED',retrySafe:false}:{isolation:'SERIALIZABLE',retrySafe:true});
  if(outcome.integrityConflict)throw new InvariantError('That webhook delivery identity conflicts with retained evidence.','webhook_delivery_conflict');
  return outcome;
 }
@@ -56,9 +73,10 @@ async function processReceipt(database,workspaceId,receiptId,providers=providers
   const row=(await c.query('SELECT * FROM connection_webhook_receipts WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[workspaceId,receiptId])).rows[0];
   if(!row)throw new ValidationError('That provider receipt was not found in this business.');
   if(row.status==='COMPLETED')return {done:true,result:row.result};
-  if(row.status==='NEEDS_REVIEW'&&!reviewRetry)return {done:true,result:{processingStatus:row.status,requiresReview:true,accepted:0,replayed:0,needsMapping:0,results:[]}};
+  const lifecycle=shopifyUninstall.applies({provider_type:'shopify'},vault.decrypt(row).headers||{});
+  if(row.status==='NEEDS_REVIEW'&&!reviewRetry&&!lifecycle)return {done:true,result:{processingStatus:row.status,requiresReview:true,accepted:0,replayed:0,needsMapping:0,results:[]}};
   if(row.status==='PROCESSING'&&new Date(row.lease_until).getTime()>Date.now())return {done:true,result:{processingStatus:'PROCESSING',accepted:0,replayed:0,needsMapping:0,results:[]}};
-  const connection=(await c.query('SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 AND status=$3 AND paused_at IS NULL',[workspaceId,row.connector_id,'connected'])).rows[0];
+  const connection=(await c.query("SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 AND ((provider_type='shopify' AND $3) OR (status='connected' AND paused_at IS NULL))",[workspaceId,row.connector_id,lifecycle])).rows[0];
   if(!connection){
     await c.query("UPDATE connection_webhook_receipts SET status='RETRY_PENDING',claim_token=NULL,lease_until=NULL,error_code='connection_paused',error_message='Reconnect or resume this connection before processing its retained events.',updated_at=now() WHERE workspace_id=$1 AND id=$2",[workspaceId,receiptId]);
     return {done:true,result:{processingStatus:'PAUSED',accepted:0,replayed:0,needsMapping:0,results:[]}};
@@ -68,11 +86,23 @@ async function processReceipt(database,workspaceId,receiptId,providers=providers
   return {row,connection,claimToken};
  },{isolation:'SERIALIZABLE',retrySafe:true});
  if(claimed.done)return claimed.result;
- const {row,connection,claimToken}=claimed,adapter=providers.get(connection.provider_type);
+ const {row,connection,claimToken}=claimed;
  let applied=[];
  try{
+  const sealed=vault.decrypt(row),rawBody=Buffer.from(sealed.rawBody,'base64'),body=JSON.parse(rawBody.toString('utf8'));
+  if(shopifyUninstall.applies(connection,sealed.headers))return await shopifyUninstall.run(database,connection,(db,bound)=>db.transaction(async c=>{
+   const receipt=(await c.query('SELECT * FROM connection_webhook_receipts WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[workspaceId,receiptId])).rows[0];
+   if(receipt.status==='COMPLETED')return receipt.result;
+   if(receipt.claim_token!==claimToken)return {processingStatus:'CLAIM_LOST',receiptId,accepted:0,replayed:0,needsMapping:0,results:[]};
+   const current=(await c.query('SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[workspaceId,connection.id])).rows[0];
+   const lifecycle=await shopifyUninstall.apply(c,current,sealed.headers,body,receiptId,sealed.shopifyUninstall||bound);
+   const result={processingStatus:'COMPLETED',accepted:0,replayed:0,needsMapping:0,results:[],receiptId,...lifecycle};
+   await c.query("UPDATE connection_webhook_receipts SET status='COMPLETED',result=$3::jsonb,lease_until=NULL,claim_token=NULL,error_code=NULL,error_message=NULL,updated_at=now() WHERE workspace_id=$1 AND id=$2",[workspaceId,receiptId,JSON.stringify(result)]);
+   return result;
+  },{isolation:'READ COMMITTED',retrySafe:false}));
+  const adapter=providers.get(connection.provider_type);
   if(!adapter?.normalizeWebhook)throw new ValidationError('That provider has no verified event adapter.');
-  const credentials=await providerService.loadProviderCredentials(database,connection,adapter),sealed=vault.decrypt(row),rawBody=Buffer.from(sealed.rawBody,'base64'),body=JSON.parse(rawBody.toString('utf8'));
+  const credentials=await providerService.loadProviderCredentials(database,connection,adapter);
   const scope=await require('../commercial/entitlements').ownerScopeForWorkspace(database,workspaceId);
   await require('../commercial/entitlements').assertCapability(database,scope,'connections.commerce');
   const events=await require('../commercial/context').run({database,scope,requestId:'webhook:'+receiptId},async()=>{

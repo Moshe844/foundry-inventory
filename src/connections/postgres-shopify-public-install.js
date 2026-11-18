@@ -16,9 +16,26 @@ function browser(value){
  if(!match)throw new AuthenticationError('This Shopify connection has expired. Open StockChief from Shopify again.');
  return {id:match[1],proof:hash(match[2])};
 }
-function approvedShop(shop){
- // Installation must not silently bypass the existing production pilot gate.
- if(process.env.STOCKCHIEF_RUNTIME_ENV==='production'&&!Object.values(launch.productionShopifyPilots()).some(shops=>shops.includes(shop)))
+function pilotShop(shop){return Object.values(launch.productionShopifyPilots()).some(shops=>shops.includes(shop));}
+const metadata=row=>typeof row.metadata==='string'?JSON.parse(row.metadata):row.metadata||{};
+function approvedShop(shop,row){
+ if(process.env.STOCKCHIEF_RUNTIME_ENV!=='production'||pilotShop(shop)||launch.publicShopifyEnabled())return;
+ // A signed start may authorize first. No catalog, inventory or billing is
+ // admitted until Shopify itself verifies the development store identity.
+ if(row&&['AUTHORIZING','EXCHANGING'].includes(row.status))return;
+ const proof=row&&metadata(row).shopifyInstallationIdentity;
+ if(proof?.developmentStore===true&&proof.shop===shop&&proof.appId===require('../commercial/shopify-billing').configuration().appId)return;
+ throw new AuthorizationError('This app is currently available to verified Shopify development stores for review. Public-store connections open after Shopify approval.');
+}
+async function existingReviewIdentity(database,existing,shop){
+ if(process.env.STOCKCHIEF_RUNTIME_ENV!=='production'||pilotShop(shop)||launch.publicShopifyEnabled())return null;
+ const b=(await database.query(`SELECT b.app_id,b.shop_id,b.shop,b.development_store FROM commercial_shopify_subscriptions b JOIN workspaces w ON w.owner_account_id=b.account_id
+  WHERE w.id=$1 AND b.shop=$2 AND b.app_id=$3 AND b.development_store=true`,[existing.workspace_id,shop,require('../commercial/shopify-billing').configuration().appId])).rows[0];
+ if(!b)throw new AuthorizationError('This store has no verified development-store installation. Your working connection is preserved.');
+ return {appId:b.app_id,shopId:b.shop_id,shop:b.shop,developmentStore:true};
+}
+function requireReviewConfiguration(shop){
+ if(process.env.STOCKCHIEF_RUNTIME_ENV==='production'&&!pilotShop(shop)&&!require('../commercial/shopify-billing').configured())
    throw new AuthorizationError('Shopify connections are being verified with approved test stores. Public connections will open after Shopify review and billing qualification.');
 }
 async function purge(database,{now=Date.now()}={}){
@@ -31,7 +48,7 @@ async function begin(database,query,origin){
 async function beginLocked(database,query,origin){
  adapter.verifyOAuthQuery(query,'public',{fresh:true});
  if(!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(query.shop||''))throw new AuthenticationError('Shopify did not identify a valid store.');
- const shop=query.shop,app=profiles.profile('public');approvedShop(shop);
+ const shop=query.shop,app=profiles.profile('public');requireReviewConfiguration(shop);
  await purge(database);
  const id=newId('sinstall'),proof=crypto.randomBytes(32).toString('base64url'),state=crypto.randomBytes(32).toString('base64url');
  const auth=adapter.authorizationUrl({state,input:{shop,shopifyProfile:'public',redirectUri:origin+PATH+'/callback'}});
@@ -45,6 +62,7 @@ async function beginLocked(database,query,origin){
  const existing=(await client.query(`SELECT id,workspace_id FROM workspace_connectors WHERE provider_type='shopify'
    AND provider_account_id=$1 AND status='connected' AND config::jsonb->>'shopifyClientId'=$2
    AND config::jsonb->>'shopifyProfile'='public' ORDER BY updated_at DESC LIMIT 1`,[shop,app.clientId])).rows[0];
+ if(existing){const review=await existingReviewIdentity(client,existing,shop);if(review)auth.metadata.shopifyInstallationIdentity=review;}
  // A new start supersedes only unclaimed authorizations. In-flight exchange
  // and owner claims share this store lock, so a second browser cannot retire
  // a token after it has become a working connection.
@@ -62,7 +80,7 @@ async function read(database,cookie){
  const row=(await database.query('SELECT * FROM shopify_public_installs WHERE id=$1 AND browser_hash=$2 AND expires_at>now()',[value.id,value.proof])).rows[0];
  if(!row)throw new AuthenticationError('This Shopify connection has expired. Open StockChief from Shopify again.');
  if(row.client_id!==profiles.profile('public').clientId)throw new AuthenticationError('The Shopify application changed. Start again from Shopify.');
- approvedShop(row.shop);return row;
+ approvedShop(row.shop,row);return row;
 }
 async function complete(database,cookie,query){
  const row=await read(database,cookie);
@@ -77,7 +95,8 @@ async function completeLocked(database,cookie,query){
  if(!query.code||query.code.length>2048)throw new AuthenticationError('Shopify did not supply a valid authorization code.');
  const active=(await database.query("SELECT id,workspace_id FROM workspace_connectors WHERE provider_type='shopify' AND provider_account_id=$1 AND status='connected' AND config::jsonb->>'shopifyProfile'='public' AND config::jsonb->>'shopifyClientId'=$2 ORDER BY updated_at DESC LIMIT 1",[row.shop,row.client_id])).rows[0];
  if(active){
-   const linked=await database.query("UPDATE shopify_public_installs SET status='LINKED',linked_workspace_id=$2,linked_connector_id=$3,ciphertext=NULL,iv=NULL,auth_tag=NULL WHERE id=$1 AND status='AUTHORIZING' RETURNING id",[row.id,active.workspace_id,active.id]);
+   const nextMetadata=metadata(row),review=await existingReviewIdentity(database,active,row.shop);if(review)nextMetadata.shopifyInstallationIdentity=review;
+   const linked=await database.query("UPDATE shopify_public_installs SET status='LINKED',linked_workspace_id=$2,linked_connector_id=$3,ciphertext=NULL,iv=NULL,auth_tag=NULL,metadata=$4 WHERE id=$1 AND status='AUTHORIZING' RETURNING id",[row.id,active.workspace_id,active.id,JSON.stringify(nextMetadata)]);
    if(!linked.rowCount)throw new AuthenticationError('This Shopify response was already used. Open StockChief from Shopify again.');
    return PATH+'/connect';
  }
@@ -87,9 +106,16 @@ async function completeLocked(database,cookie,query){
  },{isolation:'SERIALIZABLE',retrySafe:true});
  if(!taken.rows.length)throw new AuthenticationError('This Shopify response was already used. Open StockChief from Shopify again.');
  try{
-   const result=await require('./shopify-install-authorization').run(database,row,()=>adapter.exchangeAuthorization({query,metadata:JSON.parse(row.metadata)})),sealed=credentials.encrypt(result);
-   const saved=await database.query(`UPDATE shopify_public_installs SET status='AUTHORIZED',ciphertext=$2,iv=$3,auth_tag=$4
-     WHERE id=$1 AND status='EXCHANGING' AND expires_at>now() RETURNING id`,[row.id,sealed.ciphertext,sealed.iv,sealed.authTag]);
+   const result=await require('./shopify-install-authorization').run(database,row,()=>adapter.exchangeAuthorization({query,metadata:metadata(row)})),nextMetadata=metadata(row);
+   if(process.env.STOCKCHIEF_RUNTIME_ENV==='production'&&require('../commercial/shopify-billing').configured()){
+    const identity=await require('../commercial/shopify-billing').readIdentity(result.credentials,row.shop);
+    if(!pilotShop(row.shop)&&!identity.developmentStore&&!launch.publicShopifyEnabled())throw new AuthorizationError('Public-store connections open after Shopify approval. This store is not a development store.');
+    nextMetadata.shopifyInstallationIdentity=identity;result.credentials.shopifyShopId=identity.shopId;
+   }
+   approvedShop(row.shop,{...row,status:'AUTHORIZED',metadata:nextMetadata});
+   const sealed=credentials.encrypt(result);
+   const saved=await database.query(`UPDATE shopify_public_installs SET status='AUTHORIZED',ciphertext=$2,iv=$3,auth_tag=$4,metadata=$5
+     WHERE id=$1 AND status='EXCHANGING' AND expires_at>now() RETURNING id`,[row.id,sealed.ciphertext,sealed.iv,sealed.authTag,JSON.stringify(nextMetadata)]);
    if(!saved.rows.length)throw new AuthenticationError('This Shopify connection expired before authorization finished. Start again.');
  }catch(error){await database.query("UPDATE shopify_public_installs SET status='FAILED',ciphertext=NULL,iv=NULL,auth_tag=NULL WHERE id=$1",[row.id]);throw error;}
  return PATH+'/connect';

@@ -5,6 +5,7 @@ on:
       - src/commercial/release.js
       - src/commercial/connector-request-cost.js
       - src/commercial/operations.js
+      - src/commercial/network.js
       - src/commercial/*shopify*
       - src/commercial/entitlements.js
       - src/commercial/service.js
@@ -20,6 +21,10 @@ on:
       - tests/postgres/shopify-managed-billing*.test.js
       - src/connections/postgres-event-ingestion.js
       - src/connections/postgres-webhook-inbox.js
+      - src/connections/launch-policy.js
+      - src/connections/postgres-shopify-public-install.js
+      - src/connections/postgres-shopify-uninstall.js
+      - src/connections/postgres-provider-service.js
       - src/connections/providers/shopify.js
       - src/connections/postgres-provider-sync.js
       - src/connections/shopify-token-lifecycle.js
@@ -29,6 +34,9 @@ on:
       - tests/unit/shopify-token-lifecycle.test.js
       - tests/unit/provider-sync-failure.test.js
       - tests/postgres/shopify-public-install.test.js
+      - tests/postgres/shopify-uninstall.test.js
+      - tests/postgres/shopify-refund-authority.test.js
+      - tests/postgres/shopify-development-reactivation.test.js
       - tests/postgres/shopify-webhooks.test.js
       - tests/unit/commercial-connector-request-cost.test.js
       - .github/workflows/shopify-pilot-qualification.yml
@@ -79,7 +87,7 @@ jobs:
           set -euo pipefail
           mkdir -p output/shopify-pilot-release
           git rev-parse HEAD:src | tee output/shopify-pilot-release/application-tree.txt
-          node --test --test-force-exit --test-concurrency=2 tests/postgres/shopify-public-install.test.js tests/postgres/shopify-webhooks.test.js tests/postgres/shopify-managed-billing.test.js tests/postgres/shopify-managed-billing-ui.test.js tests/unit/shopify-managed-billing.test.js tests/unit/commercial-connector-request-cost.test.js tests/unit/commercial-launch-provider-policy.test.js tests/unit/shopify-token-lifecycle.test.js tests/unit/provider-sync-failure.test.js tests/postgres/commercial-provider-costs.test.js tests/postgres/subscription-guarantee.test.js tests/postgres/capacity-topups-browser.test.js tests/postgres/commercial-lifecycle-ui.test.js 2>&1 | tee output/shopify-pilot-release/checks.log
+          node --test --test-force-exit --test-concurrency=2 tests/postgres/shopify-public-install.test.js tests/postgres/shopify-uninstall.test.js tests/postgres/shopify-refund-authority.test.js tests/postgres/shopify-webhooks.test.js tests/postgres/shopify-managed-billing.test.js tests/postgres/shopify-development-reactivation.test.js tests/postgres/shopify-managed-billing-ui.test.js tests/unit/shopify-managed-billing.test.js tests/unit/commercial-connector-request-cost.test.js tests/unit/commercial-launch-provider-policy.test.js tests/unit/shopify-token-lifecycle.test.js tests/unit/provider-sync-failure.test.js tests/postgres/commercial-provider-costs.test.js tests/postgres/subscription-guarantee.test.js tests/postgres/capacity-topups-browser.test.js tests/postgres/commercial-lifecycle-ui.test.js 2>&1 | tee output/shopify-pilot-release/checks.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
