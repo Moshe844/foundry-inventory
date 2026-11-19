@@ -23,7 +23,7 @@ test('all paid plans allow day-one individual approval without changing billing,
  const prepare=async(plan,suffix)=>{
   const prepared=await assistant.prepareAction(db,ctx,'Add this exact reviewed supplier',{
    action:'create_contact',recipientKind:'supplier',recipient:'Reviewed '+plan+' '+suffix,recipientEmail:plan+'-'+suffix+'@example.test'});
-  assert.equal(prepared.status,'PREPARED',JSON.stringify(prepared));return prepared.proposal;
+  assert.equal(prepared.status,'PREPARED',JSON.stringify(prepared));return assistant.getProposal(db,ctx.workspaceId,prepared.proposal.id);
  };
  for(const plan of ['starter','growth','pro'])await t.test(plan,async()=>{
   await f.subscribe(plan);await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);
