@@ -33,11 +33,11 @@ function authorizationUrl({ state, input }) {
 
 async function exchangeAuthorization({ query, metadata: state }) {
   if (query.error) throw new ValidationError(query.error_description || 'QuickBooks authorization was not completed.');
+  if(typeof query.code!=='string'||!query.code||typeof query.realmId!=='string'||!query.realmId.trim())throw new ValidationError('QuickBooks did not identify the authorized company. Start the connection again.');
   const body = new URLSearchParams({ grant_type: 'authorization_code', code: query.code, redirect_uri: state.redirectUri });
   const response = await jsonRequest('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', { method: 'POST',
     headers: { authorization: `Basic ${basic()}`, 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body });
-  const credentials = { accessToken: response.body.access_token, refreshToken: response.body.refresh_token,
-    realmId: query.realmId, expiresAt: new Date(Date.now() + Number(response.body.expires_in || 3600) * 1000).toISOString() };
+  const credentials = { ...require('./oauth-grant').read('QuickBooks',response.body),realmId:query.realmId };
   const fact = await verifyReadOnly({ credentials });
   return { credentials, accountId: query.realmId, accountName: fact.value, verifiedFact: fact,
     capabilities: ['accounting:read', 'accounting:shadow', 'accounting:post'], expiresAt: credentials.expiresAt };
@@ -47,9 +47,7 @@ async function refresh(credentials) {
   const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: credentials.refreshToken });
   const response = await jsonRequest('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', { method: 'POST',
     headers: { authorization: `Basic ${basic()}`, 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body });
-  return { ...credentials, accessToken: response.body.access_token,
-    refreshToken: response.body.refresh_token || credentials.refreshToken,
-    expiresAt: new Date(Date.now() + Number(response.body.expires_in || 3600) * 1000).toISOString() };
+  return { ...credentials, ...require('./oauth-grant').read('QuickBooks',response.body) };
 }
 
 async function refreshCredentials(credentials) {
