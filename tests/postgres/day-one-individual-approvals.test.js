@@ -73,7 +73,7 @@ test('all paid plans allow day-one individual approval without changing billing,
   await assert.rejects(require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED'),/14 days|shadow/);
   const settings=await browser.get('/autopilot').expect(200);assert.match(settings.text,/Automatic actions are blocked until/);assert.match(settings.text,/Nothing switches on just because the period ends/);
   const report=await browser.get('/autopilot/shadow').expect(200);assert.match(report.text,/Individual approvals are available from day one/);assert.match(report.text,/separate from your refund guarantee/);
-  const bill=await browser.get('/billing').expect(200);assert.match(bill.text,/data-plan-watch-period/);
+  const bill=await browser.get('/billing').redirects(2).expect(200);assert.match(bill.text,/data-plan-watch-period/);
   // The period uses account age and keeps the complete 336-hour boundary.
   await db.query("UPDATE accounts SET created_at=(now()-interval '335 hours 59 minutes')::text WHERE id=$1",[f.owner.accountId]);
   assert.equal((await policy.accountState(db,ctx.workspaceId)).shadow,true);
