@@ -278,8 +278,12 @@ async function completeOAuthLocked(database,providerType,query,requestOrigin,opt
   }catch(error){
     // Denied or abandoned replacement consent never destroys a working grant.
     // Post-authorization setup has its own durable jobs/issues and may retry.
-    if(!authorized)await database.query(`UPDATE connection_authorization_states
-      SET metadata=(metadata::jsonb||'{"authorizationFailed":true}'::jsonb)::text WHERE id=$1`,[state.id]);
+    if(!authorized){
+      const verification=providerType==='clover'&&error.details?.kind==='clover_billing_verification'?error.details:null;
+      await database.query(`UPDATE connection_authorization_states
+        SET metadata=(metadata::jsonb||$2::jsonb)::text WHERE id=$1`,[state.id,JSON.stringify({authorizationFailed:true,
+          ...(verification?{cloverBillingVerification:verification}:{})})]);
+    }
     throw error;
   }
 }

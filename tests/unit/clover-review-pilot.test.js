@@ -39,13 +39,43 @@ test('wrong merchant and changed app fail before exchanging a code',async()=>{
  assert.equal(calls,0);
 });
 test('only a provider-confirmed matching non-billable merchant can complete the private test',async()=>{
- for(const supplied of [{id:merchant,isBillable:true},{id:merchant},{id:other,isBillable:false},{id:merchant,isBillable:'false'}]){
+ for(const supplied of [{id:merchant,isBillable:true},{id:merchant},{id:merchant,isBillable:'false'}]){
   global.fetch=async url=>new URL(url).pathname.endsWith('/token')?Response.json(grant()):Response.json(supplied);
   await assert.rejects(clover.exchangeAuthorization({query:{code:'code',merchant_id:merchant},metadata:metadata()}),/non-billable/);
  }
+ global.fetch=async url=>new URL(url).pathname.endsWith('/token')?Response.json(grant()):Response.json({id:other,isBillable:false});
+ await assert.rejects(clover.exchangeAuthorization({query:{code:'code',merchant_id:merchant},metadata:metadata()}),/different merchant/);
  global.fetch=async url=>new URL(url).pathname.endsWith('/token')?Response.json(grant()):Response.json({id:merchant,isBillable:false,name:'Isolated test merchant'});
  const result=await clover.exchangeAuthorization({query:{code:'code',merchant_id:merchant},metadata:metadata()});
  assert.equal(result.accountId,merchant);assert.equal(result.credentials.isBillable,false);assert.equal(result.credentials.clientId,appId);
+});
+
+test('current Clover billingInfo verifies both plan and app billing without trusting omitted or contradictory flags',async()=>{
+ const rejected=[
+  {},{planBillable:false},{appBillable:false},{planBillable:false,appBillable:true},
+  {planBillable:true,appBillable:false},{planBillable:'false',appBillable:false},
+  {planBillable:false,appBillable:null},[],
+ ];
+ for(const billingInfo of rejected){
+  const supplied={id:merchant,billingInfo};
+  assert.equal(clover.merchantBillingStatus(supplied).confirmedNonBillable,false);
+  global.fetch=async url=>new URL(url).pathname.endsWith('/token')?Response.json(grant()):Response.json(supplied);
+  await assert.rejects(clover.exchangeAuthorization({query:{code:'code',merchant_id:merchant},metadata:metadata()}),error=>
+   error.details?.kind==='clover_billing_verification'&&error.details.confirmedNonBillable===false);
+ }
+ for(const supplied of [
+  {id:merchant,isBillable:true,billingInfo:{planBillable:false,appBillable:false}},
+  {id:merchant,isBillable:false,billingInfo:{planBillable:true,appBillable:false}},
+  {id:merchant,isBillable:'false',billingInfo:{planBillable:false,appBillable:false}},
+ ])assert.equal(clover.merchantBillingStatus(supplied).confirmedNonBillable,false);
+ for(const legacy of [undefined,null,false]){
+  const supplied={id:merchant,isBillable:legacy,billingInfo:{planBillable:false,appBillable:false}};
+  global.fetch=async url=>new URL(url).pathname.endsWith('/token')?Response.json(grant()):Response.json(supplied);
+  const result=await clover.exchangeAuthorization({query:{code:'code',merchant_id:merchant},metadata:metadata()});
+  assert.equal(result.credentials.isBillable,false);
+  assert.deepEqual(result.credentials.billingEvidence,{source:'billingInfo',legacyBillable:legacy??null,planBillable:false,
+   appBillable:false,confirmedNonBillable:true,isBillable:false});
+ }
 });
 test('a saved Clover grant is not refreshed through another application',async()=>{
  let calls=0;global.fetch=async()=>{calls++;throw Error('Must not contact provider');};

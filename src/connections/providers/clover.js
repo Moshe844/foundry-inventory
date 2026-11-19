@@ -43,6 +43,23 @@ function isoFromUnix(value) {
   return Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000).toISOString() : null;
 }
 
+// Clover's current merchant schema uses billingInfo; isBillable is deprecated.
+// Unknown, incomplete or contradictory evidence must never admit a paid merchant.
+function merchantBillingStatus(merchant) {
+  const legacyBillable = typeof merchant?.isBillable === 'boolean' ? merchant.isBillable : null;
+  const info = merchant?.billingInfo;
+  const modern = info !== undefined && info !== null;
+  const planBillable = typeof info?.planBillable === 'boolean' ? info.planBillable : null;
+  const appBillable = typeof info?.appBillable === 'boolean' ? info.appBillable : null;
+  const invalidLegacy = merchant?.isBillable != null && legacyBillable === null;
+  const billable = legacyBillable === true || planBillable === true || appBillable === true;
+  const confirmedNonBillable = !billable && !invalidLegacy && (modern
+    ? !Array.isArray(info) && planBillable === false && appBillable === false
+    : legacyBillable === false);
+  return { source: modern ? 'billingInfo' : 'isBillable', legacyBillable, planBillable, appBillable,
+    confirmedNonBillable, isBillable: billable ? true : confirmedNonBillable ? false : null };
+}
+
 async function exchangeAuthorization({ query, metadata: authMetadata = {} }) {
   if (query.error) throw new ValidationError(query.error_description || 'Clover authorization was not completed.');
   const merchantId = String(query.merchant_id || query.merchantId || '').trim();
@@ -66,10 +83,18 @@ async function exchangeAuthorization({ query, metadata: authMetadata = {} }) {
   };
   if (!credentials.accessToken) throw new ValidationError('Clover did not return a usable access token.');
   const merchant = (await api(credentials, `/v3/merchants/${encodeURIComponent(merchantId)}`)).body;
-  if(authMetadata.testOnly&&(merchant.id!==merchantId||merchant.isBillable!==false))
-    throw new ValidationError('Clover must confirm this is the approved non-billable test merchant. No connection was saved.');
+  const billing = merchantBillingStatus(merchant);
+  if(authMetadata.testOnly&&(merchant.id!==merchantId||!billing.confirmedNonBillable)) {
+    const message = merchant.id !== merchantId
+      ? 'Clover returned a different merchant from the approved test. No connection was saved.'
+      : billing.isBillable === true
+        ? 'Clover reports that this merchant can be billed. A confirmed non-billable test merchant is required. No connection was saved.'
+        : 'Clover did not provide complete non-billable test-merchant verification. No connection was saved.';
+    throw new ValidationError(message, { kind: 'clover_billing_verification', merchantMatches: merchant.id === merchantId, ...billing });
+  }
   credentials.clientId=config.connections.clover.clientId;
-  if(typeof merchant.isBillable==='boolean')credentials.isBillable=merchant.isBillable;
+  if(typeof billing.isBillable==='boolean')credentials.isBillable=billing.isBillable;
+  credentials.billingEvidence=billing;
   return { credentials, accountId: merchantId, accountName: merchant.name || `Clover merchant ${merchantId.slice(-6)}`,
     capabilities: ['READ_MERCHANT', 'READ_INVENTORY', 'READ_ORDERS', 'READ_PAYMENTS', 'WEBHOOKS'],
     expiresAt: isoFromUnix(body.access_token_expiration) };
@@ -230,6 +255,6 @@ async function historySummary({ credentials, since }) {
 
 function webhookUrl({ origin }) { return `${origin}/api/v1/connections/clover/webhooks`; }
 
-module.exports = { catalogueCapabilities:Object.freeze(['products','skus','stock','locations']), metadata, authorizationUrl, exchangeAuthorization, refreshCredentials, discover, verifyWebhook,
+module.exports = { catalogueCapabilities:Object.freeze(['products','skus','stock','locations']), metadata, authorizationUrl, merchantBillingStatus, exchangeAuthorization, refreshCredentials, discover, verifyWebhook,
   normalizeWebhook, historySummary, webhookUrl, api, oauthBase, apiBase };
 Object.assign(module.exports,require('./commerce-position').adapter('clover',{api}));
