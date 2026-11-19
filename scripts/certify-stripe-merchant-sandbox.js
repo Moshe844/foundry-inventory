@@ -12,12 +12,13 @@ async function main(){
  const key=process.env.STOCKCHIEF_SANDBOX_STRIPE_KEY;
  assert(/^(rkcs|sk|rk)_test_/.test(key||''),'Only a Stripe sandbox key is accepted');
  process.env.STRIPE_SECRET_KEY=key;
- let providerRequests=0;const realFetch=global.fetch;
+ let providerRequests=0,refundCreateRequests=0;const realFetch=global.fetch;
  global.fetch=async(input,options={})=>{
   const url=new URL(input);
   assert.equal(url.origin,'https://api.stripe.com','Certification cannot contact another provider');
   assert.equal(options.headers?.Authorization,'Bearer '+key,'Only the sandbox key can leave this process');
-  providerRequests++;return realFetch(input,options);
+  providerRequests++;if(url.pathname==='/v1/refunds'&&options.method==='POST')refundCreateRequests++;
+  return realFetch(input,options);
  };
  const cluster=await require('../tests/helpers/postgres-cluster').startCluster();
  assert(['127.0.0.1','localhost'].includes(new URL(cluster.connectionString).hostname));
@@ -69,7 +70,7 @@ async function main(){
    assert.equal((await collection.receiveVerifiedEvent(db,owner.workspaceId,'stripe',event)).replayed,true);
    assert.equal((await collection.get(db,owner.workspaceId,prepared.id)).paidMinor,2400);
    const quarantine=await locations.createLocation(db,ctx,{name:'Returns',kind:'staging',parentLocationId:location.id});
-   const refundResults=[];
+   const refundResults=[],refundCreatesBefore=refundCreateRequests;
    for(const number of [1,2]){
     const requested=await returns.requestCustomerReturn(db,ctx,{salesOrderId:order.salesOrderId,quarantineLocationId:quarantine.id,resolution:'REFUND',reason:'Stripe sandbox certification',lines:[{salesOrderLineId:order.lineIds[0],quantity:1}],idempotencyKey:'return-'+plan+'-'+number});
     await returns.authorizeCustomerReturn(db,ctx,requested.customerReturnId,{idempotencyKey:'authorize-'+plan+'-'+number});
@@ -95,13 +96,30 @@ async function main(){
     const actual=await provider.retrieveRefund(paymentContext,{externalRefundId:saved.external_refund_id,externalPaymentId:evidence.externalPaymentId});
     assert.equal(actual.status,'succeeded');assert.equal(actual.amountMinor,1200);assert.equal(actual.currency,'usd');assert.equal(actual.originalPaymentId,evidence.externalPaymentId);
     assert.equal((await require('../src/payments/stripe-return-refunds').verify(db,owner.workspaceId,refund.effectId,{system:true})).replayed,true);
+    const createsBeforeReplay=refundCreateRequests;
+    await collection.queueCustomerReturnRefund(db,ctx,requested.customerReturnId,{}).then(repeated=>{
+     assert.equal(repeated.replayed,true);assert.equal(repeated.refund.id,refund.refund.id);assert.equal(repeated.queued,false);
+    },error=>{
+     assert(error instanceof require('../src/domain/errors').ValidationError);
+     assert.match(error.message,/not waiting for a refund/,'A settled return may reject the duplicate command explicitly');
+    });
+    const sameEffect=await require('../src/operations/postgres-provider-effects').get(db,owner.workspaceId,refund.effectId);
+    const retried=await require('../src/payments/stripe-return-refunds').execute(db,sameEffect);
+    assert.equal(retried.replayed,true);assert.equal(retried.refundId,saved.external_refund_id);
+    assert.equal(refundCreateRequests,createsBeforeReplay,'Replaying a completed refund must not create another provider request');
     refundResults.push({id:actual.externalRefundId,status:actual.status,amountMinor:actual.amountMinor});
    }
    const charge=await api('/payment_intents/'+evidence.externalPaymentId+'?expand[]=latest_charge');assert.equal(charge.latest_charge.amount_refunded,2400);
+   const providerRefunds=await api('/refunds?payment_intent='+encodeURIComponent(evidence.externalPaymentId)+'&limit=100');
+   assert.equal(providerRefunds.has_more,false);assert.equal(providerRefunds.data.length,2);
+   assert.equal(new Set(providerRefunds.data.map(r=>r.id)).size,2);
+   assert.equal(providerRefunds.data.reduce((total,r)=>total+r.amount,0),2400);
+   assert(providerRefunds.data.every(r=>r.status==='succeeded'&&r.currency==='usd'));
+   assert.equal(refundCreateRequests-refundCreatesBefore,2);
    assert.equal(Number((await db.query('SELECT count(*) n FROM accounting_payments WHERE workspace_id=$1 AND sales_order_id=$2',[owner.workspaceId,order.salesOrderId])).rows[0].n),1);
    assert.equal(Number((await db.query('SELECT count(*) n FROM accounting_sale_refunds WHERE workspace_id=$1',[owner.workspaceId])).rows[0].n),2);
    assert.deepEqual((await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[owner.accountId])).rows,subscriptions);
-   results.push({plan,invoiceId:prepared.externalInvoiceId,paymentId:evidence.externalPaymentId,paidMinor:2400,refundedMinor:2400,refunds:refundResults,subscriptionUnchanged:true});
+   results.push({plan,invoiceId:prepared.externalInvoiceId,paymentId:evidence.externalPaymentId,paidMinor:2400,refundedMinor:2400,refunds:refundResults,refundCreateRequests:2,duplicateRefundsPrevented:true,subscriptionUnchanged:true});
    console.log('STRIPE_SANDBOX_PLAN '+JSON.stringify(results.at(-1)));
   }
   const proof={checkedAt:new Date().toISOString(),sandboxAccountId:account.id,liveTransactions:0,providerRequests,source:'actual Stripe sandbox APIs and disposable PostgreSQL',webhookDelivery:'separately qualified; this run reconciles authenticated provider API reads',plans:results};
