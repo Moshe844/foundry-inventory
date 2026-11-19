@@ -1,6 +1,12 @@
 name: Stripe merchant release qualification
 on:
   workflow_dispatch:
+    inputs:
+      create_temporary_sandbox:
+        description: Create an anonymous temporary sandbox instead of using the encrypted test-key secret
+        type: boolean
+        required: false
+        default: false
   pull_request:
     paths:
       - src/payments/**
@@ -19,6 +25,7 @@ on:
       - tests/postgres/connection-synchronization.test.js
       - scripts/certify-stripe-merchant-sandbox.js
       - scripts/run-stripe-merchant-sandbox.js
+      - tests/unit/stripe-sandbox-runner.test.js
       - .github/workflows/stripe-merchant-qualification.yml
 permissions:
   contents: read
@@ -36,6 +43,8 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+      - name: Verify sandbox isolation and artifact privacy
+        run: node --test tests/unit/stripe-sandbox-runner.test.js
       - name: Install PostgreSQL with bounded downloads
         timeout-minutes: 8
         run: |
@@ -86,6 +95,8 @@ jobs:
       STOCKCHIEF_RUNTIME_ENV: test
       STOCKCHIEF_POSTGRES_BIN: /usr/lib/postgresql/17/bin
       STOCKCHIEF_SANDBOX_EMAIL: support@stockchiefhq.com
+      STOCKCHIEF_CERTIFICATION_STRIPE_KEY: ${{ secrets.STOCKCHIEF_CERTIFICATION_STRIPE_KEY }}
+      STOCKCHIEF_CREATE_TEMPORARY_SANDBOX: ${{ inputs.create_temporary_sandbox && '1' || '0' }}
       STRIPE_NO_AUTO_UPDATE: '1'
     steps:
       - uses: actions/checkout@v4
@@ -93,6 +104,8 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+      - name: Require isolated sandbox credentials before provisioning test infrastructure
+        run: node -e "const r=require('./scripts/run-stripe-merchant-sandbox');r.assertSafeEnvironment(process.env);r.assertCredentialsConfigured(process.env)"
       - name: Install disposable PostgreSQL fixture tools
         timeout-minutes: 8
         run: |
