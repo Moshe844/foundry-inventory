@@ -1,5 +1,6 @@
 name: Stripe merchant release qualification
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - src/payments/**
@@ -17,6 +18,7 @@ on:
       - tests/postgres/native-connection-inspection.test.js
       - tests/postgres/connection-synchronization.test.js
       - scripts/certify-stripe-merchant-sandbox.js
+      - scripts/run-stripe-merchant-sandbox.js
       - .github/workflows/stripe-merchant-qualification.yml
 permissions:
   contents: read
@@ -71,3 +73,64 @@ jobs:
         with:
           name: stripe-merchant-qualification
           path: output/stripe-merchant-release
+
+  stripe-provider-sandbox:
+    name: Stripe actual-provider payments and refunds / all plans
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'codex/stripe-sandbox-qualification-'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CI: 'true'
+      NODE_ENV: test
+      FOUNDRY_SKIP_LOCAL_ENV: '1'
+      STOCKCHIEF_RUNTIME_ENV: test
+      STOCKCHIEF_POSTGRES_BIN: /usr/lib/postgresql/17/bin
+      STOCKCHIEF_SANDBOX_EMAIL: support@stockchiefhq.com
+      STRIPE_NO_AUTO_UPDATE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install disposable PostgreSQL fixture tools
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'Acquire::Retries "2";' 'Acquire::http::Timeout "30";' 'Acquire::https::Timeout "30";' | sudo tee /etc/apt/apt.conf.d/99-stockchief-ci-network > /dev/null
+          if [ -f /etc/apt/apt-mirrors.txt ] && getent ahosts archive.ubuntu.com >/dev/null; then
+            sudo sed -i -E 's|https?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          fi
+          sudo install -d /usr/share/postgresql-common/pgdg
+          if ! sudo curl --fail --connect-timeout 15 --max-time 90 --retry 2 --retry-all-errors --retry-delay 2 -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc; then
+            sudo curl --fail --connect-timeout 15 --max-time 90 --retry 2 --retry-all-errors --retry-delay 2 -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://apt.postgresql.org/pub/repos/apt/ACCC4CF8.asc
+          fi
+          fingerprint="$(gpg --batch --show-keys --with-colons /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc 2>/dev/null | awk -F: '$1 == "fpr" {print $10; exit}')"
+          test "$fingerprint" = B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8
+          printf '%s\n' 'Types: deb' 'URIs: https://apt.postgresql.org/pub/repos/apt' 'Suites: noble-pgdg' 'Components: main' 'Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc' | sudo tee /etc/apt/sources.list.d/pgdg.sources > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y postgresql-17
+      - run: npm ci
+      - name: Install pinned and checksum-verified Stripe CLI
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/stripe_1.55.13_linux_x86_64.tar.gz"
+          curl --fail --location --connect-timeout 15 --max-time 90 --retry 2 --retry-all-errors --output "$archive" https://github.com/stripe/stripe-cli/releases/download/v1.55.13/stripe_1.55.13_linux_x86_64.tar.gz
+          printf '%s  %s\n' a88695841d6caa78620a53aa383343ed7679c10f39c1247a53c611f2967b5a97 "$archive" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/stockchief-stripe-cli"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/stockchief-stripe-cli" stripe
+          printf 'STOCKCHIEF_STRIPE_CLI=%s/stockchief-stripe-cli/stripe\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Verify actual sandbox payment, partial refund, full refund and duplicate protection
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          mkdir -p output/stripe-merchant-sandbox
+          node scripts/run-stripe-merchant-sandbox.js 2>&1 | tee output/stripe-merchant-sandbox/checks.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stripe-actual-provider-financial-proof
+          path: |
+            output/stripe-sandbox-financial-proof.json
+            output/stripe-merchant-sandbox/checks.log
