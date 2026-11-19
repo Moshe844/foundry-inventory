@@ -29,7 +29,7 @@ test('private Clover authorization preserves every plan, credentials, cost accou
    if(url.pathname==='/oauth/v2/token')return Response.json({access_token:'isolated-access',refresh_token:'isolated-refresh',
     access_token_expiration:Math.floor(Date.now()/1000)+1800,refresh_token_expiration:Math.floor(Date.now()/1000)+86400});
    const id=url.pathname.match(/^\/v3\/merchants\/([A-Z0-9]+)$/)?.[1];assert(id,'Unexpected provider request');
-   return Response.json({id,isBillable:billable,name:'Isolated Clover test merchant'});
+   return Response.json({id,billingInfo:{planBillable:billable,appBillable:billable},name:'Isolated Clover test merchant'});
   };
   for(const [index,plan] of ['starter','growth','pro'].entries())await t.test(plan,async()=>{
    billable=false;
@@ -86,9 +86,16 @@ test('private Clover authorization preserves every plan, credentials, cost accou
     await db.query('DELETE FROM connection_authorization_states WHERE state_hash=$1 AND used_at IS NULL',[service.stateHash(providerUrl.searchParams.get('state'))]);
    }finally{await browserContext.close();}
    const grant=await store.get(db,owner.workspaceId,connected.id,'provider');
+    assert.equal(grant.billingEvidence.source,'billingInfo');
+    assert.equal(grant.billingEvidence.planBillable,false);assert.equal(grant.billingEvidence.appBillable,false);
    billable=true;
    const retry=await service.beginAuthorization(db,ctx,{providerType:'clover',connectorId:connected.id},'https://app.example.test');
    await assert.rejects(service.completeOAuth(db,'clover',{state:new URL(retry.redirectUrl).searchParams.get('state'),code:'isolated-code',merchant_id:merchant},'https://app.example.test'),/non-billable/);
+    const rejectedState=(await db.query('SELECT metadata FROM connection_authorization_states WHERE state_hash=$1',
+     [service.stateHash(new URL(retry.redirectUrl).searchParams.get('state'))])).rows[0];
+    const failure=JSON.parse(rejectedState.metadata).cloverBillingVerification;
+    assert.equal(failure.source,'billingInfo');assert.equal(failure.isBillable,true);
+    assert.equal(JSON.stringify(failure).includes('isolated-access'),false,'Failure evidence must not store provider tokens');
    assert.deepEqual(await store.get(db,owner.workspaceId,connected.id,'provider'),grant,'Rejected replacement consent must preserve the working grant');
    assert.deepEqual(await snapshot(),before);assert.equal(await release.isOpen(db),true);
    await db.query("UPDATE workspace_connectors SET config='{}' WHERE id=$1",[connected.id]);
