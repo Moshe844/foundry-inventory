@@ -38,13 +38,13 @@ test('Clover, Xero and QuickBooks consent and refresh preserve billing and isola
    const capability=await require('../../src/commercial/entitlements').capabilityState(db,{accountId:owner.accountId,workspaceId:owner.workspaceId},type==='clover'?'connection.commerce':'connection.accounting');
    if(!capability.enabled){
     const calls=externalCalls;
-    await assert.rejects(()=>service.startOAuth(db,ctx,{providerType:type},'https://app.example.test'),error=>error.code==='entitlement_required');
+    await assert.rejects(()=>service.beginAuthorization(db,ctx,{providerType:type},'https://app.example.test'),error=>error.code==='entitlement_required');
     assert.equal(externalCalls,calls,'A plan restriction must be enforced before provider traffic');
     assert.equal((await db.query('SELECT 1 FROM workspace_connectors WHERE workspace_id=$1',[owner.workspaceId])).rowCount,0);
     assert.deepEqual((await db.query('SELECT to_jsonb(s) state FROM account_subscriptions s WHERE account_id=$1',[owner.accountId])).rows,before);
     return;
    }
-   const started=await service.startOAuth(db,ctx,{providerType:type},'https://app.example.test');
+   const started=await service.beginAuthorization(db,ctx,{providerType:type},'https://app.example.test');
    const state=new URL(started.redirectUrl).searchParams.get('state');assert(state);
    assert.equal((await db.query('SELECT 1 FROM workspace_connectors WHERE workspace_id=$1',[owner.workspaceId])).rowCount,0,'Starting consent creates no connector');
    const connected=await service.completeOAuth(db,type,{state,code:'offline-code',realmId:'offline-company',merchant_id:'offline-merchant'},'https://app.example.test');

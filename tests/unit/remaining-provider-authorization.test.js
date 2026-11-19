@@ -22,6 +22,8 @@ for(const [name,adapter,grant] of [['Clover',clover,absolute],['QuickBooks',quic
    b=>b.access_token={unexpected:'object'},b=>b.error='temporarily_unavailable',
    b=>b[name==='Clover'?'access_token_expiration':'expires_in']=-1,
    b=>b[name==='Clover'?'access_token_expiration':'expires_in']='not-a-date',
+   b=>b[name==='Clover'?'access_token_expiration':'expires_in']=true,
+   b=>b[name==='Clover'?'access_token_expiration':'expires_in']=[1800],
    b=>b[name==='Clover'?'refresh_token_expiration':'expires_in']=Number.MAX_VALUE]){
    let calls=0;const body=grant();change(body);
    global.fetch=async value=>{calls++;assert.match(new URL(value).hostname,/^(apisandbox\.dev\.clover\.com|oauth\.platform\.intuit\.com|identity\.xero\.com)$/);return Response.json(body);};

@@ -9,11 +9,15 @@ function read(provider,body,{absolute=false,now=Date.now()}={}){
   {code:'PROVIDER_REFRESH_UNCONFIRMED',status:503,transient:true});
  const token=value=>typeof value==='string'&&value.length>0&&!/\s/.test(value);
  if(!body||body.error||!token(body.access_token)||!token(body.refresh_token))throw invalid();
- const seconds=Number(absolute?body.access_token_expiration:body.expires_in);
+ const numeric=value=>typeof value==='number'||typeof value==='string'&&/^\d+$/.test(value);
+ const value=absolute?body.access_token_expiration:body.expires_in;
+ if(!numeric(value))throw invalid();
+ const seconds=Number(value);
  if(!Number.isSafeInteger(seconds)||seconds<=0)throw invalid();
  const expires=absolute?seconds*1000:now+seconds*1000;
  if(!Number.isSafeInteger(expires)||!Number.isFinite(new Date(expires).getTime()))throw invalid();
  if(absolute){
+  if(!numeric(body.refresh_token_expiration))throw invalid();
   const refreshSeconds=Number(body.refresh_token_expiration);
   if(!Number.isSafeInteger(refreshSeconds)||refreshSeconds<=seconds||!Number.isFinite(new Date(refreshSeconds*1000).getTime()))throw invalid();
  }
