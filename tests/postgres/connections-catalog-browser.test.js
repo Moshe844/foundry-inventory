@@ -73,8 +73,9 @@ test('Connections browser shows the full provider directory without enabling exc
     await page.setViewportSize({width:390,height:844});
     await page.goto(base);
     await page.getByRole('button',{name:'Open navigation'}).click();
+    await page.waitForFunction(()=>{const box=document.getElementById('app-sidebar').getBoundingClientRect();return box.left>=0&&box.right<=window.innerWidth+1;},null,{timeout:5000});
     const mobilePanel=await page.locator('#app-sidebar').boundingBox();
-    assert.ok(mobilePanel.x>=0 && mobilePanel.x+mobilePanel.width<=391);
+    assert.ok(mobilePanel.x>=0 && mobilePanel.x+mobilePanel.width<=391,JSON.stringify(mobilePanel));
     assert.ok(mobilePanel.y>=0 && mobilePanel.y+mobilePanel.height<=845);
     await page.getByRole('button',{name:'Visible Connections'}).click();
     const mobileSwitcher=await page.locator('#rail-inventory-menu').boundingBox();
