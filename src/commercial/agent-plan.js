@@ -289,16 +289,18 @@ const humanSteps=new Set([
   'shipping.purchase_limits','connection.accounting_authority','customer.update'
 ]);
 function needsPerson(capability,payload,state){if(capability==='sales_order.reserve_rotation'&&payload?.needsHistoricalFifoConfirmation)return true;if(['purchase_order.reorder_drafts','purchasing.select_supplier'].includes(capability)&&payload?.needsPurchaseTermsConfirmation!==false)return true;if(['inventory.transfer','transfer.approve'].includes(capability)&&state&&usesAgentTerms(state))return true;return (state?.plan==='starter'&&usesAgentTerms(state))||(capability?.startsWith('document.file_to_')&&payload?.needsTargetConfirmation!==false)||(['accounting.bank_import','customer_payment.record','customer_invoice.payment'].includes(capability)&&state&&usesAgentTerms(state))||(capability==='customer_payment.match_bank_line'&&payload?.needsPaymentConfirmation!==false)||(capability==='document.save_product_facts'&&payload?.needsFactConfirmation!==false)||(capability==='catalog.supplier_price_list'&&payload?.overReviewThreshold!==false)||(capability==='supplier_invoice.dispute'&&payload?.needsDisputeConfirmation!==false)||(capability==='purchase_order.record_supplier_invoice'&&state&&usesAgentTerms(state)&&payload?.needsInvoiceConfirmation!==false)||(capability==='warehouse.wave.create'&&state&&usesAgentTerms(state)&&payload?.needsWaveConfirmation!==false)||(capability==='warehouse.prepare_putaway'&&payload?.needsPutawayConfirmation!==false)||(capability==='customer.statement'&&payload?.needsStatementConfirmation!==false)||(capability==='landed_cost.apply'&&payload?.needsLandedCostConfirmation!==false)||humanSteps.has(capability)||separateApproval.has(capability);}
-// During the first 14 days only automatic execution is refused. An exact
-// individual approval still passes every plan, permission and job-mode check.
+// During the first 14 days only a trusted exact individual approval may act.
+// It still passes every plan, permission and job-mode check; automatic work
+// and ordinary callers passing automatic=false cannot borrow that authority.
 // Jobs compare this reason before recording what they would have done.
 const SHADOW_REASON='StockChief is watching during the first 14 days. Automatic actions are blocked; review and approve eligible individual changes now. After the watch period, choose which automatic work to enable within your plan and limits.';
 async function stopped(db,workspaceId,account,capability,automatic,payload){
   if(!account.plan||!usesAgentTerms(account))return null;
-  if(account.shadow&&automatic)return SHADOW_REASON;
+  const individual=!automatic&&require('./individual-approval').active(workspaceId);
+  if(account.shadow&&!individual)return SHADOW_REASON;
   if(['autopilot.pause','autopilot.resume','autopilot.mode','report.template.create'].includes(capability))return null;
   const {rows:[config]}=await db.query('SELECT mode,paused,suspended FROM workspace_autopilot WHERE workspace_id=$1',[workspaceId]);
-  if(config?.mode==='OBSERVE'&&(automatic||!account.shadow))return 'StockChief is in watch-only mode. Change its authority before approving an agent change.';
+  if(config?.mode==='OBSERVE'&&(!account.shadow||!individual))return 'StockChief is in watch-only mode. Change its authority before approving an agent change.';
   if(automatic&&(Number(config?.paused)||Number(config?.suspended)))return 'Automatic work is paused. Review the inventory’s automation settings.';
   if(capability?.startsWith('document.file_to_')){
     const filingMode=await require('../autopilot/job-modes').restriction(db,workspaceId,142,automatic);

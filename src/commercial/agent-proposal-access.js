@@ -10,7 +10,7 @@ async function review(db,ctx,proposal,{mission=false}={}){
  const minimum=operation=>tiers.find(([plan])=>policy.permits(plan,job,operation,{trained:true,edi:true}))?.[1];
  try{if(job&&tier!==undefined)await policy.requireWorkspaceJob(db,ctx.workspaceId,job,'draft');}
  catch(error){if(error.code!=='entitlement_required')throw error;return {individual:{blocked:true,reason:error.message,upgrade:minimum('draft')},mission:{blocked:true,reason:error.message}};}
- const stop=await policy.stopped(db,ctx.workspaceId,state,proposal.action_type,false,proposal.payload);
+ const stop=await require('./individual-approval').run(ctx,()=>policy.stopped(db,ctx.workspaceId,state,proposal.action_type,false,proposal.payload));
  if(stop)return {individual:{blocked:true,reason:stop},mission:{blocked:true,reason:stop}};
  const watchPeriod=state.shadow?{endsAt:state.shadowEndsAt}:null;
  if(!mission)return {individual,mission:whole,watchPeriod};

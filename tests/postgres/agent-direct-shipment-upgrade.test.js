@@ -1,5 +1,4 @@
 'use strict';
-const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 
 process.env.NODE_ENV='test';
 const {test}=require('node:test');
@@ -42,7 +41,7 @@ test('direct-shipping upgrade preserves existing stock, cost, customer reservati
   const direct=require('../../src/purchasing/agent-direct-shipments');
   const input={salesOrderId:order.salesOrderId,supplierId:'fixture-supplier',requestKey:randomUUID(),confirmed:'yes',
     lines:[{lineId:order.lineIds[0],quantity:3}]};
-  await reviewedChangeWithoutCommit(db,()=>direct.prepare(db,ctx,input));
+  await assert.rejects(direct.prepare(db,ctx,input),/first 14 days/);
   await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
   const prepared=await direct.prepare(db,ctx,input);
   const decision={confirmed:'yes',revision:prepared.revision,sourceHash:prepared.source_hash};

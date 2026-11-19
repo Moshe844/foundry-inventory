@@ -3,7 +3,7 @@ const list=(p,key)=>p.lines.filter(l=>l[key]>0).map(l=>l[key]+' × '+l.code+(l.k
 const value=v=>helpers.money(v,r?.currency||m.currency); %>
 <div class="page-head"><div class="titles"><h1>Split orders</h1>
 <p>When an order is partly in stock, StockChief sends the part that is set aside to picking and keeps the rest waiting on the same order. Your rules decide which orders can be split.</p></div></div>
-<% if(m.shadow){ %><p class="notice notice--info">StockChief shows which orders it would split. You can review an individual split now; automatic splits stay blocked during the first 14 days.</p>
+<% if(m.shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It shows which orders it would split and changes nothing.</p>
 <% }else if(m.blocked){ %><p class="notice notice--warn"><%= m.blocked %></p><% } %>
 
 <% if(m.drafts.length){ %><section class="card section" id="approvals"><h2>Waiting for your approval</h2>
@@ -29,10 +29,10 @@ const value=v=>helpers.money(v,r?.currency||m.currency); %>
 <td data-label="Next"><% if(p.hold){ %><span class="badge badge--warn">Needs you</span> <%= p.hold %>
 <% }else if(p.wait){ %><span class="badge">Waits</span> <%= p.wait %>
 <% }else{ %><span class="badge badge--ok"><%= p.final?'Rest ships':'Splits' %></span> <%= p.final?'The rest is set aside and can go to picking.':'Part '+p.split+' can go to picking now.' %>
-<% if(!m.drafts.some(d=>d.sales_order_id===p.orderId)){ %><form method="post" action="<%= m.href %>/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="orderId" value="<%= p.orderId %>">
+<% if(!m.shadow&&!m.drafts.some(d=>d.sales_order_id===p.orderId)){ %><form method="post" action="<%= m.href %>/prepare"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="orderId" value="<%= p.orderId %>">
 <button class="btn btn--sm" <%= m.blocked?'disabled':'' %>>Prepare for approval</button></form><% } %><% } %></td></tr><% } %>
 </tbody></table></div>
-<% if(!m.blocked){ %><form method="post" action="<%= m.href %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost">Check orders now</button></form><% } %><% } %></section>
+<% if(!m.shadow&&!m.blocked){ %><form method="post" action="<%= m.href %>/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost">Check orders now</button></form><% } %><% } %></section>
 
 <section class="card section"><h2>Your rules</h2>
 <% if(r&&r.enabled){ %><p><%= r.customers==='all'?'Every customer, unless you marked them to ship complete.':'Only customers and orders you marked as accepting partial shipments.' %>

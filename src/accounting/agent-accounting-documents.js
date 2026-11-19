@@ -192,9 +192,10 @@ async function decide(db,workspaceId){
 }
 
 async function stopped(db,workspaceId,state,automatic){
-  if(state.shadow&&automatic)return 'StockChief is watching during its first 14 days. Review and approve this document individually.';
+  const individual=!automatic&&require('../commercial/individual-approval').active(workspaceId);
+  if(state.shadow&&!individual)return 'StockChief is watching during its first 14 days. Review and approve this document individually.';
   const cfg=(await db.query('SELECT mode,paused,suspended FROM workspace_autopilot WHERE workspace_id=$1',[workspaceId])).rows[0];
-  if(cfg?.mode==='OBSERVE'&&(automatic||!state.shadow))return 'StockChief is set to Watch only. Change its mode to send this.';
+  if(cfg?.mode==='OBSERVE'&&(!state.shadow||!individual))return 'StockChief is set to Watch only. Change its mode to send this.';
   if(automatic&&(Number(cfg?.paused)||Number(cfg?.suspended)))return 'Automatic work is paused.';
   const mode=await require('../autopilot/job-modes').restriction(db,workspaceId,JOB,automatic);
   if(mode)return mode;

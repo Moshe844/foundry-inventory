@@ -1,5 +1,4 @@
 'use strict';
-const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const margin=require('../../src/reports/agent-net-margin');
@@ -194,7 +193,7 @@ test('Starter gets one read-only view; Growth and Custom run alone; pause holds;
   await db.query("UPDATE accounts SET created_at=now()::text WHERE id=$1",[f.owner.accountId]);
   const shadow=await margin.run(db,ws);
   assert.equal(shadow.outcome,'WATCHED');assert.match(shadow.reason,/first 14 days/);
-  await reviewedChangeWithoutCommit(db,()=>margin.checkNow(db,ctx));
+  await assert.rejects(margin.checkNow(db,ctx),/first 14 days/);
   await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
 
   // Custom runs alone too, and a plan lock stops the worker without losing alerts.

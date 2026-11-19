@@ -3,7 +3,7 @@ const change=l=>l.delta>0?'gets '+l.delta+' × '+l.code:'gives up '+(-l.delta)+'
 const order=ch=>ch.lines.map(change).join(', '); %>
 <div class="page-head"><div class="titles"><h1>Share scarce stock</h1>
 <p>When open orders need more of a product than a warehouse has free, StockChief shares it by your rules. It never takes stock from an order that is being picked, packed or has shipped.</p></div></div>
-<% if(m.shadow){ %><p class="notice notice--info">StockChief shows how it would share stock. You can review an individual change now; automatic allocation stays blocked during the first 14 days.</p>
+<% if(m.shadow){ %><p class="notice notice--info">StockChief is watching during your first 14 days. It shows how it would share stock and changes nothing.</p>
 <% }else if(m.blocked){ %><p class="notice notice--warn"><%= m.blocked %></p><% } %>
 
 <% if(m.drafts.length){ %><section class="card section" id="approvals"><h2>Waiting for your approval</h2>
