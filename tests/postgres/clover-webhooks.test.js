@@ -76,5 +76,6 @@ test('real Chromium qualifies Clover merchant fan-out, unknown isolation, signat
     const replay=await send('clover-auth-secret');assert.equal(replay.status,200);assert.equal((await replay.json()).replayed,1);
     assert.equal(await balance(),5);assert.equal((await send('forged')).status,401);assert.equal(await balance(),5);
     await page.goto(`${base}/inventory/${item.itemId}`);
+    await page.getByRole('navigation',{name:'Product tabs'}).getByRole('link',{name:'History',exact:true}).click();
     assert.match(await page.locator('main').innerText(),/Clover order order-1/);assert.deepEqual(errors,[]);
   });

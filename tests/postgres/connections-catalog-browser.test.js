@@ -37,31 +37,25 @@ test('Connections browser shows the full provider directory without enabling exc
     await inventory.receive(database,ctx,{skuId:item.skuIds[0],locationId:place.id,quantity:8,
       reference:'OPENING',idempotencyKey:'visible-connections-opening'});
     await page.goto(base);
-    assert.match(await page.locator('.sc-home__inventory-line').innerText(),
-      /1 product · 8 units on hand · 8 not reserved/);
-    await page.getByRole('button',{name:'More'}).click();
-    const directory=page.getByRole('navigation',{name:'More destinations'});
-    await directory.getByRole('heading',{name:'Connections'}).waitFor();
-    assert.equal(await directory.getByRole('link',{name:'All connections'}).getAttribute('href'),'/settings/connections');
+    assert.equal(await page.locator('[data-home-number="units"]').innerText(),'8');
+    await page.getByRole('navigation',{name:'Account navigation'}).getByRole('link',{name:'Settings',exact:true}).click();
+    await page.getByRole('navigation',{name:'Settings sections'}).getByRole('link',{name:'Connections',exact:true}).click();
+    assert.equal(new URL(page.url()).pathname,'/settings/connections');
     await page.getByRole('button',{name:'Visible Connections'}).click();
-    assert.equal(await directory.isVisible(),false);
     const switcher=page.locator('#rail-inventory-menu');
     assert.equal(await switcher.isVisible(),true);
     assert.equal(await switcher.getByRole('link',{name:'All inventories'}).count(),1);
     assert.equal(await switcher.getByRole('link',{name:'Everything else'}).count(),0);
-    const menuBox=await switcher.boundingBox();const railBox=await page.locator('.rm-rail').boundingBox();
-    assert.ok(menuBox.x>=railBox.x+railBox.width-4 && menuBox.x+menuBox.width<=1281,
-      JSON.stringify({menuBox,railBox}));
-    await page.getByRole('button',{name:'More'}).click();
-    assert.equal(await switcher.isVisible(),false);
+    const menuBox=await switcher.boundingBox();
+    assert.ok(menuBox.x>=0 && menuBox.x+menuBox.width<=1281,JSON.stringify(menuBox));
     await page.keyboard.press('Escape');
-    assert.equal(await directory.isVisible(),false);
+    assert.equal(await switcher.isVisible(),false);
     const id=newId('con');const at=nowIso();
     await database.query(`INSERT INTO workspace_connectors
       (id,workspace_id,connector_key,display_name,provider_type,status,capabilities,provides,config,
-       expected_interval_minutes,setup_status,authorized_by_user_id,created_at,updated_at)
-      VALUES($1,$2,$3,'Former Shop','shopify','disconnected','[]','[]','{}',60,'DISCONNECTED',$4,$5,$5)`,
-    [id,owner.workspace_id,`shopify:${id}`,owner.actor_id,at]);
+       expected_interval_minutes,setup_status,authorized_by_user_id,created_at,updated_at,first_connected_at)
+      VALUES($1,$2,$3,'Former Shop','shopify','disconnected','[]','[]','{}',60,'DISCONNECTED',$4,$5,$5,$6)`,
+    [id,owner.workspace_id,`shopify:${id}`,owner.actor_id,at,at]);
     await page.goto(`${base}/settings/connections`);
     const text=await page.locator('main').innerText();
     for(const provider of ['Square','WooCommerce','Gmail','Stripe'])assert.match(text,new RegExp(provider));
@@ -69,18 +63,20 @@ test('Connections browser shows the full provider directory without enabling exc
       assert.match(text,new RegExp(provider),'Existing adapters remain discoverable with honest availability');
     for(const provider of ['QuickBooks','Xero','Clover','Microsoft 365'])assert.equal(await page.getByRole('link',{name:'Connect '+provider,exact:true}).count(),0,'A directory entry is not a production activation');
     assert.doesNotMatch(text,/Connect Shopify/);
-    assert.match(text,/disconnected or incomplete connection/);
-    await page.getByText(/disconnected or incomplete connection/).click();
-    assert.match(await page.locator('main').innerText(),/Former Shop/);
-    assert.match(await page.locator('main').innerText(),/history retained/);
-    assert.equal(await page.getByRole('link',{name:'View record'}).count(),1);
+    const history=page.locator('.sc-connection-history');
+    await history.getByText('Connection history',{exact:true}).click();
+    const record=history.getByRole('link',{name:'View details: Shopify · Not connected',exact:true});
+    assert.equal(await record.getAttribute('href'),'/settings/connections/'+id);
+    await record.click();
+    await page.getByRole('heading',{name:'Former Shop',exact:true}).waitFor();
+    assert.match(await page.locator('main').innerText(),/Not connected/);
     await page.setViewportSize({width:390,height:844});
     await page.goto(base);
-    await page.getByRole('button',{name:'More'}).click();
-    const mobilePanel=await page.locator('#rail-more-panel').boundingBox();
-    assert.ok(mobilePanel.x>=0 && mobilePanel.x+mobilePanel.width<=391);
+    await page.getByRole('button',{name:'Open navigation'}).click();
+    await page.waitForFunction(()=>{const box=document.getElementById('app-sidebar').getBoundingClientRect();return box.left>=0&&box.right<=window.innerWidth+1;},null,{timeout:5000});
+    const mobilePanel=await page.locator('#app-sidebar').boundingBox();
+    assert.ok(mobilePanel.x>=0 && mobilePanel.x+mobilePanel.width<=391,JSON.stringify(mobilePanel));
     assert.ok(mobilePanel.y>=0 && mobilePanel.y+mobilePanel.height<=845);
-    await page.keyboard.press('Escape');
     await page.getByRole('button',{name:'Visible Connections'}).click();
     const mobileSwitcher=await page.locator('#rail-inventory-menu').boundingBox();
     assert.ok(mobileSwitcher.x>=0 && mobileSwitcher.x+mobileSwitcher.width<=391,

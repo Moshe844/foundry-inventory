@@ -53,9 +53,9 @@ async function exchangeAuthorization({ query, metadata: authMetadata = {} }) {
       code: query.code,
     }),
   });
+  const grant=require('./oauth-grant').read('Clover',body,{absolute:true});
   const credentials = {
-    environment, merchantId, accessToken: body.access_token, refreshToken: body.refresh_token,
-    accessTokenExpiration: body.access_token_expiration, refreshTokenExpiration: body.refresh_token_expiration,
+    environment, merchantId, ...grant,
     webhookAuthCode: config.connections.clover.webhookAuthCode,
   };
   if (!credentials.accessToken) throw new ValidationError('Clover did not return a usable access token.');
@@ -77,8 +77,7 @@ async function refreshCredentials(credentials) {
       refresh_token: credentials.refreshToken,
     }),
   });
-  const refreshed = { ...credentials, accessToken: body.access_token, refreshToken: body.refresh_token,
-    accessTokenExpiration: body.access_token_expiration, refreshTokenExpiration: body.refresh_token_expiration };
+  const refreshed = { ...credentials, ...require('./oauth-grant').read('Clover',body,{absolute:true}) };
   return { credentials: refreshed, refreshed: true, expiresAt: isoFromUnix(body.access_token_expiration) };
 }
 

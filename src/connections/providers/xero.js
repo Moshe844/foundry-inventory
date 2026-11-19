@@ -34,14 +34,13 @@ function authorizationUrl({ state, input }) {
 
 async function exchangeAuthorization({ query, metadata: state }) {
   if (query.error) throw new ValidationError(query.error_description || 'Xero authorization was not completed.');
+  if(typeof query.code!=='string'||!query.code)throw new ValidationError('Xero did not return an authorization code. Start the connection again.');
   const body = new URLSearchParams({ grant_type: 'authorization_code', code: query.code, redirect_uri: state.redirectUri });
   const token = await jsonRequest('https://identity.xero.com/connect/token', { method: 'POST', headers: {
     authorization: `Basic ${basic()}`, 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body });
-  const credentials = { accessToken: token.body.access_token, refreshToken: token.body.refresh_token,
-    expiresAt: new Date(Date.now() + Number(token.body.expires_in || 1800) * 1000).toISOString() };
+  const credentials = require('./oauth-grant').read('Xero',token.body);
   const tenants = await jsonRequest('https://api.xero.com/connections', { headers: { authorization: `Bearer ${credentials.accessToken}`, accept: 'application/json' } });
-  if ((tenants.body || []).length !== 1) throw new ValidationError('Choose one Xero organization for this connection.');
-  credentials.tenantId = tenants.body[0].tenantId;
+  credentials.tenantId = authorizedTenant(credentials.accessToken,tenants.body);
   const fact = await verifyReadOnly({ credentials });
   return { credentials, accountId: credentials.tenantId, accountName: fact.value, verifiedFact: fact,
     capabilities: ['accounting:read','accounting:shadow', ...(state.requestedPosting ? ['accounting:post'] : [])], expiresAt: credentials.expiresAt };
@@ -51,8 +50,7 @@ async function refresh(credentials) {
   const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: credentials.refreshToken });
   const token = await jsonRequest('https://identity.xero.com/connect/token', { method: 'POST', headers: {
     authorization: `Basic ${basic()}`, 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body });
-  return { ...credentials, accessToken: token.body.access_token, refreshToken: token.body.refresh_token,
-    expiresAt: new Date(Date.now() + Number(token.body.expires_in || 1800) * 1000).toISOString() };
+  return { ...credentials, ...require('./oauth-grant').read('Xero',token.body) };
 }
 
 async function refreshCredentials(credentials) {
@@ -70,8 +68,25 @@ async function api(credentials, path) {
 
 async function verifyReadOnly({ credentials }) {
   const response = await api(credentials, '/Organisation'); const org = response.body.Organisations?.[0];
-  if (!org?.Name) throw new ValidationError('Xero did not return an organization identity.');
+  if (!org?.Name||!org.OrganisationID||String(org.OrganisationID)!==String(credentials.tenantId)) throw new ValidationError('Xero did not confirm the authorized organization identity.');
   return { label: 'Xero organization', value: org.Name, externalId: org.OrganisationID };
+}
+
+function authorizedTenant(accessToken,connections){
+ if(!Array.isArray(connections))throw new ValidationError('Xero did not return its authorized organizations.');
+ let eventId=null;
+ try{
+  // This token came directly from Xero's authenticated token endpoint. The
+  // claim only narrows its returned connection list; it grants no authority.
+  const parts=accessToken.split('.');
+  if(parts.length===3){const claims=JSON.parse(Buffer.from(parts[1],'base64url').toString('utf8'));
+   if(typeof claims.authentication_event_id==='string'&&claims.authentication_event_id)eventId=claims.authentication_event_id;}
+ }catch{/* Opaque tokens still work when Xero returns exactly one company. */}
+ const organizations=connections.filter(row=>row&&typeof row.tenantId==='string'&&row.tenantId&&(!row.tenantType||row.tenantType==='ORGANISATION'));
+ const current=eventId?organizations.filter(row=>row.authEventId===eventId):organizations;
+ const ids=[...new Set(current.map(row=>row.tenantId))];
+ if(ids.length!==1)throw new ValidationError('In Xero, authorize one organization for this connection, then try again. Your existing connections are preserved.');
+ return ids[0];
 }
 
 async function discover({credentials}){
