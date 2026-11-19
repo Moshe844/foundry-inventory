@@ -90,7 +90,16 @@ jobs:
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'watch-period' }}
         run: |
           set -euo pipefail
-          node --test --test-concurrency=1 tests/unit/day-one-individual-approvals.test.js tests/unit/agent-plan-v3.test.js tests/postgres/day-one-individual-approvals.test.js tests/postgres/agent-po-delivery-dates.test.js tests/postgres/agent-product-retirements.test.js tests/postgres/agent-supplier-forecasts.test.js tests/postgres/agent-shadow-mode.test.js tests/postgres/agent-plan-v3.test.js tests/postgres/stripe-live-connect.test.js tests/postgres/subscription-guarantee.test.js tests/postgres/shopify-public-install.test.js tests/postgres/connection-synchronization.test.js 2>&1 | tee output/customer-navigation-ci/day-one-approvals.log
+          node --test --test-concurrency=1 \
+            tests/unit/day-one-individual-approvals.test.js tests/unit/agent-plan-v3.test.js \
+            tests/postgres/day-one-individual-approvals.test.js tests/postgres/agent-po-delivery-dates.test.js \
+            tests/postgres/agent-product-retirements.test.js tests/postgres/agent-supplier-forecasts.test.js \
+            tests/postgres/agent-customer-questions.test.js tests/postgres/agent-pricing-chart.test.js \
+            tests/postgres/agent-landed-cost-bills.test.js tests/postgres/agent-year-end-pack.test.js \
+            tests/postgres/agent-supplier-review-packs.test.js tests/postgres/agent-shadow-mode.test.js \
+            tests/postgres/agent-plan-v3.test.js tests/postgres/stripe-live-connect.test.js \
+            tests/postgres/subscription-guarantee.test.js tests/postgres/shopify-public-install.test.js \
+            tests/postgres/connection-synchronization.test.js 2>&1 | tee output/customer-navigation-ci/day-one-approvals.log
       - name: Private authentication persists before redirects
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |

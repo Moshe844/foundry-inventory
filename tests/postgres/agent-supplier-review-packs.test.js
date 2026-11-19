@@ -93,7 +93,12 @@ test('Supplier review packs are prepared after each quarter, kept, and sent to e
   const shadowPage=await f.browser.get(packs.href).expect(200);
   assert.match(shadowPage.text,/first 14 days/);assert.doesNotMatch(shadowPage.text,/>Send</);
   const kept=await f.one('alt-supplier');
-  await reviewedChangeWithoutCommit(db,()=>packs.send(db,ctx,kept.id,{fingerprint:kept.fingerprint}));
+  await reviewedChangeWithoutCommit(db,async()=>{
+    await f.mailbox('Individually reviewed supplier pack mailbox');
+    const reviewed=await packs.send(db,ctx,kept.id,{fingerprint:kept.fingerprint});
+    assert.equal(reviewed.sent,true);
+    assert.equal((await f.effects('alt-supplier')).length,1,'one reviewed supplier pack is queued without routine authority');
+  });
   // The kept copy is the PDF StockChief made.
   const text=await f.pdfText((await f.binary(f.browser.get(packs.href+'/packs/'+kept.id)).expect(200).expect('Content-Type',/pdf/)).body);
   for(const s of ['Alternative','Shipping operation fixture',f.first,f.second,'$11.00','50%','$1.25'])assert(text.includes(s),s);
