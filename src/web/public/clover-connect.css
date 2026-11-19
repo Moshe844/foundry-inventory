@@ -1,0 +1,62 @@
+.sc-clover-connect {
+  width: min(100%, 720px);
+  box-sizing: border-box;
+  margin: 36px auto;
+  padding: 32px;
+  border: 1px solid var(--line, #dce0eb);
+  border-radius: 20px;
+  background: var(--surface, #fff);
+  color: var(--ink, #17223b);
+  box-shadow: 0 8px 28px rgb(24 33 58 / 6%);
+}
+.sc-clover-connect__header,
+.sc-clover-connect__brands,
+.sc-clover-connect__actions { display: flex; align-items: center; gap: 12px; }
+.sc-clover-connect__header { justify-content: space-between; flex-wrap: wrap; margin-bottom: 28px; }
+.sc-clover-connect__brands { font-size: 16px; font-weight: 650; }
+.sc-clover-connect__symbol {
+  display: grid; place-items: center; width: 40px; height: 40px;
+  border-radius: 12px; background: #5046e5; color: #fff;
+}
+.sc-clover-connect__arrow { color: var(--muted, #66718a); font-weight: 400; }
+.sc-clover-connect__badge {
+  padding: 5px 10px; border: 1px solid #dedbf8; border-radius: 999px;
+  background: #f3f1ff; color: #5147a3; font-size: 12px; font-weight: 600;
+}
+.sc-clover-connect h1 { margin: 0 0 12px; font-size: clamp(25px, 3vw, 32px); line-height: 1.2; letter-spacing: -.025em; }
+.sc-clover-connect__intro { margin: 0 0 24px; color: var(--muted, #66718a); font-size: 16px; line-height: 1.6; }
+.sc-clover-connect__destination {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+  padding: 20px; margin: 0 0 24px; border: 1px solid var(--line, #dce0eb); border-radius: 12px;
+}
+.sc-clover-connect dt { margin: 0 0 7px; color: var(--muted, #66718a); font-size: 13px; }
+.sc-clover-connect dd { margin: 0; font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
+.sc-clover-connect__merchant { font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+.sc-clover-connect__signin {
+  padding: 20px; border: 1px solid #e2e5ef; border-radius: 12px; background: #f7f8fc;
+}
+.sc-clover-connect__signin h2 { margin: 0 0 8px; font-size: 16px; line-height: 1.4; }
+.sc-clover-connect__signin p { margin: 0 0 10px; color: #59657d; font-size: 14px; line-height: 1.6; }
+.sc-clover-connect__signin a { color: #473bc4; font-size: 14px; font-weight: 600; text-underline-offset: 3px; }
+.sc-clover-connect__next { margin: 24px 0 18px; font-size: 15px; line-height: 1.6; }
+.sc-clover-connect__actions { margin: 0; flex-wrap: wrap; }
+.sc-clover-connect__actions .btn { min-height: 46px; padding: 11px 18px; box-sizing: border-box; font: inherit; font-size: 15px; font-weight: 600; }
+.sc-clover-connect__continue {
+  display: inline-flex; align-items: center; justify-content: center; gap: 14px;
+  border: 1px solid #483bd1; border-radius: 10px; background: #5046e5; color: #fff;
+  cursor: pointer; box-shadow: 0 2px 4px rgb(39 28 126 / 15%);
+}
+.sc-clover-connect__continue:hover { background: #4439d2; }
+.sc-clover-connect__continue:focus-visible,
+.sc-clover-connect a:focus-visible { outline: 3px solid #a89dff; outline-offset: 3px; }
+.sc-clover-connect__note { margin: 18px 0 0; color: var(--muted, #66718a); font-size: 13px; line-height: 1.6; }
+@media (max-width: 600px) {
+  .sc-clover-connect { margin: 16px auto; padding: 22px 18px; border-radius: 16px; }
+  .sc-clover-connect__header { gap: 14px; margin-bottom: 22px; }
+  .sc-clover-connect__brands { gap: 8px; font-size: 15px; }
+  .sc-clover-connect__symbol { width: 34px; height: 34px; border-radius: 10px; }
+  .sc-clover-connect__destination { grid-template-columns: 1fr; gap: 16px; padding: 16px; }
+  .sc-clover-connect__signin { padding: 16px; }
+  .sc-clover-connect__actions { flex-direction: column; align-items: stretch; gap: 10px; }
+  .sc-clover-connect__actions .btn { width: 100%; justify-content: center; text-align: center; }
+}

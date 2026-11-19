@@ -1,12 +1,30 @@
-<section class="panel" style="max-width:600px;margin:40px auto;padding:28px">
-  <h1>Connect your Clover test merchant</h1>
-  <p>Clover merchant: <strong><%= merchantId %></strong></p>
-  <p>Connect this merchant to the business currently selected in StockChief. You will continue to Clover to authorize access.</p>
-  <p>This private test requires a non-billable Clover test merchant. Connecting it does not change your StockChief plan.</p>
-  <form method="post" action="/settings/connections/clover/install">
+<link rel="stylesheet" href="/clover-connect.css?v=<%= locals.assetVersion||'current' %>">
+<section class="sc-clover-connect" aria-labelledby="clover-connect-title">
+  <header class="sc-clover-connect__header">
+    <div class="sc-clover-connect__brands" aria-label="StockChief and Clover">
+      <span class="sc-clover-connect__symbol"><%- include('../components/brand-symbol') %></span>
+      <span>StockChief</span><span class="sc-clover-connect__arrow" aria-hidden="true">→</span>
+      <img src="/provider-logos/clover.svg" width="28" height="28" alt=""><span>Clover</span>
+    </div>
+    <span class="sc-clover-connect__badge">Test connection</span>
+  </header>
+  <h1 id="clover-connect-title">Connect your Clover test merchant</h1>
+  <p class="sc-clover-connect__intro">Bring your Clover catalog, stock and completed sales into StockChief.</p>
+  <dl class="sc-clover-connect__destination">
+    <div><dt>StockChief business</dt><dd><%= locals.workspace?.name||'Your selected business' %></dd></div>
+    <div><dt>Clover merchant</dt><dd class="sc-clover-connect__merchant"><%= merchantId %></dd></div>
+  </dl>
+  <aside class="sc-clover-connect__signin" aria-labelledby="clover-signin-title">
+    <h2 id="clover-signin-title">Use your Clover merchant login</h2>
+    <p>Clover developer and merchant accounts are separate. For this test, open your merchant dashboard from Clover’s Test Merchants page first to check access.</p>
+    <a href="https://www.clover.com/global-developer-home/NA/prod/dashboard/tmc">Open Clover Test Merchants <span aria-hidden="true">↗</span></a>
+  </aside>
+  <p class="sc-clover-connect__next">On the next screen, choose this Clover merchant and approve access.</p>
+  <form method="post" action="/settings/connections/clover/install" class="sc-clover-connect__actions">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="merchantId" value="<%= merchantId %>">
-    <button type="submit" class="button primary">Continue to Clover</button>
+    <button type="submit" class="btn btn--primary sc-clover-connect__continue">Continue to Clover <span aria-hidden="true">→</span></button>
+    <a href="/settings/connections" class="btn btn--ghost">Back to Connections</a>
   </form>
-  <p><a href="/settings/connections">Back to Connections</a></p>
+  <p class="sc-clover-connect__note">Connecting does not change your StockChief plan. This private test uses a non-billable Clover test merchant.</p>
 </section>
