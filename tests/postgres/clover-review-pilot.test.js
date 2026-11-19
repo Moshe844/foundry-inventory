@@ -69,7 +69,7 @@ test('private Clover authorization preserves every plan, credentials, cost accou
     await page.goto(base+'/settings/connections?merchantId='+merchant);
     assert.equal(await page.getByRole('heading',{name:'Connect your Clover test merchant'}).count(),1);
     assert.match(await page.locator('main').innerText(),/does not change your StockChief plan/);
-    const rejected=await page.request.post(base+'/settings/connections/clover/install',{form:{merchantId:merchant}});
+    const rejected=await page.request.post(base+'/settings/connections/clover/install',{headers:{accept:'application/json'},form:{merchantId:merchant}});
     assert.equal(rejected.status(),403,'A forged POST cannot start Clover authorization');
     await page.getByRole('button',{name:'Continue to Clover'}).click();
     await page.getByRole('heading',{name:'Isolated Clover consent'}).waitFor();assert.equal(requested.length,1);
