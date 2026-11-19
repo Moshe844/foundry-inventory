@@ -59,6 +59,8 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
       shopifyProfile=parseJson(saved.config).shopifyProfile||'legacy';
     }
     auth=adapter.authorizationUrl({state,input:{...input,
+      ...(providerType==='clover'&&registry===defaultProviders&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'
+        ?{cloverTestMerchantId:require('./clover-review-pilot').expected(ctx.workspaceId,input)}:{}),
       ...(providerType==='shopify'?{shopifyProfile:shopifyProfile||'legacy'}:{}),
       redirectUri:`${origin}/settings/connections/${providerType}/callback`,
       returnUri:`${origin}/settings/connections/woocommerce/return?state=${encodeURIComponent(state)}`,
@@ -102,6 +104,11 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
       if(result.credentials?.shop!==result.accountId)throw new AuthenticationError('The Shopify credential does not match the approved store.');
       await launchPolicy.assertWorkspaceConnection(client,'shopify',{workspaceId:connection.workspace_id},{shop:result.accountId});
     }
+    if(options.enforceLaunchPolicy&&connection.provider_type==='clover'&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'){
+      if(result.credentials?.merchantId!==result.accountId||result.credentials?.isBillable!==false||result.credentials?.clientId!==config.connections.clover.clientId)
+        throw new AuthenticationError('Clover did not confirm the approved non-billable test merchant.');
+      await launchPolicy.assertWorkspaceConnection(client,'clover',{workspaceId:connection.workspace_id},{merchantId:result.accountId});
+    }
     const scope=await entitlements.ownerScopeForWorkspace(client,connection.workspace_id);
     await entitlements.assertCapability(client,scope,['gmail','microsoft365'].includes(connection.provider_type)?'communications.email_ingestion':
       ['quickbooks','xero'].includes(connection.provider_type)?'connections.accounting':'connections.commerce');
@@ -143,6 +150,8 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
     }
     await credentials.put(client,target.workspace_id,target.id,'provider',providerCredentials,result.expiresAt||null);
     const safeConfig={...currentConfig};
+    if(connection.provider_type==='clover'&&result.credentials?.isBillable===false&&result.credentials?.environment==='production')
+      safeConfig.cloverTestEvidence=require('./clover-review-pilot').evidence(result);
     if(result.credentials?.shop)safeConfig.shop=result.credentials.shop;
     if(connection.provider_type==='shopify'){
       safeConfig.shopifyClientId=result.credentials?.shopifyClientId||require('../config').connections.shopify.clientId;

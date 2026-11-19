@@ -1,0 +1,12 @@
+<section class="panel" style="max-width:600px;margin:40px auto;padding:28px">
+  <h1>Connect your Clover test merchant</h1>
+  <p>Clover merchant: <strong><%= merchantId %></strong></p>
+  <p>Connect this merchant to the business currently selected in StockChief. You will continue to Clover to authorize access.</p>
+  <p>This private test requires a non-billable Clover test merchant. Connecting it does not change your StockChief plan.</p>
+  <form method="post" action="/settings/connections/clover/install">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="merchantId" value="<%= merchantId %>">
+    <button type="submit" class="button primary">Continue to Clover</button>
+  </form>
+  <p><a href="/settings/connections">Back to Connections</a></p>
+</section>
