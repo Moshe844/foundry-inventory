@@ -162,9 +162,24 @@ function createPostgresConnectionsRouter(database,options={}){
   router.get('/connections',requireAuth,(req,res)=>res.redirect(303,'/settings/connections'));
   router.use('/settings/connections',requireAuth);
   router.get('/settings/connections',asyncRoute(async(req,res)=>{
+    const cloverMerchant=req.query.merchantId||req.query.merchant_id;
+    if(cloverMerchant){
+      if(req.user?.role!=='owner')throw new (require('../../domain/errors').AuthorizationError)('Only an owner can connect Clover.');
+      if(typeof cloverMerchant!=='string'||!require('../../connections/clover-review-pilot').merchantId(cloverMerchant))
+        throw new ValidationError('Clover did not supply a valid merchant identifier.');
+      await require('../../connections/launch-policy').assertWorkspaceConnection(database,'clover',req.ctx,{merchantId:cloverMerchant});
+      return res.page('connections/clover-install',{title:'Connect Clover',merchantId:cloverMerchant});
+    }
     const apiToken=req.session.newPublicApiToken||null;
     delete req.session.newPublicApiToken;
     return renderConnections(req,res,apiToken);
+  }));
+  router.post('/settings/connections/clover/install',requireOwner,asyncRoute(async(req,res)=>{
+    if(!await connectionAllowed(req,res,'clover'))return;
+    const requestOrigin=`${req.protocol}://${req.get('host')}`;
+    const started=await providerService.beginAuthorization(database,req.ctx,{providerType:'clover',merchantId:req.body.merchantId},requestOrigin,
+      {providers:registry,publicOrigin:options.publicOrigin==='request'?requestOrigin:options.publicOrigin});
+    return res.redirect(303,started.redirectUrl);
   }));
   router.post('/settings/connections/:provider/cancel-attempt',requireOwner,asyncRoute(async(req,res)=>{
     const type=String(req.params.provider),saved=req.session.providerInstallIntents?.[type];

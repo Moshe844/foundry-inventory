@@ -33,6 +33,8 @@ function authorizationUrl({ state, input }) {
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('state', state);
   return { url: url.toString(), metadata: { redirectUri: input.redirectUri,
+    clientId:config.connections.clover.clientId,
+    ...(input.cloverTestMerchantId?{expectedMerchantId:input.cloverTestMerchantId,testOnly:true}:{}),
     environment: config.connections.clover.environment } };
 }
 
@@ -45,6 +47,10 @@ async function exchangeAuthorization({ query, metadata: authMetadata = {} }) {
   if (query.error) throw new ValidationError(query.error_description || 'Clover authorization was not completed.');
   const merchantId = String(query.merchant_id || query.merchantId || '').trim();
   if (!query.code || !merchantId) throw new ValidationError('Clover did not return an authorization code and merchant.');
+  if(authMetadata.clientId&&authMetadata.clientId!==config.connections.clover.clientId)
+    throw new ValidationError('The Clover application changed during authorization. Start the connection again.');
+  if(authMetadata.testOnly&&(typeof query.merchant_id!=='string'&&typeof query.merchantId!=='string'||merchantId!==authMetadata.expectedMerchantId))
+    throw new ValidationError('Clover returned a different merchant from the approved test. No connection was saved.');
   const environment = authMetadata.environment || config.connections.clover.environment;
   const { body } = await jsonRequest(`${apiBase(environment)}/oauth/v2/token`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
@@ -60,12 +66,18 @@ async function exchangeAuthorization({ query, metadata: authMetadata = {} }) {
   };
   if (!credentials.accessToken) throw new ValidationError('Clover did not return a usable access token.');
   const merchant = (await api(credentials, `/v3/merchants/${encodeURIComponent(merchantId)}`)).body;
+  if(authMetadata.testOnly&&(merchant.id!==merchantId||merchant.isBillable!==false))
+    throw new ValidationError('Clover must confirm this is the approved non-billable test merchant. No connection was saved.');
+  credentials.clientId=config.connections.clover.clientId;
+  if(typeof merchant.isBillable==='boolean')credentials.isBillable=merchant.isBillable;
   return { credentials, accountId: merchantId, accountName: merchant.name || `Clover merchant ${merchantId.slice(-6)}`,
     capabilities: ['READ_MERCHANT', 'READ_INVENTORY', 'READ_ORDERS', 'READ_PAYMENTS', 'WEBHOOKS'],
     expiresAt: isoFromUnix(body.access_token_expiration) };
 }
 
 async function refreshCredentials(credentials) {
+  if(credentials.clientId&&credentials.clientId!==config.connections.clover.clientId)
+    throw new ValidationError('This Clover connection belongs to a different application. Its saved credentials were preserved.');
   const expiresAt = Number(credentials.accessTokenExpiration || 0) * 1000;
   if (!expiresAt || expiresAt > Date.now() + 5 * 60_000) {
     return { credentials, refreshed: false, expiresAt: isoFromUnix(credentials.accessTokenExpiration) };
@@ -150,7 +162,7 @@ function orderLines(order) {
 
 async function fetchOrder(credentials, merchantId, orderId) {
   return (await api(credentials, `/v3/merchants/${encodeURIComponent(merchantId)}/orders/${encodeURIComponent(orderId)}`
-    + '?expand=lineItems,payments,refunds,customers,orderFulfillmentEvent')).body;
+    + '?expand=lineItems,payments,refunds')).body;
 }
 
 function normalizeOrder(order, merchantId, update) {
