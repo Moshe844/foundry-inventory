@@ -39,7 +39,8 @@ test('all paid plans allow day-one individual approval without changing billing,
  };
  for(const plan of ['starter','growth','pro'])await t.test(plan,async()=>{
   await f.subscribe(plan);await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);
-  await db.query("UPDATE workspace_autopilot SET mode='OBSERVE' WHERE workspace_id=$1",[ctx.workspaceId]);
+  await require('../../src/autopilot/postgres-service').ensure(db,ctx.workspaceId);
+  assert.equal((await db.query("UPDATE workspace_autopilot SET mode='OBSERVE' WHERE workspace_id=$1",[ctx.workspaceId])).rowCount,1);
   const before=await snapshots(),state=await policy.accountState(db,ctx.workspaceId);
   assert(state.shadow);const proposal=await prepare(plan,'day-one');
   const review=await access.review(db,ctx,proposal,{mission:true});
@@ -52,7 +53,11 @@ test('all paid plans allow day-one individual approval without changing billing,
   await view.goto(base+'/actions/'+proposal.id);
   assert(await view.getByRole('button',{name:'Approve only this change',exact:true}).isEnabled());
   for(const width of [1440,390]){
-   await view.setViewportSize({width,height:1000});assert(await view.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+   await view.setViewportSize({width,height:1000});
+   const closeMenu=view.getByRole('button',{name:'Close menu',exact:true});
+   if(width<768&&await closeMenu.isVisible())await closeMenu.click();
+   assert(await view.getByRole('button',{name:'Approve only this change',exact:true}).isEnabled());
+   assert(await view.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
    await view.screenshot({path:require('node:path').join(folder,plan+'-'+width+'.png'),fullPage:true});
   }
   await Promise.all([view.waitForNavigation(),view.getByRole('button',{name:'Approve only this change',exact:true}).click()]);
