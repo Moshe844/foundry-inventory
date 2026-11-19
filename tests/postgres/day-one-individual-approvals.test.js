@@ -44,7 +44,7 @@ test('all paid plans allow day-one individual approval without changing billing,
   assert(state.shadow);const proposal=await prepare(plan,'day-one');
   const review=await access.review(db,ctx,proposal,{mission:true});
   assert.equal(review.individual.blocked,false);assert.equal(review.mission.blocked,true);assert(review.watchPeriod.endsAt);
-  await assert.rejects(assistant.executeMission(db,ctx,proposal.id),/14 days|own confirmation|individual/i,'whole-request execution cannot borrow individual approval');
+  await assert.rejects(assistant.executeMission(db,ctx,proposal.id),/not part of a multi-step mission/,'an individual proposal cannot be treated as an approved whole request');
   const page=await browser.get('/actions/'+proposal.id).expect(200);
   assert.match(page.text,/data-individual-watch-approval/);
   const button=page.text.match(/<button[^>]*>Approve only this change<\/button>/);
