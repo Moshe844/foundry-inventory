@@ -53,8 +53,8 @@ test('Connections browser shows the full provider directory without enabling exc
     const id=newId('con');const at=nowIso();
     await database.query(`INSERT INTO workspace_connectors
       (id,workspace_id,connector_key,display_name,provider_type,status,capabilities,provides,config,
-       expected_interval_minutes,setup_status,authorized_by_user_id,created_at,updated_at)
-      VALUES($1,$2,$3,'Former Shop','shopify','disconnected','[]','[]','{}',60,'DISCONNECTED',$4,$5,$5)`,
+       expected_interval_minutes,setup_status,authorized_by_user_id,created_at,updated_at,first_connected_at)
+      VALUES($1,$2,$3,'Former Shop','shopify','disconnected','[]','[]','{}',60,'DISCONNECTED',$4,$5,$5,$5)`,
     [id,owner.workspace_id,`shopify:${id}`,owner.actor_id,at]);
     await page.goto(`${base}/settings/connections`);
     const text=await page.locator('main').innerText();

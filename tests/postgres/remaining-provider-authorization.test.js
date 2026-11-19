@@ -55,6 +55,11 @@ test('Clover, Xero and QuickBooks consent and refresh preserve billing and isola
    const other=await db.query('SELECT 1 FROM connection_credentials WHERE workspace_id<>$1 AND connector_id=$2',[owner.workspaceId,connected.id]);assert.equal(other.rowCount,0);
    const expired={...saved,expiresAt:new Date(Date.now()-60000).toISOString(),accessTokenExpiration:Math.floor(Date.now()/1000)-60};
    await store.put(db,owner.workspaceId,connected.id,'provider',expired);
+   if(type==='xero'){
+    const network=require('../../src/commercial/network'),context={database:db,scope:{accountId:owner.accountId,workspaceId:owner.workspaceId}};
+    for(const url of ['https://api.xero.com/api.xro/2.0/ManualJournals','https://identity.xero.com/connect/token/not-token'])
+     await assert.rejects(()=>network.before(context,url,{method:'POST'},'Xero'),/registered business operation/,'The token exception must not authorize accounting writes or neighboring routes');
+   }
    incomplete=true;
    await assert.rejects(()=>service.loadProviderCredentials(db,connected,registry.get(type)),error=>error.code==='PROVIDER_REFRESH_UNCONFIRMED');
    assert.deepEqual(await store.get(db,owner.workspaceId,connected.id,'provider'),expired,'Malformed provider success must preserve the complete encrypted grant');
