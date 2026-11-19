@@ -10,4 +10,5 @@ function run(ctx,operation){
  return approval.run(Object.freeze({workspaceId:ctx.workspaceId,actorId:ctx.actorId}),operation);
 }
 function active(workspaceId){return approval.getStore()?.workspaceId===workspaceId;}
-module.exports={run,active};
+function actor(workspaceId){return active(workspaceId)?approval.getStore().actorId:null;}
+module.exports={run,active,actor};

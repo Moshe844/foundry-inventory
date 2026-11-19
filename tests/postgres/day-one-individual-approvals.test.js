@@ -15,6 +15,18 @@ test('all paid plans allow day-one individual approval without changing billing,
  await view.goto(base+'/login');await view.getByLabel('Work email').fill(f.email);await view.locator('[name=password]').fill(f.password);
  await Promise.all([view.waitForNavigation(),view.getByRole('button',{name:'Sign in',exact:true}).click()]);
  const folder=require('node:path').join(process.cwd(),'output','customer-navigation-ci','day-one-approvals');require('node:fs').mkdirSync(folder,{recursive:true});
+ const mailboxId='reviewed-mailbox-'+randomUUID();
+ await db.query(`INSERT INTO workspace_connectors(id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,credential_ref,setup_status,authorized_by_user_id,provider_account_id,created_at,updated_at)
+  VALUES($1,$2,$1,'Reviewed Microsoft mailbox','microsoft365','[]','{}','connected','["MAIL_SEND"]',$3,'CONNECTED',$4,'reviewed-microsoft-account',now(),now())`,[mailboxId,ctx.workspaceId,'connection_credentials:'+mailboxId,ctx.actorId]);
+ await db.transaction(c=>require('../../src/connections/postgres-credential-store').put(c,ctx.workspaceId,mailboxId,'provider',{accessToken:'reviewed-mail-fixture'}));
+ const delivered=[],mailProvider={send:async({credentials,message})=>{
+  assert.equal(credentials.accessToken,'reviewed-mail-fixture');
+  assert(require('../../src/commercial/individual-approval').active(ctx.workspaceId),'a worker restores only the saved individual approval');
+  const account=await policy.accountState(db,ctx.workspaceId);
+  assert.equal(await policy.stopped(db,ctx.workspaceId,account,'communication.send_email',false),null);
+  assert.equal(await policy.stopped(db,ctx.workspaceId,account,'communication.send_email',true),policy.SHADOW_REASON);
+  delivered.push(message.id);return {externalMessageId:'reviewed-provider-'+message.id};
+ }};
  const snapshots=async()=>({
   subscriptions:(await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows,
   connections:(await db.query('SELECT * FROM workspace_connectors WHERE workspace_id=$1 ORDER BY id',[ctx.workspaceId])).rows,
@@ -47,6 +59,16 @@ test('all paid plans allow day-one individual approval without changing billing,
   assert.equal((await db.query("SELECT count(*)::int n FROM suppliers WHERE workspace_id=$1 AND name=$2",[ctx.workspaceId,'Reviewed '+plan+' day-one'])).rows[0].n,1);
   await assistant.executeProposal(db,ctx,proposal.id);
   assert.equal((await db.query("SELECT count(*)::int n FROM suppliers WHERE workspace_id=$1 AND name=$2",[ctx.workspaceId,'Reviewed '+plan+' day-one'])).rows[0].n,1,'replay cannot create a second supplier');
+  const mail=require('../../src/connections/postgres-outbound-mail'),approval=require('../../src/commercial/individual-approval');
+  const queued=await approval.run(ctx,()=>db.transaction(c=>mail.queueInTransaction(c,ctx,{recipientKind:'customer',recipientId:'fixture-customer',recipientEmail:'receiver@example.test',connectorId:mailboxId,subject:'Reviewed '+plan+' test',body:'One individually approved test message.'},'reviewed-day-one-'+plan)));
+  const effect=await require('../../src/operations/postgres-provider-effects').get(db,ctx.workspaceId,queued.effectId);
+  assert.equal(effect.payload.individualApprovalActorId,ctx.actorId);
+  const providers={get:()=>mailProvider},handlers=require('../../src/operations/postgres-runtime-handlers').create(providers);
+  const sent=await require('../../src/operations/postgres-job-queue').processOne(db,handlers,{owner:'reviewed-test-worker',kinds:['provider.effect']});
+  assert.equal(sent.status,'COMPLETED',JSON.stringify(sent.lastError));
+  assert.equal((await mail.get(db,ctx.workspaceId,'customer',queued.communicationId)).status,'SENT');
+  const count=delivered.length;await mail.executeSendEffect(db,ctx.workspaceId,queued.effectId,{provider:mailProvider});assert.equal(delivered.length,count,'delivery replay sends no second email');
+  assert.equal(approval.active(ctx.workspaceId),false,'worker approval authority does not leak into the next operation');
   assert.equal(await policy.stopped(db,ctx.workspaceId,state,'contact.create',true),policy.SHADOW_REASON);
   await assert.rejects(require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED'),/14 days|shadow/);
   const settings=await browser.get('/autopilot').expect(200);assert.match(settings.text,/Automatic actions are blocked until/);assert.match(settings.text,/Nothing switches on just because the period ends/);
@@ -77,4 +99,5 @@ test('all paid plans allow day-one individual approval without changing billing,
   await assert.rejects(assistant.executeProposal(db,foreign,restricted.id));
  });
  assert.deepEqual(browserErrors,[]);
+ assert.equal(delivered.length,3,'all three paid plans delivered one individually approved message through the worker');
 });

@@ -34,3 +34,20 @@ test('a worker, another inventory or a request field cannot borrow an individual
  for(const path of ['/autopilot/landed-cost-bills/bill-1/approve','/autopilot/supplier-forecasts/report-1/send','/autopilot/supplier-forecasts/report-api-group-1/send'])assert(reviewedRecordPath(path));
  for(const path of ['/autopilot/run','/autopilot/reviews/stock-sharing/prepare','/autopilot/approval-groups/group-1/approve','/autopilot/mission/step-1/approve','/autopilot/customer-replies/rule-1/settings','/api/v1/business/actions/approve'])assert.equal(reviewedRecordPath(path),false,path);
 });
+
+test('only trusted review execution can stamp a durable provider approval',async t=>{
+ const effects=require('../../src/operations/postgres-provider-effects'),jobs=require('../../src/operations/postgres-job-queue');
+ t.mock.method(jobs,'enqueue',async()=>({job:{id:'fixture-job'},created:true}));
+ const input={workspaceId:'workspace',kind:'payment.request.create',provider:'stripe',aggregateType:'customer_payment',aggregateId:'payment',idempotencyKey:'review',requestedByUserId:'owner'};
+ const client={query:async(sql,values)=>{
+  assert(sql.includes('INSERT INTO stockchief_runtime.provider_effects'));
+  return {rows:[{id:values[0],workspace_id:values[1],kind:values[2],provider:values[3],aggregate_type:values[4],aggregate_id:values[5],payload:JSON.parse(values[6]),idempotency_key:values[7],requested_by_user_id:values[8],status:'PENDING'}]};
+ }};
+ const forged=await effects.enqueueInTransaction(client,{...input,payload:{individualApprovalActorId:'owner'}});
+ assert.equal(forged.effect.payload.individualApprovalActorId,undefined,'caller-supplied proof is discarded');
+ const reviewed=await approval.run({workspaceId:'workspace',actorId:'owner'},()=>effects.enqueueInTransaction(client,{...input,payload:{}}));
+ assert.equal(reviewed.effect.payload.individualApprovalActorId,'owner');
+ const automated=await approval.run({workspaceId:'workspace',actorId:'owner'},()=>effects.enqueueInTransaction(client,{...input,payload:{automatic:true}}));
+ assert.equal(automated.effect.payload.individualApprovalActorId,undefined,'an automatic effect cannot inherit a reviewed request');
+ await assert.rejects(effects.withIndividualApproval({query:async()=>({rowCount:1})},{...reviewed.effect,requestedByUserId:'someone-else'},()=>{}),/no longer valid/);
+});
