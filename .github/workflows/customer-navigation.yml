@@ -111,6 +111,11 @@ jobs:
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/postgres/authority-redesign-plans.test.js tests/postgres/authority-plan-enforcement.test.js tests/postgres/customer-polish-browser.test.js 2>&1 | tee output/customer-navigation-ci/authority-design-plans.log
+      - name: Day-one individual approvals, 14-day automatic lock and all-plan safety
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
+        run: |
+          set -euo pipefail
+          node --test --test-concurrency=1 tests/unit/day-one-individual-approvals.test.js tests/unit/agent-plan-v3.test.js tests/postgres/day-one-individual-approvals.test.js tests/postgres/agent-shadow-mode.test.js tests/postgres/agent-plan-v3.test.js 2>&1 | tee output/customer-navigation-ci/day-one-approvals.log
       - name: Public Shopify installation and existing connection isolation
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |

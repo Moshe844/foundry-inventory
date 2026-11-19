@@ -581,7 +581,8 @@ async function execute(database,ctx,workId,{approvedBy=null,worker=false}={}){
     }
   }
   const effectState=await getState(scoped,ctx.workspaceId);
-  if(effectState.shadowEndsAt) throw new ValidationError('During the first 14 days StockChief only watches. You can enter the transaction manually.');
+  if(effectState.shadowEndsAt&&(!approvedBy||approvedBy!==ctx.actorId||worker||item.approval_requirement==='NONE'))
+    throw new ValidationError(agentPlan.SHADOW_REASON);
   if(effectState.agentTerms && item.recommendedAction.type==='transfer' && effectState.plan==='starter') throw new ValidationError('Starter can suggest a transfer. Record the transfer manually.');
   if(effectState.agentTerms&&item.recommendedAction.type==='purchase'){
     const restricted=await purchasingJobRestriction(scoped,ctx.workspaceId,item.recommendedAction,item.approval_requirement==='NONE');

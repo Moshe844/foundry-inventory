@@ -1,4 +1,5 @@
 <header class="rm-head"><h1>Plan &amp; billing</h1><p>Manage your subscription, monthly usage and payments.</p></header>
+<p class="notice notice--info" data-plan-watch-period>On every plan, automatic actions are blocked during the first 14 days after account creation. Eligible changes can be reviewed and approved individually from day one. After the watch period, you choose which automatic work to enable within your plan and limits. This watch period is separate from the 14-day money-back guarantee.</p>
 <link rel="stylesheet" href="/billing-clarity.css?v=<%= locals.assetVersion||'current' %>">
 <div class="sc-settings-layout sc-billing-layout"><%- include('../settings/navigation',{section:'billing',sections:searchableSettingsSections}) %><div class="sc-settings-content" data-settings-section="billing">
 <% if(locals.scheduleUnavailable){ %><p class="notice notice--warn">We could not refresh your scheduled plan change. Check the date in Stripe using Manage plan and payment below, or try again shortly.</p><% } %>

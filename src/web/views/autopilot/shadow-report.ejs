@@ -1,8 +1,13 @@
 <% const s=screen, date=d=>new Date(d).toISOString().slice(0,10), money=list=>list.length?list.map(a=>a.text).join(' + '):'None'; %>
 <header class="rm-head">
   <h1>Your first 14 days</h1>
-  <p><% if(s.shadow){ %>StockChief is watching: day <%= s.day %> of 14. It changes nothing on its own and writes down what it would have done. Watching ends <%= date(s.endsAt) %>.<% }else{ %>StockChief watched from <%= date(s.startedAt) %> to <%= date(s.endsAt) %> and changed nothing. This is what it would have done, from your own records.<% } %></p>
+  <p><% if(s.shadow){ %>StockChief is watching: day <%= s.day %> of 14. It changes nothing on its own and writes down what it would have done. Watching ends <%= date(s.endsAt) %>.<% }else{ %>StockChief watched from <%= date(s.startedAt) %> to <%= date(s.endsAt) %> and changed nothing automatically. This is what it would have done, from your own records.<% } %></p>
 </header>
+<section class="notice notice--info" data-watch-period-explanation>
+  <strong>Individual approvals are available from day one.</strong>
+  <p>You can review and approve eligible changes within your plan and permissions. The first 14 days block automatic orders, emails and record changes. This restriction applies to Starter, Growth and Pro and is separate from your refund guarantee.</p>
+  <p>After 14 days, automatic work still needs your chosen authority, any teaching required by your plan, connected services and saved limits. Nothing switches on just because the period ends.</p>
+</section>
 
 <div class="stat-strip section" data-shadow-totals>
   <div><span class="stat-value"><%= s.orders.count %></span><span class="stat-label"><%= s.orders.count===1?'order':'orders' %> it <%= s.orderVerb %></span></div>
