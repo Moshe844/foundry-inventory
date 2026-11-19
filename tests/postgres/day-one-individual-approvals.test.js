@@ -14,7 +14,7 @@ test('all paid plans allow day-one individual approval without changing billing,
  view.on('pageerror',error=>browserErrors.push(error.message));view.setDefaultTimeout(20000);
  await view.goto(base+'/login');await view.getByLabel('Work email').fill(f.email);await view.locator('[name=password]').fill(f.password);
  await Promise.all([view.waitForNavigation(),view.getByRole('button',{name:'Sign in',exact:true}).click()]);
- const folder=require('node:path').join(process.cwd(),'output','day-one-approvals');require('node:fs').mkdirSync(folder,{recursive:true});
+ const folder=require('node:path').join(process.cwd(),'output','customer-navigation-ci','day-one-approvals');require('node:fs').mkdirSync(folder,{recursive:true});
  const snapshots=async()=>({
   subscriptions:(await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows,
   connections:(await db.query('SELECT * FROM workspace_connectors WHERE workspace_id=$1 ORDER BY id',[ctx.workspaceId])).rows,
@@ -32,6 +32,7 @@ test('all paid plans allow day-one individual approval without changing billing,
   assert(state.shadow);const proposal=await prepare(plan,'day-one');
   const review=await access.review(db,ctx,proposal,{mission:true});
   assert.equal(review.individual.blocked,false);assert.equal(review.mission.blocked,true);assert(review.watchPeriod.endsAt);
+  await assert.rejects(assistant.executeMission(db,ctx,proposal.id),/14 days|own confirmation|individual/i,'whole-request execution cannot borrow individual approval');
   const page=await browser.get('/actions/'+proposal.id).expect(200);
   assert.match(page.text,/data-individual-watch-approval/);
   const button=page.text.match(/<button[^>]*>Approve only this change<\/button>/);

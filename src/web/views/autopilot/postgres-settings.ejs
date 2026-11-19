@@ -4,7 +4,7 @@
   const routineLocked = state.shadowEndsAt || locals.planGates?.[routineGate]?.enabled === false;
   const growthUp = ['growth','pro','enterprise'].includes(state.plan);
   const isOwner = locals.user?.role === 'owner' || locals.currentUser?.role === 'owner';
-  const shadowDay = state.shadowEndsAt ? helpers.shortDate(new Date(state.shadowEndsAt).toISOString().slice(0,10)) : null;
+  const shadowDay = state.shadowEndsAt ? helpers.dateTime(state.shadowEndsAt) : null;
   // The words an owner reads for each job. The job's own label stays, so every
   // other page and Ask still name it the same way.
   const plain = {
