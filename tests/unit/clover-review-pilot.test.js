@@ -81,3 +81,42 @@ test('a saved Clover grant is not refreshed through another application',async()
  let calls=0;global.fetch=async()=>{calls++;throw Error('Must not contact provider');};
  await assert.rejects(clover.refreshCredentials({clientId:'B123456789012'}),/different application/);assert.equal(calls,0);
 });
+
+function ownerMetadata(){return {...metadata(),testMerchantPermit:pilot.ownerPermit('approved','usr_owner',{merchantId:merchant}),
+ authorizationWorkspaceId:'approved',authorizationActorId:'usr_owner'};}
+
+test('only the exact server-approved test merchant may use owner evidence when Clover omits all billing fields',async()=>{
+ const missingOwner={...pilot.ownerPermit('approved','usr_owner',{merchantId:merchant}),ownerId:undefined};
+ assert.equal(pilot.ownerPermitMatches(missingOwner,'approved',merchant,undefined),false);
+ for(const supplied of [{id:merchant},{id:merchant,isBillable:null,billingInfo:null}]){
+  global.fetch=async url=>new URL(url).pathname.endsWith('/token')?Response.json(grant()):Response.json(supplied);
+  const result=await clover.exchangeAuthorization({query:{code:'code',merchant_id:merchant},metadata:ownerMetadata()});
+  assert.equal(result.credentials.isBillable,undefined,'An omitted provider flag must not be fabricated as false');
+  assert.equal(result.credentials.billingEvidence.isBillable,null);
+  assert.equal(result.credentials.providerBillingFieldsOmitted,true);
+  const proof=pilot.evidence(result,'approved','usr_owner');
+  assert.equal(proof.source,pilot.OWNER_SOURCE);assert.equal(proof.ownerApprovedTestMerchant,true);
+  assert.equal(proof.isBillable,undefined);assert.equal(proof.approvedByUserId,'usr_owner');
+  assert.throws(()=>pilot.evidence(result,'outside','usr_owner'));
+  assert.throws(()=>pilot.evidence({...result,credentials:{...result.credentials,isBillable:true}},'approved','usr_owner'));
+ }
+ for(const [key,value] of [['workspaceId','outside'],['ownerId','usr_other'],['appId','B123456789012'],['merchantId',other],['source','untrusted']]){
+  const saved=ownerMetadata();saved.testMerchantPermit[key]=value;
+  global.fetch=async url=>new URL(url).pathname.endsWith('/token')?Response.json(grant()):Response.json({id:merchant});
+  await assert.rejects(clover.exchangeAuthorization({query:{code:'code',merchant_id:merchant},metadata:saved}),/non-billable/);
+ }
+ const revoked=ownerMetadata();process.env.STOCKCHIEF_PRODUCTION_CLOVER_PILOTS='{}';
+ await assert.rejects(clover.exchangeAuthorization({query:{code:'code',merchant_id:merchant},metadata:revoked}),/non-billable/);
+});
+
+test('owner-approved test permits never override paid, partial or mistyped provider billing evidence',async()=>{
+ for(const supplied of [
+  {id:merchant,isBillable:true},{id:merchant,isBillable:'false'},
+  {id:merchant,billingInfo:{planBillable:false}},
+  {id:merchant,billingInfo:{planBillable:true,appBillable:false}},
+  {id:merchant,billingInfo:{planBillable:false,appBillable:true}},
+ ]){
+  global.fetch=async url=>new URL(url).pathname.endsWith('/token')?Response.json(grant()):Response.json(supplied);
+  await assert.rejects(clover.exchangeAuthorization({query:{code:'code',merchant_id:merchant},metadata:ownerMetadata()}),/non-billable/);
+ }
+});

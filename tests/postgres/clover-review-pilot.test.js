@@ -23,16 +23,16 @@ test('private Clover authorization preserves every plan, credentials, cost accou
   app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID(),publicOrigin:'request'});
   server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
   browser=await require('playwright').chromium.launch();const base='http://127.0.0.1:'+server.address().port;
-  let billable=false,called=0;
+  let billable=false,omitBilling=true,called=0;
   global.fetch=async value=>{
    called++;const url=new URL(value);assert.equal(url.origin,'https://api.clover.com','Only the isolated provider transport may be used');
    if(url.pathname==='/oauth/v2/token')return Response.json({access_token:'isolated-access',refresh_token:'isolated-refresh',
     access_token_expiration:Math.floor(Date.now()/1000)+1800,refresh_token_expiration:Math.floor(Date.now()/1000)+86400});
    const id=url.pathname.match(/^\/v3\/merchants\/([A-Z0-9]+)$/)?.[1];assert(id,'Unexpected provider request');
-   return Response.json({id,billingInfo:{planBillable:billable,appBillable:billable},name:'Isolated Clover test merchant'});
+   return Response.json({id,...(omitBilling?{}:{billingInfo:{planBillable:billable,appBillable:billable}}),name:'Isolated Clover test merchant'});
   };
   for(const [index,plan] of ['starter','growth','pro'].entries())await t.test(plan,async()=>{
-   billable=false;
+   billable=false;omitBilling=true;
    const email=randomUUID()+'@example.test',password='Clover!'+randomUUID();
    const owner=await auth.createBusiness(db,{name:'Clover owner',businessName:'Isolated '+plan,email,password});
    await db.query(`INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,current_period_start,current_period_end)
@@ -47,14 +47,18 @@ test('private Clover authorization preserves every plan, credentials, cost accou
    const snapshot=async()=>({subscriptions:(await db.query('SELECT to_jsonb(s) state FROM account_subscriptions s WHERE account_id=$1',[owner.accountId])).rows,
     mailbox:await store.get(db,owner.workspaceId,existingId,'provider')});
    const before=await snapshot();
-   const started=await service.beginAuthorization(db,ctx,{providerType:'clover'},'https://app.example.test');
+   const started=await service.beginAuthorization(db,ctx,{providerType:'clover',cloverTestMerchantPermit:{source:'untrusted',ownerId:'another-user'}},'https://app.example.test');
    const state=new URL(started.redirectUrl).searchParams.get('state');
    const saved=(await db.query('SELECT metadata FROM connection_authorization_states WHERE state_hash=$1',[service.stateHash(state)])).rows[0];
    assert.equal(JSON.parse(saved.metadata).expectedMerchantId,merchant);
+   assert.equal(JSON.parse(saved.metadata).testMerchantPermit.ownerId,owner.userId,'Client input cannot choose the approving owner');
+   assert.equal(JSON.parse(saved.metadata).testMerchantPermit.workspaceId,owner.workspaceId);
    const connected=await service.completeOAuth(db,'clover',{state,code:'isolated-code',merchant_id:merchant},'https://app.example.test');
    assert.equal(connected.status,'connected');assert.equal(connected.provider_account_id,merchant);
-   assert.equal(connected.config.cloverTestEvidence.isBillable,false);
-   assert.equal(connected.config.cloverTestEvidence.source,'CLOVER_NONBILLABLE_TEST_MERCHANT_V1');
+   assert.equal(connected.config.cloverTestEvidence.isBillable,undefined);
+   assert.equal(connected.config.cloverTestEvidence.source,'CLOVER_OWNER_APPROVED_TEST_MERCHANT_V1');
+   assert.equal(connected.config.cloverTestEvidence.approvedByUserId,owner.userId);
+   assert.equal(connected.config.cloverTestEvidence.ownerApprovedTestMerchant,true);
    assert.deepEqual(await snapshot(),before,'Connecting Clover must preserve billing and the existing mailbox grant');
    assert.equal(await release.isOpen(db),true,'Verified private test must not close public subscription checkout');
    const browserContext=await browser.newContext();
@@ -86,9 +90,9 @@ test('private Clover authorization preserves every plan, credentials, cost accou
     await db.query('DELETE FROM connection_authorization_states WHERE state_hash=$1 AND used_at IS NULL',[service.stateHash(providerUrl.searchParams.get('state'))]);
    }finally{await browserContext.close();}
    const grant=await store.get(db,owner.workspaceId,connected.id,'provider');
-    assert.equal(grant.billingEvidence.source,'billingInfo');
-    assert.equal(grant.billingEvidence.planBillable,false);assert.equal(grant.billingEvidence.appBillable,false);
-   billable=true;
+    assert.equal(grant.billingEvidence.isBillable,null);assert.equal(grant.isBillable,undefined);
+    assert.equal(grant.providerBillingFieldsOmitted,true);
+    billable=true;omitBilling=false;
    const retry=await service.beginAuthorization(db,ctx,{providerType:'clover',connectorId:connected.id},'https://app.example.test');
    await assert.rejects(service.completeOAuth(db,'clover',{state:new URL(retry.redirectUrl).searchParams.get('state'),code:'isolated-code',merchant_id:merchant},'https://app.example.test'),/non-billable/);
     const rejectedState=(await db.query('SELECT metadata FROM connection_authorization_states WHERE state_hash=$1',
@@ -97,6 +101,13 @@ test('private Clover authorization preserves every plan, credentials, cost accou
     assert.equal(failure.source,'billingInfo');assert.equal(failure.isBillable,true);
     assert.equal(JSON.stringify(failure).includes('isolated-access'),false,'Failure evidence must not store provider tokens');
    assert.deepEqual(await store.get(db,owner.workspaceId,connected.id,'provider'),grant,'Rejected replacement consent must preserve the working grant');
+    billable=false;
+    const current=await service.beginAuthorization(db,ctx,{providerType:'clover',connectorId:connected.id},'https://app.example.test');
+    const verified=await service.completeOAuth(db,'clover',{state:new URL(current.redirectUrl).searchParams.get('state'),code:'isolated-code',merchant_id:merchant},'https://app.example.test');
+    assert.equal(verified.config.cloverTestEvidence.source,'CLOVER_NONBILLABLE_TEST_MERCHANT_V1');
+    assert.equal(verified.config.cloverTestEvidence.isBillable,false);
+    assert.equal(verified.config.cloverTestEvidence.ownerApprovedTestMerchant,undefined,'Provider-confirmed status replaces the owner-evidence record');
+    assert.equal(await release.isOpen(db),true);
    assert.deepEqual(await snapshot(),before);assert.equal(await release.isOpen(db),true);
    await db.query("UPDATE workspace_connectors SET config='{}' WHERE id=$1",[connected.id]);
    assert.equal(await release.isOpen(db),false,'An allowlist alone is insufficient without verified non-billable merchant evidence');

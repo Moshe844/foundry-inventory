@@ -60,7 +60,8 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
     }
     auth=adapter.authorizationUrl({state,input:{...input,
       ...(providerType==='clover'&&registry===defaultProviders&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'
-        ?{cloverTestMerchantId:require('./clover-review-pilot').expected(ctx.workspaceId,input)}:{}),
+        ?{cloverTestMerchantId:require('./clover-review-pilot').expected(ctx.workspaceId,input),
+          cloverTestMerchantPermit:require('./clover-review-pilot').ownerPermit(ctx.workspaceId,ctx.actorId,input)}:{}),
       ...(providerType==='shopify'?{shopifyProfile:shopifyProfile||'legacy'}:{}),
       redirectUri:`${origin}/settings/connections/${providerType}/callback`,
       returnUri:`${origin}/settings/connections/woocommerce/return?state=${encodeURIComponent(state)}`,
@@ -105,7 +106,10 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
       await launchPolicy.assertWorkspaceConnection(client,'shopify',{workspaceId:connection.workspace_id},{shop:result.accountId});
     }
     if(options.enforceLaunchPolicy&&connection.provider_type==='clover'&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'){
-      if(result.credentials?.merchantId!==result.accountId||result.credentials?.isBillable!==false||result.credentials?.clientId!==config.connections.clover.clientId)
+      const ownerApprovedTest=result.credentials?.isBillable==null&&result.credentials?.billingEvidence?.isBillable===null&&
+        result.credentials?.providerBillingFieldsOmitted===true&&
+        require('./clover-review-pilot').ownerPermitMatches(result.credentials?.testMerchantPermit,connection.workspace_id,result.accountId,actorId);
+      if(result.credentials?.merchantId!==result.accountId||(result.credentials?.isBillable!==false&&!ownerApprovedTest)||result.credentials?.clientId!==config.connections.clover.clientId)
         throw new AuthenticationError('Clover did not confirm the approved non-billable test merchant.');
       await launchPolicy.assertWorkspaceConnection(client,'clover',{workspaceId:connection.workspace_id},{merchantId:result.accountId});
     }
@@ -150,8 +154,9 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
     }
     await credentials.put(client,target.workspace_id,target.id,'provider',providerCredentials,result.expiresAt||null);
     const safeConfig={...currentConfig};
-    if(connection.provider_type==='clover'&&result.credentials?.isBillable===false&&result.credentials?.environment==='production')
-      safeConfig.cloverTestEvidence=require('./clover-review-pilot').evidence(result);
+    if(connection.provider_type==='clover'&&result.credentials?.environment==='production'&&
+      (result.credentials?.isBillable===false||result.credentials?.providerBillingFieldsOmitted===true))
+      safeConfig.cloverTestEvidence=require('./clover-review-pilot').evidence(result,connection.workspace_id,actorId);
     if(result.credentials?.shop)safeConfig.shop=result.credentials.shop;
     if(connection.provider_type==='shopify'){
       safeConfig.shopifyClientId=result.credentials?.shopifyClientId||require('../config').connections.shopify.clientId;
@@ -257,7 +262,8 @@ async function completeOAuthLocked(database,providerType,query,requestOrigin,opt
   try{
     const result=await require('../commercial/operations').run(database,connection.workspace_id,{capability:
       ['gmail','microsoft365'].includes(providerType)?'communications.email_ingestion':adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce',
-      key:`oauth:${state.id}`,provider:providerType,operation:'authorization_exchange'},()=>adapter.exchangeAuthorization({query,metadata:state.metadata}));
+      key:`oauth:${state.id}`,provider:providerType,operation:'authorization_exchange'},()=>adapter.exchangeAuthorization({query,
+        metadata:providerType==='clover'?{...state.metadata,authorizationWorkspaceId:state.workspace_id,authorizationActorId:state.actor_id}:state.metadata}));
     if(adapter.verifyReadOnly&&!result.verifiedFact&&adapter.integrationClass==='accounting'){
       result.verifiedFact=await require('../commercial/operations').run(database,connection.workspace_id,{capability:'connections.accounting',
         key:`oauth-verify:${state.id}`,provider:providerType,operation:'accounting_verify'},()=>adapter.verifyReadOnly({credentials:result.credentials,connection}));
