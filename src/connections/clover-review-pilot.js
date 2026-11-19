@@ -31,7 +31,7 @@ function ownerPermit(workspaceId,ownerId,input={}){
  return {source:OWNER_SOURCE,workspaceId,ownerId,appId:process.env.CLOVER_CLIENT_ID,merchantId:expected(workspaceId,input)};
 }
 function ownerPermitMatches(permit,workspaceId,merchant,ownerId){
- if(!permit||permit.source!==OWNER_SOURCE||permit.workspaceId!==workspaceId||permit.ownerId!==ownerId||
+ if(typeof ownerId!=='string'||!/^[A-Za-z0-9_-]{1,200}$/.test(ownerId)||!permit||permit.source!==OWNER_SOURCE||permit.workspaceId!==workspaceId||permit.ownerId!==ownerId||
    permit.appId!==process.env.CLOVER_CLIENT_ID||permit.merchantId!==merchant)return false;
  try{return expected(workspaceId,{merchantId:merchant})===merchant;}catch{return false;}
 }

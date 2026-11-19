@@ -86,6 +86,8 @@ function ownerMetadata(){return {...metadata(),testMerchantPermit:pilot.ownerPer
  authorizationWorkspaceId:'approved',authorizationActorId:'usr_owner'};}
 
 test('only the exact server-approved test merchant may use owner evidence when Clover omits all billing fields',async()=>{
+ const missingOwner={...pilot.ownerPermit('approved','usr_owner',{merchantId:merchant}),ownerId:undefined};
+ assert.equal(pilot.ownerPermitMatches(missingOwner,'approved',merchant,undefined),false);
  for(const supplied of [{id:merchant},{id:merchant,isBillable:null,billingInfo:null}]){
   global.fetch=async url=>new URL(url).pathname.endsWith('/token')?Response.json(grant()):Response.json(supplied);
   const result=await clover.exchangeAuthorization({query:{code:'code',merchant_id:merchant},metadata:ownerMetadata()});

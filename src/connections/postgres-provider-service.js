@@ -154,7 +154,8 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
     }
     await credentials.put(client,target.workspace_id,target.id,'provider',providerCredentials,result.expiresAt||null);
     const safeConfig={...currentConfig};
-    if(connection.provider_type==='clover'&&result.credentials?.environment==='production')
+    if(connection.provider_type==='clover'&&result.credentials?.environment==='production'&&
+      (result.credentials?.isBillable===false||result.credentials?.providerBillingFieldsOmitted===true))
       safeConfig.cloverTestEvidence=require('./clover-review-pilot').evidence(result,connection.workspace_id,actorId);
     if(result.credentials?.shop)safeConfig.shop=result.credentials.shop;
     if(connection.provider_type==='shopify'){
