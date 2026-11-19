@@ -6,7 +6,12 @@ const approval=require('../commercial/individual-approval');
 // never receive it. Existing handlers still enforce CSRF, role, plan, exact
 // source fingerprints, confirmation, amount limits and replay protections.
 function reviewedRecordPath(path){
- if(!/^\/autopilot\/(?:[A-Za-z0-9_-]+\/){2,5}(?:approve|apply|review|send|confirm|accept)$/.test(path))return false;
+ // These saved-source decisions predate the common /:id/approve convention.
+ if(/^\/autopilot\/po-delivery-dates\/[A-Za-z0-9_-]+$/.test(path)||
+   /^\/mail\/[A-Za-z0-9_-]+\/(?:return|supplier-details)$/.test(path)||
+   /^\/warehouse\/bin-corrections\/[A-Za-z0-9_-]+\/(?:scan|approve)$/.test(path)||
+   /^\/autopilot\/supplier-rfqs\/[A-Za-z0-9_-]+\/chase\/[A-Za-z0-9_-]+$/.test(path))return true;
+ if(!/^\/autopilot\/(?:[A-Za-z0-9_-]+\/){2,5}(?:approve|apply|review|send|confirm|accept|publish|remind)$/.test(path))return false;
  const parts=path.split('/'),family=parts[2]==='reviews'?parts[3]:parts[2];
  return !/group|mission|playbook|routine|rule|mode|shadow|api/i.test(family);
 }

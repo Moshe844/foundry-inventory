@@ -1,4 +1,16 @@
 'use strict';process.env.NODE_ENV='test';const test=require('node:test'),assert=require('node:assert/strict'),{fixture}=require('../helpers/agent-po-date-fixture');
+
+test('an owner can approve one supplier date through its real HTTP review during the watch period without authorizing routines',{timeout:240000},async t=>{
+ const f=await fixture(t),{db,ctx,service}=f,id=await f.incoming(2),preview=await service.preview(db,ctx,id);
+ await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);
+ const page=await f.browser.get('/autopilot/po-delivery-dates/'+id).expect(200);
+ assert.match(page.text,/approve this exact supplier date change now/);
+ assert.doesNotMatch(page.text,/<button[^>]*disabled[^>]*>Apply reviewed delivery date/);
+ await f.browser.post('/autopilot/po-delivery-dates/'+id).type('form').send({_csrf:f.csrf(page.text),confirmed:'yes',expectedFingerprint:preview.facts.sourceFingerprint}).expect(303);
+ assert.equal((await f.order()).expected_date,f.date(2));
+ await assert.rejects(service.configure(db,ctx,id,{...f.caps,confirmed:'yes',revision:0}),/14-day watch period/);
+ assert.equal(require('../../src/commercial/individual-approval').active(ctx.workspaceId),false);
+});
 test('supplier portal dates obey exact plans, taught Pro authority, lower limits after upgrade and current order evidence without changing stock or money',{timeout:240000},async t=>{
  const f=await fixture(t),{db,ctx,service}=f,first=await f.incoming(2),stock=await f.balance(),journals=Number((await db.query('SELECT count(*) n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),before=await f.order();
  for(const plan of ['starter','growth']){await f.subscribe(plan);await assert.rejects(service.preview(db,ctx,first),e=>e.code==='entitlement_required');assert.equal((await service.onArrival(db,ctx.workspaceId,first)).held,true);assert.equal((await f.order()).expected_date,f.date(1));}

@@ -55,10 +55,10 @@ test('all paid plans allow day-one individual approval without changing billing,
   for(const width of [1440,390]){
    await view.setViewportSize({width,height:1000});
    const closeMenu=view.getByRole('button',{name:'Close menu',exact:true});
-   if(width<768&&await closeMenu.isVisible())await closeMenu.click();
+   if(width<768&&await view.locator('body.sc-sidebar-open').count())await closeMenu.click();
    assert(await view.getByRole('button',{name:'Approve only this change',exact:true}).isEnabled());
    assert(await view.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
-   await view.screenshot({path:require('node:path').join(folder,plan+'-'+width+'.png'),fullPage:true});
+   await view.screenshot({path:require('node:path').join(folder,plan+'-'+width+'.png'),fullPage:true,animations:'disabled'});
   }
   await Promise.all([view.waitForNavigation(),view.getByRole('button',{name:'Approve only this change',exact:true}).click()]);
   assert.equal((await db.query("SELECT count(*)::int n FROM suppliers WHERE workspace_id=$1 AND name=$2",[ctx.workspaceId,'Reviewed '+plan+' day-one'])).rows[0].n,1);

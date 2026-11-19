@@ -31,8 +31,12 @@ test('a worker, another inventory or a request field cannot borrow an individual
  });
  assert.equal(await policy.stopped(db,'one',state,'contact.create',false),policy.SHADOW_REASON,'the exception ends with the reviewed operation');
  const {reviewedRecordPath}=require('../../src/web/reviewed-individual-approval');
- for(const path of ['/autopilot/landed-cost-bills/bill-1/approve','/autopilot/supplier-forecasts/report-1/send','/autopilot/supplier-forecasts/report-api-group-1/send'])assert(reviewedRecordPath(path));
- for(const path of ['/autopilot/run','/autopilot/reviews/stock-sharing/prepare','/autopilot/approval-groups/group-1/approve','/autopilot/mission/step-1/approve','/autopilot/customer-replies/rule-1/settings','/api/v1/business/actions/approve'])assert.equal(reviewedRecordPath(path),false,path);
+ for(const path of ['/autopilot/landed-cost-bills/bill-1/approve','/autopilot/supplier-forecasts/report-1/send','/autopilot/supplier-forecasts/report-api-group-1/send',
+ '/autopilot/po-delivery-dates/source-1','/autopilot/channel-buffer-reviews/review-1/publish','/autopilot/supplier-rfqs/request-1/chase/delivery-1',
+ '/mail/message-1/return','/mail/message-1/supplier-details','/warehouse/bin-corrections/correction-1/scan','/warehouse/bin-corrections/correction-1/approve'])assert(reviewedRecordPath(path),path);
+ for(const path of ['/autopilot/run','/autopilot/reviews/stock-sharing/prepare','/autopilot/approval-groups/group-1/approve','/autopilot/mission/step-1/approve','/autopilot/customer-replies/rule-1/settings','/api/v1/business/actions/approve',
+ '/autopilot/po-delivery-dates/source-1/settings','/autopilot/po-delivery-dates/source-1/teach','/mail/message-1/return-rule','/mail/message-1/supplier-details-settings',
+ '/warehouse/bin-corrections/settings','/warehouse/bin-corrections/correction-1/rule'])assert.equal(reviewedRecordPath(path),false,path);
 });
 
 test('only trusted review execution can stamp a durable provider approval',async t=>{

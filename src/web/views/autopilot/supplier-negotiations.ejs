@@ -1,6 +1,6 @@
 <div class="page-head"><div class="titles"><h1>Supplier negotiation emails</h1><p>Emails to suppliers built from what your records show, with each fact linked to its evidence.</p></div></div>
 <% const label={late:'Late deliveries',short:'Short deliveries',price:'Price increases',quote:'Cheaper quotes',volume:'What we buy'}; %>
-<% if(shadow){ %><p class="notice">The first 14 days are Watch only. Drafting and sending wait until that period ends.</p><% } %>
+<% if(shadow){ %><p class="notice">You can approve an exact saved supplier email now. Automatic drafting and sending stay blocked during the first 14 days.</p><% } %>
 <% if(saved){ const facts=saved.facts||[]; %><section class="card section"><h2><%= saved.kind==='lead_time_check'?'Lead-time note':'Negotiation email' %> to <%= saved.supplier_name %></h2>
 <p><%= saved.status==='PREPARED'?'Unsent draft':saved.status==='SENT'?'Sent '+helpers.dateTime(saved.sent_at):saved.status==='FAILED'?'Not sent: '+(saved.error_message||'needs review'):'Queued for sending' %><%= saved.automatic?' · prepared by your supplier rule':'' %> · facts from <%= saved.from_day %> to <%= saved.to_day %>.</p>
 <% if(saved.needs_person&&saved.status==='PREPARED'){ %><p class="notice"><%= saved.needs_person %></p><% } %>
@@ -13,7 +13,7 @@
 <label class="rm-field"><span>Send from</span><select name="connectorId" required><option value="">Choose a connected mailbox</option><% for(const box of mailboxes){ %><option value="<%= box.id %>"><%= box.display_name %></option><% } %></select></label>
 <% if(!saved.supplier_email){ %><p class="notice">Add <%= saved.supplier_name %>’s email address before sending.</p><% } %>
 <label><input type="checkbox" name="confirmed" value="yes" required> Send this email to <%= saved.supplier_email||saved.supplier_name %> as it is saved above.</label>
-<button class="btn btn--primary" <%= shadow||!mailboxes.length||!saved.supplier_email?'disabled':'' %>>Send to supplier</button></form><% }else{ %><div class="quiet-note"><p><strong><%= saved.subject %></strong></p><pre style="white-space:pre-wrap;overflow-wrap:anywhere;font:inherit"><%= saved.body %></pre></div><% } %>
+<button class="btn btn--primary" <%= !mailboxes.length||!saved.supplier_email?'disabled':'' %>>Send to supplier</button></form><% }else{ %><div class="quiet-note"><p><strong><%= saved.subject %></strong></p><pre style="white-space:pre-wrap;overflow-wrap:anywhere;font:inherit"><%= saved.body %></pre></div><% } %>
 <p><a href="/autopilot/supplier-negotiations?supplier=<%= encodeURIComponent(saved.supplier_id) %>">Back to <%= saved.supplier_name %></a></p></section><% }else{ %>
 <section class="card section"><form method="get" action="/autopilot/supplier-negotiations" class="form-stack"><label class="rm-field"><span>Supplier</span><select name="supplier" required><option value="">Choose a supplier</option><% for(const s of suppliers){ %><option value="<%= s.id %>" <%= s.id===supplierId?'selected':'' %>><%= s.name %></option><% } %></select></label><button class="btn">Show what the records say</button></form></section>
 <% if(problem){ %><p class="notice"><%= problem %></p><% } %>
