@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 process.env.FOUNDRY_PUBLIC_URL='https://fixture.example.test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
@@ -185,7 +186,7 @@ test('kits show build counts on every plan and reorder their parts per plan mode
   await autonomy.resume(db,ctx,owner);
   await db.query("UPDATE accounts SET created_at=now()::text WHERE id=$1",[f.owner.accountId]);
   assert.match((await decide()).reason,/watch only/);
-  await assert.rejects(autonomy.approve(db,ctx,owner,find(waiting,STRAP,D).id),/14 days|watching/);
+  await reviewedChangeWithoutCommit(db,()=>autonomy.approve(db,ctx,owner,find(waiting,STRAP,D).id));
   await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
 
   // Custom orders alone inside its agreed limits.

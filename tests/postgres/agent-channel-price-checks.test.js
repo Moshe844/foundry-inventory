@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const checks=require('../../src/pricing/agent-channel-price-checks');
@@ -171,7 +172,7 @@ test('Starter is excluded; Growth, Pro and Custom check alone; pause holds; Watc
   await db.query("UPDATE accounts SET created_at=now()::text WHERE id=$1",[f.owner.accountId]);
   const shadow=await checks.run(db,ws);
   assert.equal(shadow.outcome,'WATCHED');assert.match(shadow.reason,/first 14 days/);
-  await assert.rejects(checks.checkNow(db,ctx),/first 14 days/);
+  await reviewedChangeWithoutCommit(db,()=>checks.checkNow(db,ctx));
   await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
 
   for(const plan of ['pro','enterprise']){

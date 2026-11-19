@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test');
 const assert=require('node:assert/strict');
@@ -197,7 +198,7 @@ test('supplier invoice disputes follow up through reminders, replies and credit 
     await setMode('routine');
     await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);
     assert.equal((await flow.schedule(db,ws)).reminders,0);
-    await assert.rejects(flow.remind(db,ctx,taxed.billId,{confirmed:'yes',reminder:1}),/first 14 days/);
+    await reviewedChangeWithoutCommit(db,()=>flow.remind(db,ctx,taxed.billId,{confirmed:'yes',reminder:1}));
     await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
     await auto.pause(db,ctx,{role:'owner'},'Check supplier mail');
     assert.equal((await flow.schedule(db,ws)).reminders,0);

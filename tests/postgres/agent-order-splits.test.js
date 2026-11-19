@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 // Job 61: an order that is partly in stock is split by the owner's rules. The
 // part set aside goes to picking through the normal shipment path, the rest
@@ -179,7 +180,7 @@ test('Custom splits alone within the rules: kits leave whole, batches wait for p
   await f.mode(61,'inherit');
   await db.query("UPDATE accounts SET created_at=now()::text WHERE id=$1",[f.owner.accountId]);
   assert.equal((await splits.run(db,f.ws)).watching,true);
-  await assert.rejects(splits.prepare(db,ctx,{orderId:target.salesOrderId}),/14 days/);
+  await reviewedChangeWithoutCommit(db,()=>splits.prepare(db,ctx,{orderId:target.salesOrderId}));
   await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
   assert.equal((await f.boxes(target)).length,0);
 

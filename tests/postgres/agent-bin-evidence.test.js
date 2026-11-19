@@ -1,4 +1,5 @@
 'use strict';process.env.NODE_ENV='test';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 async function fixture(t,tier){
  const f=await require('../helpers/agent-workflow-fixture').fixture(t,{units:20}),{db,ctx}=f;await f.subscribe('pro');
@@ -43,7 +44,7 @@ test('found-stock scans: Starter and Growth are locked, Pro proposes until taugh
  await f.mode('ask');const asked=await f.mix(1,'BIN-C');assert.equal(asked.needsApproval,true);assert.match(asked.reason,/Ask me first/);await f.decline(asked.id);
  await f.mode('watch');await assert.rejects(f.mix(1,'BIN-C'),/Watch only/);await f.mode('routine');
  await db.query('UPDATE workspace_autopilot SET paused=1 WHERE workspace_id=$1',[ctx.workspaceId]);const paused=await f.mix(1,'BIN-C');assert.equal(paused.needsApproval,true);assert.match(paused.reason,/paused/);await f.decline(paused.id);await db.query('UPDATE workspace_autopilot SET paused=0 WHERE workspace_id=$1',[ctx.workspaceId]);
- await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);await assert.rejects(f.mix(1,'BIN-C'),/watching/);await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
+ await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);await reviewedChangeWithoutCommit(db,()=>f.mix(1,'BIN-C'));await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
  const beforeUndo={a:await f.at(a.id),c:await f.at(c.id)};const undone=await service.undo(db,ctx,fresh.id,{confirmed:'yes'});assert.equal(await f.at(c.id),beforeUndo.c-2);assert.equal(await f.at(a.id),beforeUndo.a+2);
  assert.equal((await f.row(fresh.id)).status,'UNDONE');assert.equal((await service.undo(db,ctx,fresh.id,{confirmed:'yes'})).replayed,true);assert.equal((await require('../../src/transfers/postgres-transfer-service').verify(db,ctx.workspaceId,undone.transferId)).ok,true);
  assert.equal(await f.audit('Bin correction undone'),1);assert.deepEqual(await f.totals(),before,'Moving records between bins never creates or loses stock value');

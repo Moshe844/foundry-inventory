@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 
@@ -190,7 +191,7 @@ test('discontinued products stop reordering, sell down, retire to zero on channe
   await autopilot.resume(db,ctx,{role:'owner'});
   await age('1 day');
   await sweep();assert.match((await row(held.sku_id)).reason,/watching during the first 14 days/);
-  await assert.rejects(work.mark(db,ctx,{sku:'DEAD-C',confirmed:'yes'}),/watching during the first 14 days/);
+  await reviewedChangeWithoutCommit(db,()=>work.mark(db,ctx,{sku:'DEAD-C',confirmed:'yes'}));
   await age('30 days');
   await modes.save(db,ctx,132,{mode:'ask',revision:0});
   await sweep();assert.match((await row(held.sku_id)).reason,/Ask me first/);

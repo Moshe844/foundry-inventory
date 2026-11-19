@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const backorders=require('../../src/sales/agent-backorders');
@@ -186,5 +187,5 @@ test('Custom shares on its own without teaching, by share-across rules, and resp
   await db.query("UPDATE accounts SET created_at=now()::text WHERE id=$1",[f.owner.accountId]);
   assert.equal((await backorders.run(db,f.ws)).watching,true);
   assert.deepEqual(await f.all(early,vip),[2,2]);
-  await assert.rejects(sharing.prepare(db,ctx,{locationId:f.location.id}),/watching during the first 14 days/);
+  await reviewedChangeWithoutCommit(db,()=>sharing.prepare(db,ctx,{locationId:f.location.id}));
 });

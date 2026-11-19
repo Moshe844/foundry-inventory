@@ -1,4 +1,5 @@
 'use strict';process.env.NODE_ENV='test';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 
 // Job 184: customer invoices and supplier bills sent to QuickBooks or Xero.
@@ -133,7 +134,7 @@ test('Custom sends to Xero alone; pause, Watch, Ask me first and the first 14 da
  await f.modes.save(db,ctx,184,{mode:'ask',revision:1});r=await f.run();assert.equal(r.drafted,1);assert.match((await f.row(xero,'invoice',held.id)).reason,/Ask me first/);
  await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);await f.run();assert.match((await f.row(xero,'invoice',held.id)).reason,/first 14 days/);
  const page=await f.documents.detail(db,ctx,xero.id,'invoice',held.id);
- await assert.rejects(f.documents.approve(db,ctx,xero.id,'invoice',held.id,{confirmed:'yes',expectedFingerprint:page.fingerprint}),/first 14 days/);
+ await reviewedChangeWithoutCommit(db,()=>f.documents.approve(db,ctx,xero.id,'invoice',held.id,{confirmed:'yes',expectedFingerprint:page.fingerprint}));
  await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
  assert(!(await f.pending(xero)).some(e=>e.id===saved.journal_entry_id),'A waiting invoice holds its journal back.');
  await f.modes.save(db,ctx,184,{mode:'inherit',revision:2});r=await f.run();assert.equal(r.queued,1);await f.deliver();assert.equal((await f.row(xero,'invoice',held.id)).status,'SENT');

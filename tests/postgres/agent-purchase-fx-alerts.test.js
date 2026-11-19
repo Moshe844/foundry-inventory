@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 
 const test=require('node:test');
@@ -238,7 +239,7 @@ test('Starter only suggests; pause, Watch only, Ask me first and shadow only wat
   await rates.saveManual(db,ctx,{currency:'EUR',rate:'1.3',rateDate:f.today,note:'Bank',confirmed:'yes'});
   const shadow=await fx.run(db,ws);
   assert.match(shadow.reason,/first 14 days/);
-  await assert.rejects(fx.checkNow(db,ctx),/first 14 days/);
+  await reviewedChangeWithoutCommit(db,()=>fx.checkNow(db,ctx));
   await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
 
   // A missing price stops and asks: back near the old rate, the alerts still stay open.

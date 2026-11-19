@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 
@@ -48,7 +49,7 @@ test('supplier catalogs create new products, link existing ones and wait for a p
   const shadowed=await setup('SHD'),shadow=await shadowed.start();
   const shadowRow=await one('SELECT status,hold_reason FROM stockchief_runtime.agent_supplier_catalogs WHERE id=$1',[shadow.id]);
   assert.equal(shadowRow.status,'WAITING');assert.match(shadowRow.hold_reason,/first 14 days/);
-  await assert.rejects(catalogs.approve(db,ctx,shadow.id),/first 14 days/);
+  await reviewedChangeWithoutCommit(db,()=>catalogs.approve(db,ctx,shadow.id));
   await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
   await autopilot.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
 

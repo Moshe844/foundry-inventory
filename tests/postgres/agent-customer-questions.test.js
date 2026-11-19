@@ -1,4 +1,5 @@
 'use strict';process.env.NODE_ENV='test';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 
 // Job 72: customer emails about stock, delivery dates and order status.
@@ -111,8 +112,8 @@ test('unclear questions stop and ask; first contact, mailbox choice, pause, Watc
  await f.modes.save(db,ctx,72,{mode:'ask',revision:1});r=await f.ask('Stock','Do you have '+f.code+' in stock?');assert.equal(r.drafted,true);assert.match(r.reason,/Ask me first/);
  const asked=r.id;
  await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);r=await f.ask(...status);assert.equal(r.watched,true);assert.match(r.reason,/first 14 days/);
- // The owner can still approve under Ask me first, but not during the first 14 days.
- let draft=await f.row(asked);await assert.rejects(f.questions.approve(db,ctx,asked,{confirmed:'yes',expectedFingerprint:draft.fingerprint}),/first 14 days/);
+ // An individually reviewed answer is available during the first 14 days too.
+ let draft=await f.row(asked);await reviewedChangeWithoutCommit(db,()=>f.questions.approve(db,ctx,asked,{confirmed:'yes',expectedFingerprint:draft.fingerprint}));
  await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
  // If the records changed since it was written, the answer is rewritten and shown again.
  await f.workflows.confirmSalesOrder(db,ctx,(await f.workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'PICKUP',idempotencyKey:'later-2',lines:[{skuId:f.item.skuIds[0],quantity:1,unitPriceMinor:1200}]})).salesOrderId,{idempotencyKey:'later-2-confirm'});

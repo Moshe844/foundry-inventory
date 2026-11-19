@@ -1,4 +1,5 @@
 'use strict';process.env.NODE_ENV='test';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const forecasts=require('../../src/purchasing/agent-supplier-forecasts');
 
@@ -52,7 +53,7 @@ test('weekly supplier forecasts follow each plan: older terms see the card, Star
  let r=await f.work();assert.equal(r.watched,1);
  let report=await f.latest();assert.equal(report.status,'WATCHED');assert.match(report.reason,/first 14 days/);
  assert.equal((await f.effects()).length,0);assert.deepEqual(await f.needs(),[]);
- await assert.rejects(forecasts.send(db,ctx,report.id,{fingerprint:report.source_fingerprint}),/first 14 days/);
+ await reviewedChangeWithoutCommit(db,()=>forecasts.send(db,ctx,report.id,{fingerprint:report.source_fingerprint}));
  assert.equal(await f.audits('StockChief prepared a supplier forecast'),1);
  // The forecast: only this supplier's products, twelve weeks from the demand forecast, no prices or customers.
  const p=report.snapshot;assert.deepEqual(p.skuIds,[f.sku]);assert.equal(p.rows[0].weeks.length,12);assert(p.rows[0].total>0);assert(p.rows[0].method);

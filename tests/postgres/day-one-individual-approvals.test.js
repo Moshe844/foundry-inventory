@@ -6,6 +6,15 @@ const access=require('../../src/commercial/agent-proposal-access');
 
 test('all paid plans allow day-one individual approval without changing billing, connections or automatic authority',{timeout:300000},async t=>{
  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx,browser}=f;
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()});
+ const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
+ const chrome=await require('playwright').chromium.launch(),base='http://127.0.0.1:'+server.address().port;
+ f.cleanup(async()=>{await chrome.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await app.locals.sessionStore.close();});
+ const view=await chrome.newPage({viewport:{width:1440,height:1000}}),browserErrors=[];
+ view.on('pageerror',error=>browserErrors.push(error.message));view.setDefaultTimeout(20000);
+ await view.goto(base+'/login');await view.getByLabel('Work email').fill(f.email);await view.locator('[name=password]').fill(f.password);
+ await Promise.all([view.waitForNavigation(),view.getByRole('button',{name:'Sign in',exact:true}).click()]);
+ const folder=require('node:path').join(process.cwd(),'output','day-one-approvals');require('node:fs').mkdirSync(folder,{recursive:true});
  const snapshots=async()=>({
   subscriptions:(await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[f.owner.accountId])).rows,
   connections:(await db.query('SELECT * FROM workspace_connectors WHERE workspace_id=$1 ORDER BY id',[ctx.workspaceId])).rows,
@@ -27,7 +36,13 @@ test('all paid plans allow day-one individual approval without changing billing,
   assert.match(page.text,/data-individual-watch-approval/);
   const button=page.text.match(/<button[^>]*>Approve only this change<\/button>/);
   assert(button,'individual review button is present');assert.doesNotMatch(button[0],/disabled/);
-  await browser.post('/actions/'+proposal.id+'/approve').type('form').send({_csrf:f.csrf(page.text)}).expect(303);
+  await view.goto(base+'/actions/'+proposal.id);
+  assert(await view.getByRole('button',{name:'Approve only this change',exact:true}).isEnabled());
+  for(const width of [1440,390]){
+   await view.setViewportSize({width,height:1000});assert(await view.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+   await view.screenshot({path:require('node:path').join(folder,plan+'-'+width+'.png'),fullPage:true});
+  }
+  await Promise.all([view.waitForNavigation(),view.getByRole('button',{name:'Approve only this change',exact:true}).click()]);
   assert.equal((await db.query("SELECT count(*)::int n FROM suppliers WHERE workspace_id=$1 AND name=$2",[ctx.workspaceId,'Reviewed '+plan+' day-one'])).rows[0].n,1);
   await assistant.executeProposal(db,ctx,proposal.id);
   assert.equal((await db.query("SELECT count(*)::int n FROM suppliers WHERE workspace_id=$1 AND name=$2",[ctx.workspaceId,'Reviewed '+plan+' day-one'])).rows[0].n,1,'replay cannot create a second supplier');
@@ -52,6 +67,7 @@ test('all paid plans allow day-one individual approval without changing billing,
   else await require('../../src/autopilot/postgres-service').setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
   assert.deepEqual(await snapshots(),before,'approval and watch-period expiry leave subscription billing and existing connection credentials unchanged');
   const restricted=await prepare(plan,'permission');
+  if(plan==='starter')assert.equal((await access.review(db,ctx,{...restricted,action_type:'sales_quote.create',payload:{}})).individual.blocked,true,'a reviewed action does not unlock a higher-plan duty');
   const actor=(await db.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
   await db.query("UPDATE users SET role='staff',permissions='[]' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);
   try{await assert.rejects(assistant.executeProposal(db,ctx,restricted.id),/permission|owner|allowed|access/i);}
@@ -59,4 +75,5 @@ test('all paid plans allow day-one individual approval without changing billing,
   const foreign={...ctx,workspaceId:'different-inventory-'+randomUUID()};
   await assert.rejects(assistant.executeProposal(db,foreign,restricted.id));
  });
+ assert.deepEqual(browserErrors,[]);
 });

@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const discovery=require('../../src/documents/agent-document-discovery');
@@ -191,7 +192,7 @@ test('dispatch checks source, stopped authority, plan, quota and lease and dedup
   await assert.rejects(f.submit(bytes+'\nNo filing during Watch.'),/Watch only/);
   await mode.save(db,ctx,142,{mode:'inherit',revision:1});
   await db.query("UPDATE accounts SET created_at=now()::text WHERE id=$1",[f.owner.accountId]);
-  await assert.rejects(f.submit(bytes+'\nFirst two weeks.'),/first 14 days/);
+  await reviewedChangeWithoutCommit(db,()=>f.submit(bytes+'\nFirst two weeks.'));
   await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
   await db.query("INSERT INTO commercial_entitlement_overrides(id,account_id,meter,limit_units,reason) VALUES($1,$2,'storage_bytes',0,'Verify filing original storage cap')",[cap,f.owner.accountId]);
   await assert.rejects(f.submit(bytes+'\nOver the storage allowance.'),e=>e.code==='entitlement_required');

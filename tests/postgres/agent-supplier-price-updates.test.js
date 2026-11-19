@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 
@@ -140,7 +141,7 @@ test('supplier price lists update exact supplier costs on each plan and ask over
   const L6=await upload([['VEND-C','6.60','USD','case',12]]);
   found=await rows(L6);
   assert.equal(found[0].status,'REVIEW');assert.equal(found[0].would_apply,true);assert.match(found[0].reason,/first 14 days/);
-  await assert.rejects(approve(L6,1),/first 14 days/);
+  await reviewedChangeWithoutCommit(db,()=>approve(L6,1));
   assert.deepEqual(await costs.schedule(db,ws,'cycle-3'),{queued:false});
   await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
   await costs.schedule(db,ws,'cycle-4');await work();

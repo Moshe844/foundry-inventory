@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const backorders=require('../../src/sales/agent-backorders');
@@ -212,5 +213,5 @@ test('Pro and Custom set stock aside alone inside the owner limit, send complete
   await db.query("UPDATE accounts SET created_at=now()::text WHERE id=$1",[f.owner.accountId]);
   assert.equal((await backorders.run(db,ws)).watching,true);
   assert.equal(await f.reserved(waiting),0);
-  await assert.rejects(backorders.prepare(db,ctx,{locationId:f.location.id}),/watching during the first 14 days/);
+  await reviewedChangeWithoutCommit(db,()=>backorders.prepare(db,ctx,{locationId:f.location.id}));
 });

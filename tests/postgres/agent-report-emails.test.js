@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 process.env.FOUNDRY_PUBLIC_URL='https://stockchief.test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
@@ -163,7 +164,7 @@ test('scheduled reports and the daily briefing are emailed on their own from the
  // The first 14 days: it waits and the owner cannot send it either.
  await age(0);
  s=await slot();assert.match(s.row.hold_reason,/first 14 days/);
- await assert.rejects(mail.sendHeld(db,ctx,s.id),/first 14 days/);
+ await reviewedChangeWithoutCommit(db,()=>mail.sendHeld(db,ctx,s.id));
  await age(30);
 
  // Growth, Pro and Custom send on their own too.
@@ -235,7 +236,7 @@ test('scheduled reports and the daily briefing are emailed on their own from the
  await modes.save(db,ctx,156,{mode:'inherit',revision:1});
  await age(0);
  b=await due(at(6,8,30));assert.match(b.held,/first 14 days/);
- await assert.rejects(briefing.sendNow(db,ctx),/first 14 days/);
+ await reviewedChangeWithoutCommit(db,()=>briefing.sendNow(db,ctx));
  await age(30);
  // Checked again before the mailbox sends: a changed mailbox stops it.
  b=await due(at(7,8,30));assert.equal(b.emailed,2);

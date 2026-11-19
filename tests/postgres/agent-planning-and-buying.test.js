@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict');
 const {randomUUID}=require('node:crypto');
@@ -117,7 +118,7 @@ test('local sales tune location thresholds only within current plan and owner au
   await assert.rejects(configure(locationId,30),/Growth/);
   await subscribe('growth');await assert.rejects(configure(locationId,30),/individually approved/);
   const first=(await rules.page(db,ctx,{skuId,locationId})).estimate;
-  await assert.rejects(rules.approve(db,ctx,{skuId,locationId,digest:first.digest}),/first 14 days/);
+  await reviewedChangeWithoutCommit(db,()=>rules.approve(db,ctx,{skuId,locationId,digest:first.digest}));
   await db.query("UPDATE accounts SET created_at=(now()-interval '16 days')::text WHERE id=$1",[f.owner.accountId]);
   await authority.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
   const completed=await rules.approve(db,ctx,{skuId,locationId,digest:first.digest});

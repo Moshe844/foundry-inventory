@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const packs=require('../../src/purchasing/agent-supplier-review-packs');
@@ -92,7 +93,7 @@ test('Supplier review packs are prepared after each quarter, kept, and sent to e
   const shadowPage=await f.browser.get(packs.href).expect(200);
   assert.match(shadowPage.text,/first 14 days/);assert.doesNotMatch(shadowPage.text,/>Send</);
   const kept=await f.one('alt-supplier');
-  await assert.rejects(packs.send(db,ctx,kept.id,{fingerprint:kept.fingerprint}),/first 14 days/);
+  await reviewedChangeWithoutCommit(db,()=>packs.send(db,ctx,kept.id,{fingerprint:kept.fingerprint}));
   // The kept copy is the PDF StockChief made.
   const text=await f.pdfText((await f.binary(f.browser.get(packs.href+'/packs/'+kept.id)).expect(200).expect('Content-Type',/pdf/)).body);
   for(const s of ['Alternative','Shipping operation fixture',f.first,f.second,'$11.00','50%','$1.25'])assert(text.includes(s),s);
