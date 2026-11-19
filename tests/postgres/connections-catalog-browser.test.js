@@ -54,8 +54,8 @@ test('Connections browser shows the full provider directory without enabling exc
     await database.query(`INSERT INTO workspace_connectors
       (id,workspace_id,connector_key,display_name,provider_type,status,capabilities,provides,config,
        expected_interval_minutes,setup_status,authorized_by_user_id,created_at,updated_at,first_connected_at)
-      VALUES($1,$2,$3,'Former Shop','shopify','disconnected','[]','[]','{}',60,'DISCONNECTED',$4,$5,$5,$5)`,
-    [id,owner.workspace_id,`shopify:${id}`,owner.actor_id,at]);
+      VALUES($1,$2,$3,'Former Shop','shopify','disconnected','[]','[]','{}',60,'DISCONNECTED',$4,$5,$5,$6)`,
+    [id,owner.workspace_id,`shopify:${id}`,owner.actor_id,at,at]);
     await page.goto(`${base}/settings/connections`);
     const text=await page.locator('main').innerText();
     for(const provider of ['Square','WooCommerce','Gmail','Stripe'])assert.match(text,new RegExp(provider));
