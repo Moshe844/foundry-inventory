@@ -45,10 +45,15 @@ async function isOpen(database){const release=await state(database);
         WHERE w.id=c.workspace_id AND b.app_id=$7 AND b.shop=c.provider_account_id AND b.development_store=true))),false)))
     OR (c.provider_type='stripe' AND EXISTS(SELECT 1 FROM payment_connect_accounts p WHERE p.connector_id=c.id AND ${certifiedStripe}))
     OR COALESCE((c.provider_type='clover' AND COALESCE(($9::jsonb->c.workspace_id) ? c.provider_account_id,false)
-     AND c.config::jsonb#>>'{cloverTestEvidence,source}'='CLOVER_NONBILLABLE_TEST_MERCHANT_V1'
      AND c.config::jsonb#>>'{cloverTestEvidence,merchantId}'=c.provider_account_id
      AND c.config::jsonb#>>'{cloverTestEvidence,appId}'=$10
-     AND c.config::jsonb#>>'{cloverTestEvidence,isBillable}'='false'),false))
+     AND ((c.config::jsonb#>>'{cloverTestEvidence,source}'='CLOVER_NONBILLABLE_TEST_MERCHANT_V1'
+       AND c.config::jsonb#>>'{cloverTestEvidence,isBillable}'='false')
+      OR (c.config::jsonb#>>'{cloverTestEvidence,source}'='CLOVER_OWNER_APPROVED_TEST_MERCHANT_V1'
+       AND c.config::jsonb#>>'{cloverTestEvidence,workspaceId}'=c.workspace_id
+       AND c.config::jsonb#>>'{cloverTestEvidence,approvedByUserId}'=c.authorized_by_user_id
+       AND c.config::jsonb#>>'{cloverTestEvidence,ownerApprovedTestMerchant}'='true'
+       AND c.config::jsonb#>>'{cloverTestEvidence,providerBillingFlagsMissing}'='true'))),false))
    UNION ALL SELECT 1 FROM payment_connect_accounts p LEFT JOIN workspace_connectors c ON c.id=p.connector_id
      WHERE p.charges_enabled=1 AND NOT COALESCE((${certifiedStripe}),false)
    LIMIT 1`,
