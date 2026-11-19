@@ -97,8 +97,12 @@ async function main(){
     assert.equal(actual.status,'succeeded');assert.equal(actual.amountMinor,1200);assert.equal(actual.currency,'usd');assert.equal(actual.originalPaymentId,evidence.externalPaymentId);
     assert.equal((await require('../src/payments/stripe-return-refunds').verify(db,owner.workspaceId,refund.effectId,{system:true})).replayed,true);
     const createsBeforeReplay=refundCreateRequests;
-    const repeated=await collection.queueCustomerReturnRefund(db,ctx,requested.customerReturnId,{});
-    assert.equal(repeated.replayed,true);assert.equal(repeated.refund.id,refund.refund.id);assert.equal(repeated.queued,false);
+    await collection.queueCustomerReturnRefund(db,ctx,requested.customerReturnId,{}).then(repeated=>{
+     assert.equal(repeated.replayed,true);assert.equal(repeated.refund.id,refund.refund.id);assert.equal(repeated.queued,false);
+    },error=>{
+     assert(error instanceof require('../src/domain/errors').ValidationError);
+     assert.match(error.message,/not waiting for a refund/,'A settled return may reject the duplicate command explicitly');
+    });
     const sameEffect=await require('../src/operations/postgres-provider-effects').get(db,owner.workspaceId,refund.effectId);
     const retried=await require('../src/payments/stripe-return-refunds').execute(db,sameEffect);
     assert.equal(retried.replayed,true);assert.equal(retried.refundId,saved.external_refund_id);
