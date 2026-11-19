@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const pack=require('../../src/accounting/agent-year-end-pack');
@@ -96,7 +97,11 @@ test('The year-end pack is made after the financial year ends, kept, and sent to
   assert.equal(await f.audits('StockChief made the year-end stock pack'),1);
   let kept=await f.one();
   assert.equal(kept.year_start,f.start);assert.equal(kept.year_end,f.end);
-  await assert.rejects(pack.send(db,ctx,kept.id,{fingerprint:kept.fingerprint}),/first 14 days/);
+  await reviewedChangeWithoutCommit(db,async()=>{
+    await f.mailbox('Individually reviewed year-end mailbox');
+    await pack.send(db,ctx,kept.id,{fingerprint:kept.fingerprint});
+    assert.equal((await f.mails()).length,1,'one reviewed pack is queued without enabling routine mail');
+  });
   // The kept workbook: valuation method, the year's roll-forward, write-downs, counts and stocktakes.
   const file=await f.binary(f.browser.get(pack.href+'/packs/'+kept.id)).expect(200).expect('Content-Type',/spreadsheetml/);
   const book=f.workbook(file.body);

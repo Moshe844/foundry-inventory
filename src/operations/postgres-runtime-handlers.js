@@ -502,6 +502,12 @@ async function autopilotEvaluate(job,client){
 function external(handler,workerLane){handler.externalEffect=true;if(workerLane)handler.workerLane=workerLane;return handler;}
 
 async function providerEffect(job,database,options={},providers=defaultProviders){
+  if(!job.workspaceId||!job.payload?.effectId)return providerEffectCore(job,database,options,providers);
+  const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);
+  return providerEffects.withIndividualApproval(database,effect,()=>providerEffectCore(job,database,options,providers));
+}
+
+async function providerEffectCore(job,database,options={},providers=defaultProviders){
   const effectId=job.payload?.effectId;
   if(!job.workspaceId||!effectId)throw Object.assign(new Error('A provider job needs workspace and effect identity.'),
     {code:'invalid_provider_effect',retryable:false});

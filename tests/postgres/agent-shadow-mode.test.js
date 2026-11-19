@@ -50,7 +50,9 @@ test('shadow mode watches every automatic job for 14 days, reports what it would
   const order=planned.created.find(w=>w.recommendedAction.type==='purchase'),transfer=planned.created.find(w=>w.recommendedAction.type==='transfer');
   assert.ok(order,JSON.stringify(planned.considered));assert.ok(transfer,JSON.stringify(planned.considered));
   assert.equal(order.approval_requirement,'REQUIRED');assert.match(order.policyEvaluation.reason,/watch only/);
-  await assert.rejects(autonomy.approve(db,ctx,{role:'owner'},order.id),/only watches/);
+  await assert.rejects(autonomy.execute(db,ctx,order.id),/needs a person to approve/);
+  assert.equal(await require('../../src/commercial/individual-approval').run(ctx,()=>policy.stopped(db,ws,account,'contact.create',false)),null,'exact individual approval is available while watching');
+  assert.equal(await policy.stopped(db,ws,account,'contact.create',true),policy.SHADOW_REASON,'a mission or automatic action cannot use that approval');
   assert.equal((await db.query('SELECT count(*)::int n FROM purchase_orders WHERE workspace_id=$1',[ws])).rows[0].n,1,'only the fixture order exists');
   let rows=await records();
   const ordered=rows.find(r=>r.kind==='order');

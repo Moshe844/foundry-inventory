@@ -2256,7 +2256,7 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null,receiptRo
 }
 
 async function executeProposal(database,ctx,id,options={}) {
-  const committed=await executeProposalCore(database,ctx,id);
+  const committed=await require('../commercial/individual-approval').run(ctx,()=>executeProposalCore(database,ctx,id));
   try{return {...committed,continued:await continueApprovedPlans(database,ctx,id,options)};}
   catch(error){
     console.warn('[stockchief] Ask plan continuation failed',JSON.stringify({

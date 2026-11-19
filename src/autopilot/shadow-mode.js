@@ -1,9 +1,9 @@
 'use strict';
 
 // Job 198: shadow mode. For an account's first 14 days (counted from
-// accounts.created_at) StockChief only watches. The shared gate in
-// agent-plan stopped() refuses every agent action in that period, and each
-// automatic job checks the same period before it acts.
+// accounts.created_at) StockChief never acts automatically. Exact individual
+// approvals remain available within the plan and permissions. The shared
+// gate and automatic jobs enforce this period before automatic execution.
 //
 // This module is the one place where jobs record what they would have done
 // while watching, with amounts and the evidence they used. The main automatic

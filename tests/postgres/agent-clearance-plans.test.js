@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 
@@ -73,7 +74,7 @@ test('clearance plans suggest steps with expected cash and change prices only af
   // Shadow mode, Watch only, watch mode: no price approval.
   const plan=(await save({sku:'CLR-A',markdown:'20'})).id;
   await db.query("UPDATE accounts SET created_at=now()::text WHERE id=$1",[f.owner.accountId]);
-  await assert.rejects(approve(plan,1),/watching during the first 14 days/);
+  await reviewedChangeWithoutCommit(db,()=>approve(plan,1));
   await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
   await modes.save(db,ctx,86,{mode:'watch',revision:0});
   await assert.rejects(approve(plan,1),/Watch only/);

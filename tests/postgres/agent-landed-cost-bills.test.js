@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 
@@ -138,7 +139,11 @@ test('Pro drafts delivery cost bills until taught, then posts them on its own wi
   const L7=await bill({receiptId:D2.receiptId,amount:110});
   r=await row(L7);
   assert.equal(r.status,'WATCHING');assert.equal(r.document_id,null);assert.equal(r.would_post,true);assert.match(r.reason,/first 14 days/);
-  await assert.rejects(bills.approve(db,ctx,L3,{confirmed:'yes'}),/first 14 days/);
+  await reviewedChangeWithoutCommit(db,async()=>{
+    const current=await row(L3),preview=await require('../../src/accounting/postgres-landed-costs').preview(db,ctx,current.document_id);
+    await bills.approve(db,ctx,L3,{confirmed:'yes',fingerprint:preview.fingerprint});
+    assert.equal((await row(L3)).status,'POSTED');
+  });
   assert.deepEqual(await bills.schedule(db,ws,'cycle-3'),{queued:false});
   await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[s.owner.accountId]);
   await bills.schedule(db,ws,'cycle-4');await work();

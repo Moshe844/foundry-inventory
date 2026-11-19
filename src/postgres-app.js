@@ -255,6 +255,7 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   // A form key that already went through is not run twice; see form-submission-replay.js.
   app.use(require('./web/form-submission-replay').create(database));
   app.use(postgresPageRenderer);
+  app.use(require('./web/reviewed-individual-approval').middleware);
   app.use(require('./web/routes/postgres-company-sign-in').createCompanySignInRouter(database,{...ssoOptions,publicOrigin:connectionPublicOrigin||(env==='test'?'request':config.connections.publicOrigin)}));
   app.use(require('./web/routes/postgres-support-conversations').createSupportConversationsRouter(database));
   app.use(createPostgresCommercialRouter(database,{publicOrigin:connectionPublicOrigin || config.connections.publicOrigin,

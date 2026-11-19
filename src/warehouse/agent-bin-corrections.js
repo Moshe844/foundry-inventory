@@ -376,9 +376,10 @@ async function page(db,ctx,id=null,{afterRule=''}={}){
  const recent=owner&&!row?(await db.query(`SELECT id,source,status,kind FROM ${relation} WHERE workspace_id=$1 ORDER BY created_at DESC,id LIMIT 50`,[ctx.workspaceId])).rows:[];
  const learned=owner&&!row?(await db.query(`SELECT scope,maximum_units,example_id,scope_hash FROM ${rulesTable} WHERE workspace_id=$1 AND scope_hash>$2 ORDER BY scope_hash LIMIT 101`,[ctx.workspaceId,afterRule])).rows:[];
  const blocked=locked?null:await policy.stopped(db,ctx.workspaceId,account,action,false);
+ const individualBlocked=locked?null:await require('../commercial/individual-approval').run(ctx,()=>policy.stopped(db,ctx.workspaceId,account,action,false));
  const manualRecoveryAllowed=owner&&['starter','growth'].includes(account.plan)&&row?.status==='SCANNED'&&['pro','enterprise'].includes(row.scanned_plan);
  const valueLimit=settings?.maximum_value_minor!=null?require('../domain/currency').fromMinor(Number(settings.maximum_value_minor),settings.currency):'';
- return {row,settings,valueLimit,rule,recent,learned:learned.slice(0,100),nextRule:learned.length>100?learned[99].scope_hash:null,owner,locked,blocked,manualRecoveryAllowed,canScan:physical.every(p=>P.can(user,p)),shadow:account.shadow,requestKey:newId('bincorrectform')};
+ return {row,settings,valueLimit,rule,recent,learned:learned.slice(0,100),nextRule:learned.length>100?learned[99].scope_hash:null,owner,locked,blocked,individualBlocked,manualRecoveryAllowed,canScan:physical.every(p=>P.can(user,p)),shadow:account.shadow,requestKey:newId('bincorrectform')};
 }
 async function readPage(db,ctx,{page=1}={}){
  await actor(db,ctx,{owner:true});const rows=(await db.query(`SELECT id,source,status,problem,kind FROM ${relation} WHERE workspace_id=$1 ORDER BY created_at DESC,id LIMIT 101 OFFSET $2`,[ctx.workspaceId,(page-1)*100])).rows;

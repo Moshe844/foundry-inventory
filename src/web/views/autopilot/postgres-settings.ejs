@@ -4,7 +4,7 @@
   const routineLocked = state.shadowEndsAt || locals.planGates?.[routineGate]?.enabled === false;
   const growthUp = ['growth','pro','enterprise'].includes(state.plan);
   const isOwner = locals.user?.role === 'owner' || locals.currentUser?.role === 'owner';
-  const shadowDay = state.shadowEndsAt ? helpers.shortDate(new Date(state.shadowEndsAt).toISOString().slice(0,10)) : null;
+  const shadowDay = state.shadowEndsAt ? helpers.dateTime(state.shadowEndsAt) : null;
   // The words an owner reads for each job. The job's own label stays, so every
   // other page and Ask still name it the same way.
   const plain = {
@@ -50,7 +50,7 @@
 <% if(state.suspended){ %><div class="ap-alert ap-alert--stop"><%- helpers.icon('alert',{size:18}) %><div><strong>Automatic work is stopped.</strong><p><%= state.suspendedReason || 'A business check needs attention before automatic work can continue.' %></p></div></div><% } %>
 <% if(state.paused){ %><div class="ap-alert ap-alert--stop"><%- helpers.icon('pause',{size:18}) %><div><strong>Automatic work is paused.</strong><p><%= state.pausedReason || 'StockChief keeps watching but does nothing on its own.' %></p></div>
   <form method="post" action="/autopilot/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="ap-btn ap-btn--primary" type="submit">Resume safely</button></form></div><% } %>
-<% if(state.shadowEndsAt){ %><div class="ap-alert"><%- helpers.icon('eye',{size:18}) %><div><strong>StockChief is only watching until <%= shadowDay %>.</strong><p>New accounts start this way. After that you can let it handle routine work. <a href="/autopilot/shadow">See what it would have done so far</a></p></div></div><% } %>
+<% if(state.shadowEndsAt){ %><div class="ap-alert"><%- helpers.icon('eye',{size:18}) %><div><strong>Automatic actions are blocked until <%= shadowDay %>.</strong><p>You can review and approve eligible individual changes now. During the first 14 days, StockChief cannot place orders, send emails or change records automatically. After that, you choose which routine work to enable within your plan, required teaching and limits. Nothing switches on just because the period ends. <a href="/autopilot/shadow">See your watch-period report</a></p></div></div><% } %>
 <%- include('../components/maintenance-progress',{maintenanceProgress}) %>
 
 <section class="ap-card" aria-labelledby="ap-level-title">

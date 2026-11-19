@@ -3,6 +3,17 @@ process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const service=require('../../src/catalog/agent-product-retirements'),{hash}=require('../../src/pricing/postgres-promotions');
 
+test('reviewed product retirement works through the HTTP approval during the watch period while automatic retirement stays held',{timeout:240000},async t=>{
+ const f=await require('../helpers/agent-product-retirement-fixture').fixture(t),{db,ctx}=f,pair=await f.pair(),notice=await f.record([pair]),pending=await f.record([await f.pair()]);
+ await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);
+ const page=await f.browser.get('/autopilot/discontinued-products/'+notice.id).expect(200);
+ assert.doesNotMatch(page.text,/<button[^>]*disabled[^>]*>Apply reviewed product retirements/);
+ await f.browser.post('/autopilot/discontinued-products/'+notice.id+'/apply').type('form').send({_csrf:f.csrf(page.text),confirmed:'yes',sourceFingerprint:notice.p.sourceFingerprint}).expect(303);
+ assert.equal(Number((await db.query('SELECT is_active FROM items WHERE id=$1',[pair.old.item_id])).rows[0].is_active),0);
+ assert.equal((await service.onNotice(db,ctx.workspaceId,pending.id)).held,true);
+ assert.equal(require('../../src/commercial/individual-approval').active(ctx.workspaceId),false);
+});
+
 const {fixture}=require('../helpers/agent-product-retirement-fixture');
 
 test('discontinued products respect every plan, native retirement, Pro teaching and lower limits after upgrade',{timeout:240000},async t=>{

@@ -29,10 +29,16 @@ async function enqueueInTransaction(client,input){
   if(!input.workspaceId||!input.kind||!input.provider||!input.aggregateType||!input.aggregateId||!input.idempotencyKey)
     throw new TypeError('A provider effect needs tenant, kind, provider, aggregate and idempotency identity.');
   effectJobKind(input);
+  const approval=require('../commercial/individual-approval'),actor=approval.actor(input.workspaceId);
+  // This field is generated here, never accepted from request/model payloads.
+  const {individualApprovalActorId:ignoredApproval,...payload}=input.payload||{};
+  const grant=payload.standingAuthority;
+  if(actor&&input.requestedByUserId===actor&&payload.automatic!==true&&grant?.automatic!==true&&
+    (!grant||grant.automatic===false||grant.manual===true||grant.manualApproval===true))payload.individualApprovalActorId=actor;
   const id=input.id||newId('peff');const inserted=await client.query(`INSERT INTO stockchief_runtime.provider_effects
     (id,workspace_id,kind,provider,aggregate_type,aggregate_id,payload,idempotency_key,requested_by_user_id)
     VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) ON CONFLICT(workspace_id,kind,idempotency_key) DO NOTHING RETURNING *`,
-  [id,input.workspaceId,input.kind,input.provider,input.aggregateType,input.aggregateId,JSON.stringify(input.payload||{}),
+  [id,input.workspaceId,input.kind,input.provider,input.aggregateType,input.aggregateId,JSON.stringify(payload),
     input.idempotencyKey,input.requestedByUserId||null]);
   const row=inserted.rows[0]||(await client.query(`SELECT * FROM stockchief_runtime.provider_effects
     WHERE workspace_id=$1 AND kind=$2 AND idempotency_key=$3`,[input.workspaceId,input.kind,input.idempotencyKey])).rows[0];
@@ -44,6 +50,15 @@ async function enqueueInTransaction(client,input){
 
 async function enqueue(database,input){return database.transaction((client)=>enqueueInTransaction(client,input),
   {isolation:'SERIALIZABLE',retrySafe:true});}
+
+async function withIndividualApproval(database,effect,operation){
+  const actor=effect.payload?.individualApprovalActorId;
+  if(!actor)return operation();
+  const valid=actor===effect.requestedByUserId&&effect.payload?.automatic!==true&&effect.payload?.standingAuthority?.automatic!==true&&
+    (await database.query('SELECT 1 FROM users WHERE workspace_id=$1 AND id=$2 AND revoked_at IS NULL',[effect.workspaceId,actor])).rowCount;
+  if(!valid)throw new ValidationError('The individual approval for this provider operation is no longer valid. Review the saved change again.');
+  return require('../commercial/individual-approval').run({workspaceId:effect.workspaceId,actorId:actor},operation);
+}
 
 async function claim(database,workspaceId,id){return database.transaction(async(client)=>{
   const row=(await client.query(`SELECT * FROM stockchief_runtime.provider_effects
@@ -155,4 +170,4 @@ async function markStaleAmbiguous(client,{olderThanMinutes=5}={}){const at=nowIs
     completed_at=$2,updated_at=$2 WHERE status='RUNNING' AND claimed_at<now()-($1::integer*interval '1 minute') RETURNING *`,
   [olderThanMinutes,at]);}
 
-module.exports={get,enqueue,enqueueInTransaction,claim,claimVerification,checkpoint,succeed,finishError,markStaleAmbiguous,definiteFailure,hydrate};
+module.exports={get,enqueue,enqueueInTransaction,withIndividualApproval,claim,claimVerification,checkpoint,succeed,finishError,markStaleAmbiguous,definiteFailure,hydrate};

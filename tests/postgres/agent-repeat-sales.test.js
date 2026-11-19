@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict');
 const {randomUUID}=require('node:crypto');
@@ -116,7 +117,7 @@ test('repeating last month’s order uses current prices, refuses ambiguity and 
     {action:'sales_order.repeat',recordReference:'fixture-customer',repeatPeriod:'previous-month',...extra});
   await setPrice(700);
   const first=await request();assert.match(first.proposal.summary,/\$21.00/);
-  await assert.rejects(assistant.executeProposal(db,ctx,first.proposal.id),/14 days/);
+  await reviewedChangeWithoutCommit(db,()=>assistant.executeProposal(db,ctx,first.proposal.id));
   await db.query("UPDATE accounts SET created_at=(now()-interval '15 days')::text WHERE id=$1",[f.owner.accountId]);
   const modes=require('../../src/autopilot/postgres-service');
   await modes.setMode(db,ctx,{role:'owner'},'OBSERVE');

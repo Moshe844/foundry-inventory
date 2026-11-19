@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 
@@ -192,7 +193,7 @@ test('duplicates, missing costs and weights, and bad SKUs are fixed in bulk on e
   await age('1 day');
   await sweep();
   assert.match((await fixOf(box.sku,'WEIGHT')).reason,/watching during the first 14 days/);
-  await assert.rejects(approve(box.sku,'WEIGHT'),/watching during the first 14 days/);
+  await reviewedChangeWithoutCommit(db,()=>approve(box.sku,'WEIGHT'));
   await age('30 days');
   await modes.save(db,ctx,126,{mode:'ask',revision:0});
   await sweep();

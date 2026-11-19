@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 
@@ -155,7 +156,7 @@ test('new products get categories and tags from their supplier file and similar 
   await sweep();
   const shadow=await recordOf(level.item,'CATEGORY');
   assert.match(shadow.reason,/watching during the first 14 days/);
-  await assert.rejects(classes.approve(db,ctx,shadow.id,{confirmed:'yes',fingerprint:shadow.fingerprint}),/watching during the first 14 days/);
+  await reviewedChangeWithoutCommit(db,()=>classes.approve(db,ctx,shadow.id,{confirmed:'yes',fingerprint:shadow.fingerprint}));
   await age('30 days');
   await modes.save(db,ctx,131,{mode:'ask',revision:0});
   await sweep();

@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 
 process.env.NODE_ENV='test';
 const {test}=require('node:test');
@@ -79,7 +80,7 @@ test('a native cost increase suggests and prepares an exact owner-approved local
   await autopilot.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
   await db.query("UPDATE accounts SET created_at=(now()-interval '7 days')::text WHERE id=$1",[f.owner.accountId]);
   assert.equal(await notice(),undefined);
-  await assert.rejects(assistant.executeProposal(db,ctx,plan.id),/first 14 days/);
+  await reviewedChangeWithoutCommit(db,()=>assistant.executeProposal(db,ctx,plan.id));
   await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
 
   const connectorId=randomUUID(),priceMoney={amount:1000,currency:'USD'};

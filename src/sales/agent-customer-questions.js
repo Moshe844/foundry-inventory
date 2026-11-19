@@ -63,9 +63,10 @@ async function decide(db,workspaceId){
 // What stops a send right now, for a person's approval (automatic=false) or
 // for StockChief alone (automatic=true).
 async function stopped(db,workspaceId,state,automatic){
-  if(state.shadow)return 'StockChief is watching during its first 14 days. Reply to this email yourself, or approve answers after that.';
+  const individual=!automatic&&require('../commercial/individual-approval').active(workspaceId);
+  if(state.shadow&&!individual)return 'StockChief is watching during its first 14 days. Review and approve this exact reply individually.';
   const cfg=(await db.query('SELECT mode,paused,suspended FROM workspace_autopilot WHERE workspace_id=$1',[workspaceId])).rows[0];
-  if(cfg?.mode==='OBSERVE')return 'StockChief is set to Watch only. Reply to this email yourself, or change its mode.';
+  if(cfg?.mode==='OBSERVE'&&(!state.shadow||!individual))return 'StockChief is set to Watch only. Reply to this email yourself, or change its mode.';
   if(automatic&&(Number(cfg?.paused)||Number(cfg?.suspended)))return 'Automatic work is paused.';
   const mode=await require('../autopilot/job-modes').restriction(db,workspaceId,JOB,automatic);
   if(mode)return mode;

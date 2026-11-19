@@ -581,7 +581,8 @@ async function execute(database,ctx,workId,{approvedBy=null,worker=false}={}){
     }
   }
   const effectState=await getState(scoped,ctx.workspaceId);
-  if(effectState.shadowEndsAt) throw new ValidationError('During the first 14 days StockChief only watches. You can enter the transaction manually.');
+  if(effectState.shadowEndsAt&&(!require('../commercial/individual-approval').active(ctx.workspaceId)||!approvedBy||approvedBy!==ctx.actorId||worker||item.approval_requirement==='NONE'))
+    throw new ValidationError(agentPlan.SHADOW_REASON);
   if(effectState.agentTerms && item.recommendedAction.type==='transfer' && effectState.plan==='starter') throw new ValidationError('Starter can suggest a transfer. Record the transfer manually.');
   if(effectState.agentTerms&&item.recommendedAction.type==='purchase'){
     const restricted=await purchasingJobRestriction(scoped,ctx.workspaceId,item.recommendedAction,item.approval_requirement==='NONE');
@@ -804,7 +805,7 @@ async function run(database,ctx,options={}){const followThrough=await reconcileS
     approvalRouting,vacationCoverage,considered:planned.considered.length,followThrough,partial:planned.partial,refreshRequested:planned.refreshRequested,planningRevision:planned.planningRevision,nextAfterSkuId:planned.nextAfterSkuId,processedSkus:planned.processedSkus};}
 async function approve(database,ctx,membership,id,{destinationLocationId=null}={}){assertOperate(membership);
  if(destinationLocationId)await database.transaction(async client=>{const work=(await client.query('SELECT * FROM work_items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];if(!work)throw new NotFoundError('That prepared work is not in this inventory.');const action=parse(work.recommended_action,{});if(work.execution_status!=='WAITING_FOR_APPROVAL'||action.type!=='purchase'||action.quantityScope!=='workspace'||action.destinationLocationId)throw new ValidationError('This work is not waiting for a receiving-location choice.');const place=(await client.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL',[ctx.workspaceId,destinationLocationId])).rows[0];if(!place)throw new ValidationError('Choose an active receiving location in this inventory.');await client.query('UPDATE work_items SET recommended_action=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify({...action,destinationLocationId:place.id,destinationLocationName:place.name})]);await client.query("INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at) VALUES($1,$2,$3,'receiving_location_selected',$4,$5,$6)",[newId('wievt'),ctx.workspaceId,id,JSON.stringify({locationId:place.id}),ctx.actorId,nowIso()]);},{isolation:'SERIALIZABLE',retrySafe:true});
- return execute(database,ctx,id,{approvedBy:ctx.actorId});}
+ return require('../commercial/individual-approval').run(ctx,()=>execute(database,ctx,id,{approvedBy:ctx.actorId}));}
 async function cancel(database,ctx,membership,id){assertOperate(membership);return database.transaction(async client=>{
   await client.query('SELECT id FROM work_items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id]);
   const scoped=scopedDatabase(client),item=await getWork(scoped,ctx.workspaceId,id);

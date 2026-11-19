@@ -1,9 +1,12 @@
 'use strict';process.env.NODE_ENV='test';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 
 // Job 72: customer emails about stock, delivery dates and order status.
 async function fixture(t){
- const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx}=f;
+ // The documented reference reader requires a digit. A random hex-only code
+ // could contain only letters and accidentally test the unknown-product path.
+ const f=await require('../helpers/agent-workflow-fixture').fixture(t,{baseCode:'QUESTION-1-'+randomUUID().slice(0,8)}),{db,ctx}=f;
  await f.subscribe('growth');await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
  const autopilot=require('../../src/autopilot/postgres-service');await autopilot.setMode(db,ctx,{role:'owner'},'POLICY_AUTOMATED');
  const mailbox=async(name,account)=>{const id=randomUUID();
@@ -21,6 +24,7 @@ async function fixture(t){
  const deliver=async()=>{for(const e of (await db.query("SELECT id FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND kind='mail.outbound.send' AND status='PENDING' ORDER BY created_at,id",[ctx.workspaceId])).rows)await outbound.executeSendEffect(db,ctx.workspaceId,e.id,{provider});};
  const needs=()=>require('../../src/projections/postgres-service').needs(db,ctx.workspaceId,ctx.actorId);
  const code=(await db.query('SELECT code FROM skus WHERE id=$1',[f.item.skuIds[0]])).rows[0].code;
+ assert(require('../../src/sales/customer-question').references(code).includes(code),'the fixture uses a supported product reference');
  const number=async orderId=>(await db.query('SELECT order_number FROM sales_orders WHERE id=$1',[orderId])).rows[0].order_number;
  return {...f,autopilot,mailbox,connection,capture,run,ask,queued,row,sent,provider,deliver,needs,code,number,outbound,
   questions:require('../../src/sales/agent-customer-questions'),modes:require('../../src/autopilot/job-modes')};
@@ -91,7 +95,7 @@ test('unclear questions stop and ask; first contact, mailbox choice, pause, Watc
  r=await f.ask('Stock','Do you have ZZ-404 in stock?');assert.equal(r.held,true);assert.match(r.reason,/could not tell which product/);
  // The first time StockChief would write to a customer, a person approves it.
  await db.query("INSERT INTO customers(id,workspace_id,name,email,record_state,created_by_user_id,created_at,updated_at) VALUES('new-shop',$1,'Brand New Shop','new@example.test','ACTIVE',$2,now()::text,now()::text)",[ctx.workspaceId,ctx.actorId]);
- r=await f.ask('Stock','Do you have '+f.code+' in stock?','new@example.test');assert.equal(r.drafted,true);assert.match(r.reason,/first time/);
+ r=await f.ask('Stock','Do you have '+f.code+' in stock?','new@example.test');assert.equal(r.drafted,true,JSON.stringify(r));assert.match(r.reason,/first time/);
  // Two mailboxes and no choice: StockChief does not pick one.
  const second=await f.mailbox('Accounts mailbox','accounts-mailbox');
  r=await f.ask('Order status','Where is my order '+order+'?');assert.equal(r.drafted,true);assert.match(r.reason,/more than one mailbox/);
@@ -111,8 +115,8 @@ test('unclear questions stop and ask; first contact, mailbox choice, pause, Watc
  await f.modes.save(db,ctx,72,{mode:'ask',revision:1});r=await f.ask('Stock','Do you have '+f.code+' in stock?');assert.equal(r.drafted,true);assert.match(r.reason,/Ask me first/);
  const asked=r.id;
  await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);r=await f.ask(...status);assert.equal(r.watched,true);assert.match(r.reason,/first 14 days/);
- // The owner can still approve under Ask me first, but not during the first 14 days.
- let draft=await f.row(asked);await assert.rejects(f.questions.approve(db,ctx,asked,{confirmed:'yes',expectedFingerprint:draft.fingerprint}),/first 14 days/);
+ // An individually reviewed answer is available during the first 14 days too.
+ let draft=await f.row(asked);await reviewedChangeWithoutCommit(db,()=>f.questions.approve(db,ctx,asked,{confirmed:'yes',expectedFingerprint:draft.fingerprint}));
  await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
  // If the records changed since it was written, the answer is rewritten and shown again.
  await f.workflows.confirmSalesOrder(db,ctx,(await f.workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'PICKUP',idempotencyKey:'later-2',lines:[{skuId:f.item.skuIds[0],quantity:1,unitPriceMinor:1200}]})).salesOrderId,{idempotencyKey:'later-2-confirm'});

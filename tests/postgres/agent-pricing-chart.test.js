@@ -33,7 +33,9 @@ test('pricing shows exact plan duties, no-training filters and accessible detail
     assert.deepEqual(await dialog.locator('[data-plan-job]').evaluateAll(es=>es.map(e=>Number(e.dataset.planJob))),allowed.map(j=>j.id));
     await trigger.click();assert(await dialog.isVisible());
     const firstDuty=await dialog.locator('[data-plan-job]').first().boundingBox(),bodyBounds=await dialog.locator('.plan-dialog-body').boundingBox();assert(firstDuty.y<bodyBounds.y+bodyBounds.height,'The duty list starts in the initial desktop view');
-    assert.match(await dialog.locator('.plan-dialog-default').innerText(),/Watch only for 14 days/);
+    const watchPeriod=await dialog.locator('.plan-dialog-default').innerText();
+    assert.match(watchPeriod,/Automatic actions are blocked for the first 14 days/);
+    assert.match(watchPeriod,/review and approve eligible individual changes from day one/);
     for(const row of await dialog.locator('[data-plan-job]').evaluateAll(es=>es.map(e=>({id:Number(e.dataset.planJob),mode:e.dataset.mode,label:e.querySelector('[data-job-label]').textContent})))){
       assert.equal(row.mode,policy.allowance(plan.id,row.id));assert.equal(row.label,jobs.find(j=>j.id===row.id).job);
     }

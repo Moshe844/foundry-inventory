@@ -156,10 +156,13 @@ async function queueInTransaction(client,ctx,payload,idempotencyKey,options={}){
     }
     await client.query('UPDATE supplier_communications SET purchase_order_id=$3 WHERE workspace_id=$1 AND id=$2 AND (purchase_order_id IS NULL OR purchase_order_id=$3)',[ctx.workspaceId,message.id,order.id]);
   }
+  const reviewedGrant=prepared.standingAuthority;
+  const reviewedActor=require('../commercial/individual-approval').active(ctx.workspaceId)&&reviewedGrant?.automatic!==true&&
+    (!reviewedGrant||reviewedGrant.automatic===false||reviewedGrant.manual===true||reviewedGrant.manualApproval===true)?ctx.actorId:null;
   const queued=await providerEffects.enqueueInTransaction(client,{workspaceId:ctx.workspaceId,kind:'mail.outbound.send',
     provider:connection.provider_type,aggregateType:communicationKind==='supplier'?'supplier_communication':'customer_communication',
     aggregateId:message.id,idempotencyKey,requestedByUserId:ctx.actorId,
-    payload:{communicationId:message.id,communicationKind,connectorId:connection.id,...(agentJob?{agentJob}:{}),...(prepared.standingAuthority?{standingAuthority:prepared.standingAuthority}:{})},priority:10,maxAttempts:12});
+    payload:{communicationId:message.id,communicationKind,connectorId:connection.id,...(reviewedActor?{individualApprovalActorId:reviewedActor}:{}),...(agentJob?{agentJob}:{}),...(prepared.standingAuthority?{standingAuthority:prepared.standingAuthority}:{})},priority:10,maxAttempts:12});
   // Job 201: an email StockChief sends on its own counts toward its usual day.
   // Alert emails to the owner and anything a person approved do not.
   const grant=prepared.standingAuthority;
@@ -183,6 +186,19 @@ async function get(database,workspaceId,kind,id){
 }
 
 async function executeSendEffect(database,workspaceId,effectId,options={}){
+  const effect=await providerEffects.get(database,workspaceId,effectId),input=effect?.payload;
+  const actor=input?.individualApprovalActorId;
+  if(!actor)return executeSendEffectCore(database,workspaceId,effectId,options);
+  const table=tableFor(input.communicationKind);
+  const approved=(await database.query(`SELECT 1 FROM ${table} m JOIN users u ON u.workspace_id=m.workspace_id AND u.id=m.approved_by_user_id
+    WHERE m.workspace_id=$1 AND m.id=$2 AND m.approved_by_user_id=$3 AND m.approved_at IS NOT NULL AND u.revoked_at IS NULL`,
+  [workspaceId,input.communicationId,actor])).rowCount;
+  if(!approved||effect.requestedByUserId!==actor||input.standingAuthority?.automatic===true)
+    throw new ValidationError('This message no longer has its individually reviewed approval. Review the message before sending.');
+  return require('../commercial/individual-approval').run({workspaceId,actorId:actor},()=>executeSendEffectCore(database,workspaceId,effectId,options));
+}
+
+async function executeSendEffectCore(database,workspaceId,effectId,options={}){
   const claimed=await providerEffects.claim(database,workspaceId,effectId);
   const effect=claimed.effect;const input=effect.payload;const kind=input.communicationKind;
   let agentJob=input.agentJob;

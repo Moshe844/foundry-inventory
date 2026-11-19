@@ -1,12 +1,12 @@
 'use strict';
 const {randomUUID}=require('node:crypto');
-async function fixture(t,{provider='shippo',units=4,timeZone,through}={}){
+async function fixture(t,{provider='shippo',units=4,timeZone,through,baseCode}={}){
  const cluster=await require('./postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
  const cleanups=[];t.after(async()=>{for(const cleanup of cleanups.reverse())await cleanup();await db.close();await cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db,{through});
  const email=randomUUID()+'@example.test',password='Fixture!'+randomUUID(),owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Owner',businessName:'Shipping operation fixture',email,password,timeZone}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId};
  await require('../../src/shipping/postgres-accounts').connect(db,ctx,{provider,apiKey:provider==='shippo'?'shippo_test_fixture':provider==='easypost'?'EZTK_fixture':'TEST_fixture'});
  const location=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Dispatch',kind:'warehouse',address:'1 Main St, Monroe, NY 10950',phone:'8455550100',shippingEmail:'dispatch@example.test'});
- const item=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'Parcel item',baseCode:'PARCEL-'+randomUUID().slice(0,8),trackingMode:'quantity'}),at=new Date().toISOString(),workflows=require('../../src/operations/postgres-business-workflows');
+ const item=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'Parcel item',baseCode:baseCode||'PARCEL-'+randomUUID().slice(0,8),trackingMode:'quantity'}),at=new Date().toISOString(),workflows=require('../../src/operations/postgres-business-workflows');
  await db.query(`INSERT INTO suppliers(id,workspace_id,name,status,currency,created_at,updated_at) VALUES('fixture-supplier',$1,'Fixture parts','active','USD',$2,$2)`,[ctx.workspaceId,at]);
  await db.query(`INSERT INTO customers(id,workspace_id,name,email,phone,shipping_address,record_state,created_by_user_id,created_at,updated_at) VALUES('fixture-customer',$1,'Receiver','receiver@example.test','5185550100','10 Jobsite Rd, Albany, NY 12207','ACTIVE',$2,$3,$3)`,[ctx.workspaceId,ctx.actorId,at]);
  const po=await workflows.createPurchaseOrder(db,ctx,{supplierId:'fixture-supplier',destinationLocationId:location.id,idempotencyKey:'fixture-po',lines:[{skuId:item.skuIds[0],quantityUnits:units,unitCost:1}]});

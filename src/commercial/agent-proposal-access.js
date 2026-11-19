@@ -10,9 +10,10 @@ async function review(db,ctx,proposal,{mission=false}={}){
  const minimum=operation=>tiers.find(([plan])=>policy.permits(plan,job,operation,{trained:true,edi:true}))?.[1];
  try{if(job&&tier!==undefined)await policy.requireWorkspaceJob(db,ctx.workspaceId,job,'draft');}
  catch(error){if(error.code!=='entitlement_required')throw error;return {individual:{blocked:true,reason:error.message,upgrade:minimum('draft')},mission:{blocked:true,reason:error.message}};}
- const stop=await policy.stopped(db,ctx.workspaceId,state,proposal.action_type,false,proposal.payload);
+ const stop=await require('./individual-approval').run(ctx,()=>policy.stopped(db,ctx.workspaceId,state,proposal.action_type,false,proposal.payload));
  if(stop)return {individual:{blocked:true,reason:stop},mission:{blocked:true,reason:stop}};
- if(!mission)return {individual,mission:whole};
+ const watchPeriod=state.shadow?{endsAt:state.shadowEndsAt}:null;
+ if(!mission)return {individual,mission:whole,watchPeriod};
  const automaticJob=policy.actionJob(proposal.action_type,'automatic',proposal.payload),automaticStop=await policy.stopped(db,ctx.workspaceId,state,proposal.action_type,true,proposal.payload);
  const bound=proposal.payload?.training,rule=bound?.key?(await db.query('SELECT maximum_minor FROM stockchief_runtime.agent_draft_rules WHERE workspace_id=$1 AND action_type=$2 AND scope_key=$3 AND currency=$4',[ctx.workspaceId,proposal.action_type,bound.key,bound.currency])).rows[0]:null;
  if(automaticStop)whole.reason=automaticStop;
@@ -24,6 +25,6 @@ async function review(db,ctx,proposal,{mission=false}={}){
   whole.upgrade=label;
  }else if(automaticJob&&policy.allowance(tier,automaticJob)==='trained'&&!await require('../autopilot/draft-authority').trained(db,ctx.workspaceId,proposal.action_type,proposal.payload))whole.reason='Approve a matching example and teach its limit before approving this step as part of a whole request.';
  else if(policy.usesAgentTerms(state)&&await policy.customerOrderNeedsPerson(db,ctx.workspaceId,proposal.action_type,proposal.payload,proposal.id,state))whole.reason='Confirm this customer, delivery and taught order scope individually before proceeding.';
- whole.blocked=Boolean(whole.reason);return {individual,mission:whole};
+ whole.blocked=Boolean(whole.reason);return {individual,mission:whole,watchPeriod};
 }
 module.exports={review};

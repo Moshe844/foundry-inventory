@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 
 process.env.NODE_ENV='test';
 const test=require('node:test');
@@ -165,7 +166,7 @@ test('job 39: carrier tracking keeps arrival dates, purchase-order dates, run-ou
   ({result}=await runJob());
   assert.equal(result.watched,1);assert.equal(await poDate(),later(16));
   snap=await snapshot(id);
-  await assert.rejects(freight.reviewUpdate(db,ctx,id,{updateId:snap.history[0].id,revision:snap.freight.revision,confirmed:'yes'}),/first 14 days/);
+  await reviewedChangeWithoutCommit(db,()=>freight.reviewUpdate(db,ctx,id,{updateId:snap.history[0].id,revision:snap.freight.revision,confirmed:'yes'}));
   await db.query("UPDATE accounts SET created_at=(now()-interval '200 days')::text WHERE id=$1",[f.owner.accountId]);
 
   // Bad or missing facts stop the reading; the saved date is unchanged.

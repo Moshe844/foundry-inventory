@@ -1,4 +1,5 @@
 'use strict';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 
@@ -94,7 +95,7 @@ test('channel buffers are drafted on Growth and set alone on Pro and Custom from
   assert.equal((await run()).drafted,1);
   const asked=await latest();assert.equal(asked.units,6);assert.match(asked.reason,/Ask me first/);
   await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);
-  await assert.rejects(plans.approve(db,ctx,asked.id),/first 14 days/);
+  await reviewedChangeWithoutCommit(db,()=>plans.approve(db,ctx,asked.id));
   await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
   await plans.approve(db,ctx,asked.id);
   assert.equal((await buffer()).buffer_units,6);

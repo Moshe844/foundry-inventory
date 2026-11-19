@@ -1,4 +1,5 @@
 'use strict';process.env.NODE_ENV='test';
+const {reviewedChangeWithoutCommit}=require('../helpers/reviewed-change-rollback');
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 
 // Job 107: StockChief prepares refunds and credits; a person always approves.
@@ -51,7 +52,7 @@ test('price adjustments credit the exact goods, discount share and tax on Pro an
  // Nothing changes before approval; Watch only and the first 14 days stop approval.
  assert.equal(Number((await f.invoice(o.invoiceId)).balance_minor),Number(before.balance_minor)-300);
  await f.modes.save(db,ctx,107,{mode:'watch',revision:0});await assert.rejects(f.assistant.executeProposal(db,ctx,p.id),/Watch only/);await f.modes.save(db,ctx,107,{mode:'inherit',revision:1});
- await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);await assert.rejects(f.assistant.executeProposal(db,ctx,p.id),/first 14 days/);
+ await db.query('UPDATE accounts SET created_at=now()::text WHERE id=$1',[f.owner.accountId]);await reviewedChangeWithoutCommit(db,()=>f.assistant.executeProposal(db,ctx,p.id));
  await db.query("UPDATE accounts SET created_at=(now()-interval '30 days')::text WHERE id=$1",[f.owner.accountId]);
  const returns=await f.control('SALES_RETURNS'),tax=await f.control('SALES_TAX_PAYABLE'),ar=await f.control('ACCOUNTS_RECEIVABLE'),cash=await f.control('CASH');
  const done=await f.assistant.executeProposal(db,ctx,p.id);assert.equal(done.result.status,'COMPLETED');
