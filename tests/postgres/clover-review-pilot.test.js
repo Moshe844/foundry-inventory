@@ -18,6 +18,9 @@ test('private Clover authorization preserves every plan, credentials, cost accou
   for(const version of ['v2','v3'])await db.query(`INSERT INTO commercial_cost_rates
    (id,provider,operation,unit,cost_per_unit_minor,effective_from,source,provider_version,pricing_basis,confidence)
    VALUES($1,'clover','http_request','request',0.1,'1970-01-01','ISOLATED_TEST_BUDGET_NOT_PROVIDER_PRICING',$2,'CONSERVATIVE_ESTIMATE','LOW')`,[randomUUID(),version]);
+  await require('../../src/commercial/control-service').saveCostRate(db,{provider:'clover',operation:'event_ingestion',unit:'event',
+   costPerUnitMinor:0.1,effectiveFrom:'1970-01-01',pricingBasis:'CONSERVATIVE_ESTIMATE',confidence:'LOW',
+   source:'ISOLATED_PRIVATE_CLOVER_EVENT_TEST_BUDGET_NOT_PROVIDER_PRICING'});
   const service=require('../../src/connections/postgres-provider-service'),auth=require('../../src/domain/postgres-auth-service');
   const store=require('../../src/connections/postgres-credential-store'),release=require('../../src/commercial/release');
   app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID(),publicOrigin:'request'});
@@ -61,6 +64,23 @@ test('private Clover authorization preserves every plan, credentials, cost accou
    assert.equal(connected.config.cloverTestEvidence.ownerApprovedTestMerchant,true);
    assert.deepEqual(await snapshot(),before,'Connecting Clover must preserve billing and the existing mailbox grant');
    assert.equal(await release.isOpen(db),true,'Verified private test must not close public subscription checkout');
+   const changedAt=Date.now(),externalEventId=`clover-item:isolated-item-${index}:CREATE:${changedAt}`;
+   const sendItemChange=()=>oldFetch(base+'/api/v1/connections/clover/webhooks',{method:'POST',
+    headers:{'content-type':'application/json','x-clover-auth':'isolated-webhook'},
+    body:JSON.stringify({appId:'A123456789012',merchants:{[merchant]:[{objectId:`I:isolated-item-${index}`,type:'CREATE',ts:changedAt}]}})});
+   const accepted=await sendItemChange();assert.equal(accepted.status,200);assert.equal((await accepted.json()).accepted,1);
+   const receipt=(await db.query('SELECT status,action_type FROM connector_feed_events WHERE workspace_id=$1 AND connector_id=$2 AND external_event_id=$3',
+    [owner.workspaceId,connected.id,externalEventId])).rows[0];
+   assert.deepEqual(receipt,{status:'IGNORED',action_type:'provider.refresh_scheduled'},'A verified item notification schedules catalog refresh without changing stock');
+   const eventCosts=async()=>(await db.query("SELECT amount_minor,detail FROM commercial_cost_events WHERE workspace_id=$1 AND provider='clover' AND operation='event_ingestion' AND idempotency_key=$2",
+    [owner.workspaceId,`event:${connected.id}:${externalEventId}`])).rows;
+   const costs=await eventCosts();assert.equal(costs.length,1);assert.equal(Number(costs[0].amount_minor),0.1);
+   assert.equal(costs[0].detail.costBasis,'CONSERVATIVE_ESTIMATE');assert.equal(costs[0].detail.costConfidence,'LOW');
+   assert.equal(costs[0].detail.costRateMissing,false);assert.match(costs[0].detail.costSource,/NOT_PROVIDER_PRICING/);
+   const replay=await sendItemChange();assert.equal(replay.status,200);assert.equal((await replay.json()).replayed,1);
+   assert.deepEqual(await eventCosts(),costs,'Repeated delivery cannot duplicate the cost of a catalog notification');
+   assert.deepEqual(await snapshot(),before,'Item notifications cannot alter subscription billing or existing mailbox credentials');
+   assert.equal(await release.isOpen(db),true,'Configured private item notifications must preserve checkout on every plan');
    const browserContext=await browser.newContext();
    try{
     const page=await browserContext.newPage();await page.goto(base+'/login');
@@ -80,6 +100,13 @@ test('private Clover authorization preserves every plan, credentials, cost accou
     await page.goto(base+'/settings/connections?merchantId='+merchant);
     assert.equal(new URL(page.url()).pathname,'/settings/connections/'+connected.id);
     assert.equal(await page.getByRole('button',{name:'Continue to Clover'}).count(),0,'A connected launch cannot send the owner back to Clover');
+    await db.query("UPDATE workspace_connectors SET setup_status='MAPPING' WHERE id=$1",[connected.id]);
+    const mappingLaunch=await page.request.get(base+'/settings/connections?merchant_id='+merchant,{maxRedirects:0});
+    assert.equal(mappingLaunch.status(),303);assert.equal(mappingLaunch.headers().location,'/settings/connections/'+connected.id,'Product mapping does not require another provider authorization');
+    const mappingCsrf=await page.locator('[name="_csrf"]').first().inputValue();
+    const mappingPost=await page.request.post(base+'/settings/connections/clover/install',{maxRedirects:0,form:{merchantId:merchant,_csrf:mappingCsrf}});
+    assert.equal(mappingPost.status(),303);assert.equal(mappingPost.headers().location,'/settings/connections/'+connected.id,'An old setup form opens the saved mapping review without reconnecting');
+    await db.query("UPDATE workspace_connectors SET setup_status='CONNECTED' WHERE id=$1",[connected.id]);
     assert.equal(requested.length,0);assert.equal(called,providerCalls,'Reopening must not exchange or refresh provider credentials');
     assert.equal((await db.query("SELECT count(*)::int n FROM connection_authorization_states WHERE workspace_id=$1 AND provider_type='clover'",[owner.workspaceId])).rows[0].n,launchStateCount,'Launch URLs cannot create or consume authorization state');
     const otherMerchant=await page.request.get(base+'/settings/connections?merchantId=N123456789012',{maxRedirects:0});

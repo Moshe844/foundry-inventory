@@ -164,7 +164,7 @@ function createPostgresConnectionsRouter(database,options={}){
   async function activeCloverLaunch(req,merchantId){
     const {rows}=await database.query(`SELECT id FROM workspace_connectors
       WHERE workspace_id=$1 AND provider_type='clover' AND provider_account_id=$2
-        AND status='connected' AND paused_at IS NULL AND setup_status='CONNECTED'
+        AND status='connected' AND paused_at IS NULL AND setup_status IN ('CONNECTED','MAPPING')
         AND credential_ref IS NOT NULL
         AND ($3::boolean=false OR config::jsonb->'cloverTestEvidence'->>'appId'=$4)
       ORDER BY updated_at DESC LIMIT 1`,[req.ctx.workspaceId,merchantId,
