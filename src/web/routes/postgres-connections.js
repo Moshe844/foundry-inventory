@@ -161,6 +161,16 @@ function createPostgresConnectionsRouter(database,options={}){
 
   router.get('/connections',requireAuth,(req,res)=>res.redirect(303,'/settings/connections'));
   router.use('/settings/connections',requireAuth);
+  async function activeCloverLaunch(req,merchantId){
+    const {rows}=await database.query(`SELECT id FROM workspace_connectors
+      WHERE workspace_id=$1 AND provider_type='clover' AND provider_account_id=$2
+        AND status='connected' AND paused_at IS NULL AND setup_status='CONNECTED'
+        AND credential_ref IS NOT NULL
+        AND ($3::boolean=false OR config::jsonb->'cloverTestEvidence'->>'appId'=$4)
+      ORDER BY updated_at DESC LIMIT 1`,[req.ctx.workspaceId,merchantId,
+      process.env.STOCKCHIEF_RUNTIME_ENV==='production',require('../../config').connections.clover.clientId]);
+    return rows[0]?.id||null;
+  }
   router.get('/settings/connections',asyncRoute(async(req,res)=>{
     const cloverMerchant=req.query.merchantId||req.query.merchant_id;
     if(cloverMerchant){
@@ -168,6 +178,12 @@ function createPostgresConnectionsRouter(database,options={}){
       if(typeof cloverMerchant!=='string'||!require('../../connections/clover-review-pilot').merchantId(cloverMerchant))
         throw new ValidationError('Clover did not supply a valid merchant identifier.');
       await require('../../connections/launch-policy').assertWorkspaceConnection(database,'clover',req.ctx,{merchantId:cloverMerchant});
+      res.set('Cache-Control','no-store');res.set('Referrer-Policy','no-referrer');
+      // Clover sends the same merchant launch link after installation and on
+      // every later Open. A saved grant must open the connection, not restart
+      // setup or exchange any code appended to that ordinary launch link.
+      const connectedId=await activeCloverLaunch(req,cloverMerchant);
+      if(connectedId)return res.redirect(303,'/settings/connections/'+encodeURIComponent(connectedId));
       return res.page('connections/clover-install',{title:'Connect Clover',merchantId:cloverMerchant});
     }
     const apiToken=req.session.newPublicApiToken||null;
@@ -176,6 +192,13 @@ function createPostgresConnectionsRouter(database,options={}){
   }));
   router.post('/settings/connections/clover/install',requireOwner,asyncRoute(async(req,res)=>{
     if(!await connectionAllowed(req,res,'clover'))return;
+    await require('../../connections/launch-policy').assertWorkspaceConnection(database,'clover',req.ctx,{merchantId:req.body.merchantId});
+    res.set('Cache-Control','no-store');res.set('Referrer-Policy','no-referrer');
+    // An old setup tab can still submit after a different tab finishes OAuth.
+    // Reopening that tab is navigation; explicit reconnect actions use their
+    // existing connector-scoped authorization path.
+    const connectedId=await activeCloverLaunch(req,req.body.merchantId);
+    if(connectedId)return res.redirect(303,'/settings/connections/'+encodeURIComponent(connectedId));
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
     const started=await providerService.beginAuthorization(database,req.ctx,{providerType:'clover',merchantId:req.body.merchantId},requestOrigin,
       {providers:registry,publicOrigin:options.publicOrigin==='request'?requestOrigin:options.publicOrigin});

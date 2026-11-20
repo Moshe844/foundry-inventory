@@ -70,6 +70,26 @@ test('private Clover authorization preserves every plan, credentials, cost accou
     await page.route('https://www.clover.com/oauth/v2/authorize**',route=>{
      requested.push(route.request().url());return route.fulfill({status:200,contentType:'text/html',body:'<h1>Isolated Clover consent</h1>'});
     });
+    const providerCalls=called,launchStateCount=(await db.query("SELECT count(*)::int n FROM connection_authorization_states WHERE workspace_id=$1 AND provider_type='clover'",[owner.workspaceId])).rows[0].n;
+    for(const query of ['merchantId='+merchant,'merchant_id='+merchant+'&client_id=A123456789012&code=unused-launch-code&state=untrusted']){
+     const launch=await page.request.get(base+'/settings/connections?'+query,{maxRedirects:0});
+     assert.equal(launch.status(),303,'Opening an installed Clover app must navigate to its saved connection');
+     assert.equal(launch.headers().location,'/settings/connections/'+connected.id);
+     assert.equal(launch.headers()['cache-control'],'no-store');
+    }
+    await page.goto(base+'/settings/connections?merchantId='+merchant);
+    assert.equal(new URL(page.url()).pathname,'/settings/connections/'+connected.id);
+    assert.equal(await page.getByRole('button',{name:'Continue to Clover'}).count(),0,'A connected launch cannot send the owner back to Clover');
+    assert.equal(requested.length,0);assert.equal(called,providerCalls,'Reopening must not exchange or refresh provider credentials');
+    assert.equal((await db.query("SELECT count(*)::int n FROM connection_authorization_states WHERE workspace_id=$1 AND provider_type='clover'",[owner.workspaceId])).rows[0].n,launchStateCount,'Launch URLs cannot create or consume authorization state');
+    const otherMerchant=await page.request.get(base+'/settings/connections?merchantId=N123456789012',{maxRedirects:0});
+    assert.equal(otherMerchant.status(),400,'An existing grant cannot authorize a different merchant');
+    for(const state of [{status:'connected',setup:'REAUTHORIZATION_REQUIRED',paused:null},{status:'connected',setup:'CONNECTED',paused:new Date().toISOString()},{status:'error',setup:'CONNECTED',paused:null}]){
+     await db.query('UPDATE workspace_connectors SET status=$2,setup_status=$3,paused_at=$4 WHERE id=$1',[connected.id,state.status,state.setup,state.paused]);
+     const inactive=await page.request.get(base+'/settings/connections?merchantId='+merchant,{maxRedirects:0});
+     assert.equal(inactive.status(),200);assert.match(await inactive.text(),/Continue to Clover/,'An inactive grant still requires explicit authorization');
+    }
+    await db.query("UPDATE workspace_connectors SET status='disconnected',setup_status='CONNECTED',paused_at=NULL WHERE id=$1",[connected.id]);
     await page.goto(base+'/settings/connections?merchantId='+merchant);
     assert.equal(await page.getByRole('heading',{name:'Connect your Clover test merchant'}).count(),1);
     assert.match(await page.locator('main').innerText(),/does not change your StockChief plan/);
@@ -83,11 +103,19 @@ test('private Clover authorization preserves every plan, credentials, cost accou
     }
     const rejected=await page.request.post(base+'/settings/connections/clover/install',{headers:{accept:'application/json'},form:{merchantId:merchant}});
     assert.equal(rejected.status(),403,'A forged POST cannot start Clover authorization');
+    const csrf=await page.locator('form[action="/settings/connections/clover/install"] [name="_csrf"]').inputValue();
+    await db.query("UPDATE workspace_connectors SET status='connected' WHERE id=$1",[connected.id]);
+    const stale=await page.request.post(base+'/settings/connections/clover/install',{maxRedirects:0,form:{merchantId:merchant,_csrf:csrf}});
+    assert.equal(stale.status(),303);assert.equal(stale.headers().location,'/settings/connections/'+connected.id,'Submitting an old setup tab must open the connection completed in another tab');
+    assert.equal(called,providerCalls);assert.equal(requested.length,0);
+    await db.query("UPDATE workspace_connectors SET status='disconnected' WHERE id=$1",[connected.id]);
+    await page.goto(base+'/settings/connections?merchantId='+merchant);
     await page.getByRole('button',{name:'Continue to Clover'}).click();
     await page.getByRole('heading',{name:'Isolated Clover consent'}).waitFor();assert.equal(requested.length,1);
     const providerUrl=new URL(requested[0]);assert.equal(providerUrl.searchParams.get('client_id'),'A123456789012');
     assert.equal(providerUrl.searchParams.get('redirect_uri'),base+'/settings/connections/clover/callback');
     await db.query('DELETE FROM connection_authorization_states WHERE state_hash=$1 AND used_at IS NULL',[service.stateHash(providerUrl.searchParams.get('state'))]);
+    await db.query("UPDATE workspace_connectors SET status='connected',setup_status='CONNECTED',paused_at=NULL WHERE id=$1",[connected.id]);
    }finally{await browserContext.close();}
    const grant=await store.get(db,owner.workspaceId,connected.id,'provider');
     assert.equal(grant.billingEvidence.isBillable,null);assert.equal(grant.isBillable,undefined);
