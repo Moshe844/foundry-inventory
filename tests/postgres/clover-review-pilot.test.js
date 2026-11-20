@@ -80,6 +80,13 @@ test('private Clover authorization preserves every plan, credentials, cost accou
     await page.goto(base+'/settings/connections?merchantId='+merchant);
     assert.equal(new URL(page.url()).pathname,'/settings/connections/'+connected.id);
     assert.equal(await page.getByRole('button',{name:'Continue to Clover'}).count(),0,'A connected launch cannot send the owner back to Clover');
+    await db.query("UPDATE workspace_connectors SET setup_status='MAPPING' WHERE id=$1",[connected.id]);
+    const mappingLaunch=await page.request.get(base+'/settings/connections?merchant_id='+merchant,{maxRedirects:0});
+    assert.equal(mappingLaunch.status(),303);assert.equal(mappingLaunch.headers().location,'/settings/connections/'+connected.id,'Product mapping does not require another provider authorization');
+    const mappingCsrf=await page.locator('[name="_csrf"]').first().inputValue();
+    const mappingPost=await page.request.post(base+'/settings/connections/clover/install',{maxRedirects:0,form:{merchantId:merchant,_csrf:mappingCsrf}});
+    assert.equal(mappingPost.status(),303);assert.equal(mappingPost.headers().location,'/settings/connections/'+connected.id,'An old setup form opens the saved mapping review without reconnecting');
+    await db.query("UPDATE workspace_connectors SET setup_status='CONNECTED' WHERE id=$1",[connected.id]);
     assert.equal(requested.length,0);assert.equal(called,providerCalls,'Reopening must not exchange or refresh provider credentials');
     assert.equal((await db.query("SELECT count(*)::int n FROM connection_authorization_states WHERE workspace_id=$1 AND provider_type='clover'",[owner.workspaceId])).rows[0].n,launchStateCount,'Launch URLs cannot create or consume authorization state');
     const otherMerchant=await page.request.get(base+'/settings/connections?merchantId=N123456789012',{maxRedirects:0});
