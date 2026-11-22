@@ -20,7 +20,7 @@ test('accounting catalogue choices stay optional on all plans while real faults 
  await page.getByLabel('Your name').fill('Setup Owner');await page.getByLabel('Work email').fill(email);
  const password='Setup!'+randomUUID();
  await page.locator('input[name="password"]').fill(password);if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill(password);
- const [registered]=await Promise.all([page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/register'),page.getByRole('button',{name:'Create account',exact:true}).click()]);
+ const [registered]=await Promise.all([page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/register'),page.getByRole('button',{name:'Create account'}).click()]);
  if(registered.status()!==302)assert.fail('Fixture registration returned '+registered.status()+': '+(await registered.text()).replace(/<[^>]*>/g,' ').slice(-2500));
  await page.waitForURL(base+'/onboarding');
  await require('../helpers/postgres-model-fixture').fundAllWorkspaces(db);
