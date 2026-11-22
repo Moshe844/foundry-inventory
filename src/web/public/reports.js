@@ -514,10 +514,14 @@ function setupReportBuilder(builder){
     insightsArea.append(reportElement('h3','','What stands out'));
     for(const insight of list.slice(0,3)){const line=reportElement('p');line.append(reportElement('strong','',insight.title+'.'),' '+insight.text);insightsArea.append(line);}
   }
+  // Repeated first-column values stay in the page for search and screen readers but are not drawn again.
+  function markRuns(table){let last=null;for(const row of table.tBodies[0]?.rows||[]){if(row.hidden)continue;const cell=row.querySelector('td[data-run]');if(!cell)return;const same=last!==null&&cell.dataset.run===last;cell.classList.toggle('is-repeat',same);row.classList.toggle('is-group-start',last!==null&&!same);last=cell.dataset.run;}}
   function drawTable(data){
     tableArea.replaceChildren();tableArea.hidden=Boolean(data.definition.summary);
     if(data.definition.summary)return;
     const table=document.createElement('table'),head=table.createTHead().insertRow(),metricNames=data.metricColumns||[];
+    // A list sorted by its first column reads as sections: that value shows once, then the rows under it.
+    const runColumn=!data.definition.groups?.length&&data.columns.length>1&&data.definition.sort===data.columns[0]&&!['money_minor','number'].includes(data.columnTypes?.[data.columns[0]])?data.columns[0]:null;
     const primary=data.definition.groups?.length&&typeOf(data.definition.groups[0])!=='date'?metricNames[0]:null,primaryValues=primary?(data.metricValues?.[primary]||[]):[],peakValue=Math.max(1,...primaryValues.map(Math.abs)),whole=data.totals?.metrics?.find(metric=>metric.column===primary)?.value,canShare=primary&&data.definition.aggregate==='sum'&&whole>0&&primaryValues.every(value=>value>=0);
     for(const key of data.columns){
       const cell=document.createElement('th');cell.scope='col';const text=data.definition.columnLabels?.[key]||data.labels[key]||fields[key]?.label||key;
@@ -543,7 +547,8 @@ function setupReportBuilder(builder){
           button.addEventListener('click',()=>drilldown(data.definition,data.groupValues[index]));cell.append(button);
         }else if(data.links?.[index]?.startsWith('/')&&!data.links[index].startsWith('//')&&key===data.columns[0]){
           const link=document.createElement('a');link.href=data.links[index];link.textContent=value;cell.append(link);
-        }else cell.textContent=value;
+        }else if(key===runColumn)cell.append(reportElement('span','',value));else cell.textContent=value;
+        if(key===runColumn)cell.dataset.run=value;
         if(key===primary&&primaryValues.length){cell.classList.add('has-bar');cell.style.setProperty('--bar',Math.round(Math.abs(primaryValues[index])/peakValue*100)+'%');}
       }
       if(canShare){const cell=line.insertCell();cell.className='is-num report-share';cell.textContent=(primaryValues[index]/whole*100).toFixed(1)+'%';}
@@ -554,10 +559,10 @@ function setupReportBuilder(builder){
       for(const key of data.columns){const cell=foot.insertCell(),metric=wholes.find(entry=>entry.column===key);if(key===data.columns[0])cell.textContent='Total';else if(metric){cell.textContent=metric.display;cell.classList.add('is-num');}else if(['money_minor','number'].includes(data.columnTypes?.[key]))cell.classList.add('is-num');}
       if(canShare)foot.insertCell();
     }
-    tableArea.append(table);
+    tableArea.append(table);markRuns(table);
     if(data.rows.length>8&&!data.definition.summary){
       const find=reportElement('input','report-find');find.type='search';find.placeholder='Find in these results';find.setAttribute('aria-label','Find in these results');
-      find.addEventListener('input',()=>{const needle=find.value.trim().toLowerCase();for(const row of table.tBodies[0].rows)row.hidden=Boolean(needle)&&!row.textContent.toLowerCase().includes(needle);});
+      find.addEventListener('input',()=>{const needle=find.value.trim().toLowerCase();for(const row of table.tBodies[0].rows)row.hidden=Boolean(needle)&&!row.textContent.toLowerCase().includes(needle);markRuns(table);});
       find.addEventListener('keydown',event=>{if(event.key==='Enter')event.preventDefault();});
       tableArea.prepend(find);
     }
@@ -658,6 +663,8 @@ document.addEventListener('DOMContentLoaded',()=>{
       else location.assign(target.href);}
     catch(error){stopWatching();buildingReport=false;progress.stop();status.hidden=false;
       status.textContent=error instanceof TypeError||error instanceof SyntaxError?'StockChief could not be reached to finish this report. Check your connection and try again. Your description is kept here.':error.message;status.setAttribute('role','alert');button.disabled=false;box.readOnly=false;box.focus();}});
+  // Enter sends the request, as in a chat box; Shift+Enter starts a new line.
+  describe?.querySelector('textarea')?.addEventListener('keydown',event=>{if(event.key!=='Enter'||event.shiftKey||event.isComposing)return;event.preventDefault();if(event.target.value.trim())describe.requestSubmit();});
   for(const example of document.querySelectorAll('[data-report-example]'))example.addEventListener('click',()=>{const box=describe.querySelector('textarea');box.value=example.textContent;box.focus();});
   // The download menu closes once a format is chosen, and when clicking elsewhere.
   document.addEventListener('click',event=>{for(const menu of document.querySelectorAll('.report-download[open],.report-picker[open]')){const inside=menu.contains(event.target),chose=menu.matches('.report-download')&&event.target.closest('button,a');if(!inside||chose)setTimeout(()=>{menu.open=false;},0);}});

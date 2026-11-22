@@ -7,10 +7,10 @@
     <button class="btn" type="submit" form="report-builder-form" formaction="/reports/save">Save report</button>
     <button class="btn btn--primary" type="submit" form="report-builder-form">Run report</button>
   </div></div>
-<%- include('sentence-preview',{sentence:locals.draftSentence}) %>
+<%- include('sentence-preview',{sentence:locals.draftSentence,sentences:locals.draftSentences}) %>
 <section class="report-start <%= editing?'is-compact':'' %>" data-report-start aria-label="Start a custom report">
   <% const canDescribe=locals.reportBuildAvailability?.available!==false; %><% if(!canDescribe&&!selection){ %><p class="rm-note" role="status"><%= reportBuildAvailability.message %> Standard reports remain available.</p><% } %>
-  <% if(selection){ %><details class="report-change-prompt" <%= canDescribe?'':'hidden' %>><summary><span>Ask StockChief to change this report</span><span class="report-change-prompt__hint">· for example “only last month”, “add profit”, “as a line chart”</span></summary><% } %><form action="/reports/describe" method="post" data-report-describe class="report-describe"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label for="report-description"><%= selection?'Describe a change to this report':'Describe the report you want' %></label>
+  <% if(selection){ %><details class="report-change-prompt" <%= canDescribe?'':'hidden' %>><summary><span>Ask StockChief to change this report</span><span class="report-change-prompt__hint">· for example “only last month”, “add profit”, “as a line chart”</span></summary><% } %><form action="/reports/describe" method="post" data-report-describe class="report-describe"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><% if(!selection){ %><input type="hidden" name="fresh" value="1"><% }else if(saved){ %><input type="hidden" name="saved" value="<%= saved.id %>"><% } %><label for="report-description"><%= selection?'Describe a change to this report':'Describe the report you want' %></label>
     <div class="report-describe__box"><textarea id="report-description" name="q" rows="<%= editing?1:2 %>" maxlength="1800" required placeholder="For example, profit by customer by month this year"><%= locals.reportDescription||'' %></textarea>
     <button class="btn btn--primary" type="submit"><%= selection?'Update this report':'Build it for me' %></button></div><p data-report-build-status role="status" hidden></p>
     <% if(!selection){ %><div class="report-examples" data-report-landing-part <%= editing?'hidden':'' %>><% for(const example of builderEntry.examplesFor(datasets,locals.unavailableSources||[])){ %><button type="button" data-report-example><%= example %></button><% } %></div><% } %></form><% if(selection){ %></details><% } %>
@@ -24,11 +24,12 @@
   </div><% } %>
 </section>
 <section id="report-manual" data-report-editor <%= editing?'':'hidden' %> <%= editing?'':'data-report-starts-closed' %>>
-<form class="report-builder report-workspace" id="report-builder-form" method="post" action="/reports/run" data-report-builder data-active-report="<%= selection?'true':'false' %>" data-report-schema="<%= JSON.stringify(builderEntry.schema(dataset,{currency:locals.reportCurrency||null,periods:reportRelativePeriods})) %>">
+<% const fromWords=Boolean(draft&&(locals.draftSentences?.length||locals.draftSentence)); %><form class="report-builder report-workspace<%= fromWords?' is-from-words':'' %>" id="report-builder-form" method="post" action="/reports/run" data-report-builder data-active-report="<%= selection?'true':'false' %>" data-report-schema="<%= JSON.stringify(builderEntry.schema(dataset,{currency:locals.reportCurrency||null,periods:reportRelativePeriods})) %>">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
   <% if(saved){ %><input type="hidden" name="id" value="<%= saved.id %>"><% } %>
   <input type="hidden" name="chartMeasure" value="<%= selection?.chartMeasure||'' %>" data-report-chart-measure>
   <div class="report-query">
+    <% if(fromWords){ %><h2 class="report-query__title">Adjust it yourself</h2><% } %>
     <div class="report-q" data-report-step-panel="source">
       <label class="report-q__word" for="report-dataset">Report on</label>
       <div class="report-q__body">

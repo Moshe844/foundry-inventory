@@ -12,6 +12,8 @@ const {requireAuth,asyncRoute}=require('../middleware');
 const {ValidationError}=require('../../domain/errors');
 
 function saveDraftSession(req){return new Promise((resolve,reject)=>req.session.save(error=>error?reject(error):resolve()));}
+// The sentences that built the report on screen: the first request, then each change.
+const draftSentencesOf=draft=>(Array.isArray(draft?.sentences)&&draft.sentences.length?draft.sentences:draft?.sentence?[draft.sentence]:[]).map(sentence=>String(sentence).slice(0,600)).filter(Boolean).slice(-6);
 // The step a report being built from a sentence has reached, for the page to show while it waits.
 // Kept in this process for a minute after the build ends; scoped to the person's session and inventory.
 const buildProgress=new Map();
@@ -216,7 +218,11 @@ function createPostgresReportsRouter(database){
   router.post('/reports/describe',asyncRoute(async(req,res)=>{
     const description=String(req.body.q||'').trim();
     if(!description||description.length>1800)throw new ValidationError('Describe the report in 1 to 1,800 characters.');
-    const previous=req.session.reportDraft?.workspaceId===req.ctx.workspaceId?req.session.reportDraft.definition:null;
+    // A request typed in the empty builder (fresh=1) starts a new report; otherwise it changes the report on screen.
+    const current=req.body.fresh!=='1'&&req.session.reportDraft?.workspaceId===req.ctx.workspaceId?req.session.reportDraft:null;
+    // A change asked for on a saved report starts from that saved report.
+    const savedSource=req.body.fresh!=='1'&&req.body.saved?await reports.load(database,req.ctx,await actorFor(database,req.ctx),String(req.body.saved)).catch(()=>null):null;
+    const previous=savedSource?.definition||current?.definition||null,priorRequests=!savedSource&&current?draftSentencesOf(current):[];
     // The page polls /reports/describe/progress with the id it sent, to show each step as it happens.
     const progressKey=buildProgressKey(req,req.body.buildId);
     const finishProgress=()=>{if(progressKey)setTimeout(()=>buildProgress.delete(progressKey),60000).unref?.();};
@@ -226,10 +232,10 @@ function createPostgresReportsRouter(database){
       const examples=await building.examples(database,req.ctx,await actorFor(database,req.ctx));
       return res.status(status).json({ok:false,creditsUsed:0,examples,message:String(message).replace(/\s*No AI credits will be used\.?\s*$/,'')+(examples.length?' For example: '+examples.map(example=>'“'+example+'”').join(', ')+'.':'')+' No AI credits were used. Nothing was saved.'});};
     let result;
-    try{result=await require('../../assistant/postgres-service').buildReportDefinition(database,req.ctx,description,{provider:req.app.locals.aiProvider,priorReport:previous,
+    try{result=await require('../../assistant/postgres-service').buildReportDefinition(database,req.ctx,description,{provider:req.app.locals.aiProvider,priorReport:previous,priorRequests,
       onProgress:progressKey?step=>buildProgress.set(progressKey,{...step,at:Date.now()}):null,acceptReport:async reportConfig=>{
       const actor=await actorFor(database,req.ctx),definition=await reports.assertWritableCapabilities(database,req.ctx,reportConfig,actor);
-      req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition,schedule:null,sentence:description};
+      req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition,schedule:null,sentence:description,sentences:[...priorRequests,description].slice(-6)};
       await saveDraftSession(req);return definition;
     }});}
     catch(error){finishProgress();if(error.code!=='entitlement_required')throw error;
@@ -264,7 +270,7 @@ function createPostgresReportsRouter(database){
     const saved=req.query.saved?await reports.load(database,req.ctx,actor,String(req.query.saved)):null;
     return res.page('reports/builder',{title:saved?'Edit report':'Build a report',nav:'accounting',
       datasets,dataset,saved,draft,draftSchedule,builderEntry,unavailableSources,startInEditor:Boolean(req.query.dataset),
-      draftSentence:draft?String(req.session.reportDraft.sentence||'').slice(0,1800)||null:null,reportCurrency:await baseCurrency(database,req.ctx),reportBuildAvailability:await require('../../reports/build-availability').state(database,{provider:req.app.locals.aiProvider}),reportDescription:String(req.query.q||'').slice(0,1800)});
+      draftSentence:draft?String(req.session.reportDraft.sentence||'').slice(0,1800)||null:null,draftSentences:draft?draftSentencesOf(req.session.reportDraft):[],reportCurrency:await baseCurrency(database,req.ctx),reportBuildAvailability:await require('../../reports/build-availability').state(database,{provider:req.app.locals.aiProvider}),reportDescription:String(req.query.q||'').slice(0,1800)});
   }));
   router.post('/reports/preview',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
@@ -298,7 +304,7 @@ function createPostgresReportsRouter(database){
     const dimension=dimensions.find((entry)=>entry.key===(req.query.dimension||selection?.dimension))||dimensions[0];
     if(!dimension)throw new ValidationError('No governed shared identifiers are available to this account.');
     return res.page('reports/compose',{title:saved?'Edit combined report':'Combine datasets',
-      nav:'accounting',saved,draft,dimensions,dimension,draftSentence:draft?String(req.session.reportDraft.sentence||'').slice(0,1800)||null:null,
+      nav:'accounting',saved,draft,dimensions,dimension,draftSentence:draft?String(req.session.reportDraft.sentence||'').slice(0,1800)||null:null,draftSentences:draft?draftSentencesOf(req.session.reportDraft):[],
       draftSchedule:draft?req.session.reportDraft.schedule||null:null});
   }));
   router.get('/reports/run',asyncRoute(async(req,res)=>{

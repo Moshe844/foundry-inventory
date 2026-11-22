@@ -1,6 +1,9 @@
 'use strict';
 
 const permissions=require('../actions/permissions');
+const currency=require('../domain/currency');
+const supplierCostScale=`CASE v.currency ${[...new Set([...Intl.supportedValuesOf('currency'),'CLF','UYW'])]
+  .filter(code=>currency.exponent(code)!==2).map(code=>`WHEN '${code}' THEN ${10**currency.exponent(code)}`).join(' ')} ELSE 100 END`;
 // Apply workspace, posted-state and profit-account scope before aggregation.
 // Re-aggregating the general daily view first processes asset/equity history
 // that cannot contribute to a profit report.
@@ -245,6 +248,31 @@ const datasets=Object.freeze({
     recordHref:(row)=>`/suppliers/${row.record_id}`,
     enumFields:['status'],filterValues:{status:['active','inactive']},fields:{supplier:'text',supplier_code:'text',email:'text',
       status:'text',currency:'text',lead_time_days:'number',product_links:'number',active_product_links:'number',created_on:'date'}},
+  // One row per supplier and the item it sells us, so "suppliers and their items" lists real names, not a count.
+  supplier_items:{label:'Items each supplier sells: supplier, product, their code, pack, last cost and lead time',permission:permissions.VIEW_PURCHASING,
+    source:`SELECT v.id AS record_id,v.name AS supplier,COALESCE(v.code,'') AS supplier_code,
+      i.name AS product,COALESCE(f.category,'Uncategorized') AS category,s.code AS sku,COALESCE(s.variant_label,'') AS variant,
+      COALESCE(link.supplier_sku,'') AS supplier_sku,COALESCE(link.supplier_description,'') AS supplier_description,
+      link.purchase_unit,link.units_per_purchase_unit::numeric AS units_per_purchase_unit,
+      CASE WHEN link.last_unit_cost IS NULL THEN NULL ELSE ROUND(link.last_unit_cost::numeric*(${supplierCostScale}))::bigint END AS unit_cost_minor,v.currency,
+      CASE WHEN link.last_unit_cost IS NULL THEN 'no' ELSE 'yes' END AS unit_cost_recorded,
+      NULLIF(left(COALESCE(link.last_cost_at,''),10),'') AS last_cost_on,
+      COALESCE(link.lead_time_days,v.default_lead_time_days)::bigint AS lead_time_days,
+      link.minimum_order_quantity::numeric AS minimum_order_quantity,
+      CASE WHEN link.is_preferred=1 THEN 'yes' ELSE 'no' END AS preferred,
+      CASE WHEN link.is_active=1 AND i.is_active=1 AND s.is_active=1 THEN 'active' ELSE 'inactive' END AS status,
+      v.status AS supplier_status
+      FROM supplier_items link JOIN suppliers v ON v.id=link.supplier_id AND v.workspace_id=link.workspace_id
+      JOIN skus s ON s.id=link.sku_id AND s.workspace_id=link.workspace_id
+      JOIN items i ON i.id=s.item_id AND i.workspace_id=link.workspace_id
+      LEFT JOIN catalogue_item_facts f ON f.item_id=i.id AND f.workspace_id=i.workspace_id
+      WHERE link.workspace_id=$1`,
+    recordHref:(row)=>`/suppliers/${row.record_id}`,
+    moneyCompleteness:{unit_cost_minor:{field:'unit_cost_recorded',value:'yes'}},
+    enumFields:['status','supplier_status','preferred','unit_cost_recorded'],filterValues:{status:['active','inactive'],supplier_status:['active','inactive'],preferred:['yes','no'],unit_cost_recorded:['yes','no']},
+    fields:{supplier:'text',supplier_code:'text',product:'text',category:'text',sku:'text',variant:'text',supplier_sku:'text',supplier_description:'text',
+      purchase_unit:'text',units_per_purchase_unit:'number',unit_cost_minor:'money_minor',currency:'text',unit_cost_recorded:'text',last_cost_on:'date',
+      lead_time_days:'number',minimum_order_quantity:'number',preferred:'text',status:'text',supplier_status:'text'}},
   purchase_orders:{label:'Supplier purchase orders',permission:permissions.VIEW_PURCHASING,
     source:`SELECT o.id AS record_id,o.po_number,s.name AS supplier,o.status,
       o.order_date,o.expected_date,(COALESCE(lines.units,0)-COALESCE(lines.received,0))::numeric AS outstanding_units,CASE WHEN o.status NOT IN ('DRAFT','CANCELLED') AND COALESCE(lines.units,0)>COALESCE(lines.received,0) THEN 'yes' ELSE 'no' END AS is_open,COALESCE(lines.units,0)::numeric AS ordered_units,

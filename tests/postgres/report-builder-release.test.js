@@ -2,6 +2,48 @@
 const test=require('node:test'),assert=require('node:assert/strict'),request=require('supertest'),{randomUUID}=require('node:crypto');
 const {PRICED_MODEL,pricedUsage}=require('../helpers/postgres-model-fixture');
 
+test('supplier item reports preserve currency units, missing costs and inventory scope',{timeout:180000},async t=>{
+ const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx}=f;await f.subscribe('pro');
+ const reports=require('../../src/reports/postgres-service'),actor={role:'owner'};
+ await db.query(`INSERT INTO supplier_items(id,workspace_id,supplier_id,sku_id,last_unit_cost,created_at,updated_at)
+  VALUES($1,$2,'fixture-supplier',$3,NULL,now()::text,now()::text) ON CONFLICT(workspace_id,supplier_id,sku_id) DO UPDATE SET last_unit_cost=NULL`,
+  [randomUUID(),ctx.workspaceId,f.item.skuIds[0]]);
+ const definition={dataset:'supplier_items',columns:['supplier','product','sku','unit_cost_minor','unit_cost_recorded','currency'],sort:'supplier',chart:'table'};
+ for(const [currency,major,minor]of [['USD','19.12',1912],['JPY','1912',1912],['BHD','1.912',1912],['CLF','1.9123',19123]]){
+  await db.query("UPDATE suppliers SET currency=$2 WHERE workspace_id=$1 AND id='fixture-supplier'",[ctx.workspaceId,currency]);
+  await db.query('UPDATE supplier_items SET last_unit_cost=$2 WHERE workspace_id=$1 AND sku_id=$3',[ctx.workspaceId,major,f.item.skuIds[0]]);
+  const result=await reports.run(db,ctx,actor,definition);
+  assert.equal(result.rows.length,1,currency);assert.equal(result.rows[0].product,'Parcel item');
+  assert.equal(Number(result.rows[0].unit_cost_minor),minor,currency+' uses its own minor units');
+  assert.equal(result.rows[0].unit_cost_recorded,'yes');assert.equal(result.rows[0].currency,currency);
+ }
+ await db.query('UPDATE supplier_items SET last_unit_cost=NULL WHERE workspace_id=$1',[ctx.workspaceId]);
+ assert.equal((await reports.run(db,ctx,actor,definition)).rows[0].unit_cost_recorded,'no');
+ await db.query('UPDATE supplier_items SET last_unit_cost=0 WHERE workspace_id=$1',[ctx.workspaceId]);
+ const zero=(await reports.run(db,ctx,actor,definition)).rows[0];assert.equal(Number(zero.unit_cost_minor),0);assert.equal(zero.unit_cost_recorded,'yes');
+ assert.equal((await reports.run(db,{...ctx,workspaceId:'another-inventory'},actor,definition)).rows.length,0);
+});
+
+test('report edits retain requested blank columns and full-filter reports still build',{timeout:180000},async t=>{
+ const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx}=f;await f.subscribe('pro');
+ const reports=require('../../src/reports/postgres-service'),ask=require('../../src/reports/postgres-ask'),actor={role:'owner'};
+ let proposal={dataset:'catalogue',title:'Product references',columns:['product','sku','barcode'],groups:[],aggregate:'count',measure:'',filters:[],sort:'product',direction:'asc',chart:'table'};
+ const provider={async complete(input){return {data:input.schemaName==='stockchief_governed_report_fit'?{aligned:true,reason:''}:proposal};}};
+ const original='Show every product alongside its SKU and barcode, including empty barcodes';
+ const first=await ask.prepare(db,ctx,original,{provider});assert(first.reportConfig,first.answer);assert(first.reportConfig.columns.includes('barcode'));
+ proposal={...first.reportConfig,sort:'sku'};
+ const edited=await ask.prepare(db,ctx,'Sort this report by SKU',{provider,priorReport:first.reportConfig,priorRequests:[original]});
+ assert(edited.reportConfig,edited.answer);assert(edited.reportConfig.columns.includes('barcode'),'Earlier explicit request survives a follow-up');
+ const savedEdit=await ask.prepare(db,ctx,'Sort this report by SKU',{provider,priorReport:first.reportConfig});
+ assert(savedEdit.reportConfig,savedEdit.answer);assert(savedEdit.reportConfig.columns.includes('barcode'),'Saved manual columns survive without sentence history');
+ const fresh=await ask.prepare(db,ctx,'Show product names alongside their SKU references',{provider});
+ assert(fresh.reportConfig,fresh.answer);assert(!fresh.reportConfig.columns.includes('barcode'),'Unrequested all-blank columns are still omitted from a fresh report');
+ proposal={...proposal,filters:Array.from({length:12},()=>({field:'product',operator:'contains',value:'Parcel'}))};
+ const full=await ask.prepare(db,ctx,'Show product names alongside their SKU references',{provider});
+ assert(full.reportConfig,full.answer);assert.equal(full.reportConfig.filters.length,12);
+ assert.equal((await reports.run(db,ctx,actor,full.reportConfig)).rows.length,1);
+});
+
 test('AI report extras execute exact totals and any-of treats SQL wildcards as literal customer text',{timeout:180000},async t=>{
  const f=await require('../helpers/agent-workflow-fixture').fixture(t),{db,ctx}=f;await f.subscribe('pro');
  const reports=require('../../src/reports/postgres-service'),ask=require('../../src/reports/postgres-ask'),actor={role:'owner'};
