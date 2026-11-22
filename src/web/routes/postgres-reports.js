@@ -12,6 +12,15 @@ const {requireAuth,asyncRoute}=require('../middleware');
 const {ValidationError}=require('../../domain/errors');
 
 function saveDraftSession(req){return new Promise((resolve,reject)=>req.session.save(error=>error?reject(error):resolve()));}
+// The step a report being built from a sentence has reached, for the page to show while it waits.
+// Kept in this process for a minute after the build ends; scoped to the person's session and inventory.
+const buildProgress=new Map();
+function buildProgressKey(req,id){
+  const clean=String(id||'');
+  if(!/^[A-Za-z0-9-]{8,64}$/.test(clean)||!req.sessionID)return null;
+  if(buildProgress.size>2000)buildProgress.delete(buildProgress.keys().next().value);
+  return `${req.sessionID}:${req.ctx?.workspaceId||''}:${clean}`;
+}
 
 function source(body){
   if(body.definition){try{return JSON.parse(body.definition);}catch{throw new ValidationError('The report definition was invalid.');}}
@@ -208,20 +217,25 @@ function createPostgresReportsRouter(database){
     const description=String(req.body.q||'').trim();
     if(!description||description.length>1800)throw new ValidationError('Describe the report in 1 to 1,800 characters.');
     const previous=req.session.reportDraft?.workspaceId===req.ctx.workspaceId?req.session.reportDraft.definition:null;
+    // The page polls /reports/describe/progress with the id it sent, to show each step as it happens.
+    const progressKey=buildProgressKey(req,req.body.buildId);
+    const finishProgress=()=>{if(progressKey)setTimeout(()=>buildProgress.delete(progressKey),60000).unref?.();};
     // Job 154: a sentence StockChief cannot turn into a report is refused with
     // sentences this person can build instead; nothing is saved or charged.
     const refuse=async(message,status=422)=>{const building=require('../../reports/build-availability');
       const examples=await building.examples(database,req.ctx,await actorFor(database,req.ctx));
       return res.status(status).json({ok:false,creditsUsed:0,examples,message:String(message).replace(/\s*No AI credits will be used\.?\s*$/,'')+(examples.length?' For example: '+examples.map(example=>'“'+example+'”').join(', ')+'.':'')+' No AI credits were used. Nothing was saved.'});};
     let result;
-    try{result=await require('../../assistant/postgres-service').buildReportDefinition(database,req.ctx,description,{provider:req.app.locals.aiProvider,priorReport:previous,acceptReport:async reportConfig=>{
+    try{result=await require('../../assistant/postgres-service').buildReportDefinition(database,req.ctx,description,{provider:req.app.locals.aiProvider,priorReport:previous,
+      onProgress:progressKey?step=>buildProgress.set(progressKey,{...step,at:Date.now()}):null,acceptReport:async reportConfig=>{
       const actor=await actorFor(database,req.ctx),definition=await reports.assertWritableCapabilities(database,req.ctx,reportConfig,actor);
       req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition,schedule:null,sentence:description};
       await saveDraftSession(req);return definition;
     }});}
-    catch(error){if(error.code!=='entitlement_required')throw error;
+    catch(error){finishProgress();if(error.code!=='entitlement_required')throw error;
       // A report that needs a source this plan does not include shows the lock, not an error page.
       return refuse('That report needs records your plan does not include.',402);}
+    finishProgress();
     if(!result.reportConfig)return refuse(result.answer||'What would you like this report to measure?');
     const definition=result.reportConfig;
     req.flash('success',`Report ready. AI credits used: ${result.creditsUsed||0}.`);
@@ -229,6 +243,11 @@ function createPostgresReportsRouter(database){
     if(req.accepts(['html','json'])==='json')return res.json({ok:true,url,title:definition.title,creditsUsed:result.creditsUsed||0});
     return res.redirect(303,url);
   }));
+  router.get('/reports/describe/progress',(req,res)=>{
+    const key=buildProgressKey(req,req.query.id),step=key?buildProgress.get(key):null;
+    res.set('Cache-Control','private, no-store');
+    return res.json(step?{stage:step.stage,label:step.label}:{stage:null});
+  });
   router.get('/reports/builder',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
     const draft=req.query.draft==='1'&&req.session.reportDraft?.workspaceId===req.ctx.workspaceId

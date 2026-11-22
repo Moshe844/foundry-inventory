@@ -35,8 +35,11 @@
 
   function pivotOf(data){
     const across=new Map(),down=new Map();
-    for(const item of data.items){across.set(item.second,(across.get(item.second)||0)+Math.abs(item.value));if(!down.has(item.first))down.set(item.first,new Map());down.get(item.first).set(item.second,item);}
-    return {down,across:[...across.entries()].sort((a,b)=>b[1]-a[1]).map(([key])=>key)};
+    const order=new Map();
+    for(const item of data.items){across.set(item.second,(across.get(item.second)||0)+Math.abs(item.value));if(!order.has(item.second))order.set(item.second,String(item.secondKey??''));if(!down.has(item.first))down.set(item.first,new Map());down.get(item.first).set(item.second,item);}
+    // Months and other dates read left to right in time; other parts biggest first.
+    const sorted=data.secondIsDate?[...across.entries()].sort((a,b)=>order.get(a[0]).localeCompare(order.get(b[0]))):[...across.entries()].sort((a,b)=>b[1]-a[1]);
+    return {down,across:sorted.map(([key])=>key)};
   }
   // Each row split into its second group, biggest parts first.
   function stacked(area,data){

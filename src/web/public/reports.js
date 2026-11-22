@@ -2,7 +2,7 @@
 
 // A word for each comparison, per kind of field. The stored operators stay as the server knows them.
 const REPORT_OPERATORS={
-  text:[['contains','contains'],['equals','is exactly'],['is_not','is not'],['not_empty','has a value'],['is_empty','is empty']],
+  text:[['contains','contains'],['any_of','is any of'],['equals','is exactly'],['is_not','is not'],['not_empty','has a value'],['is_empty','is empty']],
   choice:[['equals','is'],['is_not','is not'],['not_empty','has a value'],['is_empty','is empty']],
   number:[['at_least','is at least'],['at_most','is at most'],['greater_than','is more than'],['less_than','is less than'],['equals','is exactly'],['is_not','is not'],['not_empty','has a value'],['is_empty','is empty']],
   date:[['relative','is in'],['after','is on or after'],['before','is on or before'],['equals','is on'],['greater_than','is after'],['less_than','is before'],['not_empty','has a value'],['is_empty','is empty']],
@@ -475,9 +475,9 @@ function setupReportBuilder(builder){
       const metricName=data.labels?.[data.chart.column]||'Total',money=data.columnTypes?.[data.chart.column]==='money_minor',currency=data.definition.filters?.find(filter=>filter.field==='currency'&&filter.operator==='equals')?.value||schema.currency||'USD';
       const format=value=>money?new Intl.NumberFormat(undefined,{style:'currency',currency}).format(value/minorPerUnit):new Intl.NumberFormat().format(value);
       const groups=data.definition.groups,textOf=(index,key)=>cellText(data,key,data.rows[index]);
-      const items=data.rows.map((row,index)=>({index,value:data.chart.values[index],display:String(row[data.chart.column]??'—'),label:groupLabel(data,index),first:textOf(index,groups[0]),second:groups[1]?textOf(index,groups[1]):''}));
+      const items=data.rows.map((row,index)=>({index,value:data.chart.values[index],display:String(row[data.chart.column]??'—'),label:groupLabel(data,index),first:textOf(index,groups[0]),second:groups[1]?textOf(index,groups[1]):'',secondKey:groups[1]?String(data.groupValues?.[index]?.[1]??''):''}));
       const whole=data.totals?.metrics?.find(metric=>metric.column===data.chart.column);
-      window.ReportCharts.draw(data.definition.chart,chartArea,{items,format,metricName,groupName:data.labels?.[groups[0]]||labelOf(groups[0]),totalDisplay:whole?.display||'',onPick:index=>drilldown(data.definition,data.groupValues[index])});
+      window.ReportCharts.draw(data.definition.chart,chartArea,{items,secondIsDate:Boolean(groups[1])&&typeOf(groups[1])==='date',format,metricName,groupName:data.labels?.[groups[0]]||labelOf(groups[0]),totalDisplay:whole?.display||'',onPick:index=>drilldown(data.definition,data.groupValues[index])});
       if(data.hasMore)chartArea.append(reportElement('p','report-preview-note','Showing the first '+data.returned+' rows.'));
     }else if(['line','area'].includes(data.definition.chart)&&data.rows.length>1)drawLine(data);else if(overTime)drawColumns(data);else drawBars(data);
   }
@@ -596,9 +596,68 @@ function setupReportBuilder(builder){
   applyMode();renderColumns();requireMoneyScope();syncFilterSummary();syncCompare();syncTry();schedule();
 }
 
+// While a report is built from a sentence: a moving bar, the step StockChief is on, and the time
+// so far. The server sends each step as it happens; the bar creeps forward between steps.
+const REPORT_BUILD_STEPS=[['reading','Reading your request',8],['choosing','Choosing the records and numbers',30],['running','Running it on your records',58],['checking','Checking it matches what you asked',78],['ready','Report ready',100]];
+function reportBuildProgress(form){
+  let panel=form.querySelector('[data-report-progress]');
+  if(!panel){
+    panel=document.createElement('div');panel.className='report-progress';panel.dataset.reportProgress='';panel.hidden=true;
+    panel.innerHTML='<div class="report-progress__bar" role="progressbar" aria-label="Build progress" aria-valuemin="0" aria-valuemax="100"><span></span></div><ol class="report-progress__steps"></ol><p class="report-progress__note"><span data-report-progress-now aria-live="polite"></span><span data-report-progress-time></span></p>';
+    const list=panel.querySelector('ol');
+    for(const [key,label] of REPORT_BUILD_STEPS.slice(1,4)){const item=document.createElement('li');item.dataset.step=key;item.textContent=label;list.append(item);}
+    form.querySelector('[data-report-build-status]')?.before(panel);
+  }
+  const bar=panel.querySelector('.report-progress__bar'),fill=bar.querySelector('span'),now=panel.querySelector('[data-report-progress-now]'),time=panel.querySelector('[data-report-progress-time]');
+  let value=0,ceiling=0,started=0,timer=null;
+  const paint=()=>{fill.style.width=value.toFixed(1)+'%';bar.setAttribute('aria-valuenow',String(Math.round(value)));const seconds=Math.round((Date.now()-started)/1000);
+    const lead=now.textContent?' · ':'';time.textContent=seconds<3?'':seconds<25?lead+seconds+'s':lead+seconds+'s · still working, this one is taking longer than usual';};
+  const step=({stage,label})=>{
+    const known=REPORT_BUILD_STEPS.findIndex(([key])=>key===stage);
+    if(stage==='fixing'){ceiling=Math.max(ceiling,60);panel.classList.add('is-fixing');}
+    else if(known>=0){value=Math.max(value,known?REPORT_BUILD_STEPS[known-1][2]:2);ceiling=REPORT_BUILD_STEPS[known][2];panel.classList.remove('is-fixing');}
+    // The list already names the current step; this line speaks only for a retry or the finish.
+    now.textContent=['fixing','ready'].includes(stage)?label||'':'';
+    const reached=stage==='fixing'?1:known;
+    for(const item of panel.querySelectorAll('li')){const index=REPORT_BUILD_STEPS.findIndex(([key])=>key===item.dataset.step);item.classList.toggle('is-done',index<reached);item.classList.toggle('is-now',index===reached);}
+    paint();
+  };
+  return {
+    start(){started=Date.now();value=2;ceiling=8;panel.hidden=false;panel.classList.remove('is-fixing');step({stage:'reading',label:'Reading your request'});
+      timer=setInterval(()=>{value+=Math.max(0.04,(ceiling-value)*0.04);if(value>ceiling-0.5)value=Math.max(value,ceiling-0.5);paint();},250);},
+    step,
+    done(){clearInterval(timer);value=100;step({stage:'ready',label:'Report ready. Opening it…'});},
+    stop(){clearInterval(timer);panel.hidden=true;}};
+}
+// Asks which step the server has reached while the report is built (every 0.7s). Best effort:
+// if the answer cannot be read, the bar keeps creeping on its own.
+function watchReportBuild(id,onStep){
+  let stopped=false,last='';
+  const poll=async()=>{if(stopped)return;
+    try{const response=await fetch('/reports/describe/progress?id='+encodeURIComponent(id),{credentials:'same-origin',headers:{accept:'application/json'}});
+      const step=response.ok?await response.json():null;if(!stopped&&step?.stage&&step.stage!==last){last=step.stage;onStep(step);}}catch(_error){/* keep the bar moving */}
+    if(!stopped)setTimeout(poll,700);};
+  setTimeout(poll,400);
+  return ()=>{stopped=true;};
+}
+
 document.addEventListener('DOMContentLoaded',()=>{
   const describe=document.querySelector('[data-report-describe]');let buildingReport=false;
-  describe?.addEventListener('submit',async event=>{event.preventDefault();if(buildingReport)return;buildingReport=true;const button=describe.querySelector('button[type=submit]'),status=describe.querySelector('[data-report-build-status]');button.disabled=true;status.hidden=false;status.textContent='Building your report from your business records…';try{const response=await fetch(describe.action,{method:'POST',credentials:'same-origin',headers:{accept:'application/json','content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(new FormData(describe))});const result=await response.json();if(!response.ok||!result.ok)throw Error(result.message||result.error?.message||'This report could not be built. Your description is kept here.');status.textContent='Ready: '+result.title;location.assign(result.url);}catch(error){buildingReport=false;status.textContent=error.message;status.setAttribute('role','alert');button.disabled=false;describe.querySelector('textarea').focus();}});
+  describe?.addEventListener('submit',async event=>{event.preventDefault();if(buildingReport)return;buildingReport=true;
+    const button=describe.querySelector('button[type=submit]'),status=describe.querySelector('[data-report-build-status]'),box=describe.querySelector('textarea'),progress=reportBuildProgress(describe);
+    button.disabled=true;box.readOnly=true;status.hidden=true;status.removeAttribute('role');progress.start();
+    const buildId=(crypto.randomUUID?.()||String(Date.now())+Math.random().toString(16).slice(2)).replace(/[^A-Za-z0-9-]/g,''),body=new URLSearchParams(new FormData(describe));body.set('buildId',buildId);
+    const stopWatching=watchReportBuild(buildId,progress.step);
+    try{const response=await fetch(describe.action,{method:'POST',credentials:'same-origin',headers:{accept:'application/json','content-type':'application/x-www-form-urlencoded'},body});
+      stopWatching();const result=await response.json().catch(()=>null);
+      if(!result?.ok)throw Error(result?.message||result?.error?.message||'This report could not be built. Your description is kept here.');
+      // Changing a report returns the address already open (it differs only by #report-manual).
+      // Assigning it would just scroll, leaving the old report on screen, so reload instead.
+      progress.done();const target=new URL(result.url,location.href);
+      if(target.pathname+target.search===location.pathname+location.search){if(target.hash)history.replaceState(null,'',target.href);location.reload();}
+      else location.assign(target.href);}
+    catch(error){stopWatching();buildingReport=false;progress.stop();status.hidden=false;
+      status.textContent=error instanceof TypeError||error instanceof SyntaxError?'StockChief could not be reached to finish this report. Check your connection and try again. Your description is kept here.':error.message;status.setAttribute('role','alert');button.disabled=false;box.readOnly=false;box.focus();}});
   for(const example of document.querySelectorAll('[data-report-example]'))example.addEventListener('click',()=>{const box=describe.querySelector('textarea');box.value=example.textContent;box.focus();});
   // The download menu closes once a format is chosen, and when clicking elsewhere.
   document.addEventListener('click',event=>{for(const menu of document.querySelectorAll('.report-download[open],.report-picker[open]')){const inside=menu.contains(event.target),chose=menu.matches('.report-download')&&event.target.closest('button,a');if(!inside||chose)setTimeout(()=>{menu.open=false;},0);}});

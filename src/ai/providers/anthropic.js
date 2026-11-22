@@ -192,7 +192,9 @@ function create(options = {}) {
           ...(wantsThinking ? { effort } : {}),
           format: {
             type: 'json_schema',
-            schema: toWireSchema(request.schema),
+            // A caller may send the model a stricter copy (every property required) to stay
+            // within the provider's schema limits, while answers are still checked against request.schema.
+            schema: toWireSchema(request.providerSchema || request.schema),
           },
         },
         messages: [{ role: 'user', content: request.prompt }],

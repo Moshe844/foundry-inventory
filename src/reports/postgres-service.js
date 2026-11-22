@@ -6,7 +6,7 @@ const permissions=require('../actions/permissions');
 const {ValidationError}=require('../domain/errors');
 const {newId}=require('../lib/util');
 
-const OPERATORS=new Set(['equals','is_not','contains','greater_than','less_than','at_least','at_most','after','before','is_null','is_empty','not_empty','relative']);
+const OPERATORS=new Set(['equals','is_not','contains','any_of','greater_than','less_than','at_least','at_most','after','before','is_null','is_empty','not_empty','relative']);
 const AGGREGATES=new Set(['count','count_distinct','sum','average','minimum','maximum','ratio']);
 const DATE_GRAINS=new Set(['exact','day','week','month','quarter','year']);
 const AGGREGATE_COLUMN=Object.freeze({count:'count',count_distinct:'distinct_count',sum:'total',average:'average',minimum:'minimum',maximum:'maximum',ratio:'ratio'});
@@ -97,6 +97,7 @@ function normalize(spec,actor){
       invalid('This field cannot be compared numerically.');
     if(['after','before'].includes(operator)&&type!=='date')invalid('This field is not a date.');
     if(operator==='contains'&&type!=='text')invalid('Only text fields support contains.');
+    if(operator==='any_of'&&(type!=='text'||!anyOfTerms(value).length))invalid('Use “is any of” on a text field, with the values separated by commas.');
     if(operator==='relative'&&(type!=='date'||!require('./relative-dates').normalize(value)))invalid('Choose a supported relative period for a date field.');
     if(!['is_null','is_empty','not_empty','relative'].includes(operator)&&type==='date'&&!/^\d{4}-\d{2}-\d{2}$/.test(value))
       invalid('Use dates in YYYY-MM-DD format.');
@@ -235,12 +236,17 @@ function condition(filter,index){
   if(filter.operator==='equals')return `${field}=${value}`;
   if(filter.operator==='is_not')return `${field}<>${value}`;
   if(filter.operator==='contains')return `${field} ILIKE ${value} ESCAPE '!'`;
+  // Any of several names; each one matches the way contains does.
+  if(filter.operator==='any_of')return `${field} ILIKE ANY(${value}::text[])`;
   if(filter.operator==='greater_than')return `${field}>${value}`;
   if(filter.operator==='less_than')return `${field}<${value}`;
   if(filter.operator==='at_least'||filter.operator==='after')return `${field}>=${value}`;
   return `${field}<=${value}`;
 }
+// Several values typed as one, separated by commas: Harbor Café, Corner Deli.
+function anyOfTerms(value){return [...new Set(String(value||'').split(',').map(term=>term.trim()).filter(Boolean))].slice(0,20);}
 function filterParameter(filter){
+  if(filter.operator==='any_of')return anyOfTerms(filter.value).map(term=>`%${term.replace(/[\\%_]/g,match=>'\\'+match)}%`);
   return filter.operator==='contains'
     ?`%${filter.value.replaceAll('!','!!').replaceAll('%','!%').replaceAll('_','!_')}%`
     :filter.value;

@@ -345,3 +345,31 @@ html:root body .rm-canvas .sc-report-card{grid-template-areas:"title spark" "val
 @media(prefers-reduced-motion:reduce){.rc-donut__ring svg,.rc-stack__piece{animation:none}}
 
 .report-breakdown{display:grid;gap:0;margin:0 0 12px;padding:6px 16px;border-radius:12px;background:#fff;box-shadow:var(--d-1,0 1px 2px rgba(17,21,46,.08))}.report-breakdown>div{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-top:1px solid #F0F1F6;font-size:13.5px}.report-breakdown>div:first-child{border-top:0}.report-breakdown dt{color:#475069}.report-breakdown dd{margin:0;font-variant-numeric:tabular-nums;color:var(--d-ink,#11152E)}.report-breakdown .is-sub dt,.report-breakdown .is-sub dd{font-weight:600;color:var(--d-ink,#11152E)}
+/* Building a report from a sentence: a moving bar, the three steps, and the time so far. */
+.report-progress{display:grid;gap:10px;padding:14px 16px;border-radius:10px;background:#F5F6FF;box-shadow:inset 0 0 0 1px #DCDFFB}
+.report-progress[hidden]{display:none}
+.report-progress__bar{height:6px;border-radius:999px;background:#E2E5FB;overflow:hidden}
+.report-progress__bar>span{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#6366F1,#4338CA);transition:width .25s linear;position:relative;overflow:hidden}
+.report-progress__bar>span::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);animation:report-progress-shine 1.4s linear infinite}
+@keyframes report-progress-shine{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.report-progress__steps{display:flex;flex-wrap:wrap;gap:6px 18px;margin:0;padding:0;list-style:none;font-size:12.5px;color:#8A92A8}
+.report-progress__steps li{display:flex;align-items:center;gap:7px}
+.report-progress__steps li::before{content:"";flex:none;width:8px;height:8px;border-radius:50%;background:#D5D9E8}
+.report-progress__steps li.is-now{color:#3730A3;font-weight:600}
+.report-progress__steps li.is-now::before{background:#4F46E5;box-shadow:0 0 0 3px rgba(79,70,229,.18);animation:report-progress-pulse 1.2s ease-in-out infinite}
+.report-progress__steps li.is-done{color:#05603A}
+.report-progress__steps li.is-done::before{background:#12B76A}
+@keyframes report-progress-pulse{50%{box-shadow:0 0 0 6px rgba(79,70,229,.08)}}
+.report-describe p.report-progress__note{margin:0;font-size:12.5px;color:#5A6379}
+.report-progress__note [data-report-progress-now]{font-weight:500;color:#3730A3}
+.report-progress.is-fixing .report-progress__note [data-report-progress-now]{color:#B54708}
+.report-describe textarea[readonly]{background:#F8F9FB;color:#5A6379}
+@media (prefers-reduced-motion:reduce){.report-progress__bar>span::after,.report-progress__steps li.is-now::before{animation:none}}
+/* Changing a report in words: a clear control, not a small grey link. */
+html:root body details.report-change-prompt.report-change-prompt>summary{padding:8px 14px;border-radius:999px;background:#EEF0FF;color:#3730A3;font-size:13.5px;font-weight:600;box-shadow:inset 0 0 0 1px #DCDFFB}
+html:root body details.report-change-prompt.report-change-prompt>summary:hover{background:#E4E7FF}
+html:root body details.report-change-prompt.report-change-prompt[open]>summary{background:transparent;box-shadow:none;padding-left:0}
+html:root body .report-change-prompt__hint{font-weight:400;color:#5A6379}
+/* In the one-line layout the progress panel and messages take the full width under the box. */
+.report-start.is-compact .report-describe>.report-progress,.report-start.is-compact .report-describe>[data-report-build-status]{grid-column:1/-1}
+html:root body details.report-change-prompt[open]>summary .report-change-prompt__hint{display:none}

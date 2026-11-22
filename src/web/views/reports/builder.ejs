@@ -10,7 +10,7 @@
 <%- include('sentence-preview',{sentence:locals.draftSentence}) %>
 <section class="report-start <%= editing?'is-compact':'' %>" data-report-start aria-label="Start a custom report">
   <% const canDescribe=locals.reportBuildAvailability?.available!==false; %><% if(!canDescribe&&!selection){ %><p class="rm-note" role="status"><%= reportBuildAvailability.message %> Standard reports remain available.</p><% } %>
-  <% if(selection){ %><details class="report-change-prompt" <%= canDescribe?'':'hidden' %>><summary>Ask StockChief to change this report</summary><% } %><form action="/reports/describe" method="post" data-report-describe class="report-describe"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label for="report-description"><%= selection?'Describe a change to this report':'Describe the report you want' %></label>
+  <% if(selection){ %><details class="report-change-prompt" <%= canDescribe?'':'hidden' %>><summary><span>Ask StockChief to change this report</span><span class="report-change-prompt__hint">· for example “only last month”, “add profit”, “as a line chart”</span></summary><% } %><form action="/reports/describe" method="post" data-report-describe class="report-describe"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label for="report-description"><%= selection?'Describe a change to this report':'Describe the report you want' %></label>
     <div class="report-describe__box"><textarea id="report-description" name="q" rows="<%= editing?1:2 %>" maxlength="1800" required placeholder="For example, profit by customer by month this year"><%= locals.reportDescription||'' %></textarea>
     <button class="btn btn--primary" type="submit"><%= selection?'Update this report':'Build it for me' %></button></div><p data-report-build-status role="status" hidden></p>
     <% if(!selection){ %><div class="report-examples" data-report-landing-part <%= editing?'hidden':'' %>><% for(const example of builderEntry.examplesFor(datasets,locals.unavailableSources||[])){ %><button type="button" data-report-example><%= example %></button><% } %></div><% } %></form><% if(selection){ %></details><% } %>
@@ -117,7 +117,7 @@
             <option value="">Choose a field</option><% for(const field of Object.keys(dataset.fields)){ %>
               <option value="<%= field %>" <%= filter.field===field?'selected':'' %>><%= builderEntry.friendlyField(field) %></option>
             <% } %></select><select name="filters[<%= index %>][operator]" aria-label="Filter comparison <%= index+1 %>">
-            <% for(const option of ['equals','is_not','contains','greater_than','less_than','at_least','at_most','after','before','is_null','is_empty','not_empty','relative']){ %>
+            <% for(const option of ['equals','is_not','contains','any_of','greater_than','less_than','at_least','at_most','after','before','is_null','is_empty','not_empty','relative']){ %>
               <option value="<%= option %>" <%= filter.operator===option?'selected':'' %>><%= option.replaceAll('_',' ') %></option>
             <% } %></select><input name="filters[<%= index %>][value]" value="<%= filter.value||'' %>"
               aria-label="Filter value <%= index+1 %>"><button type="button" class="report-icon-btn" data-report-remove-filter aria-label="Remove filter <%= index+1 %>">×</button></div>

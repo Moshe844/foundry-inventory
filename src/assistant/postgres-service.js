@@ -1979,13 +1979,13 @@ async function askCapabilities(database,ctx,message,options={}){
   answer:results.map((row)=>row.answer).filter(Boolean).join(' '),results};
 }
 
-async function buildReportDefinition(database,ctx,message,{provider=null,priorReport=null,acceptReport=null}={}){
+async function buildReportDefinition(database,ctx,message,{provider=null,priorReport=null,acceptReport=null,onProgress=null}={}){
   await require('../commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
-  const raw=provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
+  const raw=provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('reports')):null);
   if(!require('../reports/builder-entry').standardDefinition(message,'USD')){const availability=await require('../reports/build-availability').state(database,{provider:raw});if(!availability.available)return {status:'CLARIFY',answer:availability.message,creditsUsed:0,rows:[],columns:[]};}
   const reportModel=(db,context,provider,operation,key,options={})=>require('../commercial/model').wrap(db,context,provider,operation,key,{...options,includedReport:true});
   const prefix=newId('report-build'),funded=fundedAskProvider(database,ctx,raw,prefix,reportModel),settlement=require('../reports/build-usage');
-  try{const result=await require('../reports/postgres-ask').prepare(database,ctx,message,{provider:funded,priorReport});
+  try{const result=await require('../reports/postgres-ask').prepare(database,ctx,message,{provider:funded,priorReport,onProgress});
     // A generated definition is only useful once its permissions and draft storage succeed.
     if(result.reportConfig&&acceptReport)result.reportConfig=await acceptReport(result.reportConfig);
     const creditsUsed=await settlement.settle(database,ctx,prefix,{failed:!result.reportConfig});return {...result,creditsUsed};
