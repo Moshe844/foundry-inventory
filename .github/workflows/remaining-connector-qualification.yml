@@ -18,6 +18,7 @@ on:
       - tests/unit/accounting-review-pilot.test.js
       - tests/postgres/accounting-review-pilot.test.js
       - src/connections/providers/quickbooks.js
+      - src/connections/provider-sync-failure.js
       - src/connections/providers/xero.js
       - src/connections/providers/oauth-grant.js
       - src/lib/provider-http.js
@@ -25,6 +26,10 @@ on:
       - tests/postgres/accounting-oauth-return.test.js
       - tests/unit/quickbooks-oauth-security.test.js
       - tests/unit/quickbooks-request-diagnostics.test.js
+      - tests/unit/quickbooks-feature-changes.test.js
+      - tests/postgres/quickbooks-feature-changes.test.js
+      - tests/unit/provider-streaming-discovery.test.js
+      - tests/unit/accounting-catalog-contract.test.js
       - src/commercial/network.js
       - tests/unit/remaining-provider-authorization.test.js
       - tests/postgres/remaining-provider-authorization.test.js
@@ -75,11 +80,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p output/remaining-connectors
-          node --test tests/unit/quickbooks-oauth-security.test.js tests/unit/quickbooks-request-diagnostics.test.js tests/unit/provider-http.test.js tests/unit/accounting-review-pilot.test.js tests/unit/clover-review-pilot.test.js tests/unit/remaining-provider-authorization.test.js tests/unit/mission9-provider-contracts.test.js tests/unit/integration-quickbooks-contract.test.js tests/unit/accounting-catalog-contract.test.js tests/unit/commercial-network.test.js 2>&1 | tee output/remaining-connectors/contracts.log
+          node --test tests/unit/quickbooks-feature-changes.test.js tests/unit/provider-streaming-discovery.test.js tests/unit/quickbooks-oauth-security.test.js tests/unit/quickbooks-request-diagnostics.test.js tests/unit/provider-http.test.js tests/unit/accounting-review-pilot.test.js tests/unit/clover-review-pilot.test.js tests/unit/remaining-provider-authorization.test.js tests/unit/mission9-provider-contracts.test.js tests/unit/integration-quickbooks-contract.test.js tests/unit/accounting-catalog-contract.test.js tests/unit/commercial-network.test.js 2>&1 | tee output/remaining-connectors/contracts.log
       - name: All-plan consent, preserved credentials, webhook isolation and accounting authority
         run: |
           set -euo pipefail
-          node --test --test-force-exit --test-concurrency=2 tests/postgres/accounting-oauth-return.test.js tests/postgres/accounting-review-pilot.test.js tests/postgres/clover-review-pilot.test.js tests/postgres/remaining-provider-authorization.test.js tests/postgres/connections-restored-pilot.test.js tests/postgres/clover-webhooks.test.js tests/postgres/accounting-export-ui.test.js tests/postgres/agent-accounting-documents.test.js tests/postgres/connections-catalog-browser.test.js 2>&1 | tee output/remaining-connectors/connections.log
+          node --test --test-force-exit --test-concurrency=2 tests/postgres/quickbooks-feature-changes.test.js tests/postgres/accounting-oauth-return.test.js tests/postgres/accounting-review-pilot.test.js tests/postgres/clover-review-pilot.test.js tests/postgres/remaining-provider-authorization.test.js tests/postgres/connections-restored-pilot.test.js tests/postgres/clover-webhooks.test.js tests/postgres/accounting-export-ui.test.js tests/postgres/agent-accounting-documents.test.js tests/postgres/connections-catalog-browser.test.js 2>&1 | tee output/remaining-connectors/connections.log
       - name: Existing subscriptions, refunds, Shopify and connection lifecycle
         run: |
           set -euo pipefail
