@@ -12,17 +12,20 @@ test('accounting catalogue choices stay optional on all plans while real faults 
  t.after(async()=>{await browser.close();await new Promise(resolve=>server.close(resolve));await app.locals.sessionStore.close();await db.close();await cluster.stop();});
  const before={},keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_STAGING_CONNECTION_PROVIDERS','STOCKCHIEF_STAGING_CONNECTION_WORKSPACES','XERO_CLIENT_ID','XERO_CLIENT_SECRET'];
  for(const key of keys)before[key]=process.env[key];
- Object.assign(process.env,{STOCKCHIEF_RUNTIME_ENV:'staging',STOCKCHIEF_STAGING_CONNECTION_PROVIDERS:'xero',XERO_CLIENT_ID:'setup-fixture',XERO_CLIENT_SECRET:'setup-fixture-secret'});
  t.after(()=>{for(const key of keys)if(before[key]===undefined)delete process.env[key];else process.env[key]=before[key];});
  let providerRequests=0;t.mock.method(global,'fetch',async()=>{providerRequests++;throw Error('Viewing accounting setup must not call a provider');});
  const base='http://127.0.0.1:'+server.address().port,email=randomUUID()+'@example.test';
  page.setDefaultTimeout(15000);const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.goto(base+'/register');await page.getByLabel('Business name').fill('Accounting Setup Fixture');
  await page.getByLabel('Your name').fill('Setup Owner');await page.getByLabel('Work email').fill(email);
- await page.locator('input[name="password"]').fill('Setup!Password2026');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('Setup!Password2026');
- await Promise.all([page.waitForURL(base+'/onboarding'),page.getByRole('button',{name:'Create account',exact:true}).click()]);
+ const password='Setup!'+randomUUID();
+ await page.locator('input[name="password"]').fill(password);if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill(password);
+ const [registered]=await Promise.all([page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/register'),page.getByRole('button',{name:'Create account',exact:true}).click()]);
+ assert.equal(registered.status(),302,(await registered.text()).replace(/<[^>]*>/g,' ').slice(-2500));
+ await page.waitForURL(base+'/onboarding');
  await require('../helpers/postgres-model-fixture').fundAllWorkspaces(db);
  const owner=(await db.query('SELECT w.id AS workspace_id,w.owner_account_id AS account_id,u.id AS actor_id FROM workspaces w JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=w.owner_account_id WHERE a.email=$1',[email])).rows[0];
+ Object.assign(process.env,{STOCKCHIEF_RUNTIME_ENV:'staging',STOCKCHIEF_STAGING_CONNECTION_PROVIDERS:'xero',XERO_CLIENT_ID:'setup-fixture',XERO_CLIENT_SECRET:'setup-fixture-secret'});
  process.env.STOCKCHIEF_STAGING_CONNECTION_WORKSPACES=owner.workspace_id;
  const id='con_'+randomUUID().replaceAll('-',''),ctx={workspaceId:owner.workspace_id,actorId:owner.actor_id,accountId:owner.account_id};
  await db.query(`INSERT INTO workspace_connectors(id,workspace_id,connector_key,display_name,provider_type,status,setup_status,capabilities,provides,config,
