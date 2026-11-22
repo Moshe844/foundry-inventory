@@ -11,6 +11,7 @@ on:
       - src/commercial/release.js
       - src/commercial/operations.js
       - src/web/routes/postgres-connections.js
+      - src/web/security-headers.js
       - src/web/views/connections/clover-install.ejs
       - tests/unit/clover-review-pilot.test.js
       - tests/postgres/clover-review-pilot.test.js
