@@ -347,6 +347,16 @@ const config = {
           effort: process.env.FOUNDRY_AI_EFFORT_STANDARD || 'medium',
         };
       },
+      // Turning an owner's sentence into a report. Measured on the same eight everyday requests
+      // and edits (2026-11-21): the fast model failed or dropped a requested number on three,
+      // the standard model built all of them in 4–8 seconds each. A wrong report costs more
+      // than the difference.
+      get reports() {
+        return {
+          model: process.env.FOUNDRY_AI_MODEL_REPORTS || process.env.FOUNDRY_AI_MODEL_STANDARD || 'claude-sonnet-5',
+          effort: process.env.FOUNDRY_AI_EFFORT_REPORTS || process.env.FOUNDRY_AI_EFFORT_STANDARD || 'medium',
+        };
+      },
       // Bounded extraction and classification, every one of which is verified
       // deterministically afterwards. Small model, little reasoning.
       get fast() {

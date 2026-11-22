@@ -217,18 +217,19 @@ const datasets=Object.freeze({
       ordered_units:'number',quoted_line_total_minor:'money_minor',quoted_discount_minor:'money_minor',quoted_tax_minor:'money_minor',quoted_total_minor:'money_minor',pricing_complete:'text',quoted_charges_minor:'money_minor'}},
   sales_order_lines:{label:'Customer order lines by product',permission:permissions.VIEW_SALES,
     source:`SELECT o.id AS record_id,o.order_number,c.name AS customer,o.status,
-      o.order_date,o.needed_by,i.name AS product,coalesce(i.base_code,i.id) AS item_code,coalesce(s.variant_label,'') AS variant,concat_ws(' — ',i.name,nullif(s.variant_label,'')) AS product_variant,s.code AS sku,
+      o.order_date,o.needed_by,i.name AS product,coalesce(i.base_code,i.id) AS item_code,coalesce(s.variant_label,'') AS variant,concat_ws(' — ',i.name,nullif(s.variant_label,'')) AS product_variant,s.code AS sku,COALESCE(f.category,'Uncategorized') AS category,
       l.quantity_ordered::numeric AS ordered_units,l.quantity_fulfilled::numeric AS fulfilled_units,
       (l.quantity_ordered-l.quantity_fulfilled)::bigint AS open_units
       FROM sales_order_lines l JOIN sales_orders o ON o.id=l.sales_order_id AND o.workspace_id=l.workspace_id
       JOIN customers c ON c.id=o.customer_id AND c.workspace_id=l.workspace_id
       JOIN skus s ON s.id=l.sku_id AND s.workspace_id=l.workspace_id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=l.workspace_id
+      LEFT JOIN catalogue_item_facts f ON f.item_id=i.id AND f.workspace_id=i.workspace_id
     WHERE l.workspace_id=$1`,recordHref:(row)=>`/orders/${row.record_id}`,
     metrics:{fulfillment_percent:{label:'Fulfilled units %',kind:'ratio',numerator:'fulfilled_units',
       denominator:'ordered_units'}},
     fields:{order_number:'text',customer:'text',status:'text',order_date:'date',needed_by:'date',
-      product:'text',item_code:'text',variant:'text',product_variant:'text',sku:'text',ordered_units:'number',fulfilled_units:'number',open_units:'number'}},
+      product:'text',item_code:'text',variant:'text',product_variant:'text',sku:'text',category:'text',ordered_units:'number',fulfilled_units:'number',open_units:'number'}},
   suppliers:{label:'Supplier directory',permission:permissions.VIEW_PURCHASING,
     source:`SELECT s.id AS record_id,s.name AS supplier,COALESCE(s.code,'') AS supplier_code,
       COALESCE(s.email,'') AS email,s.status,s.currency,
