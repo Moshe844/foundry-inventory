@@ -229,6 +229,7 @@ html:root body .rm-canvas .report-hero .sc-report-headline{font-size:32px;font-w
 .report-preview-table tbody td.is-repeat{border-top-color:transparent}
 /* A report built from words shows the report first, with its settings underneath. */
 .report-workspace.is-from-words>.report-live-preview{order:-1}
+html body .report-workspace.is-from-words~.report-jump{display:none}
 .report-query__title{margin:0 0 4px;font-size:14px;font-weight:600;color:var(--d-ink,#11152E)}
 .report-preview-table .is-up,.report-results .is-up{color:#067647;font-weight:500}.report-preview-table .is-down,.report-results .is-down{color:var(--d-urgent,#D92D20);font-weight:500}
 .report-sort{border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer}
