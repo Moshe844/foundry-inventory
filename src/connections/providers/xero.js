@@ -40,7 +40,9 @@ async function exchangeAuthorization({ query, metadata: state }) {
     authorization: `Basic ${basic()}`, 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body });
   const credentials = require('./oauth-grant').read('Xero',token.body);
   const tenants = await jsonRequest('https://api.xero.com/connections', { headers: { authorization: `Bearer ${credentials.accessToken}`, accept: 'application/json' } });
-  credentials.tenantId = authorizedTenant(credentials.accessToken,tenants.body);
+  const authorized=authorizedTenant(credentials.accessToken,tenants.body);
+  credentials.tenantId=authorized.tenantId;
+  if(authorized.connectionId)credentials.xeroConnectionId=authorized.connectionId;
   const fact = await verifyReadOnly({ credentials });
   return { credentials, accountId: credentials.tenantId, accountName: fact.value, verifiedFact: fact,
     capabilities: ['accounting:read','accounting:shadow', ...(state.requestedPosting ? ['accounting:post'] : [])], expiresAt: credentials.expiresAt };
@@ -86,7 +88,27 @@ function authorizedTenant(accessToken,connections){
  const current=eventId?organizations.filter(row=>row.authEventId===eventId):organizations;
  const ids=[...new Set(current.map(row=>row.tenantId))];
  if(ids.length!==1)throw new ValidationError('In Xero, authorize one organization for this connection, then try again. Your existing connections are preserved.');
- return ids[0];
+ const selected=current.filter(row=>row.tenantId===ids[0]);
+ const connectionIds=[...new Set(selected.map(row=>row.id).filter(id=>typeof id==='string'&&id&&id.length<=200))];
+ return {tenantId:ids[0],connectionId:connectionIds.length===1?connectionIds[0]:null};
+}
+
+async function revokeAuthorization(credentials){
+ if(!config.connections.xero.configured||!credentials?.tenantId)
+  throw new ValidationError('Xero authorization cannot be released with the current configuration.');
+ const {credentials:current}=await refreshCredentials(credentials);
+ const headers={authorization:`Bearer ${current.accessToken}`,accept:'application/json'};
+ const response=await jsonRequest('https://api.xero.com/connections',{headers});
+ if(!Array.isArray(response.body))throw new ValidationError('Xero did not confirm its current connections.');
+ const matches=response.body.filter(row=>row?.tenantId===current.tenantId&&(!row.tenantType||row.tenantType==='ORGANISATION'));
+ // A missing connection is already disconnected. Never substitute another
+ // user's connection, nor confuse the organization ID with the connection ID.
+ const selected=current.xeroConnectionId?matches.filter(row=>row.id===current.xeroConnectionId):matches;
+ if(!selected.length)return true;
+ if(selected.length!==1||typeof selected[0].id!=='string'||!selected[0].id||selected[0].id.length>200)
+  throw new ValidationError('Xero did not identify one connection to remove. Remove StockChief in Xero connected apps.');
+ const removed=await jsonRequest('https://api.xero.com/connections/'+encodeURIComponent(selected[0].id),{method:'DELETE',headers,retries:0});
+ return removed.status===204;
 }
 
 async function discover({credentials}){
@@ -204,6 +226,6 @@ async function verifyDocument({credentials,document,externalId}){
  return {...verifyDocumentPayload(document,remote),externalId:String(remote.InvoiceID),version:remote.UpdatedDateUTC||null};
 }
 
-module.exports = { integrationClass: 'accounting',catalogueCapabilities:Object.freeze(['products','skus','stock','locations']),discover, metadata, authorizationUrl, exchangeAuthorization,
-  refresh, refreshCredentials, verifyReadOnly, readAccountingSnapshot, postJournalEntry,verifyJournalEntry,verifyJournalPayload,exactDecimal,trialBalances,
+module.exports = { integrationClass: 'accounting',serializeAuthorization:true,catalogueCapabilities:Object.freeze(['products','skus','stock','locations']),discover, metadata, authorizationUrl, exchangeAuthorization,
+  refresh, refreshCredentials,revokeAuthorization, verifyReadOnly, readAccountingSnapshot, postJournalEntry,verifyJournalEntry,verifyJournalPayload,exactDecimal,trialBalances,
   postDocument,findDocument,verifyDocument,verifyDocumentPayload,taxShares };

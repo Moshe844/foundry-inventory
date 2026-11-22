@@ -247,6 +247,9 @@ async function completeOAuth(database,providerType,query,requestOrigin,options={
   if(providerType==='quickbooks'&&registry.get(providerType)?.serializeAuthorization&&query.code&&!query.error&&typeof query.realmId==='string')
     return require('./quickbooks-token-lifecycle').run(database,config.connections.quickbooks.clientId||'unconfigured',query.realmId,
       db=>completeOAuthLocked(db,providerType,query,requestOrigin,options));
+  if(providerType==='xero'&&registry.get(providerType)?.serializeAuthorization&&query.code&&!query.error)
+    return require('./xero-token-lifecycle').run(database,config.connections.xero.clientId||'unconfigured',
+      db=>completeOAuthLocked(db,providerType,query,requestOrigin,options));
   if(providerType==='shopify'){
     const preview=await readState(database,query.state,providerType);
     if(preview.metadata.shopifyProfile==='public'){
@@ -307,6 +310,9 @@ async function completeOAuthLocked(database,providerType,query,requestOrigin,opt
 
 async function loadProviderCredentials(database,connection,adapter){
   const saved=parseJson(connection.config);
+  if(connection.provider_type==='xero'&&adapter?.serializeAuthorization)
+    return require('./xero-token-lifecycle').run(database,config.connections.xero.clientId||'unconfigured',
+      db=>loadProviderCredentialsLocked(db,connection,adapter));
   if(connection.provider_type==='quickbooks'&&adapter?.serializeAuthorization&&connection.provider_account_id)
     return require('./quickbooks-token-lifecycle').run(database,config.connections.quickbooks.clientId||'unconfigured',connection.provider_account_id,
       db=>loadProviderCredentialsLocked(db,connection,adapter));
