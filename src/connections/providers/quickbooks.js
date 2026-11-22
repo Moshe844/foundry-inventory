@@ -59,8 +59,39 @@ async function refreshCredentials(credentials) {
 }
 
 async function api(credentials, path, options = {}) {
-  return jsonRequest(`${base()}${path}`, { ...options, headers: { authorization: `Bearer ${credentials.accessToken}`,
-    accept: 'application/json', 'content-type': 'application/json', ...(options.headers || {}) } });
+  let response;
+  try{
+    response=await jsonRequest(`${base()}${path}`, { ...options, headers: { authorization: `Bearer ${credentials.accessToken}`,
+      accept: 'application/json', 'content-type': 'application/json', ...(options.headers || {}) } });
+  }catch(error){
+    if(unsupportedFeature(error.providerBody))throw featureUnavailable();
+    throw error;
+  }
+  // Intuit can return a Fault with HTTP 200. It must never become an empty
+  // successful catalogue, a zero balance, or a confirmed accounting write.
+  if(response.body?.Fault){
+    if(unsupportedFeature(response.body))throw featureUnavailable();
+    const error=new ValidationError('QuickBooks did not complete this request. Your saved records are preserved.');
+    error.code='QUICKBOOKS_API_FAULT';error.providerBody=response.body;
+    if(response.body.Fault.type==='AuthenticationFault')error.status=401;
+    throw error;
+  }
+  return response;
+}
+async function revokeAuthorization(credentials){
+ const token=credentials?.refreshToken||credentials?.accessToken;
+ if(!config.connections.quickbooks.configured||typeof token!=='string'||!token)
+  throw new ValidationError('QuickBooks authorization cannot be released with the current configuration.');
+ const response=await jsonRequest('https://developer.api.intuit.com/v2/oauth2/tokens/revoke',{method:'POST',
+  headers:{authorization:`Basic ${basic()}`,'content-type':'application/json',accept:'application/json'},body:JSON.stringify({token})});
+ return response.status===200&&!response.body?.error&&!response.body?.Fault;
+}
+function unsupportedFeature(body){
+  return Array.isArray(body?.Fault?.Error)&&body.Fault.Error.some(error=>String(error.code)==='5030');
+}
+function featureUnavailable(){
+  const error=new ValidationError('This QuickBooks company does not support the requested feature. Check its QuickBooks plan and settings, then retry. Your saved records are preserved.');
+  error.code='QUICKBOOKS_FEATURE_UNAVAILABLE';return error;
 }
 
 async function verifyReadOnly({ credentials }) {
@@ -146,6 +177,12 @@ async function discover({credentials,onProduct}){
  const company=(await api(credentials,`/v3/company/${encodeURIComponent(credentials.realmId)}/companyinfo/${encodeURIComponent(credentials.realmId)}?minorversion=75`)).body.CompanyInfo;
  if(!company?.CompanyName)throw new ValidationError('QuickBooks did not identify the company for inventory discovery.');
  const preferences=(await api(credentials,`/v3/company/${encodeURIComponent(credentials.realmId)}/preferences?minorversion=75`)).body.Preferences;
+ // Recheck capabilities on every discovery: a downgrade or settings change
+ // can leave historical Inventory items whose old quantities are not current.
+ if(preferences?.ProductAndServicesPrefs?.QuantityOnHand!==true){
+  const error=new ValidationError('QuickBooks inventory tracking is unavailable for this company. Check its QuickBooks plan and inventory settings, then retry. Your saved products and stock are preserved.');
+  error.code='QUICKBOOKS_INVENTORY_UNAVAILABLE';throw error;
+ }
  const currency=money.code(preferences?.CurrencyPrefs?.HomeCurrency?.value),locationId=String(credentials.realmId),catalog=require('../accounting-catalog');
  const products=[];await entities(credentials,'Item',1,row=>{if(row.Active===false||!['Inventory','NonInventory'].includes(row.Type))return;
   const record=catalog.product({id:row.Id,code:row.Sku,name:row.Name,currency,price:row.UnitPrice,tracked:row.Type==='Inventory'&&row.TrackQtyOnHand===true,quantity:row.QtyOnHand,locationId});if(onProduct)onProduct(record);else products.push(record);});
@@ -261,6 +298,6 @@ async function verifyDocument({credentials,document,externalId}){
  return {...verifyDocumentPayload(document,remote),externalId:String(remote.Id),version:remote.SyncToken==null?null:String(remote.SyncToken)};
 }
 
-module.exports = { integrationClass: 'accounting',catalogueCapabilities:Object.freeze(['products','skus','stock','locations']),discover, metadata, authorizationUrl, exchangeAuthorization,
-  refresh, refreshCredentials, verifyReadOnly, readAccountingSnapshot, listPostingParties, createPostingParty,
+module.exports = { integrationClass: 'accounting',serializeAuthorization:true,catalogueCapabilities:Object.freeze(['products','skus','stock','locations']),discover, metadata, authorizationUrl, exchangeAuthorization,
+  refresh, refreshCredentials, revokeAuthorization, verifyReadOnly, readAccountingSnapshot, listPostingParties, createPostingParty,
   postJournalEntry,verifyJournalEntry,verifyJournalPayload,exactDecimal,postDocument,findDocument,verifyDocument,verifyDocumentPayload };

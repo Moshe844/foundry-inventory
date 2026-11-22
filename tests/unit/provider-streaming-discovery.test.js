@@ -34,7 +34,7 @@ test('QuickBooks streams each complete item page with exact quantities and curre
  const adapter=require('../../src/connections/providers/quickbooks');let count=0;
  t.mock.method(global,'fetch',async value=>{const u=new URL(value);
   if(u.pathname.includes('/companyinfo/'))return Response.json({CompanyInfo:{CompanyName:'Stream company'}});
-  if(u.pathname.endsWith('/preferences'))return Response.json({Preferences:{CurrencyPrefs:{HomeCurrency:{value:'USD'}}}});
+  if(u.pathname.endsWith('/preferences'))return Response.json({Preferences:{ProductAndServicesPrefs:{QuantityOnHand:true},CurrencyPrefs:{HomeCurrency:{value:'USD'}}}});
   const second=u.searchParams.get('query').includes('startposition 1001');assert.equal(count,second?1000:0);
   return Response.json({QueryResponse:{Item:Array.from({length:second?1:1000},(_,i)=>({Id:String((second?1000:0)+i),Name:'Stock',Type:'Inventory',TrackQtyOnHand:true,QtyOnHand:2,UnitPrice:'1.25'}))}});});
  const found=await adapter.discover({credentials:{realmId:'company',accessToken:'test'},onProduct:r=>{assert.equal(r.providerData.priceMoney.amount,125);assert.equal(r.providerData.inventoryCounts[0].quantity,2);count++;}});

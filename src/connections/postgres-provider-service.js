@@ -244,6 +244,9 @@ async function completeOAuth(database,providerType,query,requestOrigin,options={
   const registry=options.providers||defaultProviders;
   if(!registry.get(providerType))throw new NotFoundError('Provider not found.');
   if(registry===defaultProviders)launchPolicy.assertCallbackProvider(providerType);
+  if(providerType==='quickbooks'&&registry.get(providerType)?.serializeAuthorization&&query.code&&!query.error&&typeof query.realmId==='string')
+    return require('./quickbooks-token-lifecycle').run(database,config.connections.quickbooks.clientId||'unconfigured',query.realmId,
+      db=>completeOAuthLocked(db,providerType,query,requestOrigin,options));
   if(providerType==='shopify'){
     const preview=await readState(database,query.state,providerType);
     if(preview.metadata.shopifyProfile==='public'){
@@ -304,6 +307,9 @@ async function completeOAuthLocked(database,providerType,query,requestOrigin,opt
 
 async function loadProviderCredentials(database,connection,adapter){
   const saved=parseJson(connection.config);
+  if(connection.provider_type==='quickbooks'&&adapter?.serializeAuthorization&&connection.provider_account_id)
+    return require('./quickbooks-token-lifecycle').run(database,config.connections.quickbooks.clientId||'unconfigured',connection.provider_account_id,
+      db=>loadProviderCredentialsLocked(db,connection,adapter));
   if(connection.provider_type==='shopify'&&saved.shopifyProfile==='public')return require('./shopify-token-lifecycle').run(database,saved.shopifyClientId||require('./shopify-app-profile').profile('public').clientId,saved.shop||connection.provider_account_id,db=>loadProviderCredentialsLocked(db,connection,adapter));
   return loadProviderCredentialsLocked(database,connection,adapter);
 }
