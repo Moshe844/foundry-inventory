@@ -21,7 +21,7 @@ test('accounting catalogue choices stay optional on all plans while real faults 
  const password='Setup!'+randomUUID();
  await page.locator('input[name="password"]').fill(password);if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill(password);
  const [registered]=await Promise.all([page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/register'),page.getByRole('button',{name:'Create account',exact:true}).click()]);
- assert.equal(registered.status(),302,(await registered.text()).replace(/<[^>]*>/g,' ').slice(-2500));
+ if(registered.status()!==302)assert.fail('Fixture registration returned '+registered.status()+': '+(await registered.text()).replace(/<[^>]*>/g,' ').slice(-2500));
  await page.waitForURL(base+'/onboarding');
  await require('../helpers/postgres-model-fixture').fundAllWorkspaces(db);
  const owner=(await db.query('SELECT w.id AS workspace_id,w.owner_account_id AS account_id,u.id AS actor_id FROM workspaces w JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=w.owner_account_id WHERE a.email=$1',[email])).rows[0];
