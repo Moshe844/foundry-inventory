@@ -1,0 +1,25 @@
+<% const readOnly=accounting.policy.requested_authority==='OBSERVE';
+   const healthy=helpers.connectionPresentation.status(connection)==='Connected';
+   const summary=helpers.connectionPresentation.matchingSummary(connection);
+   const base='/settings/connections/'+encodeURIComponent(connection.id); %>
+<section class="card cx-accounting-summary" aria-label="Accounting connection summary">
+  <div class="card-body">
+    <div class="cx-accounting-summary__title">
+      <span class="cx-accounting-summary__check <%= healthy?'is-ok':'' %>" aria-hidden="true"><%- helpers.icon(healthy?'check':'link',{size:22}) %></span>
+      <div><h2><%= healthy?(readOnly?'Read-only access is ready':'Your accounting connection is ready'):'Review your accounting connection' %></h2>
+      <p><%= connection.provider_account_name||providerName %><%= healthy?' has been verified.':'' %></p></div>
+    </div>
+    <p><%= readOnly?'StockChief can read this company. It will not post accounting entries. You can keep using this connection with the current read-only setting.':accounting.policy.stage==='WRITE_ENABLED'?'Posting is enabled under the permissions and approvals you have chosen.':'You can compare the books without changing either system. Posting remains blocked until the books match and you approve it.' %></p>
+    <dl class="cx-accounting-summary__facts">
+      <div><dt>Access</dt><dd><%= helpers.connectionPresentation.accountingStage(accounting.policy.stage) %></dd></div>
+      <div><dt>Company</dt><dd><%= connection.provider_account_name||'Verification needed' %></dd></div>
+      <div><dt>Products and locations</dt><dd><%= hasCatalogue?'Read successfully':'Waiting for the first read' %></dd></div>
+    </dl>
+    <% if(connection.catalogueSetupIssues){ %><div class="cx-accounting-summary__optional">
+      <strong>Optional inventory setup</strong>
+      <p><%= summary %> can be matched or imported if you want to use them in StockChief inventory. These choices do not stop your accounting connection.</p>
+      <a class="btn btn--secondary" href="<%= base %>?reviewProducts=1#catalogue-review">Review products and locations</a>
+    </div><% } %>
+    <% if(currentUser.role==='owner'){ %><div class="form-actions"><a class="btn" href="<%= base %>?reviewAccounting=1#accounting-options">Change accounting access</a></div><% } %>
+  </div>
+</section>

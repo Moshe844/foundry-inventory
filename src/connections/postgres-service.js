@@ -6,6 +6,7 @@ const commercial=require('../commercial/service');
 const { AuthenticationError,NotFoundError,ValidationError }=require('../domain/errors');
 const { newId,nowIso,requireText }=require('../lib/util');
 const credentials=require('./postgres-credential-store');
+const catalogueIssues=require('./catalogue-issues');
 
 const TOKEN_PREFIX='fnd_live_';
 const parseJson=(value,fallback)=>{
@@ -19,7 +20,8 @@ function publicHealth(row,now=Date.now()){
   if(row.status==='disconnected')reasons.push('DISCONNECTED');
   if(row.status==='error'||row.last_error)reasons.push('RECORDED_ERROR');
   if(row.paused_at)reasons.push('PAUSED');
-  if(Number(row.open_issues)>0)reasons.push('OPEN_ISSUES');
+  const optionalSetup=catalogueIssues.optionalForAccounting(row)?Number(row.catalogue_setup_issues||0):0;
+  if(Number(row.open_issues)>optionalSetup)reasons.push('OPEN_ISSUES');
   const evidence=Math.max(...[row.last_activity_at,row.last_synced_at,row.created_at]
     .map(value=>Date.parse(value||'')).filter(Number.isFinite));
   const expectedMinutes=Number(row.expected_interval_minutes),grace=['gmail','microsoft365'].includes(row.provider_type)?2:1;
@@ -36,6 +38,9 @@ function hydrate(row,now){
   if(!row)return null;
   return {...row,capabilities:parseJson(row.capabilities,[]),provides:parseJson(row.provides,[]),
     config:parseJson(row.config,{}),openIssues:Number(row.open_issues||0),
+    catalogueSetupOptional:catalogueIssues.optionalForAccounting(row),catalogueSetupIssues:Number(row.catalogue_setup_issues||0),
+    actionableIssues:Math.max(0,Number(row.open_issues||0)-(catalogueIssues.optionalForAccounting(row)?Number(row.catalogue_setup_issues||0):0)),
+    unmatchedProducts:Number(row.unmapped_skus||0),unmatchedLocations:Number(row.unmapped_locations||0),
     productsMapped:Number(row.products_mapped||0),locationsMapped:Number(row.locations_mapped||0),
     itemsNeedingMapping:Number(row.items_needing_mapping||0),publicStatus:publicStatus(row,now),
     synchronization:require('./synchronization-policy').describe(row,require('./providers/registry').get(row.provider_type),now)};
@@ -45,6 +50,14 @@ const SELECT=`SELECT connector.*,
   (SELECT (v.configuration->>'syncIntervalSeconds')::integer FROM workspaces w JOIN account_subscriptions s ON s.account_id=w.owner_account_id JOIN commercial_plan_versions v ON v.id=s.plan_version_id AND v.plan_id=s.plan_id WHERE w.id=connector.workspace_id) AS plan_sync_seconds,
   (SELECT COUNT(*) FROM connection_issues issue WHERE issue.workspace_id=connector.workspace_id
     AND issue.connector_id=connector.id AND issue.status='OPEN') AS open_issues,
+  (SELECT COUNT(*) FROM connection_issues issue WHERE issue.workspace_id=connector.workspace_id
+    AND issue.connector_id=connector.id AND issue.status='OPEN' AND ${catalogueIssues.setupSql}) AS catalogue_setup_issues,
+  (SELECT verified_at IS NOT NULL FROM accounting_sync_policies policy WHERE policy.workspace_id=connector.workspace_id
+    AND policy.connector_id=connector.id) AS accounting_verified,
+  (SELECT COUNT(*) FROM connection_external_records external WHERE external.workspace_id=connector.workspace_id
+    AND external.connector_id=connector.id AND external.selected=1 AND external.mapping_status='UNMAPPED' AND external.entity_type='sku') AS unmapped_skus,
+  (SELECT COUNT(*) FROM connection_external_records external WHERE external.workspace_id=connector.workspace_id
+    AND external.connector_id=connector.id AND external.selected=1 AND external.mapping_status='UNMAPPED' AND external.entity_type='location') AS unmapped_locations,
   (SELECT COUNT(*) FROM connection_mappings mapping WHERE mapping.workspace_id=connector.workspace_id
     AND mapping.connector_id=connector.id AND mapping.entity_type='sku') AS products_mapped,
   (SELECT COUNT(*) FROM connection_mappings mapping WHERE mapping.workspace_id=connector.workspace_id

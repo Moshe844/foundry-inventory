@@ -11,7 +11,9 @@ function name(connection){return names[connection.provider_type]||connection.pro
 function historyLabel(connection){return name(connection)+' · '+status(connection);}
 function description(provider){return descriptions[provider.type]||'Connect your business account.';}
 function logo(type){return type==='shipstation_custom_store'?'shipstation':['shopify','woocommerce','bigcommerce','square','clover','gmail','microsoft365','quickbooks','xero','stripe','cardknox','shipstation'].includes(type)?type:null;}
-function issue(connection){if(status(connection)!=='Error')return null;if(['AUTHORIZATION_FAILED','REAUTHORIZATION_REQUIRED'].includes(connection.setup_status))return 'Sign in again to restore access.';if(connection.itemsNeedingMapping||connection.locationsNeedingMapping)return 'Match your products and locations to finish setup.';if(connection.openIssues)return 'Review the unresolved connection issues.';if(connection.last_error)return require('../../connections/provider-sync-failure').explanation(connection.config)||'The last update failed. Review the connection to continue.';return 'Updates are behind. Check and resume the connection.';}
+function issue(connection){if(status(connection)!=='Error')return null;if(['AUTHORIZATION_FAILED','REAUTHORIZATION_REQUIRED'].includes(connection.setup_status))return 'Sign in again to restore access.';if(!connection.catalogueSetupOptional&&(connection.itemsNeedingMapping||connection.locationsNeedingMapping))return 'Match your products and locations to finish setup.';if((connection.actionableIssues??connection.openIssues)>0)return 'Review the unresolved connection issues.';if(connection.last_error)return require('../../connections/provider-sync-failure').explanation(connection.config)||'The last update failed. Review the connection to continue.';return 'Updates are behind. Check and resume the connection.';}
+function matchingSummary(connection){return [connection.unmatchedProducts?`${connection.unmatchedProducts} product${connection.unmatchedProducts===1?'':'s'}`:null,connection.unmatchedLocations?`${connection.unmatchedLocations} location${connection.unmatchedLocations===1?'':'s'}`:null].filter(Boolean).join(' and ')||'Products and locations';}
+function accountingStage(stage){return ({READ_ONLY_VERIFIED:'Read-only access',SHADOW:'Comparison in progress',WRITE_READY:'Ready for approval',WRITE_ENABLED:'Approved posting enabled'})[stage]||'Review accounting settings';}
 function availableForCustomer(provider,runtime){return runtime!=='production'||!provider.sandboxMode;}
 function access(provider={}){
  const type=provider.type,category=['gmail','microsoft365'].includes(type)?'email':['quickbooks','xero'].includes(type)?'accounting':type==='stripe'?'payments':provider.category==='accounting'?'accounting':['email','communication'].includes(provider.category)?'email':'commerce';
@@ -32,4 +34,4 @@ function cards(catalog,connections){
       needsMatching:Number(connection?.itemsNeedingMapping||0)+Number(connection?.locationsNeedingMapping||0)};
   });
 }
-module.exports={status,cards,name,historyLabel,description,logo,issue,availableForCustomer,access,groups};
+module.exports={status,cards,name,historyLabel,description,logo,issue,matchingSummary,accountingStage,availableForCustomer,access,groups};
