@@ -75,6 +75,10 @@ test('accounting catalogue choices stay optional on all plans while real faults 
   assert.deepEqual((await db.query('SELECT to_jsonb(s) state FROM account_subscriptions s WHERE account_id=$1',[owner.account_id])).rows,subscription);
  }
  const setupIssue=(await db.query("SELECT id FROM connection_issues WHERE workspace_id=$1 AND connector_id=$2 AND issue_type='UNKNOWN_SKU' LIMIT 1",[owner.workspace_id,id])).rows[0].id;
+ await db.query('UPDATE connection_issues SET external_event_id=$2 WHERE id=$1',[setupIssue,'actual-document-event']);
+ assert.equal((await service.get(db,owner.workspace_id,id)).actionableIssues,1,'A catalogue identity tied to an actual provider event remains actionable');
+ assert((await require('../../src/projections/postgres-service').needs(db,owner.workspace_id,owner.actor_id)).some(row=>row.sourceId===setupIssue));
+ await db.query('UPDATE connection_issues SET external_event_id=NULL WHERE id=$1',[setupIssue]);
  await page.goto(base+'/settings/connections/'+id+'?issue='+setupIssue);
  assert.match(page.url(),/reviewProducts=1#catalogue-review$/);assert.notEqual(await page.locator('#catalogue-review').getAttribute('open'),null);
  const fault=randomUUID();await db.query(`INSERT INTO connection_issues(id,workspace_id,connector_id,issue_type,fingerprint,title,detail,resolution_hint,candidate_matches,status,created_at,updated_at)

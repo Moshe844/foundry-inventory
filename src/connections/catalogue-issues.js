@@ -1,8 +1,8 @@
 'use strict';
 // A catalogue choice must have its own still-unmatched source record. An
 // unrelated missing SKU on a sale, or a stale issue, remains an actionable issue.
-// Both callers use the fixed alias `issue`; this is not user-supplied SQL.
-const setupSql=`issue.issue_type IN ('UNKNOWN_SKU','UNKNOWN_LOCATION') AND EXISTS (
+// Callers use the fixed alias `issue`; this is not user-supplied SQL.
+const setupSql=`issue.issue_type IN ('UNKNOWN_SKU','UNKNOWN_LOCATION') AND issue.external_event_id IS NULL AND EXISTS (
  SELECT 1 FROM connection_external_records external
  WHERE external.workspace_id=issue.workspace_id AND external.connector_id=issue.connector_id
  AND external.mapping_status='UNMAPPED'
