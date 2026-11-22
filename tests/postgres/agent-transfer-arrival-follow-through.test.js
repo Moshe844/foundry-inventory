@@ -85,8 +85,9 @@ test('scheduled transfer chase reaches only receiving staff, records a real phon
   await phone.getByRole('link',{name:'Check incoming transfers'}).first().click();
   await phone.waitForURL(/arrival-follow-up/);
   assert.equal(await phone.locator('body').evaluate(b=>b.scrollWidth<=innerWidth+2),true);
-  await phone.getByRole('button',{name:'Checked and still waiting'}).click();
-  await phone.waitForLoadState('networkidle');
+  const [checkedPage]=await Promise.all([phone.waitForNavigation({waitUntil:'domcontentloaded'}),phone.getByRole('button',{name:'Checked and still waiting'}).click()]);
+  assert.equal(checkedPage.status(),200);
+  await phone.getByText('Receiving team checked and is still waiting',{exact:false}).first().waitFor({state:'visible'});
   assert.match(await phone.textContent('body'),/Receiving team checked and is still waiting/);
   assert.equal((await db.query(`SELECT count(*)::int n FROM inventory_transfer_events WHERE transfer_id=$1 AND event_type=$2`,[eastTransfer.id,arrivals.FOLLOW_UP])).rows[0].n,2);
   assert.equal(await phone.request.get(base+'/transfers/'+westTransfer.id).then(r=>r.status()),404);
@@ -96,8 +97,8 @@ test('scheduled transfer chase reaches only receiving staff, records a real phon
   const partial=phone.locator('details').filter({hasText:'Record part of this arrival'});
   await partial.locator('input[name=received]').fill('2');
   const receiptKey=await partial.locator('input[name=idempotencyKey]').inputValue();
-  await partial.getByRole('button',{name:'Record partial arrival'}).click();
-  await phone.waitForLoadState('networkidle');
+  const [receiptPage]=await Promise.all([phone.waitForNavigation({waitUntil:'domcontentloaded'}),partial.getByRole('button',{name:'Record partial arrival'}).click()]);
+  assert.equal(receiptPage.status(),200);
   const input={idempotencyKey:receiptKey,lines:[{lineId:eastTransfer.lines[0].id,received:2}]};
   assert.equal((await transfers.receive(db,eastStaff,eastTransfer.id,input)).replayed,true);
   await assert.rejects(transfers.receive(db,source,eastTransfer.id,input),/assigned warehouses/);
