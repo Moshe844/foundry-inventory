@@ -39,6 +39,13 @@ class ProviderUnavailableError extends DomainError {
 
 const RETRY_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
+function quickbooksRequestId(url,response){
+  let host;try{host=new URL(url).hostname;}catch{return null;}
+  if(!['oauth.platform.intuit.com','quickbooks.api.intuit.com','sandbox-quickbooks.api.intuit.com','developer.api.intuit.com'].includes(host))return null;
+  const value=response.headers?.get?.('intuit_tid');
+  return typeof value==='string'&&/^[A-Za-z0-9_.:-]{1,128}$/.test(value)?value:null;
+}
+
 function isIdempotent(init = {}) {
   const method = String(init.method || 'GET').toUpperCase();
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
@@ -115,6 +122,10 @@ async function providerFetch(url, init = {}, options = {}) {
       noteUnavailable(provider, error);
       throw error;
     }
+    const intuitTid=quickbooksRequestId(url,response);
+    // Intuit support needs this correlation ID. Never log URLs, realm IDs,
+    // authorization headers, response bodies or accounting data here.
+    if(intuitTid)console.info('[foundry] QuickBooks response',JSON.stringify({intuitTid,httpStatus:response.status,attempt}));
     if(commercialAttempt)await require('../commercial/network').after(commercialContext,commercialAttempt,response.ok,{httpStatus:response.status});
     if (RETRY_STATUSES.has(response.status)) {
       lastStatus = response.status;
@@ -125,6 +136,7 @@ async function providerFetch(url, init = {}, options = {}) {
       const message=writing?provider+' did not confirm the operation. Its outcome must be checked before it is repeated.':response.status===429
         ?provider+' is rate-limiting reads. StockChief will retry safely shortly.':provider+' is not working right now. StockChief will retry this read safely.';
       const error = new ProviderUnavailableError(provider,message,{attempts:attempt,httpStatus:response.status});
+      if(intuitTid)error.intuitTid=intuitTid;
       if(providerDelay!==null)error.retryAfterMs=providerDelay;
       error.providerOutcomeUncertain=writing;
       noteUnavailable(provider, error);
