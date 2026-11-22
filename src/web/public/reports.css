@@ -223,6 +223,13 @@ html:root body .rm-canvas .report-hero .sc-report-headline{font-size:32px;font-w
 .report-preview-table th,.report-results th{position:sticky;top:0;z-index:1;background:#fff;font-size:12.5px;font-weight:500;color:#475069;box-shadow:0 1px 0 #ECEEF4}
 .report-preview-table tbody tr:hover,.report-results tbody tr:hover{background:#F9FAFC}
 .report-preview-table .is-num,.report-results .is-num{text-align:right}
+.report-preview-table td.is-repeat>*{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.report-preview-table td[data-run]{font-weight:500;color:var(--d-ink,#11152E)}
+.report-preview-table tbody tr.is-group-start td{border-top:1px solid #DCDFE8}
+.report-preview-table tbody td.is-repeat{border-top-color:transparent}
+/* A report built from words shows the report first, with its settings underneath. */
+.report-workspace.is-from-words>.report-live-preview{order:-1}
+.report-query__title{margin:0 0 4px;font-size:14px;font-weight:600;color:var(--d-ink,#11152E)}
 .report-preview-table .is-up,.report-results .is-up{color:#067647;font-weight:500}.report-preview-table .is-down,.report-results .is-down{color:var(--d-urgent,#D92D20);font-weight:500}
 .report-sort{border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer}
 .report-sort:hover{color:var(--d-ink,#11152E)}

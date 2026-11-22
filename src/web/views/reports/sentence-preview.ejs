@@ -1,2 +1,2 @@
 <%# Job 154: a report built from a sentence is a preview until it is saved. %>
-<% if(locals.sentence){ %><p class="rm-note" role="status" data-report-sentence>Built from “<%= sentence %>”. Check the preview below. Nothing is saved or emailed until you press Save report.</p><% } %>
+<% var builtFrom=locals.sentences&&locals.sentences.length?locals.sentences:(locals.sentence?[locals.sentence]:[]); %><% if(builtFrom.length){ %><p class="rm-note" role="status" data-report-sentence>Built from “<%= builtFrom[0] %>”<% for(const change of builtFrom.slice(1)){ %>, then “<%= change %>”<% } %>. Check the preview below. Nothing is saved or emailed until you press Save report.</p><% } %>
