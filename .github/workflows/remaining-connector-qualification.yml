@@ -19,6 +19,9 @@ on:
       - src/connections/providers/quickbooks.js
       - src/connections/providers/xero.js
       - src/connections/providers/oauth-grant.js
+      - src/lib/provider-http.js
+      - tests/unit/quickbooks-oauth-security.test.js
+      - tests/unit/quickbooks-request-diagnostics.test.js
       - src/commercial/network.js
       - tests/unit/remaining-provider-authorization.test.js
       - tests/postgres/remaining-provider-authorization.test.js
@@ -69,7 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p output/remaining-connectors
-          node --test tests/unit/accounting-review-pilot.test.js tests/unit/clover-review-pilot.test.js tests/unit/remaining-provider-authorization.test.js tests/unit/mission9-provider-contracts.test.js tests/unit/integration-quickbooks-contract.test.js tests/unit/accounting-catalog-contract.test.js tests/unit/commercial-network.test.js 2>&1 | tee output/remaining-connectors/contracts.log
+          node --test tests/unit/quickbooks-oauth-security.test.js tests/unit/quickbooks-request-diagnostics.test.js tests/unit/provider-http.test.js tests/unit/accounting-review-pilot.test.js tests/unit/clover-review-pilot.test.js tests/unit/remaining-provider-authorization.test.js tests/unit/mission9-provider-contracts.test.js tests/unit/integration-quickbooks-contract.test.js tests/unit/accounting-catalog-contract.test.js tests/unit/commercial-network.test.js 2>&1 | tee output/remaining-connectors/contracts.log
       - name: All-plan consent, preserved credentials, webhook isolation and accounting authority
         run: |
           set -euo pipefail

@@ -122,6 +122,8 @@ function createPostgresConnectionsRouter(database,options={}){
 
   router.get('/settings/connections/:provider/callback',asyncRoute(async(req,res)=>{
     const providerType=String(req.params.provider||'').toLowerCase();
+    const quickbooks=providerType==='quickbooks';
+    if(quickbooks){res.set('Cache-Control','no-cache, no-store');res.set('Referrer-Policy','no-referrer');}
     if(!callbackProviders.has(providerType))return res.status(404).send('Connection provider not found.');
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
     let context=null;
@@ -144,13 +146,25 @@ function createPostgresConnectionsRouter(database,options={}){
         publicOrigin:options.publicOrigin==='request'?requestOrigin:options.publicOrigin});
       // Finish on an authenticated, repeatable page backed by the saved
       // connection. Reloading completion must never reuse an OAuth code.
-      return res.redirect(303,`${safeOrigin(context.returnOrigin,requestOrigin)}/settings/connections/${encodeURIComponent(connection.id)}/complete${context.popup?'?popup=1':''}`);
+      const destination=`${safeOrigin(context.returnOrigin,requestOrigin)}/settings/connections/${encodeURIComponent(connection.id)}/complete${context.popup?'?popup=1':''}`;
+      // Intuit callbacks carry codes and company identifiers. Even Express's
+      // redirect helper writes HTML, so end the redirect without a body.
+      if(quickbooks)return res.status(302).location(destination).end();
+      return res.redirect(303,destination);
     }catch(error){
+      if(quickbooks)return res.status(302).location('/settings/connections/quickbooks/authorization-result').end();
       return oauthReturnPage(res,{connected:false,providerName:metadata?.name||'Connection',
         connection:context?.connection,returnOrigin:context?.returnOrigin,requestOrigin,popup:context?.popup,workspaceId:context?.workspaceId,
         message:error.message||'The connection was not completed.'});
     }
   }));
+
+  router.get('/settings/connections/quickbooks/authorization-result',(req,res)=>{
+    res.set('Cache-Control','no-cache, no-store');res.set('Referrer-Policy','no-referrer');
+    // This clean URL contains no provider query values or reflected error text.
+    return oauthReturnPage(res,{connected:false,providerName:'QuickBooks',requestOrigin:`${req.protocol}://${req.get('host')}`,
+      message:'QuickBooks authorization was not completed. Return to StockChief to check the connection, then start the connection again if needed.'});
+  });
 
   router.get('/settings/connections/bigcommerce/:callback(load|uninstall|remove_user)',asyncRoute(async(req,res)=>{
     const claims=registry.get('bigcommerce').verifySignedCallback(req.query.signed_payload_jwt);res.set('Cache-Control','no-store');res.set('Referrer-Policy','no-referrer');
