@@ -117,7 +117,8 @@ test('real Chromium governs PostgreSQL accounting export and a worker posts each
     await popup.waitForURL(/fixture-books-consent/);await popup.getByRole('link',{name:'Authorize Fixture Books'}).click();
     await page.waitForURL(/\/settings\/connections\/con_/);const connectionUrl=page.url();
     const connectionId=connectionUrl.split('/').pop();
-    assert.match(await page.locator('main').innerText(),/Accounting control/);
+    assert.match(await page.locator('main').innerText(),/Read-only access is ready/);
+    await page.getByRole('link',{name:'Change accounting access'}).click();
     await page.locator('input[name="authority"][value="SHADOW"]').check();
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save authority',exact:true}).click()]);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Run read-only shadow comparison'}).click()]);

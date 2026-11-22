@@ -1550,3 +1550,24 @@ html:root body .cx :is(.cx-main,.cx-side) .card-body.grid > p { margin:0; }
 }
 /* Narrow cards: a long action wraps as a neat two-line button instead of spilling. */
 html:root body .sc-provider-card .sc-provider-action .btn { height:auto; min-height:36px; padding:8px 12px; white-space:normal; line-height:1.25; text-align:center; }
+
+/* Accounting setup: verified access first; optional inventory choices stay secondary. */
+html:root body .cx-accounting-summary .card-body { display:grid; gap:16px; }
+html:root body .cx-accounting-summary__title { display:flex; align-items:center; gap:12px; }
+html:root body .cx-accounting-summary__title h2 { margin:0; font-size:20px; line-height:1.3; letter-spacing:-.02em; }
+html:root body .cx-accounting-summary__title p { margin:3px 0 0; }
+html:root body .cx-accounting-summary__check { display:grid; place-items:center; width:44px; height:44px; flex:none; border-radius:12px; background:#F3F4F8; color:#5A6379; }
+html:root body .cx-accounting-summary__check.is-ok { background:#ECFDF3; color:#05603A; }
+html:root body .cx-accounting-summary__facts { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:16px; margin:0; padding:16px 0; border-block:1px solid #EEF0F5; }
+html:root body .cx-accounting-summary__facts dt { font-size:12px; color:var(--d-muted); }
+html:root body .cx-accounting-summary__facts dd { margin:4px 0 0; font-weight:600; overflow-wrap:anywhere; }
+html:root body .cx-accounting-summary__optional { padding:14px; border:1px solid #E6E8F0; border-radius:10px; background:#FAFAFC; }
+html:root body .cx-accounting-summary__optional p { margin:5px 0 12px; }
+html:root body .cx .cx-catalogue-option > .card { border:0; border-radius:0; box-shadow:none; }
+html:root body .cx .cx-catalogue-option > summary,.cx .cx-accounting-options > summary { cursor:pointer; }
+html:root body .cx :is(.cx-catalogue-option,.cx-accounting-options):not([open]) > summary { border-bottom:0; }
+@media(max-width:640px){
+ html:root body .cx-accounting-summary__facts { grid-template-columns:minmax(0,1fr); gap:12px; }
+ html:root body .cx-accounting-summary .form-actions .btn { width:100%; white-space:normal; }
+ html:root body .cx-accounting-summary__title h2 { font-size:18px; }
+}

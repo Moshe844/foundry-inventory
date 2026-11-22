@@ -1,16 +1,18 @@
 <% const unlinked=catalogueReview.rows.filter(r=>!r.foundry_record_id&&!r.exclusion&&!['IGNORED','EXCLUDED'].includes(r.mapping_status));
+ const optional=Boolean(locals.optionalAccountingCatalogue);
  const physical=unlinked.filter(r=>r.entity_type==='sku'&&!r.exclusion);
  const places=unlinked.filter(r=>r.entity_type==='location');
  const base='/settings/connections/'+encodeURIComponent(connection.id);
  const paging=catalogueReview.page;
 %>
 <section class="card" aria-label="Match products and locations">
- <div class="card-head"><div><h2><%= unlinked.length?'Finish importing products and locations':'Provider products and locations' %></h2><p class="muted">Review the provider records on this page. Match existing records or import new ones below; saved history and mappings are preserved.</p></div></div>
+ <div class="card-head"><div><h2><%= optional?'Choose products and locations to use':unlinked.length?'Finish importing products and locations':'Provider products and locations' %></h2><p class="muted"><%= optional?'This inventory setup is optional. Your accounting connection works without importing these products. Choose only records you want to use in StockChief inventory.':'Review the provider records on this page. Match existing records or import new ones below; saved history and mappings are preserved.' %></p></div></div>
  <div class="card-body grid">
   <form method="get" action="<%= base %>" class="form-actions" role="search" aria-label="Search provider catalogue and matches">
-   <label class="field"><span class="field-label">Find provider record</span><input class="input" name="catalogueQ" value="<%= paging.q %>" placeholder="Name, code or external ID"></label>
+   <% if(optional){ %><input type="hidden" name="reviewProducts" value="1"><% } %>
+   <label class="field"><span class="field-label">Find provider record</span><input class="input" name="catalogueQ" value="<%= paging.q %>" placeholder="Product name, SKU or location"></label>
    <label class="field"><span class="field-label">Find StockChief match</span><input class="input" name="matchQ" value="<%= paging.matchQ %>" placeholder="Exact SKU code, product or location name"></label>
-   <button class="btn" type="submit">Search catalogue and matches</button><a class="btn btn--secondary" href="<%= base %>">Reset catalogue search</a>
+   <button class="btn" type="submit">Search catalogue and matches</button><a class="btn btn--secondary" href="<%= base %><%= optional?'?reviewProducts=1#catalogue-review':'' %>">Reset catalogue search</a>
   </form>
   <p class="hint">Showing <%= catalogueReview.rows.length %> provider records on this page. Match lists show up to 100 results; search to find another product or location.<% if(paging.moreSkus||paging.moreLocations){ %> More matches are available. Narrow the match search.<% } %></p>
   <% if(!catalogueReview.rows.length){ %><p class="notice">No provider records match this search.</p><% } %>

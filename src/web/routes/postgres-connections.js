@@ -6,6 +6,7 @@ const { requireAuth,requireOwner,asyncRoute }=require('../middleware');
 const connections=require('../../connections/postgres-service');
 const providerService=require('../../connections/postgres-provider-service');
 const catalogue=require('../../connections/postgres-catalog-import');
+const catalogueIssues=require('../../connections/catalogue-issues');
 const defaultProviders=require('../../connections/providers/registry');
 const jobs=require('../../operations/postgres-job-queue');
 const accountingSync=require('../../accounting/postgres-integration-sync');
@@ -358,14 +359,17 @@ function createPostgresConnectionsRouter(database,options={}){
     const pendingWebhooks=(await database.query("SELECT id,status,lease_until,received_at,updated_at,result FROM connection_webhook_receipts WHERE workspace_id=$1 AND connector_id=$2 AND status<>'COMPLETED' ORDER BY received_at DESC,id DESC LIMIT 20",[req.ctx.workspaceId,connection.id])).rows;
     const issueId=typeof req.query.issue==='string'&&req.query.issue.length<=100?req.query.issue:null;
     const issuePage=Math.max(1,Math.min(1000000,Number.parseInt(req.query.issuesPage,10)||1)),issueOffset=(issuePage-1)*10;
-    const connectionIssues={focused:Boolean(issueId),page:issuePage,total:connection.openIssues,rows:(await database.query(`
-      SELECT issue.id,issue.title,issue.detail,issue.resolution_hint,issue.updated_at,s.code,l.name AS location,p.field
+    const connectionIssues={focused:Boolean(issueId),page:issuePage,total:connection.actionableIssues,rows:(await database.query(`
+      SELECT issue.id,issue.title,issue.detail,issue.resolution_hint,issue.updated_at,(${catalogueIssues.setupSql}) AS catalogue_setup,s.code,l.name AS location,p.field
       FROM connection_issues issue LEFT JOIN connection_commerce_positions p ON p.workspace_id=issue.workspace_id
         AND p.connector_id=issue.connector_id AND issue.fingerprint='commerce-position:'||p.id
       LEFT JOIN skus s ON s.workspace_id=p.workspace_id AND s.id=p.sku_id
       LEFT JOIN locations l ON l.workspace_id=p.workspace_id AND l.id=p.location_id
       WHERE issue.workspace_id=$1 AND issue.connector_id=$2 AND issue.status='OPEN' AND ($3::text IS NULL OR issue.id=$3)
-      ORDER BY issue.updated_at DESC,issue.id LIMIT 10 OFFSET $4`,[req.ctx.workspaceId,connection.id,issueId,issueId?0:issueOffset])).rows};
+        AND (NOT $5::boolean OR $3::text IS NOT NULL OR NOT (${catalogueIssues.setupSql}))
+      ORDER BY issue.updated_at DESC,issue.id LIMIT 10 OFFSET $4`,[req.ctx.workspaceId,connection.id,issueId,issueId?0:issueOffset,connection.catalogueSetupOptional])).rows};
+    if(connection.catalogueSetupOptional&&issueId&&connectionIssues.rows[0]?.catalogue_setup)
+      return res.redirect(303,`/settings/connections/${encodeURIComponent(connection.id)}?reviewProducts=1#catalogue-review`);
     const catalogueReview=adapter?.discover&&!isMailbox
       ?await catalogue.describe(database,req.ctx,connection.id,req.query):null;
     const connectionProof=(await database.query(`SELECT
@@ -381,6 +385,8 @@ function createPostgresConnectionsRouter(database,options={}){
       connection,newConnectionToken,provider:adapter?.metadata?.()||{name:connection.display_name},
       commercePositions:await require('../../connections/postgres-commerce-sync').list(database,req.ctx.workspaceId,connection.id),
       canDiscover:Boolean(adapter?.discover)&&!isMailbox,isMailbox,mailboxLastPollAt,pendingWebhooks,catalogueReview,connectionProof,connectionIssues,
+      catalogueExpanded:req.query.reviewProducts==='1'||Object.keys(req.query).some(key=>key.startsWith('catalogue')||['matchQ','afterType','afterExternalId'].includes(key)),
+      accountingExpanded:req.query.reviewAccounting==='1',
       mailPreparation:isMailbox?await require('../../connections/postgres-mail-preparation').state(database,req.ctx,connection.id,
         {providerConfigured:Boolean(options.draftProviderConfigured)}):null,
     });
