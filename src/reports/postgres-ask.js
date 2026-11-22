@@ -251,11 +251,11 @@ async function composeForSave(database,ctx,message,{provider,priorReport=null}){
 
 // A list column the model added that is blank on every record (a business without variants or
 // barcodes) is left out, unless the owner named it. Checked against all records, not just the preview.
-async function withoutBlankColumns(database,ctx,actor,spec,result,message){
-  if(spec.groups?.length||spec.summary||!result.rows.length||(spec.columns||[]).length<3)return {spec,result};
+async function withoutBlankColumns(database,ctx,actor,spec,result,message,preservedColumns=[]){
+  if(spec.groups?.length||spec.summary||!result.rows.length||(spec.columns||[]).length<3||(spec.filters||[]).length>=12)return {spec,result};
   const fields=registry.get(spec.dataset)?.fields||{},words=String(message||'').toLowerCase(),{friendlyField}=require('./builder-entry');
   const named=column=>[column.replace(/_minor$/,'').replaceAll('_',' '),friendlyField(column).toLowerCase()].some(term=>term&&words.includes(term));
-  const candidates=spec.columns.filter(column=>column!==spec.sort&&column!==spec.columns[0]&&fields[column]==='text'&&!named(column)
+  const candidates=spec.columns.filter(column=>column!==spec.sort&&column!==spec.columns[0]&&!preservedColumns.includes(column)&&fields[column]==='text'&&!named(column)
     &&result.rows.every(row=>row[column]===null||row[column]===undefined||String(row[column]).trim()==='')).slice(0,3);
   const blank=[];
   for(const column of candidates){
@@ -435,7 +435,7 @@ async function prepare(database,ctx,message,{provider,priorReport=null,priorRequ
       if(attempt===0&&!result.rows.length&&(spec.filters||[]).some((filter)=>
         filter.operator==='equals'&&registry.get(spec.dataset)?.fields[filter.field]==='text'))
         throw new Error('The exact text filter returned no records. Reconsider whether the owner gave a partial text/category label; use contains only if that preserves the requested meaning. Never fabricate matching rows.');
-      ({spec,result}=await withoutBlankColumns(database,ctx,actor,spec,result,message));
+      ({spec,result}=await withoutBlankColumns(database,ctx,actor,spec,result,[...previousRequests,message].join('\n'),verifiedPrior?.columns||[]));
       progress('ready');
       return presentReport(spec,result,interpretation);
     }catch(error){
