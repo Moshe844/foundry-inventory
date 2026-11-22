@@ -1,6 +1,11 @@
 'use strict';
 const {newId}=require('../lib/util');
 const messages=Object.freeze({
+ QUICKBOOKS_SESSION_LOCK_UNAVAILABLE:'QuickBooks is connected, but StockChief could not start its secure update. The update will retry automatically; your saved products and stock are kept.',
+ QUICKBOOKS_AUTHORIZATION_BUSY:'Another authorization update is finishing for this QuickBooks company. The update will retry automatically; your saved products and stock are kept.',
+ QUICKBOOKS_INVENTORY_UNAVAILABLE:'QuickBooks inventory tracking is unavailable for this company. Check its QuickBooks plan and inventory settings, then retry. Your saved products and stock are preserved.',
+ QUICKBOOKS_FEATURE_UNAVAILABLE:'This QuickBooks company does not support the requested feature. Check its QuickBooks plan and settings, then retry. Your saved products and stock are preserved.',
+ QUICKBOOKS_API_FAULT:'QuickBooks did not complete this request. Your saved products and stock are preserved; the update will retry safely.',
  SHOPIFY_SESSION_LOCK_UNAVAILABLE:'Your Shopify store is connected, but StockChief could not start its secure update. The update will retry automatically; your saved products and stock are kept.',
  SHOPIFY_AUTHORIZATION_BUSY:'Another update is finishing for this Shopify store. This update will retry automatically; your saved products and stock are kept.',
  PROVIDER_RATE_LIMITED:'The provider asked StockChief to wait before checking again. The update will retry automatically.',

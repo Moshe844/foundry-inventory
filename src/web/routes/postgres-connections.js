@@ -574,8 +574,10 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.redirect(303,`/settings/connections/${connection.id}?refresh=queued`);
   }));
   router.post('/settings/connections/:id/disconnect',requireOwner,asyncRoute(async(req,res)=>{
-    await connections.disconnect(database,req.ctx.workspaceId,req.params.id);
-    req.flash('success','Connection disconnected. Credentials were removed; mappings and audit history remain.');
+    const disconnected=await connections.disconnect(database,req.ctx.workspaceId,req.params.id);
+    if(disconnected.providerAuthorizationRevoked===false)
+      req.flash('warn','Connection disconnected from StockChief and saved credentials were removed. QuickBooks access could not be confirmed as revoked. To remove app access entirely, remove StockChief from the connected apps in QuickBooks. Mappings and audit history remain.');
+    else req.flash('success','Connection disconnected. Credentials were removed; mappings and audit history remain.');
     return res.redirect(303,`/settings/connections/${req.params.id}`);
   }));
   router.use((error,req,res,next)=>{

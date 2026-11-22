@@ -20,7 +20,7 @@ test('accounting catalogues preserve zero prices, exact currency, whole quantiti
  global.fetch=async value=>{const url=new URL(value);
   if(url.hostname.includes('intuit')){
    if(url.pathname.includes('/companyinfo/'))return Response.json({CompanyInfo:{CompanyName:'Fixture company'}});
-   if(url.pathname.endsWith('/preferences'))return Response.json({Preferences:{CurrencyPrefs:{HomeCurrency:{value:'BHD'}}}});
+   if(url.pathname.endsWith('/preferences'))return Response.json({Preferences:{ProductAndServicesPrefs:{QuantityOnHand:true},CurrencyPrefs:{HomeCurrency:{value:'BHD'}}}});
    itemCalls++;return Response.json({QueryResponse:{Item:[{Id:'stock',Name:'Fixture stock',Sku:'FX-1',Type:'Inventory',TrackQtyOnHand:true,QtyOnHand:0,UnitPrice:0,Active:true},{Id:'fractional',Name:'Needs review',Type:'Inventory',TrackQtyOnHand:true,QtyOnHand:0.5,UnitPrice:'1.234'},{Id:'service',Name:'Service',Type:'Service'},{Id:'archived',Name:'Archived',Type:'Inventory',Active:false}]}});
   }
   if(url.pathname.endsWith('/Organisation'))return Response.json({Organisations:[{Name:'Fixture organization',BaseCurrency:'JPY'}]});
