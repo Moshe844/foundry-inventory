@@ -14,7 +14,7 @@ test('private production accounting consent preserves billing and existing grant
   for(const provider of ['xero','quickbooks'])for(const version of ['','unversioned','2.0','v1','v3:minor75'])
    for(const operation of ['http_request','authorization_exchange','accounting_verify'])
     await db.query(`INSERT INTO commercial_cost_rates(id,provider,operation,unit,cost_per_unit_minor,effective_from,source,provider_version,pricing_basis,confidence)
-     VALUES($1,$2,$3,'request',0.1,'1970-01-01','ISOLATED_QUALIFICATION_ESTIMATE_NOT_PROVIDER_PRICING',$4,'CONSERVATIVE_ESTIMATE','LOW')`,[randomUUID(),provider,operation,version]);
+     VALUES($1,$2,$3,$5,0.1,'1970-01-01','ISOLATED_QUALIFICATION_ESTIMATE_NOT_PROVIDER_PRICING',$4,'CONSERVATIVE_ESTIMATE','LOW')`,[randomUUID(),provider,operation,version,operation==='http_request'?'request':'operation']);
   const service=require('../../src/connections/postgres-provider-service'),auth=require('../../src/domain/postgres-auth-service');
   const store=require('../../src/connections/postgres-credential-store'),release=require('../../src/commercial/release');
   let calls=0,revokeOnVerification=false,currentProvider;
