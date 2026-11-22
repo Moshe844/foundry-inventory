@@ -68,7 +68,8 @@ async function before(context,url,init,provider){const def=definition(url);if(pr
  const key=newId('providerattempt');
  const method=String(init.method||'GET').toUpperCase();
  const oauth=def.provider==='google_oauth'||/\/(?:oauth|oauth2)(?:\/|$)/.test(address.pathname)||
-   (method==='POST'&&address.origin==='https://identity.xero.com'&&address.pathname==='/connect/token');
+   (method==='POST'&&address.origin==='https://identity.xero.com'&&address.pathname==='/connect/token')||
+   (method==='DELETE'&&address.origin==='https://api.xero.com'&&/^\/connections\/[A-Za-z0-9_-]{1,200}$/.test(address.pathname));
  const qualifiedOdooRead=provider==='Odoo ERP'&&/\/(?:search_read|search_count|fields_get|read)$/.test(address.pathname);
  if(!context.funded&&!['GET','HEAD','OPTIONS'].includes(method)&&!oauth&&!qualifiedOdooRead)
   throw new ValidationError('An external change requires its registered business operation. No provider request was sent.');
