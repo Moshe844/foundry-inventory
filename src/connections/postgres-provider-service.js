@@ -101,6 +101,13 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
   return database.transaction(async(client)=>{
     const authorizer=(await client.query("SELECT role FROM users WHERE workspace_id=$1 AND id=$2 AND revoked_at IS NULL FOR UPDATE",[connection.workspace_id,actorId])).rows[0];
     if(authorizer?.role!=='owner')throw new AuthenticationError('The owner who started this connection no longer has permission to authorize it. Start again with a current owner.');
+    let accountingPilotEvidence=null;
+    if(options.enforceLaunchPolicy&&['xero','quickbooks'].includes(connection.provider_type)&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'){
+      // Recheck after provider traffic: a revoked inventory grant must not
+      // commit credentials even if it was valid when consent began.
+      await launchPolicy.assertWorkspaceConnection(client,connection.provider_type,{workspaceId:connection.workspace_id});
+      accountingPilotEvidence=require('./accounting-review-pilot').evidence(connection,actorId,result);
+    }
     if(options.enforceLaunchPolicy&&connection.provider_type==='shopify'){
       if(result.credentials?.shop!==result.accountId)throw new AuthenticationError('The Shopify credential does not match the approved store.');
       await launchPolicy.assertWorkspaceConnection(client,'shopify',{workspaceId:connection.workspace_id},{shop:result.accountId});
@@ -154,6 +161,7 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
     }
     await credentials.put(client,target.workspace_id,target.id,'provider',providerCredentials,result.expiresAt||null);
     const safeConfig={...currentConfig};
+    if(accountingPilotEvidence)safeConfig.accountingPilotEvidence=accountingPilotEvidence;
     if(connection.provider_type==='clover'&&result.credentials?.environment==='production'&&
       (result.credentials?.isBillable===false||result.credentials?.providerBillingFieldsOmitted===true))
       safeConfig.cloverTestEvidence=require('./clover-review-pilot').evidence(result,connection.workspace_id,actorId);

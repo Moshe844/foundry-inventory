@@ -188,7 +188,7 @@ async function shadow(database,ctx,connectorId,adapter,credentials,input={}){
   try{
     const [local,external,mappings]=await Promise.all([localSnapshot(database,ctx.workspaceId,asOf),
       require('../commercial/operations').run(database,ctx.workspaceId,{capability:'accounting.sync',key:`accounting-shadow:${runId}`,
-        provider:adapter.metadata().id||'accounting',operation:'accounting_snapshot'},async()=>adapter.readAccountingSnapshot({credentials,
+        provider:current.provider_type,operation:'accounting_snapshot'},async()=>adapter.readAccountingSnapshot({credentials,
           connection:await connections.get(database,ctx.workspaceId,connectorId),asOf})),
       database.query(`SELECT * FROM accounting_posting_account_mappings
         WHERE workspace_id=$1 AND connector_id=$2`,[ctx.workspaceId,connectorId])]);
