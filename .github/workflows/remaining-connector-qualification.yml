@@ -20,6 +20,8 @@ on:
       - src/connections/providers/xero.js
       - src/connections/providers/oauth-grant.js
       - src/lib/provider-http.js
+      - src/postgres-app.js
+      - tests/postgres/accounting-oauth-return.test.js
       - tests/unit/quickbooks-oauth-security.test.js
       - tests/unit/quickbooks-request-diagnostics.test.js
       - src/commercial/network.js
@@ -76,7 +78,7 @@ jobs:
       - name: All-plan consent, preserved credentials, webhook isolation and accounting authority
         run: |
           set -euo pipefail
-          node --test --test-force-exit --test-concurrency=2 tests/postgres/accounting-review-pilot.test.js tests/postgres/clover-review-pilot.test.js tests/postgres/remaining-provider-authorization.test.js tests/postgres/connections-restored-pilot.test.js tests/postgres/clover-webhooks.test.js tests/postgres/accounting-export-ui.test.js tests/postgres/agent-accounting-documents.test.js tests/postgres/connections-catalog-browser.test.js 2>&1 | tee output/remaining-connectors/connections.log
+          node --test --test-force-exit --test-concurrency=2 tests/postgres/accounting-oauth-return.test.js tests/postgres/accounting-review-pilot.test.js tests/postgres/clover-review-pilot.test.js tests/postgres/remaining-provider-authorization.test.js tests/postgres/connections-restored-pilot.test.js tests/postgres/clover-webhooks.test.js tests/postgres/accounting-export-ui.test.js tests/postgres/agent-accounting-documents.test.js tests/postgres/connections-catalog-browser.test.js 2>&1 | tee output/remaining-connectors/connections.log
       - name: Existing subscriptions, refunds, Shopify and connection lifecycle
         run: |
           set -euo pipefail

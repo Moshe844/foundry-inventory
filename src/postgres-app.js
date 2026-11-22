@@ -88,6 +88,9 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.get('/app-system.css',(req,res)=>res.type('text/css').set('Cache-Control','public, max-age=86400').send(require('./web/presentation/stylesheets').stylesheet()));
   app.get('/og.png',(_req,res)=>res.redirect(302,'/stockchief-share-v1.png'));
   app.use(express.static(path.join(__dirname,'web','public'),{maxAge:env==='production'?'7d':0}));
+  // Dynamic pages and APIs can contain connected accounting data. Browsers
+  // and shared proxies must not retain those responses after sign-out.
+  app.use((req,res,next)=>{res.set('Cache-Control','no-cache, no-store');next();});
   // The restricted agent renderer uses the same public asset boundary as the
   // actual website. Every application/API read after static files still crosses
   // its fresh host guard; public CSS/JS never requires a tenant database read.
