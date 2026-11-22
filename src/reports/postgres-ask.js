@@ -152,6 +152,8 @@ function repairProposal(proposed,actor,baseCurrency='USD',message=''){
     }
     const sortedExtra=plan.extras.find(extra=>extra.measure&&extra.measure===plan.sort);
     if(sortedExtra)plan.sort=extraOutput(sortedExtra);
+    // The main number is named by its output alone (total), not the way an extra is (total_revenue_minor).
+    if(plan.sort&&reports.aggregateColumn[plan.aggregate]&&plan.sort===extraOutput({aggregate:plan.aggregate,measure:plan.measure}))plan.sort=reports.aggregateColumn[plan.aggregate];
     const ranged=plan.filters.some(filter=>fields[filter.field]==='date'&&['at_least','after','relative'].includes(filter.operator));
     if(!['previous_period','previous_year'].includes(plan.compare)||!ranged)delete plan.compare;
   }
