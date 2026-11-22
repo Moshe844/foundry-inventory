@@ -218,10 +218,10 @@ function createPostgresReportsRouter(database){
   router.post('/reports/describe',asyncRoute(async(req,res)=>{
     const description=String(req.body.q||'').trim();
     if(!description||description.length>1800)throw new ValidationError('Describe the report in 1 to 1,800 characters.');
-    // Only the change box (edit=1) edits the report on screen; a request from the empty builder starts fresh.
-    const current=req.body.edit==='1'&&req.session.reportDraft?.workspaceId===req.ctx.workspaceId?req.session.reportDraft:null;
+    // A request typed in the empty builder (fresh=1) starts a new report; otherwise it changes the report on screen.
+    const current=req.body.fresh!=='1'&&req.session.reportDraft?.workspaceId===req.ctx.workspaceId?req.session.reportDraft:null;
     // A change asked for on a saved report starts from that saved report.
-    const savedSource=req.body.edit==='1'&&req.body.saved?await reports.load(database,req.ctx,await actorFor(database,req.ctx),String(req.body.saved)).catch(()=>null):null;
+    const savedSource=req.body.fresh!=='1'&&req.body.saved?await reports.load(database,req.ctx,await actorFor(database,req.ctx),String(req.body.saved)).catch(()=>null):null;
     const previous=savedSource?.definition||current?.definition||null,priorRequests=!savedSource&&current?draftSentencesOf(current):[];
     // The page polls /reports/describe/progress with the id it sent, to show each step as it happens.
     const progressKey=buildProgressKey(req,req.body.buildId);
