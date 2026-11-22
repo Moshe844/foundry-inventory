@@ -63,6 +63,8 @@ function productionShopifyPilots(){
 }
 function pilotAllowed(providerType,ctx={}){
  const type=String(providerType).toLowerCase();
+ if(['xero','quickbooks'].includes(type)&&process.env.STOCKCHIEF_RUNTIME_ENV==='production')
+  return require('./accounting-review-pilot').allowed(type,ctx.workspaceId);
  if(type==='clover'&&process.env.STOCKCHIEF_RUNTIME_ENV==='production')
   return require('./clover-review-pilot').allowed(ctx.workspaceId);
  if(type==='shopify'&&process.env.STOCKCHIEF_RUNTIME_ENV==='production')
@@ -81,6 +83,7 @@ function assertNewConnection(providerType,ctx){const denied=reason(providerType,
 function assertCallbackProvider(providerType){
  // Pilot callbacks resolve and recheck the inventory from stored OAuth state.
  if(process.env.STOCKCHIEF_RUNTIME_ENV==='staging'||(providerType==='microsoft365'&&productionOutlookWorkspaces().length)||
+  require('./accounting-review-pilot').workspaces(providerType).length||
   (providerType==='clover'&&Object.keys(require('./clover-review-pilot').pilots()).length)||
   (providerType==='shopify'&&(Object.keys(productionShopifyPilots()).length||publicShopifyEnabled())))return;
  assertNewConnection(providerType);
@@ -88,6 +91,10 @@ function assertCallbackProvider(providerType){
 async function assertWorkspaceConnection(database,providerType,ctx,input={}){
  if(!EXCLUDED[String(providerType||'').toLowerCase()])return;
  ctx=await resolveWorkspaceContext(database,ctx);assertNewConnection(providerType,ctx);
+ if(['xero','quickbooks'].includes(providerType)&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'){
+  const inventory=await database.query('SELECT id FROM workspaces WHERE id=$1 AND deletion_requested_at IS NULL FOR SHARE',[ctx.workspaceId]);
+  if(!inventory.rows.length)throw new ValidationError('The approved accounting test inventory is no longer available.');
+ }
  if(providerType==='clover'&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'){
   require('./clover-review-pilot').expected(ctx.workspaceId,input);
   const inventory=await database.query('SELECT id FROM workspaces WHERE id=$1 AND deletion_requested_at IS NULL FOR SHARE',[ctx.workspaceId]);
