@@ -7,6 +7,7 @@ on:
       - src/connections/launch-policy.js
       - src/connections/accounting-review-pilot.js
       - src/connections/postgres-provider-service.js
+      - src/accounting/postgres-integration-sync.js
       - src/commercial/release.js
       - src/commercial/operations.js
       - src/web/routes/postgres-connections.js

@@ -12,7 +12,7 @@ test('private production accounting consent preserves billing and existing grant
   await db.query("UPDATE commercial_release_control SET checkout_enabled=true,economics_approved_at=now(),readiness_approved_at=now() WHERE singleton=true");
   await db.query("UPDATE commercial_critical_warnings SET status='RESOLVED'");
   for(const provider of ['xero','quickbooks'])for(const version of ['','unversioned','2.0','v1','v3:minor75'])
-   for(const operation of ['http_request','authorization_exchange','accounting_verify'])
+   for(const operation of ['http_request','authorization_exchange','accounting_verify','accounting_snapshot'])
     await db.query(`INSERT INTO commercial_cost_rates(id,provider,operation,unit,cost_per_unit_minor,effective_from,source,provider_version,pricing_basis,confidence)
      VALUES($1,$2,$3,$5,0.1,'1970-01-01','ISOLATED_QUALIFICATION_ESTIMATE_NOT_PROVIDER_PRICING',$4,'CONSERVATIVE_ESTIMATE','LOW')`,[randomUUID(),provider,operation,version,operation==='http_request'?'request':'operation']);
   const service=require('../../src/connections/postgres-provider-service'),auth=require('../../src/domain/postgres-auth-service');
@@ -50,6 +50,13 @@ test('private production accounting consent preserves billing and existing grant
    assert.equal(connected.status,'connected');assert.equal(connected.config.accountingPilotEvidence.qualificationOnly,true);
    assert.equal(connected.config.accountingPilotEvidence.approvedByUserId,owner.userId);
    assert.deepEqual(await snapshot(),before);assert.equal(await release.isOpen(db),true,'Private qualification must preserve subscription checkout');
+   const sync=require('../../src/accounting/postgres-integration-sync');
+   await sync.chooseAuthority(db,ctx,connected.id,'SHADOW');
+   const compared=await sync.shadow(db,ctx,connected.id,{metadata:()=>({id:'untrusted-adapter-label'}),
+    readAccountingSnapshot:async()=>({currency:'USD',accounts:[]})},{},{asOf:'2026-11-21'});
+   const cost=(await db.query("SELECT provider,amount_minor FROM commercial_cost_events WHERE idempotency_key LIKE $1",['%accounting-shadow:'+compared.runId+':attempt:%'])).rows;
+   assert.equal(cost.length,1);assert.equal(cost[0].provider,provider,'The stored accounting policy identifies the actual cost provider');
+   assert.notEqual(cost[0].amount_minor,null);assert.equal(await release.isOpen(db),true,'A comparison cannot create a spurious unknown-provider cost warning');
    const originalGrant=await store.get(db,owner.workspaceId,connected.id,'provider'),configuration=connected.config;
    await db.query("UPDATE workspace_connectors SET config='{}' WHERE id=$1",[connected.id]);
    assert.equal(await release.isOpen(db),false,'An inventory allowlist alone cannot certify an arbitrary accounting connection');
