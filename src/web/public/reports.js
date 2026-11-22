@@ -611,12 +611,13 @@ function reportBuildProgress(form){
   const bar=panel.querySelector('.report-progress__bar'),fill=bar.querySelector('span'),now=panel.querySelector('[data-report-progress-now]'),time=panel.querySelector('[data-report-progress-time]');
   let value=0,ceiling=0,started=0,timer=null;
   const paint=()=>{fill.style.width=value.toFixed(1)+'%';bar.setAttribute('aria-valuenow',String(Math.round(value)));const seconds=Math.round((Date.now()-started)/1000);
-    time.textContent=seconds<3?'':seconds<25?` · ${seconds}s`:` · ${seconds}s · still working, this one is taking longer than usual`;};
+    const lead=now.textContent?' · ':'';time.textContent=seconds<3?'':seconds<25?lead+seconds+'s':lead+seconds+'s · still working, this one is taking longer than usual';};
   const step=({stage,label})=>{
     const known=REPORT_BUILD_STEPS.findIndex(([key])=>key===stage);
     if(stage==='fixing'){ceiling=Math.max(ceiling,60);panel.classList.add('is-fixing');}
     else if(known>=0){value=Math.max(value,known?REPORT_BUILD_STEPS[known-1][2]:2);ceiling=REPORT_BUILD_STEPS[known][2];panel.classList.remove('is-fixing');}
-    now.textContent=label||'';
+    // The list already names the current step; this line speaks only for a retry or the finish.
+    now.textContent=['fixing','ready'].includes(stage)?label||'':'';
     const reached=stage==='fixing'?1:known;
     for(const item of panel.querySelectorAll('li')){const index=REPORT_BUILD_STEPS.findIndex(([key])=>key===item.dataset.step);item.classList.toggle('is-done',index<reached);item.classList.toggle('is-now',index===reached);}
     paint();
