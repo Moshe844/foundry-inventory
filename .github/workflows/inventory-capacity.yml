@@ -78,6 +78,9 @@ jobs:
             probe_chromium
           fi
           mkdir -p output/inventory-ci
+      - name: AI report progress, exact multi-measure totals, any-of filters and edited pages
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'providers' }}
+        run: node --test --test-force-exit --test-concurrency=2 tests/unit/report-build-pending-browser.test.js tests/postgres/report-builder-release.test.js tests/postgres/reporting-ui.test.js tests/postgres/agent-report-sentence.test.js tests/postgres/report-stock-cost-detail.test.js tests/postgres/report-large-catalogue.test.js tests/postgres/completion-report-ask-ui.test.js tests/postgres/customer-money-experience.test.js
       - name: Query deadlines, recovery and dense catalogue regressions
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'scale' }}
         run: node --test --test-concurrency=2 tests/postgres/import-stock-stale-statistics.test.js tests/postgres/import-source-checkpoint-scale.test.js tests/postgres/import-legacy-lookup-scale.test.js tests/postgres/replenishment-expiry-scale.test.js tests/postgres/replenishment-cycle.test.js tests/postgres/staging-million-fixture.test.js tests/postgres/query-deadlines.test.js tests/postgres/round16-web-recovery.test.js tests/postgres/product-planning-scale.test.js tests/postgres/grouped-inventory-skew.test.js tests/postgres/home-work-history-window.test.js tests/postgres/dashboard-covered-reads.test.js
