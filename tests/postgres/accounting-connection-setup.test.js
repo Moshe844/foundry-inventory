@@ -55,7 +55,7 @@ test('accounting catalogue choices stay optional on all plans while real faults 
    await page.setViewportSize({width,height});await page.goto(base+'/settings/connections/'+id);
    await page.locator('.cx-status').waitFor();assert.equal(await page.locator('.cx-status').innerText(),'Connected');
    const text=await page.locator('main').innerText();assert.match(text,/Read-only access is ready/);assert.match(text,/11 products and 1 location/);
-   assert.doesNotMatch(text,/12 problems|12 open|AUTHORITY REQUIRED|READ ONLY VERIFIED|UNKNOWN_SKU|UNKNOWN_LOCATION|This connection needs attention/);
+   assert.doesNotMatch(text,/12 problems|12 open|Need your match|AUTHORITY REQUIRED|READ ONLY VERIFIED|UNKNOWN_SKU|UNKNOWN_LOCATION|This connection needs attention/);
    assert.equal(await page.locator('#catalogue-review').getAttribute('open'),null);assert.equal(await page.locator('#accounting-options').getAttribute('open'),null);
    assert.equal(await page.locator('#connection-issues').count(),0);
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),'Accounting setup must fit '+name);
@@ -63,6 +63,7 @@ test('accounting catalogue choices stay optional on all plans while real faults 
   }
   await page.getByRole('link',{name:'Review products and locations',exact:true}).click();
   assert.notEqual(await page.locator('#catalogue-review').getAttribute('open'),null);
+  await page.getByRole('button',{name:'Refresh products and locations',exact:true}).waitFor();
   await page.getByRole('button',{name:'Import selected products',exact:true}).waitFor();
   assert.equal(await page.locator('[data-external-product]').count(),11);
   await page.getByLabel('Find provider record').fill('DEMO-2');await page.getByRole('button',{name:'Search catalogue and matches'}).click();

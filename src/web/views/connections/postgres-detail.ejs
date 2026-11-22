@@ -131,7 +131,7 @@
       <%- include('mail-preparation',{mailPreparation,connection}) %>
     <% } %>
 <% } %>
-    <% if(canDiscover){ %><section class="card"><div class="card-head"><div><h2>Products and locations</h2><p class="muted">Exact matches happen automatically. Ambiguous records stay unchanged. Organization-wide balances need a location match before stock is imported.</p></div></div><div class="card-body">
+    <% if(canDiscover&&!(accounting&&connection.catalogueSetupOptional)){ %><section class="card"><div class="card-head"><div><h2>Products and locations</h2><p class="muted">Exact matches happen automatically. Ambiguous records stay unchanged. Organization-wide balances need a location match before stock is imported.</p></div></div><div class="card-body">
 <div class="stats-row cx-stats">
   <div class="stat"><span>Products mapped</span><strong><%= connection.productsMapped %></strong></div>
   <div class="stat"><span>Locations mapped</span><strong><%= connection.locationsMapped %></strong></div>
@@ -140,6 +140,7 @@
     <% if(catalogueReview){ %>
       <% if(accounting&&connection.catalogueSetupOptional){ %><details class="card cx-catalogue-option" id="catalogue-review" <%= locals.catalogueExpanded?'open':'' %>>
         <summary class="card-head"><div><h2>Optional product setup</h2><p class="muted"><%= helpers.connectionPresentation.matchingSummary(connection) %> available to review. Accounting reads work without importing them.</p></div><span class="badge badge--muted">Optional</span></summary>
+        <div class="card-body"><% if(query&&query.refresh==='queued'){ %><p class="notice notice--success">Product and location refresh queued.</p><% } %><% if(connected&&currentUser.role==='owner'){ %><form method="post" action="/settings/connections/<%= connection.id %>/refresh"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Refresh products and locations</button></form><% } %></div>
         <%- include('catalogue-matching',{catalogueReview,connection,optionalAccountingCatalogue:true}) %>
       </details><% }else{ %><%- include('catalogue-matching',{catalogueReview,connection}) %><% } %>
     <% } %>

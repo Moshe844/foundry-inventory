@@ -385,7 +385,7 @@ function createPostgresConnectionsRouter(database,options={}){
       connection,newConnectionToken,provider:adapter?.metadata?.()||{name:connection.display_name},
       commercePositions:await require('../../connections/postgres-commerce-sync').list(database,req.ctx.workspaceId,connection.id),
       canDiscover:Boolean(adapter?.discover)&&!isMailbox,isMailbox,mailboxLastPollAt,pendingWebhooks,catalogueReview,connectionProof,connectionIssues,
-      catalogueExpanded:req.query.reviewProducts==='1'||Object.keys(req.query).some(key=>key.startsWith('catalogue')||['matchQ','afterType','afterExternalId'].includes(key)),
+      catalogueExpanded:req.query.reviewProducts==='1'||req.query.refresh==='queued'||Object.keys(req.query).some(key=>key.startsWith('catalogue')||['matchQ','afterType','afterExternalId'].includes(key)),
       accountingExpanded:req.query.reviewAccounting==='1',
       mailPreparation:isMailbox?await require('../../connections/postgres-mail-preparation').state(database,req.ctx,connection.id,
         {providerConfigured:Boolean(options.draftProviderConfigured)}):null,
