@@ -49,6 +49,8 @@ test('accounting catalogue choices stay optional on all plans while real faults 
   const saved=await service.get(db,owner.workspace_id,id);
   assert.equal(saved.publicStatus,'Connected');assert.equal(saved.catalogueSetupIssues,12);assert.equal(saved.actionableIssues,0);
   assert.equal(saved.unmatchedProducts,11);assert.equal(saved.unmatchedLocations,1);
+  const inbox=await require('../../src/projections/postgres-service').needs(db,owner.workspace_id,owner.actor_id);
+  assert(!inbox.some(row=>row.kind==='connection'&&row.href==='/settings/connections/'+id),'Optional catalogue choices must not create Important connection alarms');
   for(const [name,width,height]of [['desktop',1440,1000],['mobile',390,844]]){
    await page.setViewportSize({width,height});await page.goto(base+'/settings/connections/'+id);
    await page.locator('.cx-status').waitFor();assert.equal(await page.locator('.cx-status').innerText(),'Connected');
@@ -77,6 +79,7 @@ test('accounting catalogue choices stay optional on all plans while real faults 
  const fault=randomUUID();await db.query(`INSERT INTO connection_issues(id,workspace_id,connector_id,issue_type,fingerprint,title,detail,resolution_hint,candidate_matches,status,created_at,updated_at)
   VALUES($1,$2,$3,'UNKNOWN_SKU',$4,'An imported document needs a product match','A real document cannot continue yet.','Review the affected document.','[]','OPEN',now(),now())`,[fault,owner.workspace_id,id,'document-line:'+randomUUID()]);
  const broken=await service.get(db,owner.workspace_id,id);assert.equal(broken.publicStatus,'Needs attention');assert.equal(broken.actionableIssues,1);
+ assert((await require('../../src/projections/postgres-service').needs(db,owner.workspace_id,owner.actor_id)).some(row=>row.sourceId===fault),'A genuine document fault remains in Needs you');
  await page.goto(base+'/settings/connections/'+id);assert.equal(await page.locator('.cx-status').innerText(),'Error');
  assert.match(await page.locator('#connection-issues').innerText(),/An imported document needs a product match/);
  assert.doesNotMatch(await page.locator('#connection-issues').innerText(),/Sample product/);

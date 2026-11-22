@@ -1,6 +1,7 @@
 'use strict';
 
 const {hasVerifiedMigration}=require('../db/migrate-postgres');
+const catalogueIssues=require('../connections/catalogue-issues');
 const lotCertificateActivity=`CASE WHEN users.role='owner' THEN (
   EXISTS(SELECT 1 FROM stockchief_runtime.lot_certificate_requirements r WHERE r.workspace_id=$1)
   OR EXISTS(SELECT 1 FROM stockchief_runtime.lot_certificate_links d WHERE d.workspace_id=$1 AND d.state='DRAFT')
@@ -222,17 +223,22 @@ function needsInputs(connection,workspaceId){return require('../lib/versioned-re
   const database={query:async(sql,values)=>({rows:(await connection.query(sql,values)).rows})};
   return Promise.all([
     require('./postgres-attention-inbox').summary(database,workspaceId),
-    database.query(`SELECT i.id,i.title,i.detail,i.resolution_hint,i.created_at,i.updated_at,i.connector_id,
-      i.issue_type,i.external_event_id,c.provider_type,
+    database.query(`SELECT issue.id,issue.title,issue.detail,issue.resolution_hint,issue.created_at,issue.updated_at,issue.connector_id,
+      issue.issue_type,issue.external_event_id,c.provider_type,
       message.id AS reply_message_id,related_effect.id AS provider_effect_id,buffer.position_id AS buffer_position_id
-      FROM connection_issues i JOIN workspace_connectors c ON c.id=i.connector_id
-      LEFT JOIN connection_email_messages message ON message.workspace_id=i.workspace_id AND message.id=i.external_event_id
-      LEFT JOIN stockchief_runtime.agent_channel_buffers buffer ON buffer.workspace_id=i.workspace_id AND i.fingerprint='commerce-position:'||buffer.position_id AND buffer.enabled
+      FROM connection_issues issue JOIN workspace_connectors c ON c.id=issue.connector_id AND c.workspace_id=issue.workspace_id
+      LEFT JOIN connection_email_messages message ON message.workspace_id=issue.workspace_id AND message.id=issue.external_event_id
+      LEFT JOIN stockchief_runtime.agent_channel_buffers buffer ON buffer.workspace_id=issue.workspace_id AND issue.fingerprint='commerce-position:'||buffer.position_id AND buffer.enabled
       LEFT JOIN LATERAL (SELECT effect.id FROM stockchief_runtime.provider_effects effect
-        WHERE effect.workspace_id=i.workspace_id AND effect.aggregate_id=i.external_event_id
+        WHERE effect.workspace_id=issue.workspace_id AND effect.aggregate_id=issue.external_event_id
         AND effect.aggregate_type IN ('email_message','supplier_communication','customer_communication')
         AND effect.status='AMBIGUOUS' ORDER BY effect.created_at DESC LIMIT 1) related_effect ON true
-      WHERE i.workspace_id=$1 AND i.status='OPEN' ORDER BY i.updated_at DESC`,[workspaceId]),
+      WHERE issue.workspace_id=$1 AND issue.status='OPEN'
+        AND NOT (c.provider_type IN ('xero','quickbooks') AND EXISTS (
+          SELECT 1 FROM accounting_sync_policies policy WHERE policy.workspace_id=issue.workspace_id
+            AND policy.connector_id=issue.connector_id AND policy.verified_at IS NOT NULL)
+          AND (${catalogueIssues.setupSql}))
+      ORDER BY issue.updated_at DESC`,[workspaceId]),
     require('./postgres-work-inbox').summary(database,workspaceId),
     database.query(`SELECT e.id,e.import_id,e.error_message,e.finished_at,p.source_name FROM import_executions e
       JOIN import_plans p ON p.id=e.import_id WHERE e.workspace_id=$1 AND e.status='FAILED'

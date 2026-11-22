@@ -9,6 +9,7 @@ on:
       - src/connections/postgres-provider-service.js
       - src/connections/postgres-service.js
       - src/connections/catalogue-issues.js
+      - src/projections/postgres-service.js
       - src/web/presentation/connections.js
       - src/web/views/connections/accounting-summary.ejs
       - src/web/views/connections/postgres-detail.ejs
