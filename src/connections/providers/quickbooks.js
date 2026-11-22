@@ -78,6 +78,14 @@ async function api(credentials, path, options = {}) {
   }
   return response;
 }
+async function revokeAuthorization(credentials){
+ const token=credentials?.refreshToken||credentials?.accessToken;
+ if(!config.connections.quickbooks.configured||typeof token!=='string'||!token)
+  throw new ValidationError('QuickBooks authorization cannot be released with the current configuration.');
+ const response=await jsonRequest('https://developer.api.intuit.com/v2/oauth2/tokens/revoke',{method:'POST',
+  headers:{authorization:`Basic ${basic()}`,'content-type':'application/json',accept:'application/json'},body:JSON.stringify({token})});
+ return response.status===200&&!response.body?.error&&!response.body?.Fault;
+}
 function unsupportedFeature(body){
   return Array.isArray(body?.Fault?.Error)&&body.Fault.Error.some(error=>String(error.code)==='5030');
 }
@@ -290,6 +298,6 @@ async function verifyDocument({credentials,document,externalId}){
  return {...verifyDocumentPayload(document,remote),externalId:String(remote.Id),version:remote.SyncToken==null?null:String(remote.SyncToken)};
 }
 
-module.exports = { integrationClass: 'accounting',catalogueCapabilities:Object.freeze(['products','skus','stock','locations']),discover, metadata, authorizationUrl, exchangeAuthorization,
-  refresh, refreshCredentials, verifyReadOnly, readAccountingSnapshot, listPostingParties, createPostingParty,
+module.exports = { integrationClass: 'accounting',serializeAuthorization:true,catalogueCapabilities:Object.freeze(['products','skus','stock','locations']),discover, metadata, authorizationUrl, exchangeAuthorization,
+  refresh, refreshCredentials, revokeAuthorization, verifyReadOnly, readAccountingSnapshot, listPostingParties, createPostingParty,
   postJournalEntry,verifyJournalEntry,verifyJournalPayload,exactDecimal,postDocument,findDocument,verifyDocument,verifyDocumentPayload };

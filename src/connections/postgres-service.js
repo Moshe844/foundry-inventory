@@ -69,10 +69,37 @@ async function get(database,workspaceId,connectorId){
 }
 
 async function disconnect(database,workspaceId,connectorId){
+  const preview=(await database.query('SELECT provider_type,provider_account_id FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',
+    [workspaceId,connectorId])).rows[0];
+  if(!preview)throw new NotFoundError('Connection not found.');
+  if(preview.provider_type==='quickbooks'&&preview.provider_account_id)
+    return require('./quickbooks-token-lifecycle').run(database,require('../config').connections.quickbooks.clientId||'unconfigured',preview.provider_account_id,
+      db=>disconnectLocked(db,workspaceId,connectorId,preview));
+  return disconnectLocked(database,workspaceId,connectorId,preview);
+}
+async function disconnectLocked(database,workspaceId,connectorId,preview){
+  let providerAuthorizationRevoked=null;
   await database.transaction(async(client)=>{
-    const found=await client.query('SELECT id FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 FOR UPDATE',
+    const found=await client.query('SELECT id,provider_type,provider_account_id,status FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 FOR UPDATE',
       [workspaceId,connectorId]);
     if(!found.rows.length)throw new NotFoundError('Connection not found.');
+    const current=found.rows[0];
+    if(preview.provider_type==='quickbooks'){
+      if(current.provider_type!==preview.provider_type||current.provider_account_id!==preview.provider_account_id)
+        throw new ValidationError('This QuickBooks connection changed. Refresh the page and review it before disconnecting.');
+      const grant=await credentials.get(client,workspaceId,connectorId,'provider');
+      if(grant){
+        providerAuthorizationRevoked=false;
+        const shared=current.provider_account_id&&(await client.query(`SELECT 1 FROM workspace_connectors
+          WHERE provider_type='quickbooks' AND provider_account_id=$1 AND status='connected' AND id<>$2 LIMIT 1`,
+          [current.provider_account_id,connectorId])).rowCount;
+        if(current.provider_account_id&&!shared){
+          // Local access stops even when Intuit is unavailable. No token is
+          // logged and an uncertain revocation is never retried automatically.
+          try{providerAuthorizationRevoked=await require('./providers/quickbooks').revokeAuthorization(grant)===true;}catch{}
+        }
+      }
+    }
     const now=nowIso();
     await client.query(`UPDATE workspace_connectors SET status='disconnected',paused_at=$3,credential_ref=NULL,
       setup_status='DISCONNECTED',updated_at=$3 WHERE workspace_id=$1 AND id=$2`,[workspaceId,connectorId,now]);
@@ -81,8 +108,10 @@ async function disconnect(database,workspaceId,connectorId){
     await credentials.remove(client,workspaceId,connectorId);
     await client.query(`UPDATE connection_issues SET status='RESOLVED',resolved_at=$3,updated_at=$3
       WHERE workspace_id=$1 AND connector_id=$2 AND status='OPEN'`,[workspaceId,connectorId,now]);
-  },{isolation:'SERIALIZABLE',retrySafe:true});
-  return get(database,workspaceId,connectorId);
+  },{isolation:'SERIALIZABLE',retrySafe:preview.provider_type!=='quickbooks'});
+  const disconnected=await get(database,workspaceId,connectorId);
+  if(preview.provider_type==='quickbooks')disconnected.providerAuthorizationRevoked=providerAuthorizationRevoked;
+  return disconnected;
 }
 
 async function pause(database,workspaceId,connectorId){
