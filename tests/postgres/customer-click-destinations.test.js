@@ -100,6 +100,15 @@ test('required customer click gate visits page routes and detail families, block
     assert.equal(page.url(),before);buttonEvidence.push({page:target,label,action:'open and close the matching integration details'});continue;
    }
    if(await button.getAttribute('data-grid-open')!==null){await button.click();const dialog=page.locator('[data-grid-dialog][open]');assert(await dialog.count());await dialog.locator('[data-grid-close]').click();assert.equal(await page.locator('[data-grid-dialog][open]').count(),0);buttonEvidence.push({page:target,label,action:'variant grid opens and closes without changing stock'});continue;}
+   const mode=await button.getAttribute('data-filter-mode');
+   if(mode!==null){
+    const before=page.url(),root=button.locator('xpath=ancestor::*[@data-plan-inline or @data-plan-dialog][1]');
+    await button.click();assert.equal(await button.getAttribute('aria-pressed'),'true');assert.equal(await root.locator('[data-filter-mode][aria-pressed=true]').count(),1);
+    const shown=await root.locator('[data-plan-job]:visible').evaluateAll(rows=>rows.map(row=>row.dataset.mode));
+    assert(shown.every(value=>mode==='all'||value===mode),'Duty filter showed a different authority level');
+    if(!shown.length)assert(await root.locator('[data-plan-empty]').isVisible());assert.equal(page.url(),before);
+    buttonEvidence.push({page:target,label,action:'plan duty filter verified without navigation or a write'});continue;
+   }
    const form=await button.evaluate(b=>b.closest('form')?.getAttribute('method')?.toLowerCase());if(form==='get'){const formAction=await button.evaluate(b=>b.closest('form').action);const before=page.url();const valid=await button.evaluate(b=>b.closest('form').checkValidity());if(!valid){await button.click();assert.equal(page.url(),before,'Required GET form submitted without input');buttonEvidence.push({page:target,label,action:'required input prevents blank submission'});continue;}const [check]=await Promise.all([page.waitForNavigation({waitUntil:'load'}),button.click()]);assert.equal(new URL(page.url()).pathname,new URL(formAction).pathname,'GET form went elsewhere');assert(check,'GET form must return an actual navigation response');assert(check.status()<400,'GET form failed '+target+' '+label+' '+page.url()+' HTTP '+check.status());assert((await page.locator('body').innerText()).trim().length>20);buttonEvidence.push({page:target,label,action:'GET form submitted and actual navigation response checked'});await page.goto(origin+target,{waitUntil:'load'});await dismissOpenDialogs();continue;}
    if(await button.getAttribute('data-switcher-toggle')!==null){await button.click();assert.equal(await button.getAttribute('aria-expanded'),'true');await button.click();buttonEvidence.push({page:target,label,action:'business chooser opens and closes'});continue;}
    if(await button.getAttribute('data-sidebar-toggle')!==null){await button.click();assert.equal(await button.getAttribute('aria-expanded'),'true');await button.click();assert.equal(await button.getAttribute('aria-expanded'),'false');buttonEvidence.push({page:target,label,action:'navigation toggled'});continue;}
