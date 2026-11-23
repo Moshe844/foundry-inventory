@@ -110,7 +110,10 @@ test('customer Xero Starter rollout: real consent on every plan, global capacity
   assert.equal((await rollout.availability(db)).remaining,0);
   const established=owners[0],oldGrant=await store.get(db,established.workspaceId,established.connection.id,'provider');
   const reconnect=await start(established,{connectorId:established.connection.id});
-  await assert.rejects(complete(reconnect,'org-sixth'),/at capacity/);
+  await assert.rejects(complete(reconnect,'org-sixth'),/same Xero organization/);
+  // The pinned reconnect now refuses a different company before capacity
+  // admission. Keep the independent last-slot guard covered as well.
+  await assert.rejects(db.transaction(client=>rollout.admit(client,established.connection,{accountId:'org-sixth'},null)),/at capacity/);
   assert.deepEqual(await store.get(db,established.workspaceId,established.connection.id,'provider'),oldGrant);
   const connected=await complete(await start(established,{connectorId:established.connection.id}),'org-starter');assert.equal(connected.id,established.connection.id);
   assert.equal((await db.query("SELECT count(DISTINCT provider_account_id)::int n FROM workspace_connectors WHERE provider_type='xero' AND status<>'disconnected'")).rows[0].n,5);
