@@ -49,10 +49,11 @@ async function owner(db,ctx){
 // The connected books this job may write to: verified posting is enabled and
 // the provider can send documents.
 async function books(db,workspaceId,connectorId){
-  const row=(await db.query(`SELECT c.id,c.workspace_id,c.display_name,c.provider_type,c.status,c.paused_at,c.provider_account_id,c.setup_status,p.stage
+  const row=(await db.query(`SELECT c.id,c.workspace_id,c.display_name,c.provider_type,c.status,c.paused_at,c.provider_account_id,c.setup_status,c.config,c.authorized_by_user_id,p.stage
     FROM workspace_connectors c JOIN accounting_sync_policies p ON p.workspace_id=c.workspace_id AND p.connector_id=c.id
     WHERE c.workspace_id=$1 AND c.id=$2`,[workspaceId,connectorId])).rows[0];
   if(!row||!PROVIDERS[row.provider_type])return {reason:'Choose connected QuickBooks or Xero books.'};
+  if(require('../connections/xero-customer-rollout').readOnly(row))return {row,reason:'This Xero connection is read-only. No changes can be sent to Xero.'};
   if(row.status!=='connected'||row.paused_at)return {row,reason:'Reconnect or resume '+row.display_name+' before StockChief sends to it.'};
   if(row.stage!=='WRITE_ENABLED')return {row,reason:'Turn on verified posting for '+row.display_name+' on its connection page first.'};
   if(!supports(row.provider_type))return {row,reason:PROVIDERS[row.provider_type]+' cannot take invoices and bills here.'};

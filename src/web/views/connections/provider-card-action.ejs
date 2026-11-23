@@ -1,6 +1,7 @@
-<% const canConnect=provider.available&&includedOnPlan&&!capped&&currentUser.role==='owner',storeForm=['shopify','woocommerce','bigcommerce'].includes(provider.type); %>
+<% const providerFull=provider.type==='xero'&&locals.xeroAvailability?.remaining===0,canConnect=provider.available&&includedOnPlan&&!capped&&!providerFull&&currentUser.role==='owner',storeForm=['shopify','woocommerce','bigcommerce'].includes(provider.type); %>
 <% if(card.connection){ %><a class="btn btn--primary" href="<%= card.href %>"><%= card.state==='Error'?'Fix':'Manage' %> <%= provider.name %></a><% } %>
-<% if(canConnect&&storeForm){ %>
+<% if(providerFull&&includedOnPlan){ %><p class="quiet" data-xero-capacity>Xero connections are currently at capacity. Existing connections keep working.</p><a class="btn" href="/support/request?topic=connection&about=Xero">Contact support</a>
+<% }else if(canConnect&&storeForm){ %>
  <button type="button" class="btn <%= card.connection?'':'btn--primary' %>" data-modal-open="connect-<%= provider.type %>"><%= card.connection?'Connect another ':'Connect ' %><%= provider.name %></button>
  <dialog class="sc-connect-dialog" id="connect-<%= provider.type %>" aria-label="Connect <%= provider.name %>"><header><h2><%= card.connection?'Connect another ':'Connect ' %><%= provider.name %></h2><button type="button" class="btn btn--ghost" data-modal-close>Close</button></header><%- include('provider-connect-form',{provider,requiredCommercialCapability,includedOnPlan,postgresMode,csrfToken}) %></dialog>
 <% }else if(card.connection&&canConnect){ %>

@@ -48,6 +48,7 @@ async function chooseAuthority(database,ctx,connectorId,authority){
       WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,connectorId])).rows[0];
     if(!connection||!['quickbooks','xero'].includes(connection.provider_type))throw new ValidationError(
       'Choose a connected QuickBooks or Xero account.');
+    if(requested==='POST')require('../connections/xero-customer-rollout').assertNoPosting(connection);
     const at=nowIso();const post=requested==='POST';
     await client.query(`UPDATE accounting_sync_policies SET accounting_source='FOUNDRY',posting_direction=$3,
       requested_authority=$4,stage=$5,last_shadow_run_id=NULL,write_enabled_by_user_id=NULL,write_enabled_at=NULL,updated_at=$6
@@ -260,6 +261,7 @@ async function enableWrites(database,ctx,connectorId){return database.transactio
   const current=await policy(client,ctx.workspaceId,connectorId,true);
   const connection=(await client.query(`SELECT * FROM workspace_connectors
     WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,connectorId])).rows[0];
+  require('../connections/xero-customer-rollout').assertNoPosting(connection);
   const capabilities=json(connection?.capabilities,[]);
   const run=current.last_shadow_run_id&&(await client.query(`SELECT status FROM accounting_shadow_runs
     WHERE id=$1 AND workspace_id=$2 AND connector_id=$3`,[current.last_shadow_run_id,ctx.workspaceId,connectorId])).rows[0];
@@ -356,6 +358,7 @@ async function mapParty(database,ctx,connectorId,input={}){
 }
 
 async function queuePending(database,ctx,connectorId,input={},options={}){
+  require('../connections/xero-customer-rollout').assertNoPosting(await connections.get(database,ctx.workspaceId,connectorId));
   const current=await policy(database,ctx.workspaceId,connectorId);
   if(current.stage!=='WRITE_ENABLED')throw new ValidationError('Verified posting is not enabled for this accounting connection.');
   if(!providers.get(current.provider_type)?.verifyJournalEntry)throw new ValidationError('Posting is unavailable for this connection. Read-only accounting remains available.');
@@ -391,6 +394,7 @@ async function executeExportEffect(database,workspaceId,effectId,options={}){
   try{
     if(effect.payload.agentExport)await require('../commercial/agent-plan').requireWorkspaceJob(database,workspaceId,184,'draft');
     const connection=await connections.get(database,workspaceId,effect.payload.connectorId);
+    require('../connections/xero-customer-rollout').assertNoPosting(connection);
     if(!effect.payload.providerAccountId||effect.payload.providerAccountId!==connection.provider_account_id)throw new ValidationError('The accounting company changed after this export was queued. Nothing was posted.');
     const current=await policy(database,workspaceId,connection.id);
     if(current.stage!=='WRITE_ENABLED'||connection.status!=='connected'||connection.paused_at)throw Object.assign(
@@ -503,12 +507,13 @@ async function state(database,workspaceId,connectorId,{includeFinancialEntries=t
   const latestRow=latest.rows[0]||null;
   const currentRun=!current.last_shadow_run_id?null:current.last_shadow_run_id===latestRow?.id?latestRow:
     (await database.query('SELECT status FROM accounting_shadow_runs WHERE workspace_id=$1 AND connector_id=$2 AND id=$3',[workspaceId,connectorId,current.last_shadow_run_id])).rows[0];
-  return {policy:current,currentShadowStatus:currentRun?.status||null,canVerifyWrites:typeof providers.get(current.provider_type)?.verifyJournalEntry==='function',latestShadow:latestRow?{...latestRow,isCurrent:current.last_shadow_run_id===latestRow.id,differences:json(latestRow.differences,[]),
+  const readOnly=require('../connections/xero-customer-rollout').readOnly(await connections.get(database,workspaceId,connectorId));
+  return {policy:current,currentShadowStatus:currentRun?.status||null,canVerifyWrites:!readOnly&&typeof providers.get(current.provider_type)?.verifyJournalEntry==='function',latestShadow:latestRow?{...latestRow,isCurrent:current.last_shadow_run_id===latestRow.id,differences:json(latestRow.differences,[]),
     externalSnapshot:json(latestRow.external_snapshot,{})}:null,mappings:mappings.rows,accounts:accounts.rows,
     pendingEntries:pending,postedEntries:posted.rows,openingBooks,financialEntriesIncluded:includeFinancialEntries};
 }
 
 module.exports={hash,policy,initialize,chooseAuthority,localSnapshot,compare,shadow,mapAccount,mapParty,postingRequirements,enableWrites,openingBooksPreview,importOpeningBooks,
   entry,pendingEntries,queuePending,executeExportEffect,verifyExistingExport,state};
-require('../commercial/enforcement').guardExports(module.exports,0,1,{chooseAuthority:'connections.accounting',
- enableWrites:'accounting.post_connected',queuePending:'accounting.post_connected',executeExportEffect:'accounting.post_connected',verifyExistingExport:'connections.accounting',shadow:'accounting.sync',importOpeningBooks:'accounting.core'});
+require('../commercial/enforcement').guardExports(module.exports,0,1,{chooseAuthority:{capability:'connections.accounting',connectionPosition:2},
+ enableWrites:'accounting.post_connected',queuePending:'accounting.post_connected',executeExportEffect:'accounting.post_connected',verifyExistingExport:'connections.accounting',shadow:{capability:'accounting.sync',connectionPosition:2},importOpeningBooks:'accounting.core'});
