@@ -1,0 +1,41 @@
+name: Customer quality investigation
+on:
+  push:
+    branches: [codex/customer-quality-followup-20261122]
+permissions:
+  contents: read
+concurrency:
+  group: customer-quality-investigation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  phone:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      NODE_ENV: test
+      FOUNDRY_SKIP_LOCAL_ENV: '1'
+      STOCKCHIEF_POSTGRES_BIN: /usr/lib/postgresql/17/bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: PostgreSQL 17
+        run: |
+          if [ ! -x /usr/lib/postgresql/17/bin/initdb ]; then
+            sudo install -d /usr/share/postgresql-common/pgdg
+            curl --fail --connect-timeout 15 --max-time 60 --retry 2 https://apt.postgresql.org/pub/repos/apt/ACCC4CF8.asc | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc > /dev/null
+            test "$(gpg --batch --show-keys --with-colons /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc 2>/dev/null | awk -F: '$1 == "fpr" {print $10; exit}')" = B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8
+            printf '%s\n' 'Types: deb' 'URIs: https://apt.postgresql.org/pub/repos/apt' 'Suites: noble-pgdg' 'Components: main' 'Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc' | sudo tee /etc/apt/sources.list.d/pgdg.sources > /dev/null
+            sudo apt-get update
+            sudo apt-get install -y postgresql-17
+          fi
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: node --test tests/postgres/agent-pricing-chart.test.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phone-dialog-investigation
+          path: output/agent-plan-review
