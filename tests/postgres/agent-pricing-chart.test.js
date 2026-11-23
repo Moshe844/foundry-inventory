@@ -7,7 +7,7 @@ test('pricing shows exact plan duties, no-training filters and accessible detail
   const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'clear-plan-chart'});
   const server=await new Promise(resolve=>{const value=app.listen(0,'127.0.0.1',()=>resolve(value));}),browser=await chromium.launch();
   f.cleanup(async()=>{await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));await app.locals.sessionStore.close();});
-  const page=await browser.newPage({viewport:{width:1440,height:1100}}),origin='http://127.0.0.1:'+server.address().port,errors=[];
+  const page=await browser.newPage({viewport:{width:1440,height:1100},reducedMotion:'reduce'}),origin='http://127.0.0.1:'+server.address().port,errors=[];
   page.on('pageerror',error=>errors.push(error.message));
   assert.equal((await page.goto(origin+'/pricing')).status(),200);
   const chart=page.locator('#compare-agent-plans'),full=chart.locator('[data-full-comparison]');
