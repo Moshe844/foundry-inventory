@@ -11,6 +11,8 @@ test('direct upload is tenant scoped, idempotent, requires approval and keeps st
  const transport={async upload(row){signed=row;return {url:'https://s3.invalid',fields:{}};},async inspect(){return 'source-version-1';},async read(row){assert.equal(row.version_id,'source-version-1');reads++;return bytes;}};
  const input={filename:'coffee.csv',bytes:bytes.length,sha256:sourceHash,requestKey:'aws-upload-fixture'};
  const first=await direct.prepare(db,ctx,input,{transport});
+ const registrations=(await db.query("SELECT relation::text FROM commercial_storage_tables WHERE relation=ANY(ARRAY['import_external_uploads'::regclass,'stockchief_runtime.import_transport_outbox'::regclass])")).rows;
+ assert.equal(registrations.length,2,'Upload and queue metadata must use the authoritative plan storage allowance');
  assert.equal((await direct.prepare(db,ctx,input,{transport})).id,first.id);
  assert.equal(signed.workspace_id,ctx.workspaceId);
  await assert.rejects(direct.prepare(db,ctx,{...input,sha256:'a'.repeat(64)},{transport}),/different file/);
