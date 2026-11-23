@@ -131,7 +131,7 @@ test('customer Xero Starter rollout: real consent on every plan, global capacity
    for(const a of accounts)await accounting.mapAccount(db,o.ctx,id,{accountId:a.id,externalId:a.system_key==='CASH'?'xero-clearing':'xero-expense'});
    const matched=await accounting.shadow(db,o.ctx,id,adapter,grant,{asOf:today});assert.equal(matched.status,'MATCHED');
    await accounting.enableWrites(db,o.ctx,id);
-   const journal=await ledger.post(db,o.ctx,{postingDate:today,sourceKey:'customer-write-'+id,description:'Individually reviewed test journal',sourceType:'manual_certification',createdByType:'USER',lines:[{accountKey:'OPERATING_EXPENSE',debitMinor:1},{accountKey:'CASH',creditMinor:1}]});
+   const {entry:journal}=await ledger.post(db,o.ctx,{postingDate:today,sourceKey:'customer-write-'+id,description:'Individually reviewed test journal',sourceType:'manual_certification',createdByType:'USER',lines:[{accountKey:'OPERATING_EXPENSE',debitMinor:1},{accountKey:'CASH',creditMinor:1}]});
    await assert.rejects(accounting.queuePending(db,o.ctx,id,{entryIds:[journal.id]},{agentRequested:true}),/first 14 days/);
    const queued=await accounting.queuePending(db,o.ctx,id,{entryIds:[journal.id]});assert.equal(queued.queued,1);
    const count=journalPosts,run=require('../../src/operations/postgres-runtime-handlers').create()['provider.effect'];
