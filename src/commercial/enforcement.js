@@ -32,12 +32,13 @@ function middleware(database){return async(req,res,next)=>{try{
 function contextMiddleware(database){return (req,res,next)=>require('./context').run({database,
  scope:req.ctx?{accountId:req.workspace.owner_account_id,workspaceId:req.ctx.workspaceId}:req.account?{accountId:req.account.id}:null,
  requestId:require('../lib/util').newId('request')},next);}
-async function workspace(database,workspaceId,capability){const scope=await entitlements.ownerScopeForWorkspace(database,workspaceId);
- return entitlements.assertCapability(database,scope,capability);}
+async function workspace(database,workspaceId,capability,options={}){const scope=await entitlements.ownerScopeForWorkspace(database,workspaceId);
+ return entitlements.assertCapability(database,scope,capability,options);}
 function guardExports(exports,databasePosition,scopePosition,rules){
- for(const [name,capability] of Object.entries(rules)){const original=exports[name];if(!original)throw new Error(`Missing enforced service operation: ${name}`);
+ for(const [name,rule] of Object.entries(rules)){const capability=typeof rule==='string'?rule:rule.capability;const original=exports[name];if(!original)throw new Error(`Missing enforced service operation: ${name}`);
   exports[name]=async function(...args){const value=args[scopePosition];const workspaceId=typeof value==='string'?value:value?.workspaceId||value?.workspace_id;
-   await workspace(args[databasePosition],workspaceId,capability);
+   const providerType=rule.connectionPosition===undefined?undefined:(await args[databasePosition].query('SELECT provider_type FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',[workspaceId,args[rule.connectionPosition]])).rows[0]?.provider_type;
+   await workspace(args[databasePosition],workspaceId,capability,{providerType});
    const scope=await entitlements.ownerScopeForWorkspace(args[databasePosition],workspaceId);
    return require('./context').run({...require('./context').current(),database:args[databasePosition],scope,
     requestId:require('./context').current()?.requestId||require('../lib/util').newId('operation')},()=>original(...args));};}

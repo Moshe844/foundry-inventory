@@ -33,7 +33,7 @@ async function begin(database,workspaceId,input){const scope=await entitlements.
  const category=require('./usage-operation-contract').category(input.operation),sub=await entitlements.subscriptionFor(database,scope.accountId);
  input.category=category==='api_requests'&&!sub?.plan_configuration?.offerId?'api_events':category;
  if(input.category==='emails_sent'&&!await require('./email-allowance').applies(database,scope))input.category=null;
- await entitlements.assertCapability(database,scope,input.capability);
+ await entitlements.assertCapability(database,scope,input.capability,{providerType:input.provider});
  if(input.category==='api_requests')await require('./api-resources').admitMinute(database,scope);
  if(!input.category)return {scope,input,unmetered:true};
  const reservation=await entitlements.reserveUsage(database,scope,{id:newId('usage'),meter:input.category,

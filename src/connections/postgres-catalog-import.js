@@ -70,7 +70,7 @@ async function mutate(database,ctx,connectorId,input,operation,recordScope=null)
       (input.includeOpening===true&&currentPolicy.autoImportOpeningStock!==true)))
     throw new ValidationError('Automatic import authority changed. Review the current connection settings before continuing.');
   const accounting=require('./providers/registry').get(state.connection.provider_type)?.integrationClass==='accounting';
-  await require('../commercial/enforcement').workspace(client,ctx.workspaceId,accounting?'connections.accounting':'connections.commerce');
+  await require('../commercial/enforcement').workspace(client,ctx.workspaceId,accounting?'connections.accounting':'connections.commerce',{providerType:state.connection.provider_type});
   if(input.revision&&input.revision!==state.revision)throw new ValidationError('The provider catalogue or its matches changed. Review the current records before confirming.');
   const result=await operation(client,state);
   const remaining=(await client.query("SELECT 1 FROM connection_external_records WHERE workspace_id=$1 AND connector_id=$2 AND selected=1 AND mapping_status='UNMAPPED' LIMIT 1",[ctx.workspaceId,connectorId])).rows.length;
@@ -207,7 +207,7 @@ for(const name of ['mapExternal','createLocation','importProducts','ignore']){
  module.exports[name]=async(database,ctx,connectorId,...args)=>{
   const connection=await require('./postgres-service').get(database,ctx.workspaceId,connectorId);
   const capability=require('./providers/registry').get(connection.provider_type)?.integrationClass==='accounting'?'connections.accounting':'connections.commerce';
-  await require('../commercial/enforcement').workspace(database,ctx.workspaceId,capability);
+  await require('../commercial/enforcement').workspace(database,ctx.workspaceId,capability,{providerType:connection.provider_type});
   const scope=await require('../commercial/entitlements').ownerScopeForWorkspace(database,ctx.workspaceId),context=require('../commercial/context');
   return context.run({...context.current(),database,scope,requestId:context.current()?.requestId||newId('operation')},()=>original(database,ctx,connectorId,...args));
  };

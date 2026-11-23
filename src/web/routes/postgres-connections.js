@@ -48,7 +48,7 @@ function createPostgresConnectionsRouter(database,options={}){
       quickbooks:'connection.accounting',xero:'connection.accounting',stripe:'payments.customer'}[type]
       ||(registry.get(type)?.metadata?.().category?require('../presentation/connections').access({type,...registry.get(type).metadata()}).commercial:null);
     if(!capability)return true;
-    const state=await entitlements.capabilityState(database,commercialScope(req),capability);
+    const state=await entitlements.capabilityState(database,commercialScope(req),capability,{providerType:type});
     if(state.enabled)return true;
     if(req.query.popup==='1'||req.body?.popup==='1'){
       oauthReturnPage(res,{connected:false,providerName:registry.get(type)?.metadata()?.name||'Connection',workspaceId:req.ctx.workspaceId,
@@ -57,6 +57,10 @@ function createPostgresConnectionsRouter(database,options={}){
     res.redirect(303,`/upgrade?capability=${encodeURIComponent(capability)}&return=${encodeURIComponent('/settings/connections')}`);return false;
   }
 
+  async function assertAccountingAccess(req){
+    const connection=await connections.get(database,req.ctx.workspaceId,req.params.id);
+    return entitlements.assertCapability(database,commercialScope(req),'connection.accounting',{providerType:connection.provider_type});
+  }
   async function renderConnections(req,res,apiToken=null,webhookSecret=null){
     const inventorySetup=req.query.setup==='inventory';
     const providerContext=await require('../../connections/launch-policy').resolveWorkspaceContext(database,req.ctx);
@@ -74,6 +78,8 @@ function createPostgresConnectionsRouter(database,options={}){
       paymentConnect.describe(database,req.ctx.workspaceId),shippingAccounts.describe(database,req.ctx.workspaceId),
       entitlements.capabilityStates(database,commercialScope(req),connectionCapabilities.map(([,key])=>key)),entitlements.meterState(database,commercialScope(req),'connections'),
     ]);
+    const xeroCustomerAccess=await entitlements.capabilityState(database,commercialScope(req),'connections.accounting',{providerType:'xero'});
+    const xeroAvailability=await require('../../connections/xero-customer-rollout').availability(database);
     const mailPreparationStates=Object.fromEntries(await Promise.all(connectionRows.filter(c=>['gmail','microsoft365'].includes(c.provider_type)&&c.status!=='disconnected').map(async c=>[c.id,await require('../../connections/postgres-mail-preparation').state(database,req.ctx,c.id,{providerConfigured:Boolean(options.draftProviderConfigured)})])));
     const developerAccounts=req.query.section==='developers'&&process.env.STOCKCHIEF_RUNTIME_ENV==='staging'&&Boolean((await database.query('SELECT 1 FROM developer_account_administrators WHERE account_id=$1',[req.account?.id])).rows.length);
     // ?only=payments shows just the payment gateways, for links from an order.
@@ -81,7 +87,7 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.page('connections/index',{searchableSettingsSections:require('../presentation/search-pages').settingsSections,paymentsFocus,paymentsReturn,connectionCapacity,mailPreparationStates,developerAccounts,connectionSection:req.query.section==='developers'||apiToken||webhookSecret?'developers':'connections',
       connectionRuntime,title:paymentsFocus?'Payment gateways':inventorySetup?'Connect a platform':'Connections',nav:'connections',room:true,backTo:paymentsFocus&&paymentsReturn?{href:paymentsReturn,label:'the order'}:inventorySetup?{href:'/onboarding',label:'Inventory setup'}:{href:'/settings',label:'Settings'},launchTicket,
       postgresMode:true,inventorySetup,connections:connectionRows.filter(c=>require('../presentation/connections').availableForCustomer(registry.get(c.provider_type)?.metadata?.()||{},connectionRuntime)&&(!inventorySetup||providerCatalog.some(p=>p.type===c.provider_type))),
-      providerCatalog,
+      providerCatalog,providerCommercialCapabilities:{xero:xeroCustomerAccess.enabled},xeroAvailability,
       apiToken,apiClients:clients,
       agentApiAvailable:await require('../../connections/agent-review-api').available(database,req.ctx.workspaceId),
       // Preserve existing merchant account details, but do not advertise new
@@ -345,7 +351,7 @@ function createPostgresConnectionsRouter(database,options={}){
       if(!current&&connection.config?.verifiedFact){await accountingSync.initialize(database,connection,req.ctx.actorId,
         connection.config.verifiedFact);current=await accountingSync.state(database,req.ctx.workspaceId,connection.id);}
       connection.accounting=current;
-      if(current&&adapter.listPostingParties){const missingTypes=[...new Set(current.pendingEntries
+      if(current?.policy.requested_authority==='POST'&&adapter.listPostingParties){const missingTypes=[...new Set(current.pendingEntries
         .flatMap((entry)=>entry.missingParties).flatMap((line)=>[
           line.customer_id&&!line.external_customer_id?'customer':null,
           line.supplier_id&&!line.external_supplier_id?'supplier':null]).filter(Boolean))];
@@ -465,7 +471,7 @@ function createPostgresConnectionsRouter(database,options={}){
       .state(database,req.ctx.workspaceId,req.params.id,{providers:registry}));
   }));
   router.post('/settings/connections/:id/accounting/authority',requireOwner,asyncRoute(async(req,res)=>{
-    await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');
+    await assertAccountingAccess(req);
     await accountingSync.chooseAuthority(database,req.ctx,req.params.id,req.body.authority);
     req.flash('success',req.body.authority==='POST'
       ?'Posting requested. Exact account mapping and a matching shadow comparison are still required.'
@@ -473,13 +479,13 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.redirect(303,`/settings/connections/${req.params.id}`);
   }));
   router.post('/settings/connections/:id/accounting/map-account',requireOwner,asyncRoute(async(req,res)=>{
-    await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');
+    await assertAccountingAccess(req);
     await accountingSync.mapAccount(database,req.ctx,req.params.id,req.body);
     req.flash('success','Exact posting account mapping saved. No journal was exported.');
     return res.redirect(303,`/settings/connections/${req.params.id}`);
   }));
   router.post('/settings/connections/:id/accounting/map-party',requireOwner,asyncRoute(async(req,res)=>{
-    await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');
+    await assertAccountingAccess(req);
     const connection=await connections.get(database,req.ctx.workspaceId,req.params.id);
     const adapter=registry.get(connection.provider_type);const partyType=String(req.body.partyType||'').toLowerCase();
     if(!adapter?.listPostingParties)throw new Error('This accounting provider does not require posting-party mappings.');
@@ -493,7 +499,7 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.redirect(303,`/settings/connections/${req.params.id}`);
   }));
   router.post('/settings/connections/:id/accounting/shadow',requireOwner,asyncRoute(async(req,res)=>{
-    await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');
+    await assertAccountingAccess(req);
     const connection=await connections.get(database,req.ctx.workspaceId,req.params.id);
     const adapter=registry.get(connection.provider_type);
     const providerCredentials=await providerService.loadProviderCredentials(database,connection,adapter);
@@ -504,20 +510,20 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.redirect(303,`/settings/connections/${req.params.id}`);
   }));
   router.post('/settings/connections/:id/accounting/enable',requireOwner,asyncRoute(async(req,res)=>{
-    await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');
+    await assertAccountingAccess(req);
     await accountingSync.enableWrites(database,req.ctx,req.params.id);
     req.flash('success','Governed journal posting enabled for this inventory and this provider account.');
     return res.redirect(303,`/settings/connections/${req.params.id}`);
   }));
   router.post('/settings/connections/:id/accounting/import-opening',requireOwner,asyncRoute(async(req,res)=>{
-    await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');
+    await assertAccountingAccess(req);
     const result=await accountingSync.importOpeningBooks(database,req.ctx,req.params.id,{runId:req.body.runId,scopeHash:req.body.scopeHash});
     req.flash('success',result.replayed?'These starting balances were already recorded. No duplicate entry was created.':
       'The approved starting balances are recorded in StockChief. QuickBooks was not changed. Posting remains disabled; run a fresh comparison.');
     return res.redirect(303,`/settings/connections/${req.params.id}`);
   }));
   router.post('/settings/connections/:id/accounting/export',requireOwner,asyncRoute(async(req,res)=>{
-    await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');
+    await assertAccountingAccess(req);
     const result=await accountingSync.queuePending(database,req.ctx,req.params.id,{});
     req.flash('success',result.queued
       ?`${result.queued} journal export${result.queued===1?'':'s'} queued. The worker—not this browser—will call the provider.`

@@ -77,12 +77,12 @@ function pilotAllowed(providerType,ctx={}){
  return approved&&configured('STOCKCHIEF_STAGING_CONNECTION_PROVIDERS').includes(type)&&['shopify','clover','quickbooks','xero','microsoft365','bigcommerce'].includes(type);
 }
 function reviewAllowed(ctx){const grant=ctx?.[shopifyReview];return grant?.workspaceId===ctx?.workspaceId&&grant?.appId===publicAppId()&&grant?.clientId===process.env.SHOPIFY_PUBLIC_CLIENT_ID;}
-function reason(providerType,ctx){const type=String(providerType||'').toLowerCase();return type==='shopify'&&(publicShopifyEnabled()||reviewAllowed(ctx))?null:pilotAllowed(type,ctx)?null:EXCLUDED[type]||null;}
+function reason(providerType,ctx){const type=String(providerType||'').toLowerCase();return type==='xero'&&require('./xero-customer-rollout').enabled()?null:type==='shopify'&&(publicShopifyEnabled()||reviewAllowed(ctx))?null:pilotAllowed(type,ctx)?null:EXCLUDED[type]||null;}
 function assertNewConnection(providerType,ctx){const denied=reason(providerType,ctx);
  if(denied)throw new ValidationError(denied);}
 function assertCallbackProvider(providerType){
  // Pilot callbacks resolve and recheck the inventory from stored OAuth state.
- if(process.env.STOCKCHIEF_RUNTIME_ENV==='staging'||(providerType==='microsoft365'&&productionOutlookWorkspaces().length)||
+ if(process.env.STOCKCHIEF_RUNTIME_ENV==='staging'||(providerType==='xero'&&require('./xero-customer-rollout').enabled())||(providerType==='microsoft365'&&productionOutlookWorkspaces().length)||
   require('./accounting-review-pilot').workspaces(providerType).length||
   (providerType==='clover'&&Object.keys(require('./clover-review-pilot').pilots()).length)||
   (providerType==='shopify'&&(Object.keys(productionShopifyPilots()).length||publicShopifyEnabled())))return;

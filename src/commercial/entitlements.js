@@ -114,10 +114,14 @@ async function capabilityStates(database,scope,capabilities,options={}){
       WHERE version.id=$1 AND entry->>'capability'=ANY($2::text[])`,[subscription.plan_version_id,keys])).rows
     :(await database.query('SELECT capability,enabled,configuration FROM commercial_plan_entitlements WHERE plan_id=$1 AND capability=ANY($2::text[])',
       [subscription.plan_id,keys])).rows);
+  const xero=require('../connections/xero-customer-rollout');
+  const xeroRead=options.providerType==='xero'&&access.canOperate&&await xero.permitsCapability(database,scope,subscription,'connections.accounting');
   return new Map(keys.map(capability=>{const definition=definitions.get(capability),override=overrides.find(row=>row.capability===capability),row=rows.find(row=>row.capability===capability);
-    return [capability,override?{capability,definition,enabled:definition.readiness!=='DISABLED'&&Boolean(Number(override.enabled)),
+    const state=override?{capability,definition,enabled:definition.readiness!=='DISABLED'&&Boolean(Number(override.enabled)),
       source:'override',override,subscription,access}:{capability,definition,enabled:definition.readiness!=='DISABLED'&&Boolean(row&&Number(row.enabled)),
-      configuration:row?.configuration||{},source:'plan',subscription,access}];}));
+      configuration:row?.configuration||{},source:'plan',subscription,access};
+    if(xeroRead&&!override&&xero.READ_CAPABILITIES.has(capability)&&definition.readiness!=='DISABLED')Object.assign(state,{enabled:true,source:'xero_starter_customer'});
+    return [capability,state];}));
 }
 
 async function assertCapability(database, scope, capability, options = {}) {

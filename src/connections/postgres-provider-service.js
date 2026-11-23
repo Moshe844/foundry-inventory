@@ -12,6 +12,7 @@ const jobs=require('../operations/postgres-job-queue');
 const entitlements=require('../entitlements/postgres-service');
 const commercial=require('../commercial/service');
 const intents=require('./authorization-intent');
+const xeroCustomers=require('./xero-customer-rollout');
 
 const stateHash=(value)=>crypto.createHash('sha256').update(String(value)).digest('hex');
 const parseJson=(value)=>connections.parseJson(value,{});
@@ -26,7 +27,9 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
   const meta=adapter.metadata({oauthOnly:true});
   const commercialScope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
   await entitlements.assertCapability(database,commercialScope,['gmail','microsoft365'].includes(providerType)?'communications.email_ingestion':
-    adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce');
+    adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce',{providerType});
+  if(providerType==='xero'&&xeroCustomers.enabled()&&!launchPolicy.pilotAllowed('xero',ctx)&&String(input.requestedAuthority||'').toUpperCase()==='POST')
+    throw new ValidationError('Xero customer connections are read-only. No posting access was requested.');
   if(!meta.available)throw new ValidationError(meta.unavailableReason||`${meta.name} is not configured.`);
   if(adapter.validateInput)adapter.validateInput(input);
   const pending=intents.draft(ctx.workspaceId,ctx.actorId,providerType,{name:input.displayName||meta.name,
@@ -43,10 +46,12 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
       if(active.some(row=>row.workspace_id!==ctx.workspaceId))throw new AuthorizationError('This Shopify store is already connected to a different inventory. Its working connection has been preserved.');
       connectorId=active[0]?.id||null;
     }
+    let existingConnection=null;
     if(connectorId){
-      const existing=await client.query(`SELECT id FROM workspace_connectors
+      const existing=await client.query(`SELECT * FROM workspace_connectors
         WHERE workspace_id=$1 AND id=$2 AND provider_type=$3`,[ctx.workspaceId,connectorId,providerType]);
       if(!existing.rows.length)throw new NotFoundError('Connection not found.');
+      existingConnection=existing.rows[0];
     }else{
       const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
       await entitlements.assertMeterCapacity(client,commercialScope,'connections',1);
@@ -58,6 +63,7 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
       const saved=(await client.query('SELECT config FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,connectorId])).rows[0];
       shopifyProfile=parseJson(saved.config).shopifyProfile||'legacy';
     }
+    const xeroSlot=providerType==='xero'?await xeroCustomers.reserve(client,existingConnection||pending):{};
     auth=adapter.authorizationUrl({state,input:{...input,
       ...(providerType==='clover'&&registry===defaultProviders&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'
         ?{cloverTestMerchantId:require('./clover-review-pilot').expected(ctx.workspaceId,input),
@@ -69,8 +75,8 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
     await client.query(`INSERT INTO connection_authorization_states
       (id,state_hash,workspace_id,connector_id,provider_type,actor_id,metadata,expires_at,created_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[newId('cauth'),stateHash(state),ctx.workspaceId,connectorId,
-      providerType,ctx.actorId,JSON.stringify({...auth.metadata,returnOrigin:requestOrigin,
-        popup:String(input.popup||'')==='1',...(!connectorId?{pendingConnection:pending}:{})}),new Date(Date.parse(now)+intents.TTL_MS).toISOString(),now]);
+      providerType,ctx.actorId,JSON.stringify({...auth.metadata,...xeroSlot,returnOrigin:requestOrigin,
+        popup:String(input.popup||'')==='1',...(!connectorId?{pendingConnection:pending}:{})}),new Date(Date.parse(now)+(xeroSlot.xeroStarterClientId?xeroCustomers.HOLD_MS:intents.TTL_MS)).toISOString(),now]);
   },{isolation:'SERIALIZABLE',retrySafe:true});
   return {connectorId,redirectUrl:auth.url,...(adapter.oauthSessionBound?{authorizationState:state}:{})};
 }
@@ -101,12 +107,14 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
   return database.transaction(async(client)=>{
     const authorizer=(await client.query("SELECT role FROM users WHERE workspace_id=$1 AND id=$2 AND revoked_at IS NULL FOR UPDATE",[connection.workspace_id,actorId])).rows[0];
     if(authorizer?.role!=='owner')throw new AuthenticationError('The owner who started this connection no longer has permission to authorize it. Start again with a current owner.');
-    let accountingPilotEvidence=null;
+    let accountingPilotEvidence=null,xeroCustomerEvidence=null;
     if(options.enforceLaunchPolicy&&['xero','quickbooks'].includes(connection.provider_type)&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'){
       // Recheck after provider traffic: a revoked inventory grant must not
       // commit credentials even if it was valid when consent began.
       await launchPolicy.assertWorkspaceConnection(client,connection.provider_type,{workspaceId:connection.workspace_id});
-      accountingPilotEvidence=require('./accounting-review-pilot').evidence(connection,actorId,result);
+      if(connection.provider_type==='xero'&&!launchPolicy.pilotAllowed('xero',{workspaceId:connection.workspace_id}))
+        xeroCustomerEvidence=xeroCustomers.evidence(connection,actorId,result);
+      else accountingPilotEvidence=require('./accounting-review-pilot').evidence(connection,actorId,result);
     }
     if(options.enforceLaunchPolicy&&connection.provider_type==='shopify'){
       if(result.credentials?.shop!==result.accountId)throw new AuthenticationError('The Shopify credential does not match the approved store.');
@@ -122,7 +130,8 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
     }
     const scope=await entitlements.ownerScopeForWorkspace(client,connection.workspace_id);
     await entitlements.assertCapability(client,scope,['gmail','microsoft365'].includes(connection.provider_type)?'communications.email_ingestion':
-      ['quickbooks','xero'].includes(connection.provider_type)?'connections.accounting':'connections.commerce');
+      ['quickbooks','xero'].includes(connection.provider_type)?'connections.accounting':'connections.commerce',{providerType:connection.provider_type});
+    if(connection.provider_type==='xero')await xeroCustomers.admit(client,connection,result,authorizationStateId);
     let target=connection;
     if(result.accountId){
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
@@ -162,6 +171,7 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
     await credentials.put(client,target.workspace_id,target.id,'provider',providerCredentials,result.expiresAt||null);
     const safeConfig={...currentConfig};
     if(accountingPilotEvidence)safeConfig.accountingPilotEvidence=accountingPilotEvidence;
+    if(xeroCustomerEvidence){safeConfig.xeroCustomerEvidence=xeroCustomerEvidence;delete safeConfig.accountingPilotEvidence;}
     if(connection.provider_type==='clover'&&result.credentials?.environment==='production'&&
       (result.credentials?.isBillable===false||result.credentials?.providerBillingFieldsOmitted===true))
       safeConfig.cloverTestEvidence=require('./clover-review-pilot').evidence(result,connection.workspace_id,actorId);
@@ -270,10 +280,10 @@ async function completeOAuthLocked(database,providerType,query,requestOrigin,opt
   if(!adapter)throw new NotFoundError('Provider not found.');
   if(registry===defaultProviders)launchPolicy.assertCallbackProvider(providerType);
   const state=await readState(database,query.state,providerType,{consume:true});
-  if(registry===defaultProviders)await launchPolicy.assertWorkspaceConnection(database,providerType,{workspaceId:state.workspace_id},state.metadata);
-  const connection=await intents.connectionForState(database,state);
   let authorized=false;
   try{
+    if(registry===defaultProviders)await launchPolicy.assertWorkspaceConnection(database,providerType,{workspaceId:state.workspace_id},state.metadata);
+    const connection=await intents.connectionForState(database,state);
     const result=await require('../commercial/operations').run(database,connection.workspace_id,{capability:
       ['gmail','microsoft365'].includes(providerType)?'communications.email_ingestion':adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce',
       key:`oauth:${state.id}`,provider:providerType,operation:'authorization_exchange'},()=>adapter.exchangeAuthorization({query,
@@ -299,6 +309,7 @@ async function completeOAuthLocked(database,providerType,query,requestOrigin,opt
     // Denied or abandoned replacement consent never destroys a working grant.
     // Post-authorization setup has its own durable jobs/issues and may retry.
     if(!authorized){
+      if(providerType==='xero')await xeroCustomers.release(database,state.id);
       const verification=providerType==='clover'&&error.details?.kind==='clover_billing_verification'?error.details:null;
       await database.query(`UPDATE connection_authorization_states
         SET metadata=(metadata::jsonb||$2::jsonb)::text WHERE id=$1`,[state.id,JSON.stringify({authorizationFailed:true,
