@@ -111,6 +111,8 @@ function createPostgresAuthRouter(database,options={}) {
     catch(error){if(error.status&&error.status<500){pending.remember=remember;return codePage(req,res,{status:error.status,flash:[{type:'error',message:error.message}],pending});}throw error;}
     const account=await auth.getAccount(database,pending.accountId);
     if(!account)return signInExpired(req,res);
+    // The same access check as a password sign-in: refused if StockChief disabled the account meanwhile.
+    account.platform_access_revision=await require('../../domain/postgres-account-access').sessionRevision(database,account.id);
     if(remember){
       const token=await signInCodes.remember(database,account.id,{days:remember,browser:req.get('user-agent')});
       res.cookie(signInCodes.DEVICE_COOKIE,signInCodes.deviceCookie(signInCodes.deviceTokens(req),token),{httpOnly:true,sameSite:'lax',

@@ -138,6 +138,22 @@ test('password sign-in asks for an emailed code unless this browser was remember
     try{await browser.get('/login/code').expect(303).expect('location','/login');}finally{Date.now=realNow;}
     const login=await browser.get('/login').expect(200);assert.match(login.text,/That sign-in took too long\. Sign in again\./);
   });
+
+  await t.test('an account disabled while its code is pending cannot finish signing in',async()=>{
+    await f.db.query("UPDATE sign_in_codes SET created_at=created_at-interval '20 minutes' WHERE account_id=$1",[f.owner.accountId]);
+    const browser=request.agent(app);
+    await signIn(browser).expect(303).expect('location','/login/code');
+    const page=await browser.get('/login/code');
+    await f.db.query(`INSERT INTO platform_account_access(account_id,disabled_at,reason,changed_by) VALUES($1,now(),'Sign-in code test',$1)
+      ON CONFLICT(account_id) DO UPDATE SET disabled_at=now(),revision=platform_account_access.revision+1`,[f.owner.accountId]);
+    try{
+      const refused=await browser.post('/login/code').type('form').send({_csrf:csrf(page.text),code:await latestCode()});
+      // The app's error handling turns the refusal into a redirect home, as for a disabled account's password sign-in.
+      assert.equal(refused.status,303);assert.equal(refused.headers.location,'/');
+      assert.equal(deviceCookie(refused),undefined);
+      assert.equal(await signedIn(browser),false);
+    }finally{await f.db.query('UPDATE platform_account_access SET disabled_at=NULL,revision=revision+1 WHERE account_id=$1',[f.owner.accountId]);}
+  });
 });
 
 test('sign-in codes stay off where the app cannot email them',()=>{
