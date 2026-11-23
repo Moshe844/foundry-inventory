@@ -58,15 +58,18 @@ async function progress(client,ctx,plan,{complete=false}={}){
  if(planned!==plan.recordsValid||complete&&result.rows!==plan.recordsValid)throw invalid();return result;
 }
 async function execute(database,ctx,plan,executionId,{deps,inputOptions,applyChunk,save,onProgress}){
- let nextLane=0,failure=null;
+ const pendingLanes=[0,1,2,3];let failure=null;
  // Once an import has durable lanes, turning concurrency off still resumes
  // the same frozen order with one session. Never switch its receipt format.
  const count=Math.min(Math.max(1,workers()),Math.max(1,Number(database.sharedSessionCapacity||2)-1));let delivery=Promise.resolve();
  const deliver=checkpoint=>{const task=delivery.then(()=>onProgress(checkpoint));delivery=task.catch(()=>{});return task;};
  await database.shareLock();
  const work=async session=>{
-  while(!failure){const lane=nextLane++;if(lane>=4)return;
-   for(;;){if(failure)return;
+  // Commit one batch per turn. Holding a session until an entire lane drains
+  // leaves the fourth lane waiting behind three long-running lanes and then
+  // runs the final quarter of the file on one session. Rotating independent
+  // lanes preserves each saved cursor and keeps three sessions useful.
+  while(!failure){const lane=pendingLanes.shift();if(lane===undefined)return;
     try{const outcome=await session.transaction(async client=>{
      const savedLane=(await client.query('SELECT * FROM import_execution_lanes WHERE workspace_id=$1 AND import_id=$2 AND lane=$3 FOR UPDATE',[ctx.workspaceId,plan.id,lane])).rows[0];
      if(!savedLane||savedLane.approval_hash!==plan.integrityHash)throw invalid();if(savedLane.complete)return {done:true};
@@ -96,9 +99,9 @@ async function execute(database,ctx,plan,executionId,{deps,inputOptions,applyChu
      await client.query('UPDATE import_executions SET items_created=$3,skus_created=$4,rows_imported=$5,units_established=$6,stage=$7 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,executionId,next.itemsCreated,next.skusCreated,next.savedRows,next.units,'processing']);
      await inputOptions.beforeBatchCommit?.();return {checkpoint:next,done:savedRows===Number(savedLane.planned_rows)};
     },{isolation:'READ COMMITTED',retrySafe:true});
-    if(outcome.checkpoint)await deliver(outcome.checkpoint);if(outcome.done)break;
+    if(!outcome.done)pendingLanes.push(lane);
+    if(outcome.checkpoint)await deliver(outcome.checkpoint);
     }catch(error){failure ||=error;return;}
-   }
   }
  };
  // The coordinator also owns a lane. Leave a pool slot for lease fencing;

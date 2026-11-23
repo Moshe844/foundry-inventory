@@ -26,5 +26,10 @@ for rule in s3_bucket_level_public_access_prohibited s3_bucket_server_side_encry
     "https://raw.githubusercontent.com/aws-cloudformation/aws-guard-rules-registry/$registry/rules/aws/amazon_s3/$rule.guard" \
     -o "$scratch/rules/$rule.guard"
 done
-"$guard" validate --rules "$scratch/rules" --data infra/aws-imports/template.json --output-format json > "$output/guard.json"
-cat "$output/guard.json"
+status=0
+for name in aws-imports aws-database; do
+  report="$output/$name-guard.json"
+  if ! "$guard" validate --rules "$scratch/rules" --data "infra/$name/template.json" --output-format json > "$report"; then status=1; fi
+  cat "$report"
+done
+exit "$status"

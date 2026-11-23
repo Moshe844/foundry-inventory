@@ -9,6 +9,7 @@ on:
       - 'src/postgres-worker-server.js'
       - 'src/web/**'
       - 'infra/aws-imports/**'
+      - 'infra/aws-database/**'
       - 'tests/**'
       - 'package*.json'
       - '.github/workflows/aws-imports.yml'
@@ -43,15 +44,20 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci
-      - run: node infra/aws-imports/build-template.js && git diff --exit-code -- infra/aws-imports/template.json
-      - run: pipx run --spec cfn-lint==1.61.0 cfn-lint infra/aws-imports/template.json
+      - run: |
+          node infra/aws-imports/build-template.js
+          node infra/aws-database/build-template.js
+          git diff --exit-code -- infra/aws-imports/template.json infra/aws-database/template.json
+      - run: |
+          pipx run --spec cfn-lint==1.61.0 cfn-lint infra/aws-imports/template.json
+          pipx run --spec cfn-lint==1.61.0 cfn-lint infra/aws-database/template.json
       - name: Install disposable PostgreSQL
         run: |
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get update
           sudo apt-get install -y postgresql-17
       - name: AWS boundaries, tenant isolation, queue recovery and COPY integrity
-        run: node --test tests/unit/aws-import-transport.test.js tests/unit/aws-import-infrastructure.test.js tests/unit/import-copy-rows.test.js tests/postgres/aws-direct-import.test.js tests/postgres/import-copy-rows.test.js tests/postgres/import-benchmark-diagnostics.test.js tests/postgres/import-mixed-stock-lanes.test.js tests/postgres/source-upload-stock-mode.test.js
+        run: node --test tests/unit/aws-import-transport.test.js tests/unit/aws-import-infrastructure.test.js tests/unit/aws-database-infrastructure.test.js tests/unit/import-copy-rows.test.js tests/postgres/aws-direct-import.test.js tests/postgres/import-copy-rows.test.js tests/postgres/import-benchmark-diagnostics.test.js tests/postgres/import-mixed-stock-lanes.test.js tests/postgres/source-upload-stock-mode.test.js
       - name: Production-only import container
         run: |
           docker build -f infra/aws-imports/Dockerfile -t stockchief-import-worker:test .

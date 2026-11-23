@@ -8,7 +8,7 @@ async function run(mode){
  const child=spawn(process.execPath,['--max-old-space-size=1536','--test','--test-concurrency=1','tests/certification/import-copy-comparison.test.js'],{
   cwd:root,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...process.env,NODE_ENV:'test',FOUNDRY_SKIP_LOCAL_ENV:'1',
    STOCKCHIEF_COPY_BENCHMARK:'1',STOCKCHIEF_IMPORT_PROFILE:'1',STOCKCHIEF_IMPORT_COPY:mode==='copy'?'true':'false',
-   STOCKCHIEF_COPY_BENCHMARK_OUTPUT:directory,FOUNDRY_IMPORT_STOCK_WORKERS:mode==='copy'?'2':'0'},
+   STOCKCHIEF_COPY_BENCHMARK_OUTPUT:directory,FOUNDRY_IMPORT_STOCK_WORKERS:mode==='copy'?'3':'0'},
  });
  let pending='',result;
  const consume=chunk=>{
