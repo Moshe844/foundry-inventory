@@ -19,11 +19,20 @@ function encodeCursor(row){
   return Buffer.from(JSON.stringify({skuId:row.skuId,locationId:row.locationId})).toString('base64url');
 }
 
-function limit(value){return Math.min(500,Math.max(1,Number(value)||200));}
+function limit(value){
+  if(value===undefined||value==='')return 200;
+  const text=typeof value==='string'?value.trim():typeof value==='number'?String(value):'';
+  const number=Number(text);
+  // LIMIT is an integer in PostgreSQL. Reject fractional, repeated and shaped
+  // query values before the database sees them; retain the documented cap.
+  if(!/^\d+$/.test(text)||!Number.isSafeInteger(number)||number<1)
+    throw new DomainError('Choose a whole number from 1 to 500 for the page size.',{code:'invalid_page_size',status:400});
+  return Math.min(500,number);
+}
 
 function apiError(res,error){
   if(!(error instanceof DomainError))console.error('[postgres-public-api] unexpected error',error);
-  return res.status(error instanceof DomainError?error.status:500).json({error:{code:error.code||'error',
+  return res.status(error instanceof DomainError?error.status:500).json({error:{code:error instanceof DomainError?error.code:'internal_error',
     message:error instanceof DomainError?error.message:'The API request could not be completed.'}});
 }
 
