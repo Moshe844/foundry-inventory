@@ -8,7 +8,7 @@ async function run(mode){
  const child=spawn(process.execPath,['--max-old-space-size=1536','--test','--test-concurrency=1','tests/certification/import-copy-comparison.test.js'],{
   cwd:root,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...process.env,NODE_ENV:'test',FOUNDRY_SKIP_LOCAL_ENV:'1',
    STOCKCHIEF_COPY_BENCHMARK:'1',STOCKCHIEF_IMPORT_PROFILE:'1',STOCKCHIEF_IMPORT_COPY:mode==='copy'?'true':'false',
-   STOCKCHIEF_COPY_BENCHMARK_OUTPUT:directory},
+   STOCKCHIEF_COPY_BENCHMARK_OUTPUT:directory,FOUNDRY_IMPORT_STOCK_WORKERS:mode==='copy'?'2':'0'},
  });
  let pending='',result;
  const consume=chunk=>{
@@ -29,7 +29,9 @@ async function main(){
  // machine prevent module warm-up or another runner from becoming the result.
  const baseline=await run('baseline'),copy=await run('copy');
  for(const key of ['catalogueSourceHash','stockSourceHash','products','skus','warehouses','openingStockRows'])assert.equal(copy[key],baseline[key],key+' must match before and after');
- assert.deepEqual(copy.actual,baseline.actual);assert.deepEqual(copy.verification,baseline.verification);
+ assert.deepEqual(copy.actual,baseline.actual);
+ for(const key of ['batchVerificationRows','finalCanonicalReconciliations','exactAtomicReceipts','paidCalls'])assert.deepEqual(copy.verification[key],baseline.verification[key],key);
+ for(const value of [baseline,copy])assert.equal(value.verification.batchReconciliations,value.verification.receiptBatches,'Every committed receipt must retain its full batch reconciliation.');
  const result={baseline,copy,stockTimeSavedMs:baseline.stockImportMs-copy.stockImportMs,
   catalogueTimeSavedMs:baseline.catalogueMs-copy.catalogueMs,stockUnder60Seconds:copy.stockImportMs<60000,
   sameMachine:true,exactSameSources:true,integrityPassed:true,hostedCertification:false};

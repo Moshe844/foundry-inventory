@@ -7,11 +7,14 @@ const hash=value=>createHash('sha256').update(value).digest('hex');
 // so stock batches never write them (applyChunk and barcodes.apply skip it).
 // Its reorder settings and category write only rows keyed by that SKU or its
 // product, and every product stays in one lane. Suppliers stay serial: two
-// lanes could otherwise create the same supplier by name.
+// lanes could otherwise create the same supplier by name. Lots are scoped to
+// a SKU and every SKU stays in its product's lane, including all locations and
+// source rows. Their ordinary receipt/expiry checks therefore remain local.
 function ordinaryStock(row){const p=row.parsed,created=!p.existingSkuId&&!p.existingItemId;
- return Boolean((p.existingSkuId&&p.existingItemId||created)&&p.trackingMode==='quantity'
+ const tracking=p.trackingMode==='quantity'?!p.lotCode&&!p.expiresAt:p.trackingMode==='lot'&&typeof p.lotCode==='string'&&p.lotCode.length>0;
+ return Boolean((p.existingSkuId&&p.existingItemId||created)&&tracking
  &&Number.isSafeInteger(p.quantity)&&p.quantity>0&&Number.isSafeInteger(p.unitCostMinor)&&p.unitCostMinor>0
- &&(p.sellingPriceMinor===null||created)&&(!p.barcode||created)&&!p.supplierName&&!p.serial&&!p.lotCode&&!p.expiresAt&&!p.catalogueUpdate
+ &&(p.sellingPriceMinor===null||created)&&(!p.barcode||created)&&!p.supplierName&&!p.serial&&!p.catalogueUpdate
  &&(created||Object.keys(p.reorder||{}).length===0&&!p.sourceFacts?.Category));}
 async function stage(client,ctx,plan,deps,onProgress){
  const existing=(await client.query('SELECT execution_identity_hash FROM import_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,plan.id])).rows[0];

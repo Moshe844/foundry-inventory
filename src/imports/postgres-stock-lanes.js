@@ -19,7 +19,7 @@ async function prepare(client,ctx,plan,saved){
  const eligibility=(await client.query(`SELECT count(*)::int rows,bool_and(parallel_stock AND execution_lane IS NOT NULL) eligible,count(DISTINCT currency)::int currencies
   FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2`,[ctx.workspaceId,plan.id])).rows[0];
  if(eligibility.rows!==plan.recordsValid||!eligibility.eligible||eligibility.currencies!==1)return saved;
- // Freeze execution only for existing ordinary stock. Recheck live metadata;
+ // Freeze execution only for ordinary or lot receipts. Recheck live metadata;
  // the protected catalogue lease prevents it changing beneath these lanes.
  // A SKU this import created is checked through its own catalogue binding.
  const unsafe=(await client.query(`SELECT EXISTS(SELECT 1 FROM
@@ -28,7 +28,7 @@ async function prepare(client,ctx,plan,saved){
    WHERE i.workspace_id=$1 AND i.import_id=$2)e
   LEFT JOIN skus s ON s.id=e.sku_id AND s.workspace_id=$1
   LEFT JOIN items i ON i.id=s.item_id AND i.workspace_id=$1
-  WHERE s.id IS NULL OR s.is_active<>1 OR i.is_active<>1 OR i.tracking_mode<>'quantity' OR i.secondary_unit_label IS NOT NULL) unsafe`,[ctx.workspaceId,plan.id])).rows[0].unsafe;
+  WHERE s.id IS NULL OR s.is_active<>1 OR i.is_active<>1 OR i.tracking_mode NOT IN('quantity','lot') OR i.secondary_unit_label IS NOT NULL) unsafe`,[ctx.workspaceId,plan.id])).rows[0].unsafe;
  if(unsafe)return saved;
  const counts=(await client.query(`SELECT execution_lane lane,count(*)::int rows FROM import_execution_identities
   WHERE workspace_id=$1 AND import_id=$2 GROUP BY execution_lane ORDER BY execution_lane`,[ctx.workspaceId,plan.id])).rows;

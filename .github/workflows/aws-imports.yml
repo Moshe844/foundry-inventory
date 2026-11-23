@@ -51,12 +51,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-17
       - name: AWS boundaries, tenant isolation, queue recovery and COPY integrity
-        run: node --test tests/unit/aws-import-transport.test.js tests/unit/aws-import-infrastructure.test.js tests/unit/import-copy-rows.test.js tests/postgres/aws-direct-import.test.js tests/postgres/import-copy-rows.test.js tests/postgres/import-benchmark-diagnostics.test.js tests/postgres/source-upload-stock-mode.test.js
+        run: node --test tests/unit/aws-import-transport.test.js tests/unit/aws-import-infrastructure.test.js tests/unit/import-copy-rows.test.js tests/postgres/aws-direct-import.test.js tests/postgres/import-copy-rows.test.js tests/postgres/import-benchmark-diagnostics.test.js tests/postgres/import-mixed-stock-lanes.test.js tests/postgres/source-upload-stock-mode.test.js
       - name: Production-only import container
         run: |
           docker build -f infra/aws-imports/Dockerfile -t stockchief-import-worker:test .
           docker run --rm --entrypoint node stockchief-import-worker:test -e 'const h=require("./src/imports/aws-worker").dedicatedHandlers(require("./src/operations/postgres-runtime-handlers").create()); if(Object.keys(h).length!==2)process.exit(1); console.log("Dedicated import handlers loaded without development dependencies");'
-      - name: Compare the exact 150000-row workload before and after COPY
+      - name: Compare the exact 150000-row workload with COPY and parallel mixed-stock lanes
         timeout-minutes: 25
         env:
           STOCKCHIEF_COPY_REQUIRE_60S: '1'

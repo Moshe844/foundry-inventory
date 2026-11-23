@@ -35,11 +35,18 @@ async function fixture(t,{onProgress=()=>{},beforeStock,afterStock,trackFunction
  const verifier=require('../../src/imports/postgres-verification'),originalVerify=verifier.totals;let verificationStage='',batchReconciliations=0,finalCanonicalReconciliations=0,stockResult;
  verifier.totals=(...args)=>{if(verificationStage==='verifying')finalCanonicalReconciliations++;else batchReconciliations++;return originalVerify(...args);};
  try{stockResult=await imports.execute(importDb,ctx,stockPlan.id,{onProgress:p=>{verificationStage=p.stage;return progress('stock-execution')(p);}});}finally{verifier.totals=originalVerify;}
- assert(stockResult.verified);assert.deepEqual(stockResult.batchReceipts,{batches:75,rows:150000,legacyFullScan:false});assert.equal(batchReconciliations,75);assert.equal(finalCanonicalReconciliations,0);
- const importBatchVerification={batchVerificationRows:150000,receiptBatches:75,batchReconciliations,finalCanonicalReconciliations,exactAtomicReceipts:true,paidCalls:0},stockImportMs=performance.now()-started;if(profiler)console.log(JSON.stringify({importQueryProfile:profiler.report()}));
+ assert(stockResult.verified);assert.equal(stockResult.batchReceipts.rows,150000);assert.equal(stockResult.batchReceipts.legacyFullScan,false);
+ const receiptBatches=stockResult.batchReceipts.batches;
+ assert.equal(batchReconciliations,receiptBatches);assert.equal(finalCanonicalReconciliations,0);
+ if(stockResult.stockLanes){assert.equal(stockResult.stockLanes,4);assert(receiptBatches>=75&&receiptBatches<=78);}else assert.equal(receiptBatches,75);
+ const importBatchVerification={batchVerificationRows:150000,receiptBatches,batchReconciliations,finalCanonicalReconciliations,exactAtomicReceipts:true,paidCalls:0},stockImportMs=performance.now()-started;if(profiler)console.log(JSON.stringify({importQueryProfile:profiler.report()}));
  await afterStock?.(db);
  const actual=(await db.query(`SELECT (SELECT count(*)::int FROM suppliers WHERE workspace_id=$1) suppliers,(SELECT count(*)::int FROM balances WHERE workspace_id=$1) positions,(SELECT sum(on_hand)::text FROM balances WHERE workspace_id=$1) units,(SELECT sum(total_cost_minor)::text FROM accounting_inventory_cost_balances WHERE workspace_id=$1) value_minor`,[ctx.workspaceId])).rows[0];
  assert.deepEqual(actual,{suppliers:200,positions:150000,units:'1500000',value_minor:'300000000'});
+ if(stockResult.stockLanes){
+  const receipts=(await db.query('SELECT sum(row_count)::int rows,sum(cost_records)::int cost_records,sum(quantity_delta)::text units,sum(value_minor)::text value,sum(asset_minor)::text asset FROM import_lane_batch_receipts WHERE workspace_id=$1 AND import_id=$2',[ctx.workspaceId,stockPlan.id])).rows[0];
+  assert.deepEqual(receipts,{rows:150000,cost_records:150000,units:'1500000',value:'300000000',asset:'300000000'});
+ }
  // A mature inventory also has completed background history. Customer pages
  // must not scan it just to discover that no work has failed.
  await db.query(`INSERT INTO stockchief_runtime.jobs(id,workspace_id,kind,status,available_at,idempotency_key,created_at,updated_at)

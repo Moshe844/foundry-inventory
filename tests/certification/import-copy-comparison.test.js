@@ -31,11 +31,11 @@ test('same 50,000-SKU / 150,000 mixed stock rows retain exact receipts through t
  }});
  assert.equal(f.stockPlan.recordsValid,150000);assert.equal(f.stockPlan.recordsInvalid,0);
  assert.deepEqual(f.actual,{suppliers:200,positions:150000,units:'1500000',value_minor:'300000000'});
- assert.equal(f.importBatchVerification.batchReconciliations,75);
+ assert.equal(f.importBatchVerification.batchReconciliations,f.importBatchVerification.receiptBatches);
  assert.equal(f.importBatchVerification.finalCanonicalReconciliations,0);
  if(mode==='copy')assert(stockCalls>0,'The large stock analysis must actually use COPY; a wrapper cannot silently discard the transaction stream capability.');
  else assert.equal(calls,0);
- console.log('COPY_BENCHMARK '+JSON.stringify({mode,products:5000,skus:50000,warehouses:5,openingStockRows:150000,
+ console.log('COPY_BENCHMARK '+JSON.stringify({mode,stockWorkers:Number(process.env.FOUNDRY_IMPORT_STOCK_WORKERS||0),products:5000,skus:50000,warehouses:5,openingStockRows:150000,
   catalogueSourceHash:f.plan.sourceHash,stockSourceHash:f.stockPlan.sourceHash,catalogueMs:Math.round(f.catalogueMs),stockImportMs:Math.round(f.stockImportMs),
   fixtureMs:Math.round(performance.now()-started),copyCalls:calls,stockCopyCalls:stockCalls,copyMs:Math.round(copyMs),
   actual:f.actual,verification:f.importBatchVerification,hosted:false,includesSourceTransfer:false,paidCalls:0}));
