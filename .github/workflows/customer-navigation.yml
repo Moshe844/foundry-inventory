@@ -88,6 +88,8 @@ jobs:
           node --test-shard="$PLAN_SHARD/4" "${tests[@]:1}" 2>&1 | tee output/customer-navigation-ci/agent-plans.log
       - name: Day-one individual approvals, 14-day automatic lock and all-plan safety
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'watch-period' }}
+        env:
+          STOCKCHIEF_PRO_STYLE_ARTIFACT_DIR: output/customer-navigation-ci/experience
         run: |
           set -euo pipefail
           node --test --test-concurrency=1 \
@@ -173,7 +175,9 @@ jobs:
         if: always()
         with:
           name: customer-navigation-results-${{ matrix.group }}
-          path: output/customer-navigation-ci
+          path: |
+            output/customer-navigation-ci
+            output/agent-plan-review
   customer-navigation:
     name: Required customer navigation and account safety
     needs: customer_checks
