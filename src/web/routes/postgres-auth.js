@@ -10,6 +10,7 @@ const commercialRelease=require('../../commercial/release');
 const config=require('../../config');
 const { ValidationError, AuthorizationError }=require('../../domain/errors');
 const { privateProductionPilot }=require('../../operations/postgres-production-environment');
+const signInCodes=require('../../domain/postgres-sign-in-codes');
 
 function safeNext(value) {
   if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//')) return '/';
@@ -38,7 +39,7 @@ function matchingPasswords(body){
 function createPostgresAuthRouter(database,options={}) {
   const router = express.Router();
   router.get('/password-policy.js',(req,res)=>res.type('application/javascript').sendFile(require('node:path').join(__dirname,'../../lib/password-policy.js')));
-  router.use((req,res,next)=>{res.locals.trialPolicy=require('../../commercial/self-service-trial').policy();res.locals.subscriptionTestMode=commercialRelease.stagingTestCheckout();if(req.account?.email_verified_at){const relevant=m=>m.code!=='verify_email_pending'&&!String(m.message||'').includes('Check your email to verify');res.locals.flash=(res.locals.flash||[]).filter(relevant);if(req.session?.flash)req.session.flash=req.session.flash.filter(relevant);}next();});
+  router.use((req,res,next)=>{res.locals.trialPolicy=require('../../commercial/self-service-trial').policy();res.locals.subscriptionTestMode=commercialRelease.stagingTestCheckout();res.locals.signInCode=options.signInCode===true;if(req.account?.email_verified_at){const relevant=m=>m.code!=='verify_email_pending'&&!String(m.message||'').includes('Check your email to verify');res.locals.flash=(res.locals.flash||[]).filter(relevant);if(req.session?.flash)req.session.flash=req.session.flash.filter(relevant);}next();});
   const checkoutAvailable=()=>options.testMode===true&&process.env.NODE_ENV==='test'
     ?Promise.resolve(true):commercialRelease.isSubscriptionCheckoutOpen(database);
   router.get('/login', (req,res) => {
@@ -47,35 +48,87 @@ function createPostgresAuthRouter(database,options={}) {
     return res.render('auth/login', { title:'Sign in',csrfToken:res.locals.csrfToken,flash:res.locals.flash,
       next:safeNext(req.query.next),email:'',appName:res.locals.appName,origin:res.locals.origin });
   });
+  const loginPage=(req,res,status,message)=>res.status(status).render('auth/login',{title:'Sign in',csrfToken:res.locals.csrfToken,
+    flash:[{type:'error',message}],next:safeNext(req.body.next),email:req.body.email||'',appName:res.locals.appName,origin:res.locals.origin});
+  // 0 when the box is not ticked, otherwise 30 or 60 days.
+  const rememberFor=(body)=>body.rememberMe==='1'?signInCodes.rememberDays(body.rememberDays):0;
+  // Signs the account in on a fresh session: straight after the password, or after the emailed code.
+  async function completeSignIn(req,res,account,{remember,next:destination,weakPassword}){
+    const shopifyInstallReturn=req.session.shopifyInstallReturn==='/integrations/shopify/connect';
+    await sessionCall(req,'regenerate');
+    if(shopifyInstallReturn)req.session.shopifyInstallReturn='/integrations/shopify/connect';
+    req.session.accountId=account.id;req.session.accountAccessRevision=Number(account.platform_access_revision||0);
+    if(weakPassword){req.session.passwordUpgradeRequired=true;req.session.passwordUpgradeNoticeDismissed=true;req.session.flash=[{type:'warning',message:'Please strengthen your password in Settings → Password to meet the current security requirements.'}];}
+    req.session.cookie.maxAge=remember?remember*86400000:null;
+    const workspaceId=await auth.defaultWorkspaceFor(database,account.id);
+    if(workspaceId)req.session.workspaceId=workspaceId;
+    await sessionCall(req,'save');
+    if(account.plan==='commercial_pending')return res.redirect(account.email_verified_at?'/complete-signup':'/verify-email/pending');
+    return res.redirect(workspaceId?safeNext(destination):'/inventories');
+  }
+  const weakPasswordOf=(password)=>{try{require('../../domain/auth-service').checkPasswordStrength(password);return false;}catch{return true;}};
+  // The account that passed its password and still owes the emailed code (for 20 minutes).
+  const pendingSignIn=(req)=>{const pending=req.session?.pendingSignIn;
+    return pending&&Date.now()-Number(pending.at||0)<20*60*1000?pending:null;};
+  const signInExpired=(req,res)=>{if(req.session)delete req.session.pendingSignIn;req.flash('error','That sign-in took too long. Sign in again.');return res.redirect(303,'/login');};
+  async function codePage(req,res,{status=200,flash=res.locals.flash,pending}){
+    const account=await auth.getAccount(database,pending.accountId);
+    return res.status(status).render('auth/sign-in-code',{title:'Check your email',csrfToken:res.locals.csrfToken,flash,
+      email:account?.email||'',remember:pending.remember,rememberDays:signInCodes.REMEMBER_DAYS,minutes:signInCodes.CODE_MINUTES,
+      appName:res.locals.appName,origin:res.locals.origin});
+  }
   router.post('/login', async (req,res,next) => {
     try {
       const account = await auth.authenticate(database,req.body.email,req.body.password,{ip:req.ip||req.socket.remoteAddress});
-      if (!account) return res.status(401).render('auth/login', {
-        title:'Sign in',csrfToken:res.locals.csrfToken,
-        flash:[{ type:'error',message:'That email and password do not match an account.' }],
-        next:safeNext(req.body.next),email:req.body.email || '',appName:res.locals.appName,
-        origin:res.locals.origin,
-      });
-      const shopifyInstallReturn=req.session.shopifyInstallReturn==='/integrations/shopify/connect';
-      await sessionCall(req,'regenerate');
-      if(shopifyInstallReturn)req.session.shopifyInstallReturn='/integrations/shopify/connect';
-      req.session.accountId=account.id;req.session.accountAccessRevision=Number(account.platform_access_revision||0);
-      try{require('../../domain/auth-service').checkPasswordStrength(req.body.password);}
-      catch{req.session.passwordUpgradeRequired=true;req.session.passwordUpgradeNoticeDismissed=true;req.session.flash=[{type:'warning',message:'Please strengthen your password in Settings → Password to meet the current security requirements.'}];}
-      req.session.cookie.maxAge=req.body.rememberMe==='1'?30*86400000:null;
-      const workspaceId=await auth.defaultWorkspaceFor(database,account.id);
-      if(workspaceId)req.session.workspaceId=workspaceId;
-      await sessionCall(req,'save');
-      if(account.plan==='commercial_pending')return res.redirect(account.email_verified_at?'/complete-signup':'/verify-email/pending');
-      return res.redirect(workspaceId?safeNext(req.body.next):'/inventories');
+      if (!account) return loginPage(req,res,401,'That email and password do not match an account.');
+      const remember=rememberFor(req.body),weakPassword=weakPasswordOf(req.body.password);
+      if(options.signInCode&&!await signInCodes.trusted(database,account.id,signInCodes.deviceTokens(req))){
+        const sent=await signInCodes.send(database,account,{ip:req.ip||req.socket.remoteAddress,origin:config.connections.publicOrigin||res.locals.origin});
+        const shopifyInstallReturn=req.session.shopifyInstallReturn==='/integrations/shopify/connect';
+        await sessionCall(req,'regenerate');
+        if(shopifyInstallReturn)req.session.shopifyInstallReturn='/integrations/shopify/connect';
+        req.session.pendingSignIn={accountId:account.id,codeId:sent.id,remember,weakPassword,next:safeNext(req.body.next),at:Date.now()};
+        await sessionCall(req,'save');
+        return res.redirect(303,'/login/code');
+      }
+      return completeSignIn(req,res,account,{remember,next:req.body.next,weakPassword});
     } catch(error) {
-      if(error.status===429)return res.status(429).render('auth/login', {
-        title:'Sign in',csrfToken:res.locals.csrfToken,flash:[{type:'error',message:error.message}],
-        next:safeNext(req.body.next),email:req.body.email||'',appName:res.locals.appName,origin:res.locals.origin,
-      });
+      if(error.status===429)return loginPage(req,res,429,error.message);
       return next(error);
     }
   });
+  router.get('/login/code',async(req,res,next)=>{try{
+    res.set('Cache-Control','private, no-store');
+    const pending=pendingSignIn(req);
+    if(!pending)return req.session?.pendingSignIn?signInExpired(req,res):res.redirect(303,'/login');
+    return codePage(req,res,{pending});
+  }catch(error){return next(error);}});
+  router.post('/login/code',async(req,res,next)=>{try{
+    const pending=pendingSignIn(req);
+    if(!pending)return signInExpired(req,res);
+    const remember=rememberFor(req.body);
+    try{await signInCodes.verify(database,{id:pending.codeId,accountId:pending.accountId,code:req.body.code});}
+    catch(error){if(error.status&&error.status<500){pending.remember=remember;return codePage(req,res,{status:error.status,flash:[{type:'error',message:error.message}],pending});}throw error;}
+    const account=await auth.getAccount(database,pending.accountId);
+    if(!account)return signInExpired(req,res);
+    if(remember){
+      const token=await signInCodes.remember(database,account.id,{days:remember,browser:req.get('user-agent')});
+      res.cookie(signInCodes.DEVICE_COOKIE,signInCodes.deviceCookie(signInCodes.deviceTokens(req),token),{httpOnly:true,sameSite:'lax',
+        secure:options.secureCookies===true,maxAge:Math.max(...signInCodes.REMEMBER_DAYS)*86400000,path:'/'});
+    }
+    return completeSignIn(req,res,account,{remember,next:pending.next,weakPassword:pending.weakPassword});
+  }catch(error){return next(error);}});
+  router.post('/login/code/resend',async(req,res,next)=>{try{
+    const pending=pendingSignIn(req);
+    if(!pending)return signInExpired(req,res);
+    try{
+      const account=await auth.getAccount(database,pending.accountId);
+      const sent=await signInCodes.send(database,account,{resend:true,ip:req.ip||req.socket.remoteAddress,origin:config.connections.publicOrigin||res.locals.origin});
+      pending.codeId=sent.id;req.flash('success','A new code is on its way. Use the newest email.');
+    }catch(error){if(error.status===429)req.flash('error',error.message);else throw error;}
+    await sessionCall(req,'save');
+    return res.redirect(303,'/login/code');
+  }catch(error){return next(error);}});
   router.all(['/register','/complete-signup/trial'], (req,res,next) => {
     if (!privateProductionPilot()) return next();
     if ((req.method === 'GET' || req.method === 'HEAD') && req.path === '/register') {
@@ -263,6 +316,8 @@ function createPostgresAuthRouter(database,options={}) {
   });
   router.post('/reset-password',async(req,res,next)=>{try{matchingPasswords(req.body);
     const changed=await passwordRecovery.consume(database,req.body.token||'',req.body.password||'');
+    // A reset may follow a stolen password, so no browser skips the emailed code any more.
+    await signInCodes.forgetDevices(database,changed.accountId);
     // Do not re-save a revoked, signed-in session after changing its password.
     if(req.session?.accountId===changed.accountId)await sessionCall(req,'regenerate');
     let signInHref='/login',admin=false;
@@ -282,7 +337,7 @@ function createPostgresAuthRouter(database,options={}) {
       return res.redirect('/login');
     } catch(error) { return next(error); }
   });
-  router.post('/logout-all',async(req,res,next)=>{try{if(req.account)await database.query(`DELETE FROM stockchief_runtime.sessions
+  router.post('/logout-all',async(req,res,next)=>{try{if(req.account)await signInCodes.forgetDevices(database,req.account.id);if(req.account)await database.query(`DELETE FROM stockchief_runtime.sessions
       WHERE data->>'accountId'=$1`,[req.account.id]);res.clearCookie('foundry.sid');return res.redirect(303,'/login');}catch(error){return next(error);}});
   return router;
 }

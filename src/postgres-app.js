@@ -51,7 +51,7 @@ const { requireOperationalSubscription } = require('./web/commercial-middleware'
 
 function createPostgresApp({database,requestTracker=null,resourceDatabase=database,probeDatabase=database,dataAccessDatabase=database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,audioTranscriber=null,
   connectionProviders=null,connectionPublicOrigin=null,shippingOptions=null,paymentOptions=null,agentInspection=false,agentInspectionGuard=null,
-  commercialOptions=null,ssoOptions=null,ownerConsoleOptions=null,probeCacheMs={health:5000,readiness:1000},probeNow=Date.now,
+  commercialOptions=null,ssoOptions=null,ownerConsoleOptions=null,signInCode=null,probeCacheMs={health:5000,readiness:1000},probeNow=Date.now,
   assetVersion=process.env.FOUNDRY_ASSET_VERSION||config.operations.releaseRef}={}) {
   if(!database?.query)throw new TypeError('A PostgreSQL database is required.');
   const app=express();
@@ -263,7 +263,8 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.use(require('./web/routes/postgres-support-conversations').createSupportConversationsRouter(database));
   app.use(createPostgresCommercialRouter(database,{publicOrigin:connectionPublicOrigin || config.connections.publicOrigin,
     ...(commercialOptions||{})}));
-  app.use(createPostgresAuthRouter(database,commercialOptions||{}));
+  // A code is emailed at each password sign-in wherever the app can send email (see sign-in-code-policy.js).
+  app.use(createPostgresAuthRouter(database,{...(commercialOptions||{}),signInCode:signInCode??require('./domain/sign-in-code-policy').enabled(env),secureCookies:env==='production'}));
   app.use(require('./web/routes/postgres-shopify-public').createRouter(database,{publicOrigin:connectionPublicOrigin||(env==='test'?'request':undefined)}));
   app.use(createPostgresWorkspacesRouter(database));
   app.use(createPostgresSettingsRouter(database,{provider:aiProvider}));
