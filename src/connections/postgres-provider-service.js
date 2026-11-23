@@ -75,7 +75,8 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
     await client.query(`INSERT INTO connection_authorization_states
       (id,state_hash,workspace_id,connector_id,provider_type,actor_id,metadata,expires_at,created_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[newId('cauth'),stateHash(state),ctx.workspaceId,connectorId,
-      providerType,ctx.actorId,JSON.stringify({...auth.metadata,...xeroSlot,returnOrigin:requestOrigin,
+      providerType,ctx.actorId,JSON.stringify({...auth.metadata,...xeroSlot,
+        ...(providerType==='xero'&&existingConnection?.provider_account_id?{xeroTenantId:existingConnection.provider_account_id}:{}),returnOrigin:requestOrigin,
         popup:String(input.popup||'')==='1',...(!connectorId?{pendingConnection:pending}:{})}),new Date(Date.parse(now)+(xeroSlot.xeroStarterClientId?xeroCustomers.HOLD_MS:intents.TTL_MS)).toISOString(),now]);
   },{isolation:'SERIALIZABLE',retrySafe:true});
   return {connectorId,redirectUrl:auth.url,...(adapter.oauthSessionBound?{authorizationState:state}:{})};
@@ -284,6 +285,8 @@ async function completeOAuthLocked(database,providerType,query,requestOrigin,opt
   try{
     if(registry===defaultProviders)await launchPolicy.assertWorkspaceConnection(database,providerType,{workspaceId:state.workspace_id},state.metadata);
     const connection=await intents.connectionForState(database,state);
+    if(providerType==='xero'&&state.metadata.xeroTenantId&&state.metadata.xeroTenantId!==connection.provider_account_id)
+      throw new ValidationError('This Xero connection changed while authorization was open. Start again from its current connection page.');
     const result=await require('../commercial/operations').run(database,connection.workspace_id,{capability:
       ['gmail','microsoft365'].includes(providerType)?'communications.email_ingestion':adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce',
       key:`oauth:${state.id}`,provider:providerType,operation:'authorization_exchange'},()=>adapter.exchangeAuthorization({query,

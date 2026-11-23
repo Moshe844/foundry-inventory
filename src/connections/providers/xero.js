@@ -40,7 +40,7 @@ async function exchangeAuthorization({ query, metadata: state }) {
     authorization: `Basic ${basic()}`, 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body });
   const credentials = require('./oauth-grant').read('Xero',token.body);
   const tenants = await jsonRequest('https://api.xero.com/connections', { headers: { authorization: `Bearer ${credentials.accessToken}`, accept: 'application/json' } });
-  const authorized=authorizedTenant(credentials.accessToken,tenants.body);
+  const authorized=authorizedTenant(credentials.accessToken,tenants.body,state.xeroTenantId);
   credentials.tenantId=authorized.tenantId;
   if(authorized.connectionId)credentials.xeroConnectionId=authorized.connectionId;
   const fact = await verifyReadOnly({ credentials });
@@ -74,7 +74,7 @@ async function verifyReadOnly({ credentials }) {
   return { label: 'Xero organization', value: org.Name, externalId: org.OrganisationID };
 }
 
-function authorizedTenant(accessToken,connections){
+function authorizedTenant(accessToken,connections,expectedTenantId){
  if(!Array.isArray(connections))throw new ValidationError('Xero did not return its authorized organizations.');
  let eventId=null;
  try{
@@ -85,7 +85,20 @@ function authorizedTenant(accessToken,connections){
    if(typeof claims.authentication_event_id==='string'&&claims.authentication_event_id)eventId=claims.authentication_event_id;}
  }catch{/* Opaque tokens still work when Xero returns exactly one company. */}
  const organizations=connections.filter(row=>row&&typeof row.tenantId==='string'&&row.tenantId&&(!row.tenantType||row.tenantType==='ORGANISATION'));
- const current=eventId?organizations.filter(row=>row.authEventId===eventId):organizations;
+ let current=eventId?organizations.filter(row=>row.authEventId===eventId):organizations;
+ if(expectedTenantId!==undefined){
+  if(typeof expectedTenantId!=='string'||!expectedTenantId.trim()||expectedTenantId.length>200)
+   throw new ValidationError('The saved Xero company could not be identified. Start again from its connection page.');
+  const existing=organizations.filter(row=>row.tenantId===expectedTenantId);
+  // Xero can retain the original connection/authEventId when an already
+  // connected company grants additional scopes. Only a tenant pinned in the
+  // server-side consent state may use that existing grant. A first connection
+  // still needs one current-event organization; a contradictory current event
+  // must never silently replace the existing company's authorization.
+  if(!existing.length||eventId&&current.length&&!current.some(row=>row.tenantId===expectedTenantId))
+   throw new ValidationError('Authorize the same Xero organization already linked to this connection. Use a separate connection for a different company.');
+  current=current.some(row=>row.tenantId===expectedTenantId)?current.filter(row=>row.tenantId===expectedTenantId):existing;
+ }
  const ids=[...new Set(current.map(row=>row.tenantId))];
  if(ids.length!==1)throw new ValidationError('In Xero, authorize one organization for this connection, then try again. Your existing connections are preserved.');
  const selected=current.filter(row=>row.tenantId===ids[0]);
