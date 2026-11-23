@@ -18,7 +18,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       NODE_ENV: test
       FOUNDRY_SKIP_LOCAL_ENV: '1'
@@ -43,3 +43,14 @@ jobs:
         run: |
           docker build -f infra/aws-imports/Dockerfile -t stockchief-import-worker:test .
           docker run --rm --entrypoint node stockchief-import-worker:test -e 'const h=require("./src/imports/aws-worker").dedicatedHandlers(require("./src/operations/postgres-runtime-handlers").create()); if(Object.keys(h).length!==2)process.exit(1); console.log("Dedicated import handlers loaded without development dependencies");'
+      - name: Compare the exact 150000-row workload before and after COPY
+        timeout-minutes: 25
+        env:
+          STOCKCHIEF_COPY_REQUIRE_60S: '1'
+        run: node scripts/benchmark-import-copy.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aws-import-copy-comparison
+          path: output/aws-import-copy-comparison
+          if-no-files-found: ignore
