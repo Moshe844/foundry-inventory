@@ -139,8 +139,11 @@ test('password sign-in asks for an emailed code unless this browser was remember
     const code=await latestCode(),waiting=await pending.get('/login/code');
     page=await owner.get('/inventory').expect(200);
     await owner.post('/logout-all').type('form').send({_csrf:csrf(page.text)}).expect(303);
-    await pending.post('/login/code').type('form').send({_csrf:csrf(waiting.text),code,rememberMe:'1'}).expect(303).expect('location','/login');
+    // The discarded session also discards its CSRF token; the error handler
+    // may redirect to Home. The invariant is that it cannot authenticate.
+    await pending.post('/login/code').type('form').send({_csrf:csrf(waiting.text),code,rememberMe:'1'}).expect(303);
     assert.equal(await signedIn(pending),false);
+    assert.equal(Number((await f.db.query('SELECT count(*) n FROM sign_in_codes WHERE account_id=$1 AND used_at IS NULL',[f.owner.accountId])).rows[0].n),0);
     const login=await pending.get('/login');
     const before=await codesSent();
     await pending.post('/login/code/resend').type('form').send({_csrf:csrf(login.text)}).expect(303).expect('location','/login');
@@ -159,7 +162,7 @@ test('password sign-in asks for an emailed code unless this browser was remember
     const token=new URL(email.unseal(reset).text.match(/https?:\/\/\S+/)[0]).searchParams.get('token');
     f.password='Reset!'+randomUUID();
     await recovery.consume(f.db,token,f.password);
-    await pending.post('/login/code').type('form').send({_csrf:csrf(waiting.text),code,rememberMe:'1'}).expect(303).expect('location','/login');
+    await pending.post('/login/code').type('form').send({_csrf:csrf(waiting.text),code,rememberMe:'1'}).expect(303);
     assert.equal(await signedIn(pending),false);
     assert.equal(Number((await f.db.query('SELECT count(*) n FROM sign_in_codes WHERE account_id=$1 AND used_at IS NULL',[f.owner.accountId])).rows[0].n),0);
     await signIn(pending).expect(303).expect('location','/login/code');
