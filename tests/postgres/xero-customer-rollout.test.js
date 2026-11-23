@@ -57,7 +57,11 @@ test('customer Xero Starter rollout: real consent on every plan, global capacity
   await store.put(db,o.workspaceId,mailId,'provider',{accessToken:'preserved-'+plan,refreshToken:'preserved-refresh'});
   const before=await snapshot();
   assert.equal((await entitlements.capabilityState(db,o.scope,'connections.accounting',{providerType:'xero'})).enabled,true);
-  assert.equal((await entitlements.capabilityState(db,o.scope,'connections.accounting',{providerType:'quickbooks'})).enabled,false,'The Xero rollout must not grant QuickBooks access');
+  const qbAccess=await entitlements.capabilityState(db,o.scope,'connections.accounting',{providerType:'quickbooks'});
+  process.env.STOCKCHIEF_XERO_STARTER_CUSTOMERS_APPROVED='0';
+  assert.equal((await entitlements.capabilityState(db,o.scope,'connections.accounting',{providerType:'quickbooks'})).enabled,qbAccess.enabled,'Xero must not change the existing QuickBooks plan decision');
+  process.env.STOCKCHIEF_XERO_STARTER_CUSTOMERS_APPROVED='1';
+  assert.notEqual(qbAccess.source,'xero_starter_customer');
   await assert.rejects(service.beginAuthorization(db,o.ctx,{providerType:'quickbooks'},'https://customer.example.test'),/not included/);
   await assert.rejects(start(o,{requestedAuthority:'POST'}),/read-only/);
   const url=await start(o);assert(!url.searchParams.get('scope').split(' ').includes('accounting.manualjournals'));
