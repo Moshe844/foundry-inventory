@@ -13,6 +13,8 @@ test('pricing shows exact plan duties, no-training filters and accessible detail
   const chart=page.locator('#compare-agent-plans'),full=chart.locator('[data-full-comparison]');
   assert.equal(await full.getAttribute('open'),null);
   assert.equal(await page.locator('.plan-card .plan-limits[open]').count(),0,'The plan cards start compact');
+  assert.equal(await chart.locator('[data-agent-job]').count(),0,'Do not download the full comparison before it is opened');
+  await full.locator('>summary').click();await chart.locator('[data-agent-job]').first().waitFor({state:'attached'});
   assert.equal(await chart.locator('[data-comparison-group]').count(),19);
   assert.equal(await chart.locator('[data-agent-job]').count(),214);assert.equal(await chart.locator('[data-agent-mode]').count(),856);
   const policy=require('../../src/commercial/agent-plan'),jobs=require('../../src/commercial/agent-plan-v3.json'),progress=require('../../src/commercial/agent-plan-progress.json');
@@ -20,7 +22,6 @@ test('pricing shows exact plan duties, no-training filters and accessible detail
   for(const row of actual)for(const cell of row.cells)assert.equal(cell.mode,policy.allowance(cell.tier,row.id),row.id+' '+cell.tier);
   const prices=await chart.locator('.pricing-summary-table thead').innerText();
   for(const price of [199,499,999])assert(prices.includes('$'+price+'/month'));
-  await full.locator('>summary').click();
   for(const [id,tier,mode]of [[35,'starter','draft'],[60,'starter','draft'],[213,'growth','trained']]){
     assert.equal(await chart.locator('[data-agent-job="'+id+'"] [data-agent-tier="'+tier+'"]').getAttribute('data-agent-mode'),mode);
   }
@@ -29,9 +30,10 @@ test('pricing shows exact plan duties, no-training filters and accessible detail
     const card=page.locator('.plan-card[data-plan="'+plan.id+'"]'),dialog=page.locator('[data-plan-dialog="'+plan.id+'"]'),trigger=card.locator('.plan-details-link');
     assert.match(await card.locator('[data-plan-default]').innerText(),/Without training/);
     const allowed=jobs.filter(job=>policy.allowance(plan.id,job.id)!=='excluded');
+    assert.equal(await dialog.locator('[data-plan-job]').count(),0,'Each plan loads only when opened');
+    await trigger.click();assert(await dialog.isVisible());await dialog.locator('[data-plan-job]').first().waitFor({state:'attached'});
     assert.deepEqual(await dialog.locator('[data-plan-feature]').evaluateAll(es=>es.map(e=>e.dataset.planFeature)),plan.features.map(f=>f.capability),'All included tools, including inherited tools, appear in '+plan.name);
     assert.deepEqual(await dialog.locator('[data-plan-job]').evaluateAll(es=>es.map(e=>Number(e.dataset.planJob))),allowed.map(j=>j.id));
-    await trigger.click();assert(await dialog.isVisible());
     const firstDuty=await dialog.locator('[data-plan-job]').first().boundingBox(),bodyBounds=await dialog.locator('.plan-dialog-body').boundingBox();assert(firstDuty.y<bodyBounds.y+bodyBounds.height,'The duty list starts in the initial desktop view');
     const watchPeriod=await dialog.locator('.plan-dialog-default').innerText();
     assert.match(watchPeriod,/Automatic actions are blocked for the first 14 days/);
@@ -86,7 +88,20 @@ test('pricing shows exact plan duties, no-training filters and accessible detail
   await full.locator('>summary').scrollIntoViewIfNeeded();await chart.locator('[data-comparison-group]').first().locator('>summary').click();
   const table=chart.locator('.agent-plan-table').first();await table.evaluate(e=>e.scrollLeft=e.scrollWidth);assert(await table.evaluate(e=>e.scrollLeft>0));
   await page.goto(origin+'/pricing?interval=annual');
-  assert.equal(await chart.locator('[data-agent-job]').count(),214);
+  assert.equal(await chart.locator('[data-agent-job]').count(),0);await full.locator('>summary').click();
+  await chart.locator('[data-agent-job]').first().waitFor({state:'attached'});assert.equal(await chart.locator('[data-agent-job]').count(),214);
   const annual=await chart.locator('.pricing-summary-table thead').innerText();for(const price of ['1,990','4,990','9,990'])assert(annual.includes('$'+price+'/year'));
+  let requests=0;
+  await page.route('**/pricing/plan/starter?*',route=>{requests++;return requests===1?route.abort('failed'):route.continue();});
+  await page.locator('#starter .plan-details-link').click();
+  await phoneDialog.getByText('Details could not load. Open the full page or try again.',{exact:true}).waitFor();
+  assert.equal(await phoneDialog.locator('[data-plan-fallback]').getAttribute('href'),'/pricing/plan/starter?interval=annual');
+  await phoneDialog.getByRole('button',{name:'Try again',exact:true}).click();await phoneDialog.locator('[data-plan-job]').first().waitFor({state:'attached'});
+  await page.keyboard.press('Escape');await page.locator('#starter .plan-details-link').click();
+  assert.equal(requests,2,'Reopening an already loaded plan must not make another request');await page.keyboard.press('Escape');
+  const plain=await browser.newContext({javaScriptEnabled:false}),plainPage=await plain.newPage();
+  await plainPage.goto(origin+'/pricing');await plainPage.locator('#growth .plan-details-link').click();
+  assert.match(plainPage.url(),/\/pricing\/plan\/growth\?interval=monthly$/);
+  assert(await plainPage.locator('[data-plan-job]').count()>0);await plain.close();
   assert.deepEqual(errors,[]);
 });

@@ -21,3 +21,10 @@ module.exports=function securityHeaders(req,res,next){
  if(req.secure)res.set('Strict-Transport-Security','max-age=31536000');
  next();
 };
+
+// Public marketing pages have external scripts only. Their policy can reject
+// inline script without changing the authenticated application's controls.
+module.exports.publicPage=function publicPage(res){
+ res.set('Content-Security-Policy',"default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; form-action 'self'; worker-src 'self' blob:");
+ res.set('Referrer-Policy','no-referrer');
+};

@@ -265,6 +265,9 @@ jobs:
         run: |
           set -euo pipefail
           node --test --test-concurrency=2 tests/unit/round16-image-columns.test.js tests/unit/image-table-import.test.js tests/unit/image-import-quality.test.js tests/unit/image-table-rules.test.js tests/unit/image-codecs.test.js tests/postgres/image-import-review.test.js tests/postgres/image-codec-review.test.js tests/unit/pdf-table-import.test.js 2>&1 | tee output/inventory-ci/image-columns.log
+      - name: Public API input validation, usage reversal and tenant scope
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
+        run: node --test tests/postgres/public-api-pagination.test.js tests/postgres/pricing-detail-loading.test.js
       - name: PostgreSQL correctness, limits, durable batches and customer screens
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
         run: |

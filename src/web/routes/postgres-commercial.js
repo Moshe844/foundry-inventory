@@ -14,11 +14,11 @@ const lifecycle=require('../../domain/postgres-account-lifecycle');
 const {newId}=require('../../lib/util');
 const {requireAccount,asyncRoute}=require('../middleware');
 const {commercialScope}=require('../commercial-middleware');
-const {AuthorizationError,ValidationError}=require('../../domain/errors');
+const {AuthorizationError,ValidationError,NotFoundError}=require('../../domain/errors');
 
 function renderPublic(req,res,view,data={}){return res.render(view,{...data,csrfToken:res.locals.csrfToken,flash:res.locals.flash,
   account:res.locals.account,origin:res.locals.origin,assetVersion:res.locals.assetVersion},(error,body)=>{
-    if(error)throw error;return res.render('public/layout',{nav:'',...data,body,account:res.locals.account,origin:res.locals.origin,
+    if(error)throw error;require('../security-headers').publicPage(res);return res.render('public/layout',{nav:'',...data,body,account:res.locals.account,origin:res.locals.origin,
       assetVersion:res.locals.assetVersion,title:data.title||'StockChief',description:data.description||
       'StockChief runs inventory operations and brings owners only the exceptions that require judgement.'});});}
 
@@ -51,6 +51,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   router.get('/',asyncRoute(async(req,res,next)=>{if(req.account)return next();await commercial.track(database,{eventName:'landing_viewed',
     anonymousId:req.sessionID,sourcePath:'/'});return renderPublic(req,res,'public/home',{title:'The AI inventory operator',nav:'home',demo:require('../../commercial/product-demo').current(),groups:require('../presentation/public-integrations').groups(),
       description:'StockChief notices, decides and carries out routine inventory operations—then brings owners the exceptions that need judgement.'});}));
+  router.get('/sitemap.xml',(req,res)=>res.type('application/xml').send(require('../presentation/public-site').sitemap(options.publicOrigin||config.connections.publicOrigin)));
   router.get('/demo',asyncRoute(async(req,res)=>{await commercial.track(database,{eventName:'demo_opened',anonymousId:req.sessionID,
     accountId:req.account?.id||null,sourcePath:'/demo'});return renderPublic(req,res,'public/demo',{title:'See StockChief in action',nav:'demo',demo:require('../../commercial/product-demo').current(),
       description:'Follow a realistic business day from sale and shortage through supplier, receiving, fulfillment, payment and accounting.'});}));
@@ -67,6 +68,18 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     title:'Pricing',nav:'pricing',plans,offer:require('../../commercial/public-offer'),agentPlans:require('../../commercial/agent-plan-comparison').presentation(),agentComparison:require('../../commercial/agent-plan-comparison').comparison(),billingInterval:req.query.interval==='annual'?'annual':'monthly',offerPacks:[],capacityProducts:await require('../../commercial/capacity-addons').catalog(database,{agentOffer:true}),checkoutOpen:await release.isSubscriptionCheckoutOpen(database),
     checkoutCancelled:req.query.checkout==='cancelled',planNavigation:require('../../commercial/plan-navigation'),planSelection:req.session.commercialSelection||null,
     currentSubscription:req.account?await entitlements.subscriptionFor(database,req.account.id):null});}));
+  router.get('/pricing/plan/:plan',asyncRoute(async(req,res)=>{
+    const plans=await commercial.listPlans(database),plan=plans.find(p=>p.id===req.params.plan);
+    if(!plan)throw new NotFoundError('That plan was not found. Compare the available plans.');
+    res.set('Cache-Control','no-store');return renderPublic(req,res,'public/pricing-plan-page',{
+      title:(plan.id==='enterprise'?'Custom':plan.public_name)+' plan details',nav:'pricing',plans,planId:plan.id,
+      offer:require('../../commercial/public-offer'),agentPlans:require('../../commercial/agent-plan-comparison').presentation(),billingInterval:req.query.interval});
+  }));
+  router.get('/pricing/compare',asyncRoute(async(req,res)=>{
+    res.set('Cache-Control','no-store');return renderPublic(req,res,'public/pricing-comparison-page',{
+      title:'Compare all plans',nav:'pricing',plans:await commercial.listPlans(database),offer:require('../../commercial/public-offer'),
+      agentPlans:require('../../commercial/agent-plan-comparison').presentation(),billingInterval:req.query.interval});
+  }));
   router.get(['/control','/trust'],asyncRoute(async(req,res)=>renderPublic(req,res,'public/trust',{title:'Control and trust',nav:'control',
     description:'Understand StockChief authority, approvals, evidence, tenant isolation, credentials and operational recovery.'})));
   for(const [path,title] of [['/security','Security'],['/roadmap','Product roadmap'],['/api/docs','Public API documentation']])router.get(path,asyncRoute(async(req,res)=>renderPublic(req,res,'public/operations-information',{title,nav:'',kind:path,staging:require('../../config').operations.runtimeEnvironment==='staging'})));

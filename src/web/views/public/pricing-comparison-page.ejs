@@ -1,0 +1,3 @@
+<% const {format,interval,compared,allowanceNumber,allowanceLabel}=offer.presentation(plans,locals.billingInterval); %>
+<p><a href="/pricing?interval=<%= interval %>#compare-agent-plans">← Back to plans</a></p>
+<section class="pricing-comparison"><h1>Compare all 214 agent duties</h1><div data-comparison-fragment><%- include('pricing-comparison-body',{agentPlans,compared,format,interval,allowanceNumber,allowanceLabel}) %></div></section>
