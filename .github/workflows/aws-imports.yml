@@ -38,7 +38,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-17
       - name: AWS boundaries, tenant isolation, queue recovery and COPY integrity
-        run: node --test tests/unit/aws-import-transport.test.js tests/unit/aws-import-infrastructure.test.js tests/unit/import-copy-rows.test.js tests/postgres/aws-direct-import.test.js tests/postgres/import-copy-rows.test.js tests/postgres/source-upload-stock-mode.test.js
+        run: node --test tests/unit/aws-import-transport.test.js tests/unit/aws-import-infrastructure.test.js tests/unit/import-copy-rows.test.js tests/postgres/aws-direct-import.test.js tests/postgres/import-copy-rows.test.js tests/postgres/import-benchmark-diagnostics.test.js tests/postgres/source-upload-stock-mode.test.js
       - name: Production-only import container
         run: |
           docker build -f infra/aws-imports/Dockerfile -t stockchief-import-worker:test .
@@ -47,6 +47,7 @@ jobs:
         timeout-minutes: 25
         env:
           STOCKCHIEF_COPY_REQUIRE_60S: '1'
+          STOCKCHIEF_COPY_DIAGNOSTICS: '1'
         run: node scripts/benchmark-import-copy.js
       - uses: actions/upload-artifact@v4
         if: always()

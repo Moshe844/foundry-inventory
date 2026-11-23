@@ -1,7 +1,7 @@
 'use strict';
 const assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const warehouses=['NJ-Main','NY-Store','PA-DC','CA-West','TX-South'];
-async function fixture(t,{onProgress=()=>{}}={}){
+async function fixture(t,{onProgress=()=>{},beforeStock,afterStock}={}){
  const cluster=await require('./postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
  t.after(async()=>{await db.close();await cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db);
  const email=randomUUID()+'@example.test',password='Round17!'+randomUUID(),owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Scale owner',businessName:'Round 17 large business qualification',email,password}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId};
@@ -29,6 +29,7 @@ async function fixture(t,{onProgress=()=>{}}={}){
  const profiler=process.env.STOCKCHIEF_IMPORT_PROFILE==='1'?require('./postgres-query-profile').profile(db):null,importDb=profiler?.database||db;
  const progress=phase=>p=>{profiler?.phase(phase+':'+p.stage);return onProgress(phase,p);};
  let additivePreviewPositionReads=0;const observe=target=>({...target,query:(sql,...values)=>{if(sql.includes('AS has_history'))additivePreviewPositionReads++;return target.query(sql,...values);}}),previewDb={...observe(importDb),transaction:(fn,options)=>importDb.transaction(c=>fn(observe(c)),options)};
+ await beforeStock?.(db);
  const started=performance.now(),stockPlan=await imports.analyse(previewDb,ctx,{text:stock.join('\n'),filename:'round17-mixed-opening-stock.csv',importMode:'add',allowModel:false,onProgress:progress('stock-analysis')});
  assert.equal(stockPlan.recordsInvalid,0);assert.equal(stockPlan.recordsValid,150000);await imports.approve(importDb,ctx,stockPlan.id,stockPlan.integrityHash);
  const verifier=require('../../src/imports/postgres-verification'),originalVerify=verifier.totals;let verificationStage='',batchReconciliations=0,finalCanonicalReconciliations=0,stockResult;
@@ -36,6 +37,7 @@ async function fixture(t,{onProgress=()=>{}}={}){
  try{stockResult=await imports.execute(importDb,ctx,stockPlan.id,{onProgress:p=>{verificationStage=p.stage;return progress('stock-execution')(p);}});}finally{verifier.totals=originalVerify;}
  assert(stockResult.verified);assert.deepEqual(stockResult.batchReceipts,{batches:75,rows:150000,legacyFullScan:false});assert.equal(batchReconciliations,75);assert.equal(finalCanonicalReconciliations,0);
  const importBatchVerification={batchVerificationRows:150000,receiptBatches:75,batchReconciliations,finalCanonicalReconciliations,exactAtomicReceipts:true,paidCalls:0},stockImportMs=performance.now()-started;if(profiler)console.log(JSON.stringify({importQueryProfile:profiler.report()}));
+ await afterStock?.(db);
  const actual=(await db.query(`SELECT (SELECT count(*)::int FROM suppliers WHERE workspace_id=$1) suppliers,(SELECT count(*)::int FROM balances WHERE workspace_id=$1) positions,(SELECT sum(on_hand)::text FROM balances WHERE workspace_id=$1) units,(SELECT sum(total_cost_minor)::text FROM accounting_inventory_cost_balances WHERE workspace_id=$1) value_minor`,[ctx.workspaceId])).rows[0];
  assert.deepEqual(actual,{suppliers:200,positions:150000,units:'1500000',value_minor:'300000000'});
  // A mature inventory also has completed background history. Customer pages

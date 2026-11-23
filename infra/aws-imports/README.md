@@ -6,7 +6,9 @@ Status: implemented behind an explicit environment switch; not provisioned or en
 
 The selected AWS experience is **the new AWS experience**, project Region **us-east-2**, CLI profile **stockchief**. Manage project members, billing, MFA and spend limits through AWS Settings / the associated Builder ID. The earlier standalone/root-account signup instructions do not apply to this project.
 
-AWS CLI 2.42.1 and uv 0.13.9 have been installed locally. Complete the human sign-in and toolkit wizard using the prepared local `connect-stockchief-aws.ps1` helper. It configures the selected Region, runs `aws login`, verifies STS, and runs the toolkit wizard in us-east-1 (the toolkit service's required Region). Select Codex only. It does not provision resources. After the wizard, verify that the generated AWS MCP configuration contains `AWS_MCP_PROXY_PROFILES=stockchief`, preserving all other MCP settings. Verify the skill catalog and install the new-experience project rules before using the connected toolkit. Restart the coding session only after saving the implementation work.
+Connection verified November 23, 2026: the native AWS MCP server successfully called STS for project `964215584702` in us-east-2. AWS CLI 2.42.1, uv 0.13.9, the official skill catalog and the new-experience project rules are installed. The MCP proxy uses only the named `stockchief` profile. TLS certificate and hostname verification remain enabled, and the other MCP configurations are preserved. No additional sign-in, wizard or browser action is needed while this session remains valid.
+
+Read-only project checks found an active FREE plan with $100 remaining credit and no existing CloudFormation stacks, ECS clusters or ECR repositories in the selected Region. CloudFormation `ValidateTemplate` accepted the prepared template; it did not create resources or certify runtime performance. These results do not authorize a paid-plan upgrade, infrastructure creation, database access changes or secret transfers.
 
 Never paste passwords, keys or the database URL into chat. No root access key is required. Browser sign-in is a human action; this work does not control the desktop or browser.
 
@@ -84,4 +86,15 @@ Commit `04afbca3` passed all four required workflows: inventory correctness/capa
 
 `node scripts/benchmark-import-copy.js` compares the existing and COPY staging paths on the same machine. Each path gets a fresh Node process and database, and must preserve identical catalogue/stock source hashes, 50,000 SKUs, 150,000 stock positions, units, value and all 75 verified receipts. It writes before/after timings and query profiles to `output/aws-import-copy-comparison`. CI sets `STOCKCHIEF_COPY_REQUIRE_60S=1`, so the comparison fails if the COPY stock import exceeds 60 seconds. This is a canonical-engine benchmark; it excludes source transfer and is not hosted certification.
 
-No AWS resources have been provisioned by writing these files. Hosted performance, network placement, IAM permissions and task startup are not certified by fake-client tests or a successful infrastructure lint. The last existing CI baseline was 150,000 stock rows in 77.462 seconds, excluding a claim of AWS performance. **Under 60 seconds and hosted million-row/concurrency certification remain unproven until the approved deployment and benchmarks run.**
+The matched comparison on commit `76968e1f` used identical source hashes on one CI machine:
+
+| 150,000 stock rows into the existing 50,000-SKU catalogue | Before COPY | With COPY |
+|---|---:|---:|
+| Analysis, approval, application and verification | 115.905 seconds | 113.354 seconds |
+| Verified stock positions | 150,000 | 150,000 |
+| Verified receipt batches | 75 | 75 |
+| Units / inventory value in minor units | 1,500,000 / 300,000,000 | 1,500,000 / 300,000,000 |
+
+COPY saved **2.551 seconds**, and the strict 60-second CI gate correctly failed. Both complete correctness checks passed. The COPY run still spent 84.945 seconds in stock-execution transactions, including 16.029 seconds outside their callbacks; loading the source evidence is not the dominant remaining cost. See the [comparison run](https://github.com/Moshe844/foundry-inventory/actions/runs/45195145086) and its retained artifact. Optional `STOCKCHIEF_COPY_DIAGNOSTICS=1` captures Node CPU samples for the stock phase and PostgreSQL function timings on the disposable fixture connection, without weakening receipt verification or changing production settings.
+
+No AWS resources have been provisioned by writing these files. Hosted performance, network placement, IAM permissions and task startup are not certified by fake-client tests or a successful infrastructure lint. **Under 60 seconds and hosted million-row/concurrency certification remain unmet.** Moving this worker to AWS alone is not evidence that the remaining database execution cost is solved.

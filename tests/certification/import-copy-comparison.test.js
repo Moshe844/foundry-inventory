@@ -11,7 +11,19 @@ test('same 50,000-SKU / 150,000 mixed stock rows retain exact receipts through t
  copy.copyFrom=async(...args)=>{const started=performance.now();calls++;if(phase==='stock-analysis')stockCalls++;try{return await original(...args);}finally{copyMs+=performance.now()-started;}};
  t.after(()=>{copy.copyFrom=original;});
  let previous='';const started=performance.now();
- const f=await require('../helpers/round17-large-business').fixture(t,{onProgress:(next,p)=>{
+ const diagnostics=process.env.STOCKCHIEF_COPY_DIAGNOSTICS==='1';
+ let tracing;
+ t.after(async()=>{await tracing?.cancel();});
+ const f=await require('../helpers/round17-large-business').fixture(t,{
+ beforeStock:async db=>{
+  if(!diagnostics)return;
+  tracing=await require('../helpers/import-benchmark-diagnostics').start(db,process.env.STOCKCHIEF_COPY_BENCHMARK_OUTPUT,mode);
+ },
+ afterStock:async()=>{
+  if(!diagnostics)return;
+  console.log('COPY_DIAGNOSTICS '+JSON.stringify(await tracing.finish()));
+ },
+ onProgress:(next,p)=>{
   phase=next;
   const bucket=Math.floor(Number(p.processedRows||p.preparedRows||0)/25000),key=next+':'+p.stage+':'+bucket;
   if(key!==previous){previous=key;console.log(JSON.stringify({mode,phase:next,stage:p.stage,rows:p.processedRows||p.preparedRows||0,elapsedMs:Math.round(performance.now()-started)}));}
