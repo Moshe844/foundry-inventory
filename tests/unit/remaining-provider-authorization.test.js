@@ -80,6 +80,39 @@ test('Xero verifies the returned organization against the authorized tenant befo
  await assert.rejects(()=>xero.verifyReadOnly({credentials:{accessToken:'offline',tenantId:'chosen-tenant'}}),/authorized organization identity/);
 });
 
+test('Xero permission upgrades retain the exact company pinned by server-side consent state',async()=>{
+ const cases=[
+  {token:jwt('scope-upgrade'),links:[{id:'original-link',tenantId:'existing',authEventId:'original-event'}]},
+  {token:jwt('scope-upgrade'),links:[{id:'old-other',tenantId:'other',authEventId:'unrelated-event'},{id:'original-link',tenantId:'existing',authEventId:'original-event'}]},
+  {token:'opaque-provider-token',links:[{id:'original-link',tenantId:'existing'},{id:'other-link',tenantId:'other'}]},
+ ];
+ for(const fixture of cases){
+  let calls=0;global.fetch=async(value,options={})=>{
+   calls++;const url=new URL(value);
+   if(url.hostname==='identity.xero.com')return Response.json({...relative(),access_token:fixture.token});
+   if(url.pathname==='/connections')return Response.json(fixture.links);
+   assert.equal(options.headers['xero-tenant-id'],'existing');
+   return Response.json({Organisations:[{OrganisationID:'existing',Name:'Existing company'}]});
+  };
+  const result=await xero.exchangeAuthorization({query:{code:'fixture'},metadata:{redirectUri:'https://example.test/callback',xeroTenantId:'existing',requestedPosting:true}});
+  assert.equal(result.accountId,'existing');assert.equal(result.credentials.xeroConnectionId,'original-link');assert(result.capabilities.includes('accounting:post'));assert.equal(calls,3);
+ }
+});
+
+test('Xero permission upgrades reject missing, contradictory and invalid company bindings before any organization read',async()=>{
+ for(const [expected,links] of [
+  ['existing',[{tenantId:'other',authEventId:'scope-upgrade'}]],
+  ['existing',[{tenantId:'existing',authEventId:'original-event'},{tenantId:'other',authEventId:'scope-upgrade'}]],
+  ['existing',[{tenantId:'existing',tenantType:'PRACTICEMANAGER',authEventId:'original-event'}]],
+  ['', [{tenantId:'existing',authEventId:'original-event'}]],
+  [{untrusted:'object'},[{tenantId:'existing',authEventId:'original-event'}]],
+ ]){
+  let calls=0;global.fetch=async value=>{calls++;return Response.json(new URL(value).hostname==='identity.xero.com'?{...relative(),access_token:jwt('scope-upgrade')}:links);};
+  await assert.rejects(()=>xero.exchangeAuthorization({query:{code:'fixture'},metadata:{redirectUri:'https://example.test/callback',xeroTenantId:expected,requestedPosting:true}}),/same Xero organization|saved Xero company/);
+  assert.equal(calls,2);
+ }
+});
+
 test('QuickBooks rejects an authorization callback missing its company before token exchange',async()=>{
  global.fetch=async()=>{throw Error('Provider call must not occur');};
  for(const query of [{code:'offline'}, {code:'offline',realmId:''}, {realmId:'company'}])

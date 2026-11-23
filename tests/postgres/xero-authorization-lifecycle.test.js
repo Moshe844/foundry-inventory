@@ -14,7 +14,7 @@ test('Xero consent, refresh, disconnect and reconnect preserve billing and unrel
  // Native PostgreSQL and application services exercise a controlled Xero wire
  // fixture. Genuine demo-company consent remains a separate operator test.
  t.mock.method(require('../../src/commercial/operations'),'run',async(_db,_workspace,_operation,run)=>run());
- let generation=0,current=null,active=false,deletions=0,failDelete=false,refreshEntered,releaseRefresh,company='';
+ let generation=0,current=null,active=false,deletions=0,failDelete=false,refreshEntered,releaseRefresh,company='',currentEvent=null,connectionEvent=null;
  t.mock.method(global,'fetch',async(value,options={})=>{
   const url=new URL(value);assert(['identity.xero.com','api.xero.com'].includes(url.hostname));
   if(url.pathname==='/connect/token'){
@@ -23,11 +23,16 @@ test('Xero consent, refresh, disconnect and reconnect preserve billing and unrel
     assert.equal(input.get('refresh_token'),current.refreshToken);
     if(refreshEntered){refreshEntered();await new Promise(resolve=>{releaseRefresh=resolve;});}
    }
-   current={accessToken:'access-'+(++generation),refreshToken:'refresh-'+generation};active=true;
+   generation++;
+   if(input.get('grant_type')!=='refresh_token'){
+    currentEvent='event-'+generation;
+    if(!active)connectionEvent=currentEvent;
+   }
+   current={accessToken:'fixture.'+Buffer.from(JSON.stringify({authentication_event_id:currentEvent})).toString('base64url')+'.signature-'+generation,refreshToken:'refresh-'+generation};active=true;
    return Response.json({access_token:current.accessToken,refresh_token:current.refreshToken,expires_in:1800});
   }
   if(!active||options.headers.authorization!=='Bearer '+current.accessToken)return Response.json({error:'unauthorized'},{status:401});
-  if(url.pathname==='/connections')return Response.json([{id:'link-'+company,tenantId:company,tenantType:'ORGANISATION'}]);
+  if(url.pathname==='/connections')return Response.json([{id:'link-'+company,tenantId:company,tenantType:'ORGANISATION',authEventId:connectionEvent}]);
   if(url.pathname.startsWith('/connections/')){
    deletions++;assert.equal(options.method,'DELETE');assert.equal(url.pathname,'/connections/link-'+company);
    if(failDelete)return Response.json({error:'temporary_failure'},{status:503});
@@ -38,7 +43,7 @@ test('Xero consent, refresh, disconnect and reconnect preserve billing and unrel
   return Response.json({Organisations:[{OrganisationID:company,Name:'Lifecycle company '+company,BaseCurrency:'USD'}]});
  });
  for(const plan of ['starter','growth','pro'])await t.test(plan,async()=>{
-  company='fixture-'+plan;failDelete=false;
+  company='fixture-'+plan;failDelete=false;active=false;currentEvent=null;connectionEvent=null;
   const owner=await auth.createBusiness(db,{name:'Lifecycle Owner',businessName:'Lifecycle '+plan,email:randomUUID()+'@example.test',password:'Lifecycle!'+randomUUID()});
   process.env.STOCKCHIEF_STAGING_CONNECTION_WORKSPACES=owner.workspaceId;
   const ctx={workspaceId:owner.workspaceId,actorId:owner.userId,accountId:owner.accountId};
@@ -47,12 +52,14 @@ test('Xero consent, refresh, disconnect and reconnect preserve billing and unrel
   await store.put(db,owner.workspaceId,mail,'provider',{accessToken:'preserved-mail',refreshToken:'preserved-mail-refresh'});
   const preserved=async()=>({subscriptions:(await db.query('SELECT to_jsonb(s) AS state FROM account_subscriptions s WHERE account_id=$1 ORDER BY id',[owner.accountId])).rows,mail:await store.get(db,owner.workspaceId,mail,'provider')});
   const baseline=await preserved();
-  const begin=async connectorId=>service.beginAuthorization(db,ctx,{providerType:'xero',...(connectorId?{connectorId}:{})},'https://app.example.test');
+  const begin=async(connectorId,extra={})=>service.beginAuthorization(db,ctx,{providerType:'xero',...(connectorId?{connectorId}:{}),...extra},'https://app.example.test');
   const finish=async started=>service.completeOAuth(db,'xero',{state:new URL(started.redirectUrl).searchParams.get('state'),code:'fixture-'+randomUUID()},'https://app.example.test');
   let linked=await finish(await begin());const id=linked.id,first=await store.get(db,owner.workspaceId,id,'provider');
   assert.equal(linked.status,'connected');assert.equal(first.xeroConnectionId,'link-'+company);assert.deepEqual(await preserved(),baseline);
   assert(!linked.capabilities.includes('accounting:post'));
-  const pending=await begin(id);
+  const pending=await begin(id,{xeroTenantId:'caller-must-not-select-a-different-company',...(plan==='pro'?{requestedAuthority:'POST'}:{})});
+  const pinned=await service.readState(db,new URL(pending.redirectUrl).searchParams.get('state'),'xero');
+  assert.equal(pinned.metadata.xeroTenantId,company,'Reconnect company comes from the persisted connector, never caller input');
   await store.put(db,owner.workspaceId,id,'provider',{...first,expiresAt:new Date(0).toISOString()});
   let entered;const waiting=new Promise(resolve=>{entered=resolve;});refreshEntered=entered;
   const refreshing=service.loadProviderCredentials(db,linked,xero);await waiting;
@@ -62,6 +69,15 @@ test('Xero consent, refresh, disconnect and reconnect preserve billing and unrel
   releaseRefresh();refreshEntered=null;const rotated=await refreshing;
   assert.notEqual(rotated.refreshToken,first.refreshToken);
   linked=await finish(pending);assert.equal(linked.id,id,'Busy consent did not consume the pending OAuth state');
+  assert.notEqual(currentEvent,connectionEvent,'Re-consent fixture retains the original Xero connection event');
+  assert.equal(linked.capabilities.includes('accounting:post'),plan==='pro');
+  assert.deepEqual(await preserved(),baseline);
+  const changed=await begin(id),beforeChanged=current.refreshToken;
+  await db.query('UPDATE workspace_connectors SET provider_account_id=$2 WHERE id=$1',[id,'changed-during-consent']);
+  await assert.rejects(finish(changed),/connection changed while authorization was open/);
+  assert.equal(current.refreshToken,beforeChanged,'Changed company is refused before consuming a provider code');
+  assert.equal((await store.get(db,owner.workspaceId,id,'provider')).refreshToken,beforeChanged);
+  await db.query('UPDATE workspace_connectors SET provider_account_id=$2 WHERE id=$1',[id,company]);
   const refreshed=await store.get(db,owner.workspaceId,id,'provider');
   await store.put(db,owner.workspaceId,id,'provider',{...refreshed,expiresAt:new Date(0).toISOString()});
   let removed=await connections.disconnect(db,owner.workspaceId,id);
