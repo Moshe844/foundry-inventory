@@ -4,7 +4,10 @@ const config = require('../../config');
 const { ValidationError } = require('../../domain/errors');
 const { jsonRequest } = require('./common');
 
-const SCOPES = ['openid', 'email', 'https://www.googleapis.com/auth/gmail.readonly',
+// Gmail's read scope already permits users.getProfile, which supplies the
+// connected mailbox identity. This integration does not consume an ID token
+// or userinfo response and needs no separate OpenID/profile/email grant.
+const SCOPES = ['https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/gmail.send'];
 const decode = (value = '') => Buffer.from(String(value).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
 const base64 = (value = '') => Buffer.from(String(value).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('base64');
@@ -26,7 +29,9 @@ function authorizationUrl({ state, input }) {
     // This entry point is also used by "Connect another Gmail". Force Google
     // to ask which account the owner means instead of silently reusing the
     // browser's current account.
-    access_type: 'offline', prompt: 'select_account consent', include_granted_scopes: 'true' })) url.searchParams.set(key, value);
+    // A fresh consent request must not silently include this Google project's
+    // historical permissions. Existing saved grants are not revoked here.
+    access_type: 'offline', prompt: 'select_account consent', include_granted_scopes: 'false' })) url.searchParams.set(key, value);
   return { url: url.toString(), metadata: { redirectUri: input.redirectUri } };
 }
 
