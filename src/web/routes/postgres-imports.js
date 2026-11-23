@@ -42,10 +42,20 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     title:'File imports and results',nav:'imports',recent:await progress.list(database,req.ctx.workspaceId,{limit:20}),
     sourceUploads:await sourceUploads.list(database,req.ctx.workspaceId),
     locations:await locations(database,req.ctx.workspaceId),aiConfigured:Boolean(provider||config.ai.configured),canOperate:true,
+    directUploadEnabled:Boolean(require('../../imports/aws-config').configuration()),
     usageKey:newId('importpreview'),uploadLimitBytes:config.uploads.maxBytes,uploadPolicy:await require('../../imports/plan-upload-policy').presentation(database,req.ctx.workspaceId),
   });}
   router.get('/imports/start',asyncRoute(renderStart));
   router.get('/imports',asyncRoute(renderStart));
+  router.post('/imports/direct-upload',asyncRoute(async(req,res)=>{
+    if(!require('../../imports/aws-config').configuration())throw new ValidationError('Direct file uploads are not enabled here. Use the standard upload form.');
+    res.set('Cache-Control','no-store').status(201).json(await require('../../imports/postgres-direct-uploads').prepare(database,req.ctx,req.body));
+  }));
+  router.post('/imports/direct-upload/:id/complete',asyncRoute(async(req,res)=>{
+    if(!require('../../imports/aws-config').configuration())throw new ValidationError('Direct file uploads are not enabled here.');
+    const saved=await require('../../imports/postgres-direct-uploads').complete(database,req.ctx,req.params.id);
+    res.set('Cache-Control','no-store').status(202).json({location:saved.href});
+  }));
   const countSources=require('../../imports/physical-count-sources'),countPath=countSources.path;
   const countPage=async(req,res)=>{
     const view={title:'Physical count originals',nav:'imports',backTo:{href:req.params.id?countPath:'/imports',

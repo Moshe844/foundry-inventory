@@ -21,6 +21,8 @@ let runtime = null;
 let scheduleRuntime = null;
 let capacityRuntime = null;
 let readAgentRuntime = null;
+let importOutboxRuntime = null;
+let importTransport = null;
 let shuttingDown = false;
 
 async function shutdown(signal, exitCode = 0) {
@@ -28,7 +30,8 @@ async function shutdown(signal, exitCode = 0) {
   shuttingDown = true;
   console.log(`[stockchief] ${signal}; stopping PostgreSQL worker.`);
   try {
-    await require('./operations/runtime-shutdown').stopRuntimes([runtime,scheduleRuntime,capacityRuntime,readAgentRuntime]);
+    await require('./operations/runtime-shutdown').stopRuntimes([runtime,scheduleRuntime,capacityRuntime,readAgentRuntime,importOutboxRuntime]);
+    importTransport?.destroy();
     await database.close();
   } finally {
     process.exit(exitCode);
@@ -39,6 +42,13 @@ async function start() {
   const applied = await migratePostgres(database);
   const handlers={...businessHandlers.create(),...runtimeHandlers.create()},businessAgentHandler=handlers['assistant.run-goal'];
   delete handlers['assistant.run-goal'];
+  if(require('./imports/aws-config').configuration()){
+    for(const kind of require('./imports/aws-worker').KINDS)delete handlers[kind];
+    importTransport=require('./imports/aws-transport').configured();
+    importOutboxRuntime=require('./imports/aws-outbox').start(database,importTransport,{
+      onError(error){console.error('[stockchief] import queue notification deferred:',error.code||error.name);}
+    });
+  }
   runtime = worker.start(database, {
     handlers,
     intervalMs: Number(process.env.FOUNDRY_WORKER_INTERVAL_MS || 500),

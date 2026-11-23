@@ -2,6 +2,44 @@
 (()=>{
  if(window.StockChiefImportProgressLoaded)return;
  window.StockChiefImportProgressLoaded=true;
+ document.querySelectorAll('[data-direct-import-upload]').forEach(form=>{
+  let running=false,saved;
+  const notice=document.createElement('p');notice.setAttribute('role','status');form.append(notice);
+  form.addEventListener('submit',async event=>{
+   if(form.querySelector('[name=readingMode]')?.value!=='standard'||!/\.(csv|tsv|txt|xlsx|xlsm|xlsb|xls|ods|json|xml|html?|docx)$/i.test(form.querySelector('[type=file]')?.files?.[0]?.name||''))return;
+   event.preventDefault();event.stopImmediatePropagation();if(running)return;running=true;
+   const button=form.querySelector('[type=submit]'),label=button?.textContent;
+   if(button)button.disabled=true;
+   const json=async(url,body)=>{
+    const response=await fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(60000)});
+    const result=await response.json().catch(()=>null);
+    if(!response.ok)throw new Error(response.status<500&&(result?.error?.message||result?.message)||'The upload could not be confirmed. Your file is safe; try again.');
+    return result;
+   };
+   try{
+    const file=form.querySelector('[type=file]')?.files?.[0];if(!file)throw new Error('Choose a file first.');
+    const fields=Object.fromEntries([...form.querySelectorAll('input[type=hidden]')].map(input=>[input.name,input.value]));
+    const requestKey=fields.uploadKey;
+    if(!saved||saved.requestKey!==requestKey){
+     notice.textContent='Checking your file before a secure upload…';
+     const hash=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());
+     const sha256=[...new Uint8Array(hash)].map(byte=>byte.toString(16).padStart(2,'0')).join('');
+     const intent=await json('/imports/direct-upload',{...fields,filename:file.name,bytes:file.size,sha256,requestKey,readingMode:'standard'});
+     const upload=new FormData();for(const [key,value]of Object.entries(intent.upload.fields))upload.append(key,value);upload.append('file',file);
+     notice.textContent='Uploading your file securely. Keep this tab open until the upload finishes.';
+     const response=await fetch(intent.upload.url,{method:'POST',body:upload,credentials:'omit',signal:AbortSignal.timeout(600000)});
+     if(!response.ok)throw new Error('The file upload was interrupted. Select the file again to retry.');
+     saved={id:intent.id,requestKey};
+    }
+    notice.textContent='File uploaded. Saving its place in the import queue…';
+    const result=await json('/imports/direct-upload/'+encodeURIComponent(saved.id)+'/complete',fields);
+    const destination=new URL(result.location,location.origin);
+    if(destination.origin!==location.origin||!destination.pathname.startsWith('/imports/uploads/'))throw new Error('Open Imports to review the saved file.');
+    location.assign(destination.href);
+   }catch(error){notice.textContent=error.message||'The upload could not finish. Please try again.';}
+   finally{running=false;if(button){button.disabled=false;button.textContent=label;}}
+  },true);
+ });
  function nextStep(){
   const query=new URL(location.href).searchParams;if(query.has('page')||query.has('rows'))return;
   const active=document.querySelector('[data-preview-revision][data-revision-active="yes"]')||document.querySelector('[data-import-current-step] [data-import-detail]');

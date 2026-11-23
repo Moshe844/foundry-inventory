@@ -60,6 +60,9 @@ async function executionRows(client,workspaceId,importId,onProgress,options={}){
  return rows;
 }
 async function insert(database,workspaceId,importId,rows,at){
+ if(process.env.STOCKCHIEF_IMPORT_COPY==='true'&&rows.length>=1000&&typeof database.copyFrom==='function'){
+  return require('./postgres-copy-rows').insert(database,workspaceId,importId,rows,at);
+ }
  for(let start=0;start<rows.length;start+=CHUNK){
   const batch=rows.slice(start,start+CHUNK).map(row=>({id:row.id,row_number:row.rowNumber,raw:row.raw,parsed:row.parsed,status:row.status,problems:row.problems,location_id:row.parsed.locationId||null,quantity:row.parsed.quantity??null}));
   await database.query(`INSERT INTO import_rows(id,import_id,workspace_id,row_number,raw,parsed,status,problems,location_id,quantity,created_at)

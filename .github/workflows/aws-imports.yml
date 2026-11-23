@@ -1,0 +1,45 @@
+name: AWS import subsystem
+on:
+  pull_request:
+    branches: [codex/production-pilot]
+    paths:
+      - 'src/imports/**'
+      - 'src/db/**'
+      - 'src/aws-import-worker-server.js'
+      - 'src/postgres-worker-server.js'
+      - 'src/web/**'
+      - 'infra/aws-imports/**'
+      - 'tests/**'
+      - 'package*.json'
+      - '.github/workflows/aws-imports.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      NODE_ENV: test
+      FOUNDRY_SKIP_LOCAL_ENV: '1'
+      STOCKCHIEF_POSTGRES_BIN: /usr/lib/postgresql/17/bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: node infra/aws-imports/build-template.js && git diff --exit-code -- infra/aws-imports/template.json
+      - run: pipx run --spec cfn-lint==1.61.0 cfn-lint infra/aws-imports/template.json
+      - name: Install disposable PostgreSQL
+        run: |
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get update
+          sudo apt-get install -y postgresql-17
+      - name: AWS boundaries, tenant isolation, queue recovery and COPY integrity
+        run: node --test tests/unit/aws-import-transport.test.js tests/unit/aws-import-infrastructure.test.js tests/unit/import-copy-rows.test.js tests/postgres/aws-direct-import.test.js tests/postgres/import-copy-rows.test.js tests/postgres/source-upload-stock-mode.test.js
+      - name: Production-only import container
+        run: |
+          docker build -f infra/aws-imports/Dockerfile -t stockchief-import-worker:test .
+          docker run --rm --entrypoint node stockchief-import-worker:test -e 'const h=require("./src/imports/aws-worker").dedicatedHandlers(require("./src/operations/postgres-runtime-handlers").create()); if(Object.keys(h).length!==2)process.exit(1); console.log("Dedicated import handlers loaded without development dependencies");'

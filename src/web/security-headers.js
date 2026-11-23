@@ -3,8 +3,10 @@
 // to StockChief and its configured hosted payment fields. Framing is denied
 // on every response, including authentication, redirects, APIs and errors.
 module.exports=function securityHeaders(req,res,next){
+ const importConfig=String(req.path||'').startsWith('/imports')?require('../imports/aws-config').configuration():null;
  res.set('Content-Security-Policy',"default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'unsafe-inline' https://cdn.cardknox.com https://js.stripe.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://api.stripe.com https://*.cardknox.com; frame-src https://cdn.cardknox.com https://js.stripe.com https://hooks.stripe.com; worker-src 'self' blob:");
  res.set('X-Frame-Options','DENY');res.set('X-Content-Type-Options','nosniff');
+ if(importConfig)res.set('Content-Security-Policy',res.get('Content-Security-Policy').replace("connect-src 'self'", "connect-src 'self' "+importConfig.origin));
  res.set('Referrer-Policy','strict-origin-when-cross-origin');
  let callbackPath;try{callbackPath=decodeURIComponent(String(req.path||'')).replace(/\/+$/,'').toLowerCase();}catch{}
  if(callbackPath==='/settings/connections/quickbooks/callback'){

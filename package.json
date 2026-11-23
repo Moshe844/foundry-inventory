@@ -61,6 +61,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
+    "@aws-sdk/client-s3": "3.1175.0",
+    "@aws-sdk/client-sqs": "3.1175.0",
+    "@aws-sdk/s3-presigned-post": "3.1175.0",
     "@napi-rs/canvas": "^1.0.6",
     "@paralleldrive/cuid2": "^2.3.1",
     "@tesseract.js-data/eng": "^1.0.0",
@@ -79,6 +82,7 @@
     "pdfjs-dist": "^6.2.108",
     "pdfkit": "^0.17.2",
     "pg": "^8.16.3",
+    "pg-copy-streams": "7.0.0",
     "qr": "0.7.2",
     "saxes": "6.0.0",
     "sharp": "0.35.5",

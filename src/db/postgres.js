@@ -178,7 +178,10 @@ function openPostgres(connectionString, options = {}) {
           ` SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`+
           (settings.jit===undefined?'':`; SET LOCAL jit = '${settings.jit?'on':'off'}'`));
         let wrote=false,business=false;const workspaces=new Set();
-        const result = await operation({ query: async(statement, values = []) => {const result=await measuredQuery(client,statement,values);if(mutated(statement,result)){wrote=true;business||=affectsBusiness(statement);for(const id of workspaceIds(values))workspaces.add(id);}return result;} });
+        const result = await operation({
+          copyFrom: (statement, chunks) => require('./postgres-copy').copyFrom(client, statement, chunks),
+          query: async(statement, values = []) => {const result=await measuredQuery(client,statement,values);if(mutated(statement,result)){wrote=true;business||=affectsBusiness(statement);for(const id of workspaceIds(values))workspaces.add(id);}return result;}
+        });
         await controlQuery(client,'COMMIT');
         if(wrote)changed(workspaces,business);
         return result;
