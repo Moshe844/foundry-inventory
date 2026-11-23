@@ -28,7 +28,8 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
   const commercialScope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
   await entitlements.assertCapability(database,commercialScope,['gmail','microsoft365'].includes(providerType)?'communications.email_ingestion':
     adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce',{providerType});
-  if(providerType==='xero'&&xeroCustomers.enabled()&&!launchPolicy.pilotAllowed('xero',ctx)&&String(input.requestedAuthority||'').toUpperCase()==='POST')
+  const customerPosting=providerType==='xero'&&xeroCustomers.enabled()&&!launchPolicy.pilotAllowed('xero',ctx)&&String(input.requestedAuthority||'').toUpperCase()==='POST';
+  if(customerPosting&&!xeroCustomers.writesEnabled())
     throw new ValidationError('Xero customer connections are read-only. No posting access was requested.');
   if(!meta.available)throw new ValidationError(meta.unavailableReason||`${meta.name} is not configured.`);
   if(adapter.validateInput)adapter.validateInput(input);
@@ -55,6 +56,12 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
     }else{
       const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
       await entitlements.assertMeterCapacity(client,commercialScope,'connections',1);
+    }
+    if(customerPosting){
+      if(!existingConnection||!xeroCustomers.certified(existingConnection))throw new ValidationError('Connect and verify your Xero company with read-only access before requesting posting permission.');
+      await entitlements.assertCapability(client,commercialScope,'accounting.post_connected');
+      const owner=(await client.query("SELECT 1 FROM users WHERE workspace_id=$1 AND id=$2 AND role='owner' AND revoked_at IS NULL",[ctx.workspaceId,ctx.actorId])).rowCount;
+      if(!owner)throw new AuthorizationError('Only the inventory owner can grant Xero posting permission.');
     }
     // Reauthorization uses the application that owns the existing grant.
     // A caller-supplied profile must never migrate an established connection.
@@ -130,6 +137,11 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
       await launchPolicy.assertWorkspaceConnection(client,'clover',{workspaceId:connection.workspace_id},{merchantId:result.accountId});
     }
     const scope=await entitlements.ownerScopeForWorkspace(client,connection.workspace_id);
+    if(connection.provider_type==='xero'&&xeroCustomerEvidence?.readOnly===false){
+      await entitlements.assertCapability(client,scope,'accounting.post_connected');
+      if(!(await client.query("SELECT 1 FROM users WHERE workspace_id=$1 AND id=$2 AND role='owner' AND revoked_at IS NULL",[connection.workspace_id,actorId])).rowCount)
+        throw new AuthorizationError('Only the inventory owner can grant Xero posting permission.');
+    }
     await entitlements.assertCapability(client,scope,['gmail','microsoft365'].includes(connection.provider_type)?'communications.email_ingestion':
       ['quickbooks','xero'].includes(connection.provider_type)?'connections.accounting':'connections.commerce',{providerType:connection.provider_type});
     if(connection.provider_type==='xero')await xeroCustomers.admit(client,connection,result,authorizationStateId);
@@ -301,6 +313,8 @@ async function completeOAuthLocked(database,providerType,query,requestOrigin,opt
     if(adapter.integrationClass==='accounting'&&result.verifiedFact){
       const accountingSync=require('../accounting/postgres-integration-sync');
       await accountingSync.initialize(database,connected,state.actor_id,result.verifiedFact);
+      if(providerType==='xero'&&state.metadata.requestedPosting&&result.capabilities.includes('accounting:post'))
+        await accountingSync.chooseAuthority(database,{workspaceId:state.workspace_id,actorId:state.actor_id},connectorId,'POST');
       connected=await connections.get(database,state.workspace_id,connectorId);
     }
     if(adapter.registerWebhooks)connected=await setupWebhookDelivery(database,{workspaceId:state.workspace_id,actorId:state.actor_id},connectorId,requestOrigin,{...options,operationKey:`oauth-webhooks:${state.id}`});

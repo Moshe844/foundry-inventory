@@ -11,6 +11,7 @@ test('customer Xero Starter rollout: real consent on every plan, global capacity
  await require('../../src/db/migrate-postgres').migratePostgres(db);
  Object.assign(process.env,{STOCKCHIEF_RUNTIME_ENV:'production',XERO_CLIENT_ID:'customer-rollout-fixture',XERO_CLIENT_SECRET:'isolated-secret',
   STOCKCHIEF_XERO_STARTER_CLIENT_ID:'customer-rollout-fixture',STOCKCHIEF_XERO_STARTER_CUSTOMERS_APPROVED:'1',
+  STOCKCHIEF_XERO_GOVERNED_WRITES_APPROVED:'0',
   STOCKCHIEF_PRODUCTION_XERO_WORKSPACES:'',STOCKCHIEF_PRODUCTION_QUICKBOOKS_WORKSPACES:'',
   STOCKCHIEF_CHECKOUT_ENABLED:'true',STOCKCHIEF_BILLING_AUTOMATIC_TAX:'false',STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID:'acct_1UBFTdIjKuQgOJD6'});
  await db.query("UPDATE commercial_release_control SET checkout_enabled=true,economics_approved_at=now(),readiness_approved_at=now() WHERE singleton=true");
@@ -21,8 +22,8 @@ test('customer Xero Starter rollout: real consent on every plan, global capacity
  const service=require('../../src/connections/postgres-provider-service'),connections=require('../../src/connections/postgres-service');
  const rollout=require('../../src/connections/xero-customer-rollout'),entitlements=require('../../src/commercial/entitlements'),store=require('../../src/connections/postgres-credential-store');
  const release=require('../../src/commercial/release'),accounting=require('../../src/accounting/postgres-integration-sync'),registry=require('../../src/connections/providers/registry');
- const calls=[],organizations=new Set();let revokeApproval=false;
- const token=org=>'fixture.'+Buffer.from(JSON.stringify({authentication_event_id:org})).toString('base64url')+'.fixture';
+ const calls=[],organizations=new Set(),journals=new Map();let revokeApproval=false,grantWriteScopes=false,writeFixture=false,journalPosts=0;
+ const token=org=>'fixture.'+Buffer.from(JSON.stringify({authentication_event_id:org,scope:grantWriteScopes?['accounting.manualjournals','accounting.invoices']:['accounting.invoices.read']})).toString('base64url')+'.fixture';
  global.fetch=async(value,init={})=>{
   const url=new URL(value);assert(['identity.xero.com','api.xero.com'].includes(url.hostname),'No other provider may be called');
   calls.push({path:url.pathname,method:init.method||'GET'});
@@ -32,8 +33,14 @@ test('customer Xero Starter rollout: real consent on every plan, global capacity
   const org=init.headers?.['xero-tenant-id'];
   if(url.pathname.endsWith('/Organisation')){if(revokeApproval)process.env.STOCKCHIEF_XERO_STARTER_CUSTOMERS_APPROVED='0';return Response.json({Organisations:[{OrganisationID:org,Name:'Customer books '+org,BaseCurrency:'USD',IsDemoCompany:false}]});}
   if(url.pathname.endsWith('/Items'))return Response.json({Items:[]});
-  if(url.pathname.endsWith('/Accounts'))return Response.json({Accounts:[]});
+  if(url.pathname.endsWith('/Accounts'))return Response.json({Accounts:writeFixture?[{AccountID:'xero-expense',Code:'500',Name:'Expense',Type:'EXPENSE',Status:'ACTIVE'},{AccountID:'xero-clearing',Code:'130',Name:'Clearing',Type:'CURRENT',Status:'ACTIVE'}]:[]});
   if(url.pathname.endsWith('/Reports/TrialBalance'))return Response.json({Reports:[{Rows:[{RowType:'Header',Cells:[{Value:'Account'},{Value:'Debit'},{Value:'Credit'}]}]}]});
+  if(url.pathname.endsWith('/ManualJournals')&&init.method==='POST'){
+   assert(writeFixture,'Only the governed-write subtest may post');const key=init.headers['idempotency-key'];
+   if(!journals.has(key)){const row=JSON.parse(init.body).ManualJournals[0];journalPosts++;journals.set(key,{...row,ManualJournalID:randomUUID(),JournalLines:row.JournalLines.map(l=>({...l,AccountID:l.AccountCode==='500'?'xero-expense':'xero-clearing',TaxAmount:0}))});}
+   return Response.json({ManualJournals:[journals.get(key)]});
+  }
+  if(url.pathname.includes('/ManualJournals/')){const id=url.pathname.split('/').at(-1);return Response.json({ManualJournals:[...journals.values()].filter(row=>row.ManualJournalID===id)});}
   throw Error('Unrecognized provider fixture request: '+url.pathname);
  };
  const owners=[];
@@ -95,6 +102,50 @@ test('customer Xero Starter rollout: real consent on every plan, global capacity
   o.connection=await complete(await start(o,{connectorId:connected.id}),'org-'+plan);assert.equal(o.connection.id,connected.id);
   assert.deepEqual(await snapshot(),before);assert.equal(await release.isOpen(db),true);
  });
+ await t.test('governed customer writes require fresh owner scope, plan authority and matching books; day-one manual work preserves billing',async()=>{
+  const previous=process.env.STOCKCHIEF_XERO_GOVERNED_WRITES_APPROVED,before=await snapshot();
+  process.env.STOCKCHIEF_XERO_GOVERNED_WRITES_APPROVED='1';writeFixture=true;
+  try{for(const o of owners.slice(0,3)){
+   const box=o.connection,id=box.id,org=box.provider_account_id;
+   const permission=await entitlements.capabilityState(db,o.scope,'accounting.post_connected');
+   if(!permission.enabled){await assert.rejects(start(o,{connectorId:id,requestedAuthority:'POST'}),/requires|unavailable/);continue;}
+   await db.query("INSERT INTO commercial_entitlement_overrides(id,account_id,capability,enabled,reason,source) VALUES($1,$2,'accounting.post_connected',0,'Test posting denial','ISOLATED_TEST')",[randomUUID(),o.accountId]);
+   await assert.rejects(accounting.chooseAuthority(db,o.ctx,id,'POST'),/requires|unavailable/);
+   await assert.rejects(start(o,{connectorId:id,requestedAuthority:'POST'}),/requires|unavailable/);
+   assert.equal((await accounting.state(db,o.workspaceId,id)).canVerifyWrites,false);
+   await db.query("DELETE FROM commercial_entitlement_overrides WHERE account_id=$1 AND capability='accounting.post_connected'",[o.accountId]);
+   await accounting.chooseAuthority(db,o.ctx,id,'POST');
+   await assert.rejects(accounting.enableWrites(db,o.ctx,id),/posting permission|matching shadow/);
+   const old=await store.get(db,o.workspaceId,id,'provider'),missing=await start(o,{connectorId:id,requestedAuthority:'POST'});
+   grantWriteScopes=false;await assert.rejects(complete(missing,org),/posting permissions/);assert.deepEqual(await store.get(db,o.workspaceId,id,'provider'),old);
+   const request=await start(o,{connectorId:id,requestedAuthority:'POST'});assert(request.searchParams.get('scope').includes('accounting.manualjournals'));
+   grantWriteScopes=true;o.connection=await complete(request,org);grantWriteScopes=false;
+   assert(rollout.postingCertified(o.connection));assert.equal((await accounting.policy(db,o.workspaceId,id)).requested_authority,'POST');
+   assert.equal((await accounting.policy(db,o.workspaceId,id)).stage,'SHADOW','Consent preserves the requested authority without enabling writes');
+   assert.equal(await release.isOpen(db),true);
+   const today=await require('../../src/lib/business-time').today(db,o.workspaceId),ledger=require('../../src/accounting/postgres-ledger');
+   await ledger.configure(db,o.ctx,{startDate:today,currency:'USD'});
+   const adapter=registry.get('xero'),grant=await store.get(db,o.workspaceId,id,'provider');
+   await accounting.shadow(db,o.ctx,id,adapter,grant,{asOf:today});
+   const accounts=(await db.query("SELECT id,system_key FROM accounting_accounts WHERE workspace_id=$1 AND system_key=ANY($2::text[])",[o.workspaceId,['CASH','OPERATING_EXPENSE']])).rows;
+   for(const a of accounts)await accounting.mapAccount(db,o.ctx,id,{accountId:a.id,externalId:a.system_key==='CASH'?'xero-clearing':'xero-expense'});
+   const matched=await accounting.shadow(db,o.ctx,id,adapter,grant,{asOf:today});assert.equal(matched.status,'MATCHED');
+   await accounting.enableWrites(db,o.ctx,id);
+   const journal=await ledger.post(db,o.ctx,{postingDate:today,sourceKey:'customer-write-'+id,description:'Individually reviewed test journal',sourceType:'manual_certification',createdByType:'USER',lines:[{accountKey:'OPERATING_EXPENSE',debitMinor:1},{accountKey:'CASH',creditMinor:1}]});
+   await assert.rejects(accounting.queuePending(db,o.ctx,id,{entryIds:[journal.id]},{agentRequested:true}),/first 14 days/);
+   const queued=await accounting.queuePending(db,o.ctx,id,{entryIds:[journal.id]});assert.equal(queued.queued,1);
+   const count=journalPosts,run=require('../../src/operations/postgres-runtime-handlers').create()['provider.effect'];
+   const result=await run({kind:'provider.effect',workspaceId:o.workspaceId,payload:{effectId:queued.effects[0].id}},db);assert(result.externalId);assert.equal(journalPosts,count+1);
+   await run({kind:'provider.effect',workspaceId:o.workspaceId,payload:{effectId:queued.effects[0].id}},db);assert.equal(journalPosts,count+1,'Confirmed effects never create duplicates');
+   assert.equal(await release.isOpen(db),true,'Native write pricing must preserve checkout');
+   process.env.STOCKCHIEF_XERO_GOVERNED_WRITES_APPROVED='0';assert.throws(()=>rollout.assertNoPosting(o.connection),/read-only/);assert(rollout.certified(o.connection));assert.equal(await release.isOpen(db),true);
+   process.env.STOCKCHIEF_XERO_GOVERNED_WRITES_APPROVED='1';
+   const current=await connections.get(db,o.workspaceId,id);assert(rollout.postingCertified(current));
+  }
+  assert(journalPosts>0,'The customer rollout must exercise the native write path, not only denied plans');
+  assert.deepEqual(await snapshot(),before);assert.equal((await rollout.availability(db)).maximum,5);
+  }finally{writeFixture=false;grantWriteScopes=false;if(previous===undefined)delete process.env.STOCKCHIEF_XERO_GOVERNED_WRITES_APPROVED;else process.env.STOCKCHIEF_XERO_GOVERNED_WRITES_APPROVED=previous;}
+ });
  await t.test('global last-slot reservations serialize across customer accounts and expire without altering grants',async()=>{
   const a=await owner('growth'),b=await owner('growth'),c=await owner('growth');
   const before=await snapshot(),urls=await Promise.all([start(a),start(b)]);
@@ -149,5 +200,5 @@ test('customer Xero Starter rollout: real consent on every plan, global capacity
   await assert.rejects(complete(pending,'org-starter'),/not included/);revokeApproval=false;
   process.env.STOCKCHIEF_XERO_STARTER_CUSTOMERS_APPROVED='1';assert.deepEqual(await snapshot(),before);
  });
- assert(calls.length>0);assert(!calls.some(call=>!['GET','DELETE'].includes(call.method)&&call.path!=='/connect/token'),'No accounting write or paid-upgrade request is allowed');
+ assert(calls.length>0);assert(!calls.some(call=>!['GET','DELETE'].includes(call.method)&&!['/connect/token','/api.xro/2.0/ManualJournals'].includes(call.path)),'Only qualified fixture journal writes are allowed; no paid upgrade or other provider is contacted');
 });
