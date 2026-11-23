@@ -62,7 +62,7 @@ async function before(context,url,init,provider){const def=definition(url);if(pr
    {provider:def.provider,operation:'blocked_unscoped_provider_request',unit:'attempt',quantity:1,
     idempotencyKey:newId('unscoped'),providerVersion:def.version,detail:{hostname:def.host,providerNotCalled:true}});
    throw new (require('../domain/errors').ValidationError)('An outside operating request requires a scoped commercial inventory.');}
- if(!context.system)await entitlements.assertCapability(context.database,context.scope,def.capability);
+ if(!context.system)await entitlements.assertCapability(context.database,context.scope,def.capability,{providerType:def.provider});
  if(def.host==='gmail.googleapis.com')await reserveGmailQuota(context.database,gmailQuota(url,init.method));
  if(context.system)return {def,key:newId('system-providerattempt'),funded:true,url,method:init.method||'GET'};
  const key=newId('providerattempt');

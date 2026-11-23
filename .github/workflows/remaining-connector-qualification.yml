@@ -6,6 +6,12 @@ on:
       - src/connections/clover-review-pilot.js
       - src/connections/launch-policy.js
       - src/connections/accounting-review-pilot.js
+      - src/connections/xero-customer-rollout.js
+      - src/commercial/entitlements.js
+      - src/commercial/enforcement.js
+      - src/web/views/connections/index.ejs
+      - src/web/views/connections/provider-card-action.ejs
+      - tests/postgres/xero-customer-rollout.test.js
       - src/connections/postgres-provider-service.js
       - src/connections/postgres-service.js
       - src/connections/catalogue-issues.js
@@ -97,6 +103,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p output/remaining-connectors
+          node --test --test-force-exit tests/postgres/xero-customer-rollout.test.js 2>&1 | tee output/remaining-connectors/xero-customers.log
           node --test tests/unit/postgres-connection-status.test.js tests/unit/xero-token-lifecycle.test.js tests/unit/quickbooks-token-lifecycle.test.js tests/unit/quickbooks-feature-changes.test.js tests/unit/provider-streaming-discovery.test.js tests/unit/quickbooks-oauth-security.test.js tests/unit/quickbooks-request-diagnostics.test.js tests/unit/provider-http.test.js tests/unit/accounting-review-pilot.test.js tests/unit/clover-review-pilot.test.js tests/unit/remaining-provider-authorization.test.js tests/unit/mission9-provider-contracts.test.js tests/unit/integration-quickbooks-contract.test.js tests/unit/accounting-catalog-contract.test.js tests/unit/commercial-network.test.js 2>&1 | tee output/remaining-connectors/contracts.log
       - name: All-plan consent, preserved credentials, webhook isolation and accounting authority
         run: |
@@ -113,4 +120,5 @@ jobs:
           path: |
             output/remaining-connectors
             output/accounting-connection-setup
+            output/xero-customer-rollout
           retention-days: 14

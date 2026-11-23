@@ -102,7 +102,7 @@ async function sync(job,client,providers=defaultProviders){
     await client.query(`UPDATE connection_sync_runs SET status='FAILED',completed_at=$2 WHERE id=$1`,[runId,nowIso()]);
     return {skipped:'connection_changed',runId};}
   await require('../commercial/enforcement').workspace(client,job.workspaceId,
-    adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce');
+    adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce',{providerType:connection.provider_type});
   // Only reconciliation needs the old source values. Keep its exact baseline
   // on scratch disk and read database pages instead of duplicating the entire
   // provider catalogue in the worker heap.
@@ -192,7 +192,7 @@ async function setMappingInTransaction(client,ctx,input){
   if(!connection)throw new ValidationError('That connection is not in this inventory.');
   await require('../commercial/enforcement').workspace(client,ctx.workspaceId,
     ['custom','erp','custom_api'].includes(connection.provider_type)?'connections.custom_api':
-      ['quickbooks','xero'].includes(connection.provider_type)?'connections.accounting':'connections.commerce');
+      ['quickbooks','xero'].includes(connection.provider_type)?'connections.accounting':'connections.commerce',{providerType:connection.provider_type});
   const target=(await client.query(`SELECT id FROM ${targetTable} WHERE workspace_id=$1 AND id=$2`,
     [ctx.workspaceId,targetId])).rows[0];
   if(!target)throw new ValidationError('The selected StockChief record is not in this inventory.');
