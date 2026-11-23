@@ -1,0 +1,16 @@
+    <p>These levels show what each plan permits after the 14-day watch period, with your authorization. “No training needed” does not turn a job on automatically.</p>
+    <%- include('plan-mode-guide') %>
+    <p class="pricing-verification-note"><strong>Check the status beside each duty.</strong> Working workflow = verified end to end in its supported scope. Limited scope = a tested workflow with further PDF requirements or checks to finish. Planned = not available yet. Provider connections need qualification with your connected account.</p>
+    <label class="pricing-search">Find a duty<input type="search" data-comparison-search placeholder="Try purchase orders, tracking or reports"></label>
+    <p class="pricing-result-count" data-comparison-count aria-live="polite">214 duties across 19 areas</p>
+    <% for(const group of agentPlans.groups){ %><details class="pricing-duty-area" data-comparison-group>
+      <summary><%= group.label %><small><%= group.jobs.length %> duties</small></summary>
+      <div class="agent-plan-table" tabindex="0" role="region" aria-label="<%= group.label %> duties by plan. Scroll horizontally on small screens.">
+        <table><caption class="sr-only"><%= group.label %>: permitted control for each plan</caption>
+          <thead><tr><th scope="col">Agent duty</th><% for(const plan of compared){ %><th scope="col" data-agent-tier="<%= plan.id %>"><%= plan.name %></th><% } %></tr></thead>
+          <tbody><% for(const job of group.jobs){ %><tr data-agent-job="<%= job.id %>"><th scope="row"><span><%= job.label %></span><small class="pricing-status pricing-status--<%= job.status %>" data-agent-verification><%= job.verification %></small><% if(job.currentScope){ %><p class="plan-current-scope" data-job-current-scope><strong>Available now:</strong> <%= job.currentScope %></p><% } %></th>
+            <% for(const plan of compared){const cell=job.plans.find(p=>p.tier===plan.id); %><td data-agent-tier="<%= plan.id %>" data-agent-mode="<%= cell.mode %>"><span class="agent-mode agent-mode--<%= cell.mode %>"><%= cell.label %></span></td><% } %>
+          </tr><% } %></tbody>
+        </table>
+      </div>
+    </details><% } %>

@@ -9,8 +9,10 @@ test('healthy pages, app permission errors, APIs and other origins remain author
  const denied=new Response('<title>Permission · StockChief</title>No access',{status:403,headers:{'Content-Type':'text/html'}});assert.equal(await worker(async()=>denied)({mode:'navigate',url:'https://stockchief-staging-web.onrender.com/settings',method:'GET'}),denied);
 });
 
-test('the qualification domain links directly to off-provider status when its origin is offline',async()=>{
- let calls=0;const run=worker(async()=>{calls++;throw Error('origin offline');},'https://qualify.stockchiefhq.com/');
- const response=await run({mode:'navigate',url:'https://qualify.stockchiefhq.com/inventory',method:'GET'}),html=await response.text();
+test('production and qualification link directly to independent status when their origin is offline',async()=>{
+ for(const origin of ['https://app.stockchiefhq.com','https://qualify.stockchiefhq.com']){
+ let calls=0;const run=worker(async()=>{calls++;throw Error('origin offline');},origin+'/');
+ const response=await run({mode:'navigate',url:origin+'/inventory',method:'GET'}),html=await response.text();
  assert.equal(response.status,503);assert.match(html,/href="https:\/\/moshe844.github.io\/stockchief-status\/"/);assert.doesNotMatch(html,/href="\/status"/);assert.equal(calls,1);assert.equal(response.headers.get('cache-control'),'no-store');
+ }
 });

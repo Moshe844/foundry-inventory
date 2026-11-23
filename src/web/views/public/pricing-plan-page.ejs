@@ -1,0 +1,4 @@
+<% const {format,interval,compared,allowanceNumber,allowanceLabel}=offer.presentation(plans,locals.billingInterval),plan=compared.find(p=>p.id===planId); %>
+<p><a href="/pricing?interval=<%= interval %>#<%= plan.id %>">← Back to plans</a></p>
+<article class="plan-detail-page" data-plan-inline><header><p class="pub-kicker">Every duty and its status</p><h1><%= plan.name %></h1></header>
+<section class="plan-dialog-body" data-plan-content><%- include('plan-detail-body',{plan,agentPlans,format,interval,allowanceNumber,allowanceLabel}) %></section></article>

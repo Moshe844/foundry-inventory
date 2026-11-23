@@ -43,4 +43,11 @@ function describe(plan){const meters=new Map((plan.meters||[]).map(m=>[m.meter,m
  };}
 function purchasableAddons(packs){return packs.filter(p=>p.purchasable===true&&p.status==='APPROVED');}
 function comparison(plans){let previous=null;return plans.slice().sort((a,b)=>Number(a.display_order||0)-Number(b.display_order||0)).map(raw=>{const plan=describe(raw),current=new Set(plan.features.map(f=>f.capability)),inherits=previous&&previous.features.every(f=>current.has(f.capability)),inherited=new Set(inherits?previous.features.map(f=>f.capability):[]),result={...plan,includesPlan:inherits?previous.name:null,incrementalFeatures:plan.features.filter(f=>!inherited.has(f.capability))};previous=plan;return result;});}
-module.exports={describe,comparison,features,enabled,purchasableAddons};
+function presentation(plans,billingInterval){
+ const format=n=>Number(n).toLocaleString('en-US'),interval=billingInterval==='annual'?'annual':'monthly',usage=new Set(['agent_documents','ai_work_credits','incoming_emails','emails_sent','connected_operations','api_requests']);
+ return {format,interval,compared:comparison(plans),
+  packLabel:category=>({ai_work_credits:'AI Work Credits',incoming_emails:'incoming emails',emails_sent:'outgoing recipients',connected_operations:'Connected Operations'}[category]||category),
+  allowanceNumber:(plan,a)=>plan.sales_only?'Agreed limit':a.units==null?(a.meter==='locations'&&plan.id==='pro'?'Unlimited':'Contact support'):a.meter==='storage_bytes'?format(a.units/1e9)+' GB':format(a.units),
+  allowanceLabel:a=>(a.label||a.meter).replace(/ per month$/i,'')+(usage.has(a.meter)?' / month':'')};
+}
+module.exports={describe,comparison,features,enabled,purchasableAddons,presentation};

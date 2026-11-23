@@ -4,11 +4,11 @@ test('plan popups and comparison explain current partial scope without offering 
  // Statuses, modes and wording come from the plan data itself, so finishing a job never breaks this check.
  const rows=require('../../src/commercial/agent-plan-comparison').comparison(),norm=s=>String(s||'').replace(/\s+/g,' ').trim().replace(/^Available now:\s*/,''),SAMPLE=[12,16,31,38,40,61,65,70,83,85,97,112,113,128,145,183];
  for(const tier of ['starter','growth','pro','enterprise']){
-  await page.locator('.plan-card[data-plan="'+tier+'"] .plan-details-link').click();const dialog=page.locator('[data-plan-dialog="'+tier+'"]');
+  await page.locator('.plan-card[data-plan="'+tier+'"] .plan-details-link').click();const dialog=page.locator('[data-plan-dialog="'+tier+'"]');await dialog.locator('[data-plan-job]').first().waitFor({state:'attached'});
   assert.equal(await dialog.locator('[data-plan-job]:not([data-status="pending"])').count(),await dialog.locator('[data-plan-job] [data-job-current-scope]').count(),tier+' must explain every available scope');
   assert.equal(await dialog.locator('[data-plan-job][data-status="pending"] [data-job-current-scope]').count(),0,tier+' must not claim availability for planned duties');
   for(const id of SAMPLE){const row=rows.find(r=>r.id===id),plan=row.plans.find(p=>p.tier===tier),el=dialog.locator('[data-plan-job="'+id+'"]');if(plan.mode==='excluded'){assert.equal(await el.count(),0,tier+' must not include excluded job '+id);continue;}assert.equal(await el.getAttribute('data-status'),row.status,'job '+id+' status');assert.equal(await el.getAttribute('data-mode'),plan.mode,'job '+id+' mode on '+tier);if(plan.currentScope)assert.equal(norm(await el.locator('[data-job-current-scope]').innerText()),norm(plan.currentScope),'job '+id+' scope on '+tier);}
   assert(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth+1));await dialog.locator('.plan-dialog-close').click();
  }
- await page.locator('[data-full-comparison]>summary').click();for(const id of [31,97]){const row=rows.find(r=>r.id===id);assert.equal(norm(await page.locator('[data-agent-job="'+id+'"] [data-job-current-scope]').textContent()),norm(row.currentScope),'comparison scope for job '+id);}assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+ await page.locator('[data-full-comparison]>summary').click();await page.locator('[data-agent-job]').first().waitFor({state:'attached'});for(const id of [31,97]){const row=rows.find(r=>r.id===id);assert.equal(norm(await page.locator('[data-agent-job="'+id+'"] [data-job-current-scope]').textContent()),norm(row.currentScope),'comparison scope for job '+id);}assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
 });
