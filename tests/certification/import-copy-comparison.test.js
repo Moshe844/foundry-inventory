@@ -5,7 +5,8 @@ const test=require('node:test'),assert=require('node:assert/strict');
 test('same 50,000-SKU / 150,000 mixed stock rows retain exact receipts through the selected staging path',{
  skip:process.env.STOCKCHIEF_COPY_BENCHMARK!=='1',timeout:900000,
 },async t=>{
- const mode=process.env.STOCKCHIEF_IMPORT_COPY==='true'?'copy':'baseline';
+ const mode=process.env.STOCKCHIEF_COPY_BENCHMARK_MODE||(process.env.STOCKCHIEF_IMPORT_COPY==='true'?'copy':'baseline');
+ assert(['baseline','copy'].includes(mode));
  const copy=require('../../src/db/postgres-copy'),original=copy.copyFrom;
  let phase='setup',calls=0,stockCalls=0,copyMs=0;
  copy.copyFrom=async(...args)=>{const started=performance.now();calls++;if(phase==='stock-analysis')stockCalls++;try{return await original(...args);}finally{copyMs+=performance.now()-started;}};
@@ -33,8 +34,13 @@ test('same 50,000-SKU / 150,000 mixed stock rows retain exact receipts through t
  assert.deepEqual(f.actual,{suppliers:200,positions:150000,units:'1500000',value_minor:'300000000'});
  assert.equal(f.importBatchVerification.batchReconciliations,f.importBatchVerification.receiptBatches);
  assert.equal(f.importBatchVerification.finalCanonicalReconciliations,0);
- if(mode==='copy')assert(stockCalls>0,'The large stock analysis must actually use COPY; a wrapper cannot silently discard the transaction stream capability.');
+ if(process.env.STOCKCHIEF_IMPORT_COPY==='true')assert(stockCalls>0,'The large stock analysis must actually use COPY; a wrapper cannot silently discard the transaction stream capability.');
  else assert.equal(calls,0);
+ const reference=process[Symbol.for('stockchief.importCpuReference')];
+ if(process.env.STOCKCHIEF_COPY_REFERENCE==='1'){
+  if(mode==='baseline'){assert.equal(reference?.commit,'72cc228dd5e2e6c706f04bebc9c4285ff4fc54eb');assert.deepEqual([...reference.loadedFiles].sort(),['src/domain/exact-quantity.js','src/imports/postgres-service.js']);}
+  else assert.equal(reference,undefined,'The optimized process must execute the current source.');
+ }
  console.log('COPY_BENCHMARK '+JSON.stringify({mode,stockWorkers:Number(process.env.FOUNDRY_IMPORT_STOCK_WORKERS||0),products:5000,skus:50000,warehouses:5,openingStockRows:150000,
   catalogueSourceHash:f.plan.sourceHash,stockSourceHash:f.stockPlan.sourceHash,catalogueMs:Math.round(f.catalogueMs),stockImportMs:Math.round(f.stockImportMs),
   fixtureMs:Math.round(performance.now()-started),copyCalls:calls,stockCopyCalls:stockCalls,copyMs:Math.round(copyMs),

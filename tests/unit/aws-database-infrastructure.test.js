@@ -24,7 +24,7 @@ test('database starts private and cannot open PostgreSQL to the internet',()=>{
  assert.equal(t.Resources.DatabaseSubnets.Properties.SubnetIds.length,2);
 });
 test('bounded hardware and storage remain distinct from customer entitlements and retained backup evidence',()=>{
- assert.equal(t.Parameters.DatabaseClass.Default,'db.m7g.xlarge');assert.deepEqual(t.Parameters.DatabaseClass.AllowedValues,['db.m7g.large','db.m7g.xlarge']);
+ assert.equal(t.Parameters.DatabaseClass.Default,'db.m7g.large');assert.deepEqual(t.Parameters.DatabaseClass.AllowedValues,['db.m7g.large','db.m7g.xlarge']);
  assert.equal(t.Parameters.AllocatedStorage.Default,50);assert.equal(t.Parameters.MaxAllocatedStorage.Default,100);
  const evidence=t.Resources.MigrationEvidence;
  assert.equal(evidence.DeletionPolicy,'Retain');assert.equal(evidence.Properties.PublicAccessBlockConfiguration.BlockPublicPolicy,true);

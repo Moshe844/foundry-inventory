@@ -5,10 +5,11 @@ fs.mkdirSync(directory,{recursive:true});
 
 async function run(mode){
  const filename=path.join(directory,mode+'.log'),log=fs.createWriteStream(filename);
- const child=spawn(process.execPath,['--max-old-space-size=1536','--test','--test-concurrency=1','tests/certification/import-copy-comparison.test.js'],{
+ const reference=process.env.STOCKCHIEF_COPY_REFERENCE==='1';
+ const child=spawn(process.execPath,[...(reference&&mode==='baseline'?['--require','./tests/helpers/import-cpu-reference.cjs']:[]),'--max-old-space-size=1536','--test','--test-concurrency=1','tests/certification/import-copy-comparison.test.js'],{
   cwd:root,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...process.env,NODE_ENV:'test',FOUNDRY_SKIP_LOCAL_ENV:'1',
-   STOCKCHIEF_COPY_BENCHMARK:'1',STOCKCHIEF_IMPORT_PROFILE:'1',STOCKCHIEF_IMPORT_COPY:mode==='copy'?'true':'false',
-   STOCKCHIEF_COPY_BENCHMARK_OUTPUT:directory,FOUNDRY_IMPORT_STOCK_WORKERS:mode==='copy'?'3':'0'},
+   STOCKCHIEF_COPY_BENCHMARK:'1',STOCKCHIEF_IMPORT_PROFILE:'1',STOCKCHIEF_COPY_BENCHMARK_MODE:mode,STOCKCHIEF_IMPORT_COPY:reference||mode==='copy'?'true':'false',
+   STOCKCHIEF_COPY_BENCHMARK_OUTPUT:directory,FOUNDRY_IMPORT_STOCK_WORKERS:reference||mode==='copy'?'3':'0'},
  });
  let pending='',result;
  const consume=chunk=>{
@@ -34,7 +35,8 @@ async function main(){
  for(const value of [baseline,copy])assert.equal(value.verification.batchReconciliations,value.verification.receiptBatches,'Every committed receipt must retain its full batch reconciliation.');
  const result={baseline,copy,stockTimeSavedMs:baseline.stockImportMs-copy.stockImportMs,
   catalogueTimeSavedMs:baseline.catalogueMs-copy.catalogueMs,stockUnder60Seconds:copy.stockImportMs<60000,
-  sameMachine:true,exactSameSources:true,integrityPassed:true,hostedCertification:false};
+  sameMachine:true,exactSameSources:true,integrityPassed:true,hostedCertification:false,
+  ...(process.env.STOCKCHIEF_COPY_REFERENCE==='1'?{referenceCommit:'72cc228dd5e2e6c706f04bebc9c4285ff4fc54eb',referenceFiles:['src/domain/exact-quantity.js','src/imports/postgres-service.js']}:{} )};
  fs.writeFileSync(path.join(directory,'comparison.json'),JSON.stringify(result,null,2)+'\n');
  console.log('COPY_COMPARISON '+JSON.stringify(result));
  if(process.env.STOCKCHIEF_COPY_REQUIRE_60S==='1'&&!result.stockUnder60Seconds)throw new Error('The 150,000-row COPY workload took '+copy.stockImportMs+' ms; the under-60-second target is not met.');

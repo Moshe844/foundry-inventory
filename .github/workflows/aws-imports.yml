@@ -67,7 +67,10 @@ jobs:
         env:
           STOCKCHIEF_COPY_REQUIRE_60S: '1'
           STOCKCHIEF_COPY_DIAGNOSTICS: '1'
-        run: node scripts/benchmark-import-copy.js
+          STOCKCHIEF_COPY_REFERENCE: '1'
+        run: |
+          git fetch --no-tags --depth=1 origin 72cc228dd5e2e6c706f04bebc9c4285ff4fc54eb
+          node scripts/benchmark-import-copy.js
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -92,6 +92,12 @@ Parallel import eligibility now includes lot receipts as well as ordinary stock.
 
 The first mixed-lot comparison (`811854b1`) reduced 150,000 stock rows from 79.826 to 61.676 seconds on the same runner. All 150,000 positions, 1,500,000 units and 300,000,000 minor units of value reconciled through 77 verified receipts. This still failed the 60-second gate. The next change rotates lanes after each committed batch instead of leaving the fourth lane to wait behind three complete lane runs; the frozen cursors, numbers and receipts are unchanged.
 
+The fair scheduler's matched run (`72cc228d`) took 127.051 seconds serially and 90.756 seconds with COPY/three sessions, saving 36.295 seconds on that runner. All source hashes, stock, costs and 77 receipts reconciled, but the strict 60-second gate failed. Separate runners vary, so the earlier 61.676 seconds must not be presented as a stable performance certification.
+
+That run spent 35.640 seconds in the preview checking/staging transaction. CPU samples included repeated decimal parsing/formatting and validation allocations. The follow-up reuses row-schema lookup sets and adds safe-integer arithmetic paths; fractional quantities, unsafe totals and unusual price units retain exact decimal/BigInt handling. Focused tests compare integer results against BigInt proofs and check rounding, fractional import/replay and mixed-lot interruption. A CPU-only 100,000-iteration arithmetic check took 363.083 ms before and 14.056 ms after, with matching totals; this is **not** an import timing or a capacity claim.
+
+For this follow-up, CI sets `STOCKCHIEF_COPY_REFERENCE=1`. The baseline process loads only `exact-quantity.js` and `postgres-service.js` from the pinned `72cc228dd5e2e6c706f04bebc9c4285ff4fc54eb` commit; the optimized process loads the current versions. Both use COPY, three stock sessions, fresh databases, the same sources and all receipt/cost/journal checks. The test asserts that both reference modules actually loaded and that no reference loader runs in the optimized process. The loader refuses non-test execution. This isolates the CPU-code change on one machine instead of attributing runner variance to the fix. Without that flag, the script retains the original serial-JSON versus parallel-COPY experiment. The 60-second gate is unchanged.
+
 The matched comparison on commit `76968e1f` used identical source hashes on one CI machine:
 
 | 150,000 stock rows into the existing 50,000-SKU catalogue | Before COPY | With COPY |

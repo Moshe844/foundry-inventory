@@ -35,12 +35,12 @@
     },
     "DatabaseClass": {
       "Type": "String",
-      "Default": "db.m7g.xlarge",
+      "Default": "db.m7g.large",
       "AllowedValues": [
         "db.m7g.large",
         "db.m7g.xlarge"
       ],
-      "Description": "Reviewed non-burstable choices: 2 vCPU/8 GiB or 4 vCPU/16 GiB. The class remains subject to cost approval and qualification."
+      "Description": "Start with the user-selected 2 vCPU/8 GiB. A later 4 vCPU/16 GiB change requires its own cost approval."
     },
     "DeploymentPhase": {
       "Type": "String",
@@ -466,6 +466,29 @@
         }
       },
       "DependsOn": "GatewayAttachment"
+    },
+    "SourceEndpoint": {
+      "Type": "AWS::EC2::VPCEndpoint",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Network"
+        },
+        "VpcEndpointType": "Gateway",
+        "ServiceName": {
+          "Fn::Sub": "com.amazonaws.${AWS::Region}.s3"
+        },
+        "RouteTableIds": [
+          {
+            "Ref": "Routes"
+          }
+        ]
+      },
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Keep source-file traffic on the AWS S3 gateway without a paid NAT gateway.",
+          "must": []
+        }
+      }
     },
     "RouteAssociation0": {
       "Type": "AWS::EC2::SubnetRouteTableAssociation",
@@ -1158,6 +1181,11 @@
           "Database",
           "Endpoint.Address"
         ]
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:Host"
+        }
       }
     },
     "MasterSecretArn": {
@@ -1167,18 +1195,58 @@
           "Database",
           "MasterUserSecret.SecretArn"
         ]
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:MasterSecretArn"
+        }
       }
     },
     "ApplicationSecretArn": {
       "Description": "Application role secret: role must be created and qualified before activation.",
       "Value": {
         "Ref": "ApplicationSecret"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:ApplicationSecretArn"
+        }
+      }
+    },
+    "DatabaseName": {
+      "Description": "Database name for the scoped runtime connection.",
+      "Value": {
+        "Ref": "DatabaseName"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:DatabaseName"
+        }
+      }
+    },
+    "DataKeyArn": {
+      "Description": "Import execution may decrypt only its application secret with this retained key.",
+      "Value": {
+        "Fn::GetAtt": [
+          "DataKey",
+          "Arn"
+        ]
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:DataKeyArn"
+        }
       }
     },
     "VpcId": {
       "Description": "Pass to the colocated import stack.",
       "Value": {
         "Ref": "Network"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:VpcId"
+        }
       }
     },
     "SubnetIds": {
@@ -1195,18 +1263,33 @@
             }
           ]
         ]
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:SubnetIds"
+        }
       }
     },
     "ClientSecurityGroupId": {
       "Description": "Import tasks only; no inbound ports.",
       "Value": {
         "Ref": "ClientFirewall"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:ClientSecurityGroupId"
+        }
       }
     },
     "MigrationBucket": {
       "Description": "Private retained migration evidence.",
       "Value": {
         "Ref": "MigrationEvidence"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:MigrationBucket"
+        }
       }
     }
   }

@@ -5,7 +5,7 @@ const resources={},parameters={
  NamePrefix:{Type:'String',Default:'stockchief-production',AllowedPattern:'[a-z][a-z0-9-]{2,29}',Description:'Unique deployment prefix; existing databases are never replaced by this preparation.'},
  DatabaseName:{Type:'String',Default:'stockchief',AllowedPattern:'[a-zA-Z][a-zA-Z0-9_]{0,62}'},
  EngineVersion:{Type:'String',Default:'17.11',AllowedPattern:'17\\.[0-9]+',Description:'Latest available PostgreSQL 17 minor verified in the selected Region; preserve the source major for this migration.'},
- DatabaseClass:{Type:'String',Default:'db.m7g.xlarge',AllowedValues:['db.m7g.large','db.m7g.xlarge'],Description:'Reviewed non-burstable choices: 2 vCPU/8 GiB or 4 vCPU/16 GiB. The class remains subject to cost approval and qualification.'},
+ DatabaseClass:{Type:'String',Default:'db.m7g.large',AllowedValues:['db.m7g.large','db.m7g.xlarge'],Description:'Start with the user-selected 2 vCPU/8 GiB. A later 4 vCPU/16 GiB change requires its own cost approval.'},
  DeploymentPhase:{Type:'String',Default:'qualification',AllowedValues:['qualification','production'],Description:'Rehearse on the isolated target first; production enables a synchronous standby in another zone.'},
  AllocatedStorage:{Type:'Number',Default:50,AllowedValues:[50]},
  MaxAllocatedStorage:{Type:'Number',Default:100,AllowedValues:[100],Description:'Storage autoscaling ceiling, shared across customers. The database cannot shrink after growth.'},
@@ -26,6 +26,7 @@ for(let i=0;i<2;i++){
 }
 add('Routes','AWS::EC2::RouteTable',{VpcId:ref('Network')},'Shared outbound routing; no NAT gateway or public listener.');
 add('InternetRoute','AWS::EC2::Route',{RouteTableId:ref('Routes'),DestinationCidrBlock:'0.0.0.0/0',GatewayId:ref('Gateway')},'Egress route for tasks explicitly assigned a public IP.',[],{DependsOn:'GatewayAttachment'});
+add('SourceEndpoint','AWS::EC2::VPCEndpoint',{VpcId:ref('Network'),VpcEndpointType:'Gateway',ServiceName:sub('com.amazonaws.${AWS::Region}.s3'),RouteTableIds:[ref('Routes')]},'Keep source-file traffic on the AWS S3 gateway without a paid NAT gateway.');
 for(let i=0;i<2;i++)add('RouteAssociation'+i,'AWS::EC2::SubnetRouteTableAssociation',{SubnetId:ref('Subnet'+i),RouteTableId:ref('Routes')},'Associate both database/task subnets with the same reviewed routing.');
 add('ClientFirewall','AWS::EC2::SecurityGroup',{VpcId:ref('Network'),GroupDescription:'StockChief import tasks: no inbound traffic',SecurityGroupEgress:[{IpProtocol:'tcp',FromPort:443,ToPort:443,CidrIp:'0.0.0.0/0'}]},'Task identity grants private database access; HTTPS reaches S3, SQS and image endpoints.',['No ingress rules; database access is restricted to the database group.']);
 add('DatabaseFirewall','AWS::EC2::SecurityGroup',{VpcId:ref('Network'),GroupDescription:'StockChief database: import tasks and explicitly approved Render ranges only',SecurityGroupIngress:[{IpProtocol:'tcp',FromPort:5432,ToPort:5432,SourceSecurityGroupId:ref('ClientFirewall')}],SecurityGroupEgress:[{IpProtocol:'-1',CidrIp:'127.0.0.1/32'}]},'Private task traffic is allowed by security-group identity, not a shared internet range.',['Never allow 0.0.0.0/0 or ::/0 to PostgreSQL.']);
@@ -63,10 +64,15 @@ const template={AWSTemplateFormatVersion:'2010-09-09',Description:'StockChief da
   Host:{Description:'Certificate-verified PostgreSQL endpoint, never a credential.',Value:get('Database','Endpoint.Address')},
   MasterSecretArn:{Description:'Managed administrative secret: bootstrap/restore only.',Value:get('Database','MasterUserSecret.SecretArn')},
   ApplicationSecretArn:{Description:'Application role secret: role must be created and qualified before activation.',Value:ref('ApplicationSecret')},
+  DatabaseName:{Description:'Database name for the scoped runtime connection.',Value:ref('DatabaseName')},
+  DataKeyArn:{Description:'Import execution may decrypt only its application secret with this retained key.',Value:get('DataKey','Arn')},
   VpcId:{Description:'Pass to the colocated import stack.',Value:ref('Network')},
   SubnetIds:{Description:'Import task subnets; public task IPs permit HTTPS egress without a NAT gateway.',Value:{'Fn::Join':[',',[ref('Subnet0'),ref('Subnet1')]]}},
   ClientSecurityGroupId:{Description:'Import tasks only; no inbound ports.',Value:ref('ClientFirewall')},
   MigrationBucket:{Description:'Private retained migration evidence.',Value:ref('MigrationEvidence')},
  }};
+// These new exports are the explicit contract for the colocated import stack.
+// No deployed exports are renamed or removed by this preparation.
+for(const [name,output] of Object.entries(template.Outputs)) output.Export={Name:sub('${AWS::StackName}:'+name)};
 if(require.main===module)fs.writeFileSync(path.join(__dirname,'template.json'),JSON.stringify(template,null,2)+'\n');
 module.exports={template};

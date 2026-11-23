@@ -26,6 +26,9 @@ const sourceIdentity=require('./source-identity'),sourceMoney=require('./source-
 const addExact=(a,b)=>exactQuantity.safeNumber(exactQuantity.add(a,b),{signed:true});
 
 const PLAN_TTL_MS = 24 * 60 * 60 * 1000;
+const BLOCKING_IMPORT_PROBLEMS=new Set(['archived_existing_code','conflicting_product_name','bad_quantity','negative_quantity','fractional_quantity','invalid_stock_date','duplicate_position','set_tracking_unsupported','uncertain_count_cost','tracking_mismatch','duplicate_serial','serial_exists','conflicting_price','invalid_identity','image_quantity_uncertain','bad_unit_cost','bad_selling_price',
+ 'accounting_not_ready','cost_currency_mismatch','cost_overflow','no_product','missing_product_name','stock_elsewhere','invalid_unit_label','unknown_location','no_location','document_role_uncertain','image_identity_uncertain','image_money_uncertain',
+ 'missing_serial','serial_quantity','missing_lot','missing_tracking_identifier','invalid_tracking_flag','ambiguous_existing_code','workbook_unmatched_key','workbook_stock_mismatch','invalid_reorder_setting','oversize_source_fact','invalid_supplier']);
 
 // Fresh import data is not represented in committed per-workspace statistics.
 // Keep repeated key batches on parameterized plans, without caching results or
@@ -143,6 +146,11 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
   context.validationState.strongDocumentProducts=documentRows.strongProductCount;
   context.validationState.inDocumentTail=documentRows.inDocumentTail;
   const headerCurrencies=['unitCost','sellingPrice'].flatMap(field=>sourceMoney.codes(sheet.columns?.find(c=>c.index===mappings[field])?.name||''));
+  // These describe the page/schema, not an individual source row. Building
+  // the same sets 150,000 times adds allocation/GC work without new evidence.
+  const variantBases=new Set(proposal.variantBases||[]),locationsById=new Map(context.locations.map(location=>[location.id,location]));
+  const claimedColumns=new Set([...Object.values(mappings),proposal.provenanceIndex,proposal.problemsIndex]);
+  const detailColumns=(sheet.columns||[]).filter(column=>!claimedColumns.has(column.index));
   for (const [position,sourceRow] of sheet.rows.entries()) {
     const row=readingCells(sourceRow,input.imageCellOverrides);
     const problems=proposal.problemsIndex===undefined?[...(row.problems||[])]:json(textCell(row,proposal.problemsIndex),[]);
@@ -150,7 +158,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(imageRowConfirmed)for(let i=problems.length-1;i>=0;i--)if(['image_identity_uncertain','image_money_uncertain'].includes(problems[i].code))problems.splice(i,1);
     const sourceCode=trimOrNull(Object.hasOwn(input.codeOverrides||{},row.sourceRow)?input.codeOverrides[row.sourceRow]:textCell(row,mappings.code));
     const variants=sourceIdentity.options(row,mappings,proposal);
-    const code=sourceCode&&(proposal.variantBases||[]).includes(sourceCode.toLowerCase())&&!context.skuByCode.has(sourceCode.toLowerCase())?sourceIdentity.derived(sourceCode,variants):sourceCode;
+    const code=sourceCode&&variantBases.has(sourceCode.toLowerCase())&&!context.skuByCode.has(sourceCode.toLowerCase())?sourceIdentity.derived(sourceCode,variants):sourceCode;
     const rawName=trimOrNull(textCell(row,mappings.name));
     const name=rawName || code;
     if(mappings.name!==undefined&&!rawName)problems.push(problem('missing_product_name','Product name is missing. Enter a name or explicitly map the code as its name before approval.'));
@@ -204,7 +212,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     const locationText=trimOrNull(textCell(row,mappings.location));
     let location=defaultLocation;
     if(locationText){
-      const mapped=context.locations.find((candidate)=>candidate.id===input.locationMappings?.[locationText]);
+      const mapped=locationsById.get(input.locationMappings?.[locationText]);
       const matches=context.locationByName.get(locationText.toLowerCase()) || [];
       if(mapped)location=mapped;
       else if(matches.length===1)location=matches[0];
@@ -256,9 +264,6 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(quantity>0&&!aggregate)state.quantityTotal=addExact(state.quantityTotal,quantity);
     const priceKey=code?.toLowerCase()||JSON.stringify([name,variants]);
     if(sellingPriceMinor!==null){const p=currency+':'+sellingPriceMinor;if(state.prices.has(priceKey)&&state.prices.get(priceKey)!==p)problems.push(problem('conflicting_price','The same SKU has conflicting source prices. Resolve the price before importing.'));state.prices.set(priceKey,p);}
-    const blocking=new Set(['archived_existing_code','conflicting_product_name','bad_quantity','negative_quantity','fractional_quantity','invalid_stock_date','duplicate_position','set_tracking_unsupported','uncertain_count_cost','tracking_mismatch','duplicate_serial','serial_exists','conflicting_price','invalid_identity','image_quantity_uncertain','bad_unit_cost','bad_selling_price',
-      'accounting_not_ready','cost_currency_mismatch','cost_overflow','no_product','missing_product_name','stock_elsewhere','invalid_unit_label','unknown_location','no_location','document_role_uncertain','image_identity_uncertain','image_money_uncertain',
-      'missing_serial','serial_quantity','missing_lot','missing_tracking_identifier','invalid_tracking_flag','ambiguous_existing_code','workbook_unmatched_key','workbook_stock_mismatch']);
     try{catalogIdentity.unitLabel(textCell(row,mappings.unitLabel));}catch(error){problems.push(problem('invalid_unit_label',error.message));}
     const parsed={name,code,...(code!==sourceCode?{sourceCode,identityNote:'This code identifies a product with several option combinations. Each SKU includes its option values; review these derived codes before approval.'}:{}),description:trimOrNull(textCell(row,mappings.description)),
       ...(existingMatches.length===1&&rawName&&rawName!==existingMatches[0].name?{catalogueUpdate:{itemId:existingMatches[0].item_id,expectedName:existingMatches[0].name,name:rawName}}:{}),
@@ -277,8 +282,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(parsed.barcode&&(parsed.barcode.length>240||/[\x00-\x1f\x7f]/.test(parsed.barcode)))problems.push(problem('invalid_identity','Use a barcode of at most 240 printable characters.'));
     const sourceFacts=Object.create(null);
     for(const field of ['category','subcategory','supplierName']){const value=trimOrNull(textCell(row,mappings[field]));if(value)sourceFacts[fields.FIELD_LABEL[field]]=value;}
-    const claimed=new Set([...Object.values(mappings),proposal.provenanceIndex,proposal.problemsIndex]);
-    for(const column of sheet.columns||[]){if(claimed.has(column.index))continue;const value=trimOrNull(textCell(row,column.index));if(value)sourceFacts[column.name]=value;}
+    for(const column of detailColumns){const value=trimOrNull(textCell(row,column.index));if(value)sourceFacts[column.name]=value;}
     parsed.sourceFacts=sourceFacts;
     parsed.supplierName=trimOrNull(textCell(row,mappings.supplierName));
     if(parsed.supplierName){const matching=context.suppliers.filter(s=>s.name.toLowerCase()===parsed.supplierName.toLowerCase());
@@ -304,7 +308,6 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(Object.entries(sourceFacts).some(([k,v])=>k.length>240||v.length>10000))problems.push(problem('oversize_source_fact','A product detail exceeds the supported field size. Its original value is preserved in this preview.'));
     const policyKey=JSON.stringify([code?.toLowerCase()||JSON.stringify([name,variants]),parsed.reorderEverywhere?null:parsed.locationId||locationText||null]),priorPolicy=state.reorders.get(policyKey)||{};
     for(const [key,value]of Object.entries(parsed.reorder)){if(key==='leadTimeDays'&&parsed.supplierName)continue;if(priorPolicy[key]!==undefined&&priorPolicy[key]!==value)problems.push(problem('invalid_reorder_setting','The source gives conflicting reorder settings for the same product and location.'));priorPolicy[key]=value;}if(Object.keys(priorPolicy).length)state.reorders.set(policyKey,priorPolicy);
-    blocking.add('invalid_reorder_setting');blocking.add('oversize_source_fact');blocking.add('invalid_supplier');
     if(input.importMode!=='add'&&parsed.existingSkuId&&quantity!==null){parsed.inventoryBefore=context.positions.get(JSON.stringify([parsed.existingSkuId,parsed.locationId]))||{physical:0,costed:0,value:0,hasHistory:false};}
     if(quantity!==null&&!aggregate&&trackingMode==='quantity'){
       const key=JSON.stringify([code?.toLowerCase()||JSON.stringify([name?.toLowerCase(),variants]),location?.id||locationText||location?.name||null]);
@@ -320,7 +323,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
       parsed.countQuantityDelta=delta;
       parsed.countCostDeltaMinor=delta<0&&before.costed>0?-exactQuantity.ratioMinor(before.value,Math.abs(delta),before.costed):delta>0&&unitCostMinor!==null?exactQuantity.costMinor(delta,unitCostMinor):0;
     }
-    const blocked=problems.some((entry)=>blocking.has(entry.code));
+    const blocked=problems.some((entry)=>BLOCKING_IMPORT_PROBLEMS.has(entry.code));
     const alreadyImported=context.importedSourceRows.has(stable([Number(row.sourceRow),row.cells]));
     if(alreadyImported)problems.push(problem('already_imported','This source row was imported before and will not be added again.'));
     if(role)parsed.documentEvidence=role;
