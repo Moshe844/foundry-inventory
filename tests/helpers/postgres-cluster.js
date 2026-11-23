@@ -6,11 +6,13 @@ const net = require('node:net');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
-async function startCluster({ maxLocksPerTransaction = 64 } = {}) {
+async function startCluster({ maxLocksPerTransaction = 64, trackFunctions = 'none' } = {}) {
   if (!Number.isSafeInteger(maxLocksPerTransaction) || maxLocksPerTransaction < 64) {
     throw new Error('Fixture lock capacity must be an integer of at least 64.');
   }
+  if(!['none','pl','all'].includes(trackFunctions))throw new Error('Invalid disposable function tracking setting.');
   if(process.env.STOCKCHIEF_POSTGRES_FIXTURE_URL){
+    if(trackFunctions!=='none')throw new Error('Function diagnostics require a private disposable cluster, not a shared fixture server.');
     if(process.env.NODE_ENV!=='test')throw new Error('An external fixture database is test-only.');
     const address=new URL(process.env.STOCKCHIEF_POSTGRES_FIXTURE_URL);
     if(!['127.0.0.1','localhost','[::1]'].includes(address.hostname)||address.pathname!=='/postgres')throw new Error('The disposable fixture server must be loopback PostgreSQL.');
@@ -46,7 +48,7 @@ async function startCluster({ maxLocksPerTransaction = 64 } = {}) {
    const socket=net.createServer();await new Promise((resolve,reject)=>{socket.once('error',reject);socket.listen(0,'127.0.0.1',resolve);});
    port=socket.address().port;await new Promise(resolve=>socket.close(resolve));
    const log=path.join(directory,'postgres.log'),offset=fs.existsSync(log)?fs.statSync(log).size:0;
-   const options=`-h 127.0.0.1 -p ${port} -c max_locks_per_transaction=${maxLocksPerTransaction}`
+   const options=`-h 127.0.0.1 -p ${port} -c max_locks_per_transaction=${maxLocksPerTransaction} -c track_functions=${trackFunctions}`
     +(process.platform==='win32'?'':' -c unix_socket_directories=');
    try{run('pg_ctl',['-D',data,'-l',log,'-w','-t','30','-o',options,'start']);break;}
    catch(error){const attemptLog=fs.existsSync(log)?fs.readFileSync(log).subarray(offset).toString():'';

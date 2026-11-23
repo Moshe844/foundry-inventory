@@ -16,6 +16,19 @@ on:
 permissions:
   contents: read
 jobs:
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pinned AWS Guard checks for private encrypted versioned sources
+        run: bash infra/aws-imports/check-guard.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aws-import-security
+          path: output/aws-import-security
+          if-no-files-found: ignore
   validate:
     runs-on: ubuntu-24.04
     timeout-minutes: 45

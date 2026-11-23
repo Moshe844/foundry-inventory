@@ -15,6 +15,7 @@ test('same 50,000-SKU / 150,000 mixed stock rows retain exact receipts through t
  let tracing;
  t.after(async()=>{await tracing?.cancel();});
  const f=await require('../helpers/round17-large-business').fixture(t,{
+ trackFunctions:diagnostics?'all':'none',
  beforeStock:async db=>{
   if(!diagnostics)return;
   tracing=await require('../helpers/import-benchmark-diagnostics').start(db,process.env.STOCKCHIEF_COPY_BENCHMARK_OUTPUT,mode);

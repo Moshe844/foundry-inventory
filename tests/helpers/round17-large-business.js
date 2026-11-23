@@ -1,8 +1,8 @@
 'use strict';
 const assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const warehouses=['NJ-Main','NY-Store','PA-DC','CA-West','TX-South'];
-async function fixture(t,{onProgress=()=>{},beforeStock,afterStock}={}){
- const cluster=await require('./postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
+async function fixture(t,{onProgress=()=>{},beforeStock,afterStock,trackFunctions='none'}={}){
+ const cluster=await require('./postgres-cluster').startCluster({trackFunctions}),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
  t.after(async()=>{await db.close();await cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db);
  const email=randomUUID()+'@example.test',password='Round17!'+randomUUID(),owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Scale owner',businessName:'Round 17 large business qualification',email,password}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId};
  await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,source) VALUES('round17-large-subscription',$1,'enterprise','COMP','ISOLATED_TEST')",[owner.accountId]);
