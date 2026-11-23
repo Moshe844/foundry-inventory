@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Check your email · StockChief</title>
+<link rel="stylesheet" href="/design.css?v=<%= locals.assetVersion||'auth' %>">
+<link rel="stylesheet" href="/commercial.css?v=<%= locals.assetVersion||'auth' %>"><link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
+<link rel="stylesheet" href="/public-experience.css?v=<%= locals.assetVersion||'current' %>"><script src="/public-experience.js?v=<%= locals.assetVersion||'current' %>" defer></script></head>
+<body class="commercial-auth"><main class="auth-split"><section class="auth-form">
+<a class="pub-brand" href="/"><span class="pub-brand__mark" aria-hidden="true"><%- include('../components/brand-symbol') %></span><span>StockChief</span></a>
+<div class="auth-form__body"><span class="pub-eyebrow">One more step</span><h1>Check your email.</h1>
+<p>We sent a 6-digit code to <strong><%= email %></strong>. Enter it below within <%= minutes %> minutes.</p>
+<% if(flash&&flash.length){ %><div class="auth-messages"><% flash.forEach(function(message){ %><div class="auth-message auth-message--<%= message.type %>" role="<%= message.type==='error'?'alert':'status' %>"><%= message.message %></div><% }); %></div><% } %>
+<form method="post" action="/login/code" data-loading><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label class="auth-field"><span>Sign-in code</span><input class="auth-code-input" id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" maxlength="7" required autofocus spellcheck="false"></label>
+<div class="auth-between"><%- include('remember-device',{remember}) %></div>
+<p class="auth-remember-help">On your own device, remember it to skip the code and stay signed in.</p>
+<button class="pub-btn pub-btn--block" type="submit" data-loading-label="Checking…">Sign in</button></form>
+<form method="post" action="/login/code/resend" class="auth-code-resend"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><span>No email? Check spam, or</span> <button class="pub-link" type="submit">send a new code</button></form>
+<p class="auth-foot"><a href="/login">Use a different account</a></p></div></section>
+<%- include('sign-in-aside') %>
+</main><script src="/commercial.js?v=<%= locals.assetVersion||'auth' %>" defer></script></body></html>

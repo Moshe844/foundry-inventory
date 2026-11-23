@@ -1,57 +1,62 @@
 {
-  "at": "2026-10-29T13:39:17.952Z",
-  "seed": "capture-product-truth.js",
-  "reset": "Each run creates and removes its own isolated PostgreSQL cluster.",
+  "at": "2026-11-23T13:45:00.000Z",
+  "recording": "A real browser walking the current StockChief app in a demonstration business, filmed from the screen.",
   "business": "Maple & Main · demonstration",
+  "speed": "Waiting for AI answers is shown 5 times faster, and filling in the order form 1.5 times faster. Everything else plays in real time.",
   "screens": [
     {
-      "route": "/inventory/item_bssd1456qtfqjodfj1lp91zu",
-      "file": "inventory.png",
-      "title": "Inventory by location",
-      "atMilliseconds": 1370,
-      "visibleHeading": "Black Tee Small"
-    },
-    {
-      "route": "/planning",
-      "file": "planning.png",
-      "title": "Replenishment planning",
-      "atMilliseconds": 28534,
-      "visibleHeading": "No shortage is proven; 1 position needs demand history."
-    },
-    {
-      "route": "/purchasing/orders/po_rpre9y71t4zb780zi6qwn7ng",
-      "file": "purchasing.png",
-      "title": "Purchase order and expected stock",
-      "atMilliseconds": 55952,
-      "visibleHeading": "PO-00001 · Demo Apparel Supply"
+      "route": "/",
+      "file": "home.jpg",
+      "label": "Home",
+      "title": "Start the day with what needs you",
+      "text": "Sales, stock and the decisions waiting for you, on one screen.",
+      "atMilliseconds": 5000
     },
     {
       "route": "/ask",
-      "file": "ask.png",
-      "title": "Actual database answer",
-      "atMilliseconds": 82607
+      "file": "ask.jpg",
+      "label": "Ask",
+      "title": "Ask in plain words",
+      "text": "An everyday question, answered from the business’s own records.",
+      "atMilliseconds": 17000
     },
     {
-      "route": "/",
-      "file": "brief.png",
-      "title": "Home and work requiring attention",
-      "atMilliseconds": 109558,
-      "visibleHeading": "Good morning, Demo"
+      "route": "/reports/builder",
+      "file": "report.jpg",
+      "label": "Reports",
+      "title": "Describe a report. It builds itself.",
+      "text": "One sentence becomes a chart and table from real sales, ready to save or email.",
+      "atMilliseconds": 31000
     },
     {
-      "route": "/imports/imp_imrio03ih7k4uoaxr849nglk",
-      "file": "import.png",
-      "title": "Review an import before approval",
-      "atMilliseconds": 137344,
-      "visibleHeading": "Pasted inventory data"
+      "route": "/orders/new",
+      "file": "order.jpg",
+      "label": "Orders",
+      "title": "Take an order in seconds",
+      "text": "Pick the customer and products. Stock is set aside the moment the order is created.",
+      "atMilliseconds": 45000
+    },
+    {
+      "route": "/purchasing",
+      "file": "buy.jpg",
+      "label": "Buying",
+      "title": "Reorder before you run out",
+      "text": "Suggested amounts grouped by supplier, turned into a purchase order in one click.",
+      "atMilliseconds": 68000
+    },
+    {
+      "route": "/inventory",
+      "file": "stock.jpg",
+      "label": "Stock",
+      "title": "Know where every unit is",
+      "text": "On hand, promised and on the way for every product, with its sales history.",
+      "atMilliseconds": 81000
     }
   ],
   "actualBrowser": true,
   "actualPostgreSQL": true,
-  "onHand": 52,
-  "externalEventsClaimed": false,
-  "paidCalls": 0,
-  "classification": "Deterministic fixture classifier; answers are read from PostgreSQL.",
-  "durationMilliseconds": 163358,
-  "video": "walkthrough.webm"
+  "durationMilliseconds": 99570,
+  "video": "stockchief-tour.mp4",
+  "webm": "stockchief-tour.webm",
+  "poster": "stockchief-tour.jpg"
 }

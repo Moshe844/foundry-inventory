@@ -83,7 +83,17 @@ test('Connections, Settings and related pages use their real controls without co
   for(const [url,title]of [['/orders','Orders'],['/purchasing/orders','Purchase orders']]){await page.goto(base+url);assert.equal(await page.locator('main h1').innerText(),title);assert.equal(await page.locator('.sc-section-tabs').count(),1);assert.equal(await page.locator('main a').filter({hasText:/^Picking and packing$/}).count(),0);assert.doesNotMatch(await page.locator('main').innerText(),/Each of these is a story/);}
   await page.goto(base+'/');assert.equal(await page.locator('[data-home-section=suggestions]').count(),0);assert.equal(await page.locator('[data-home-section=activity]').count(),0);
   await page.setViewportSize({width:1440,height:1000});await page.goto(base+'/reports');assert.equal(await page.locator('.sc-report-cards').evaluate(e=>getComputedStyle(e).gridTemplateColumns.split(' ').length),3);
-  const publicPage=await context.newPage();await publicPage.goto(base+'/login');const publicContext=await browser.newContext({javaScriptEnabled:false}),landing=await publicContext.newPage();await landing.goto(base+'/');assert.equal(await landing.locator('[data-preview-image]').count(),1);assert(await landing.locator('[data-preview-image]').isVisible());assert.equal(await landing.locator('[data-preview-open]').getAttribute('href'),'/demo?chapter='+Math.floor(require('../../src/commercial/product-demo').current().screens[0].atMilliseconds/1000));await publicContext.close();await publicPage.close();
+  const publicPage=await context.newPage();await publicPage.goto(base+'/login');
+  const publicContext=await browser.newContext({javaScriptEnabled:false}),landing=await publicContext.newPage(),demo=require('../../src/commercial/product-demo').current();
+  await landing.goto(base+'/');
+  const preview=landing.locator('[data-preview-video]');assert.equal(await preview.count(),1);assert(await preview.isVisible());
+  assert.equal(new URL(await preview.getAttribute('poster'),base).pathname,'/demo/'+demo.poster);
+  assert.equal(new URL(await preview.locator('source[type^="video/mp4"]').getAttribute('src'),base).pathname,'/demo/'+demo.video);
+  const watch=landing.locator('.product-preview__bar a');assert.equal(await watch.getAttribute('href'),'/demo');
+  await Promise.all([landing.waitForURL(url=>/^\/demo\/?$/.test(url.pathname),{waitUntil:'domcontentloaded'}),watch.click()]);
+  const recording=landing.locator('.truth-recording video');assert(await recording.isVisible());assert(await recording.evaluate(video=>video.controls),'Native playback remains available without JavaScript');
+  assert.equal(new URL(await recording.locator('source[type^="video/mp4"]').getAttribute('src'),base).pathname,'/demo/'+demo.video);
+  await publicContext.close();await publicPage.close();
  });
  assert.deepEqual(errors,[]);t.diagnostic(JSON.stringify({actualBrowser:true,actualPostgreSQL:true,simulatedOAuthConsent:true,allTenOAuthPopups:true,noSlotsConsumed:true,sandboxCardsVisible:true,paidCalls:0}));
 });
