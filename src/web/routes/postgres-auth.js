@@ -318,8 +318,7 @@ function createPostgresAuthRouter(database,options={}) {
   });
   router.post('/reset-password',async(req,res,next)=>{try{matchingPasswords(req.body);
     const changed=await passwordRecovery.consume(database,req.body.token||'',req.body.password||'');
-    // A reset may follow a stolen password, so no browser skips the emailed code any more.
-    await signInCodes.forgetDevices(database,changed.accountId);
+    // Password recovery atomically revokes remembered devices and pending codes.
     // Do not re-save a revoked, signed-in session after changing its password.
     if(req.session?.accountId===changed.accountId)await sessionCall(req,'regenerate');
     let signInHref='/login',admin=false;

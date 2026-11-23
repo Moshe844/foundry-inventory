@@ -129,6 +129,49 @@ test('password sign-in asks for an emailed code unless this browser was remember
     await signIn(browser).expect(303).expect('location','/login/code');
   });
 
+  await t.test('sign out everywhere ends another browser waiting for a code and prevents resending',async()=>{
+    await f.db.query("UPDATE sign_in_codes SET created_at=created_at-interval '20 minutes' WHERE account_id=$1",[f.owner.accountId]);
+    const owner=request.agent(app),pending=request.agent(app);
+    await signIn(owner).expect(303);
+    let page=await owner.get('/login/code');
+    await owner.post('/login/code').type('form').send({_csrf:csrf(page.text),code:await latestCode()}).expect(302);
+    await signIn(pending).expect(303);
+    const code=await latestCode(),waiting=await pending.get('/login/code');
+    page=await owner.get('/inventory').expect(200);
+    await owner.post('/logout-all').type('form').send({_csrf:csrf(page.text)}).expect(303);
+    await pending.post('/login/code').type('form').send({_csrf:csrf(waiting.text),code,rememberMe:'1'}).expect(303).expect('location','/login');
+    assert.equal(await signedIn(pending),false);
+    const login=await pending.get('/login');
+    const before=await codesSent();
+    await pending.post('/login/code/resend').type('form').send({_csrf:csrf(login.text)}).expect(303).expect('location','/login');
+    assert.equal(await codesSent(),before,'revoked pending sessions cannot issue a replacement code');
+  });
+
+  await t.test('a password reset atomically ends pending codes even outside the HTTP reset route',async()=>{
+    await f.db.query("UPDATE sign_in_codes SET created_at=created_at-interval '20 minutes' WHERE account_id=$1",[f.owner.accountId]);
+    const pending=request.agent(app);
+    await signIn(pending).expect(303);
+    const waiting=await pending.get('/login/code'),code=await latestCode();
+    const recovery=require('../../src/domain/postgres-password-recovery');
+    await recovery.request(f.db,f.email,{origin:'https://app.example.test'});
+    const reset=(await f.db.query(`SELECT payload FROM stockchief_runtime.jobs WHERE kind='system.email-send'
+      AND payload->>'messageType'='password_reset' ORDER BY created_at DESC,id DESC LIMIT 1`)).rows[0].payload;
+    const token=new URL(email.unseal(reset).text.match(/https?:\/\/\S+/)[0]).searchParams.get('token');
+    f.password='Reset!'+randomUUID();
+    await recovery.consume(f.db,token,f.password);
+    await pending.post('/login/code').type('form').send({_csrf:csrf(waiting.text),code,rememberMe:'1'}).expect(303).expect('location','/login');
+    assert.equal(await signedIn(pending),false);
+    assert.equal(Number((await f.db.query('SELECT count(*) n FROM sign_in_codes WHERE account_id=$1 AND used_at IS NULL',[f.owner.accountId])).rows[0].n),0);
+    await signIn(pending).expect(303).expect('location','/login/code');
+  });
+
+  await t.test('an invalid remembered-device cookie is ignored instead of breaking sign-in',async()=>{
+    await f.db.query("UPDATE sign_in_codes SET created_at=created_at-interval '20 minutes' WHERE account_id=$1",[f.owner.accountId]);
+    const browser=request.agent(app),page=await browser.get('/login');
+    await browser.post('/login').set('Cookie','stockchief.device=%ZZ').type('form')
+      .send({_csrf:csrf(page.text),email:f.email,password:f.password}).expect(303).expect('location','/login/code');
+  });
+
   await t.test('a sign-in left waiting too long starts again',async()=>{
     await f.db.query("UPDATE sign_in_codes SET created_at=created_at-interval '20 minutes' WHERE account_id=$1",[f.owner.accountId]);
     const browser=request.agent(app);

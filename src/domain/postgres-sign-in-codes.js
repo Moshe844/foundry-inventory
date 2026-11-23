@@ -76,7 +76,9 @@ function deviceTokens(req){
   const header=String(req.headers?.cookie||'');
   const raw=header.split(';').map(part=>part.trim()).find(part=>part.startsWith(DEVICE_COOKIE+'='));
   if(!raw)return [];
-  return decodeURIComponent(raw.slice(DEVICE_COOKIE.length+1)).split('.').filter(token=>/^[A-Za-z0-9_-]{30,60}$/.test(token)).slice(0,DEVICE_TOKENS_KEPT);
+  let value;
+  try{value=decodeURIComponent(raw.slice(DEVICE_COOKIE.length+1));}catch{return [];}
+  return value.split('.').filter(token=>/^[A-Za-z0-9_-]{30,60}$/.test(token)).slice(0,DEVICE_TOKENS_KEPT);
 }
 
 async function trusted(database,accountId,tokens){
@@ -95,7 +97,14 @@ async function remember(database,accountId,{days,browser=null}){
 }
 
 async function forgetDevices(database,accountId){
-  await database.query('UPDATE trusted_sign_in_devices SET revoked_at=now() WHERE account_id=$1 AND revoked_at IS NULL',[accountId]);
+  await database.transaction(async client=>{
+    await client.query('SELECT id FROM accounts WHERE id=$1 FOR UPDATE',[accountId]);
+    await client.query('UPDATE trusted_sign_in_devices SET revoked_at=now() WHERE account_id=$1 AND revoked_at IS NULL',[accountId]);
+    // A password reset or sign-out everywhere must also end a password check
+    // that is still waiting for its email code, including its resend session.
+    await client.query('UPDATE sign_in_codes SET used_at=now() WHERE account_id=$1 AND used_at IS NULL',[accountId]);
+    await client.query("DELETE FROM stockchief_runtime.sessions WHERE data#>>'{pendingSignIn,accountId}'=$1",[accountId]);
+  });
 }
 
 // The browser keeps one token per remembered account, newest first.
