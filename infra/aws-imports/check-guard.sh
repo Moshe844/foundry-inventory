@@ -27,9 +27,10 @@ for rule in s3_bucket_level_public_access_prohibited s3_bucket_server_side_encry
     -o "$scratch/rules/$rule.guard"
 done
 status=0
-for name in aws-imports aws-database; do
+for source in infra/aws-imports/template.json infra/aws-imports/template-rds.json infra/aws-database/template.json; do
+  name="$(dirname "$source" | tr '/' '-')-$(basename "$source" .json)"
   report="$output/$name-guard.json"
-  if ! "$guard" validate --rules "$scratch/rules" --data "infra/$name/template.json" --output-format json > "$report"; then status=1; fi
+  if ! "$guard" validate --rules "$scratch/rules" --data "$source" --output-format json > "$report"; then status=1; fi
   cat "$report"
 done
 exit "$status"

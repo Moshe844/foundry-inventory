@@ -38,7 +38,7 @@ test('same 50,000-SKU / 150,000 mixed stock rows retain exact receipts through t
  else assert.equal(calls,0);
  const reference=process[Symbol.for('stockchief.importCpuReference')];
  if(process.env.STOCKCHIEF_COPY_REFERENCE==='1'){
-  if(mode==='baseline'){assert.equal(reference?.commit,'72cc228dd5e2e6c706f04bebc9c4285ff4fc54eb');assert.deepEqual([...reference.loadedFiles].sort(),['src/domain/exact-quantity.js','src/imports/postgres-service.js']);}
+  if(mode==='baseline'){assert.equal(reference?.commit,'6f578146aefd1d6746eb25560ea264ef116af580');assert.deepEqual([...reference.loadedFiles].sort(),['src/domain/exact-quantity.js','src/imports/postgres-service.js']);}
   else assert.equal(reference,undefined,'The optimized process must execute the current source.');
  }
  console.log('COPY_BENCHMARK '+JSON.stringify({mode,stockWorkers:Number(process.env.FOUNDRY_IMPORT_STOCK_WORKERS||0),products:5000,skus:50000,warehouses:5,openingStockRows:150000,

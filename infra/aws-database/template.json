@@ -310,6 +310,25 @@
         }
       ]
     },
+    "SeparateQualificationDatabase": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Equals": [
+                  {
+                    "Ref": "DatabaseName"
+                  },
+                  "stockchief_qualification"
+                ]
+              }
+            ]
+          },
+          "AssertDescription": "The restored database and synthetic qualification database must be separate."
+        }
+      ]
+    },
     "RenderException": {
       "RuleCondition": {
         "Fn::Equals": [
@@ -1075,6 +1094,34 @@
         }
       }
     },
+    "QualificationSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Properties": {
+        "KmsKeyId": {
+          "Fn::GetAtt": [
+            "DataKey",
+            "Arn"
+          ]
+        },
+        "Description": "Synthetic qualification database only; never grant this role access to restored customer data",
+        "GenerateSecretString": {
+          "SecretStringTemplate": "{\"username\":\"stockchief_qualification\",\"dbname\":\"stockchief_qualification\"}",
+          "GenerateStringKey": "password",
+          "PasswordLength": 40,
+          "ExcludePunctuation": true
+        }
+      },
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "Rehearsal jobs must run in a separate synthetic database, never the restored live queue.",
+          "must": [
+            "Bootstrap must grant this role CONNECT and runtime permissions only in stockchief_qualification."
+          ]
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
     "MigrationEvidence": {
       "Type": "AWS::S3::Bucket",
       "Properties": {
@@ -1210,6 +1257,26 @@
       "Export": {
         "Name": {
           "Fn::Sub": "${AWS::StackName}:ApplicationSecretArn"
+        }
+      }
+    },
+    "QualificationSecretArn": {
+      "Description": "Synthetic qualification role only, never the restored live database.",
+      "Value": {
+        "Ref": "QualificationSecret"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:QualificationSecretArn"
+        }
+      }
+    },
+    "QualificationDatabaseName": {
+      "Description": "Create this empty synthetic database separately; never restore customer jobs here.",
+      "Value": "stockchief_qualification",
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:QualificationDatabaseName"
         }
       }
     },

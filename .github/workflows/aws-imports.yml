@@ -46,10 +46,12 @@ jobs:
       - run: npm ci
       - run: |
           node infra/aws-imports/build-template.js
+          node infra/aws-imports/build-rds-template.js
           node infra/aws-database/build-template.js
-          git diff --exit-code -- infra/aws-imports/template.json infra/aws-database/template.json
+          git diff --exit-code -- infra/aws-imports/template.json infra/aws-imports/template-rds.json infra/aws-database/template.json
       - run: |
           pipx run --spec cfn-lint==1.61.0 cfn-lint infra/aws-imports/template.json
+          pipx run --spec cfn-lint==1.61.0 cfn-lint infra/aws-imports/template-rds.json
           pipx run --spec cfn-lint==1.61.0 cfn-lint infra/aws-database/template.json
       - name: Install disposable PostgreSQL
         run: |
@@ -57,7 +59,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-17
       - name: AWS boundaries, tenant isolation, queue recovery and COPY integrity
-        run: node --test tests/unit/aws-import-transport.test.js tests/unit/aws-import-infrastructure.test.js tests/unit/aws-database-infrastructure.test.js tests/unit/import-copy-rows.test.js tests/postgres/aws-direct-import.test.js tests/postgres/import-copy-rows.test.js tests/postgres/import-benchmark-diagnostics.test.js tests/postgres/import-mixed-stock-lanes.test.js tests/postgres/source-upload-stock-mode.test.js
+        run: node --test tests/unit/aws-import-transport.test.js tests/unit/aws-import-infrastructure.test.js tests/unit/aws-database-infrastructure.test.js tests/unit/aws-rds-import-infrastructure.test.js tests/unit/aws-database-connection.test.js tests/unit/import-copy-rows.test.js tests/postgres/aws-direct-import.test.js tests/postgres/import-copy-rows.test.js tests/postgres/import-benchmark-diagnostics.test.js tests/postgres/import-mixed-stock-lanes.test.js tests/postgres/source-upload-stock-mode.test.js
       - name: Production-only import container
         run: |
           docker build -f infra/aws-imports/Dockerfile -t stockchief-import-worker:test .
@@ -69,7 +71,7 @@ jobs:
           STOCKCHIEF_COPY_DIAGNOSTICS: '1'
           STOCKCHIEF_COPY_REFERENCE: '1'
         run: |
-          git fetch --no-tags --depth=1 origin 72cc228dd5e2e6c706f04bebc9c4285ff4fc54eb
+          git fetch --no-tags --depth=1 origin 6f578146aefd1d6746eb25560ea264ef116af580
           node scripts/benchmark-import-copy.js
       - uses: actions/upload-artifact@v4
         if: always()

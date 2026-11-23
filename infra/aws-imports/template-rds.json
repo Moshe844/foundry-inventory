@@ -1,0 +1,799 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "StockChief imports colocated with the AWS database: private database traffic, bounded Fargate tasks and no NAT gateway. Qualification uses a separate synthetic database.",
+  "Rules": {
+    "SelectedRegion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Equals": [
+              {
+                "Ref": "AWS::Region"
+              },
+              "us-east-2"
+            ]
+          },
+          "AssertDescription": "This project is assigned to us-east-2."
+        }
+      ]
+    }
+  },
+  "Parameters": {
+    "ApplicationOrigin": {
+      "Type": "String",
+      "AllowedPattern": "https://[a-z0-9.-]+",
+      "Description": "Exact HTTPS application origin allowed to upload; no wildcard."
+    },
+    "WorkerImage": {
+      "Type": "String",
+      "AllowedPattern": "[0-9]{12}\\.dkr\\.ecr\\.us-east-2\\.amazonaws\\.com/stockchief-imports@sha256:[a-f0-9]{64}",
+      "Description": "Reviewed immutable image digest; bootstrap with WorkerCount=0, build/push, then update."
+    },
+    "WorkerCount": {
+      "Type": "Number",
+      "Default": 0,
+      "AllowedValues": [
+        0,
+        1,
+        2
+      ],
+      "Description": "Zero until bootstrap, credentials, isolated qualification and network checks are ready; at most two tasks."
+    },
+    "MonthlyBudget": {
+      "Type": "Number",
+      "Default": 10,
+      "MinValue": 1,
+      "MaxValue": 1000,
+      "Description": "Alert threshold, not a hard spending cap. Set a project spend limit separately in AWS Settings."
+    },
+    "DatabaseStackName": {
+      "Type": "String",
+      "AllowedPattern": "[a-zA-Z][a-zA-Z0-9-]{0,127}",
+      "Description": "Reviewed database stack in this project/Region; imports its scoped secret and private client network."
+    },
+    "DeploymentPhase": {
+      "Type": "String",
+      "Default": "qualification",
+      "AllowedValues": [
+        "qualification",
+        "production"
+      ],
+      "Description": "Qualification connects only to the separate synthetic database. Production requires passed qualification and cutover approval."
+    }
+  },
+  "Resources": {
+    "Sources": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "CorsConfiguration": {
+          "CorsRules": [
+            {
+              "AllowedOrigins": [
+                {
+                  "Ref": "ApplicationOrigin"
+                }
+              ],
+              "AllowedMethods": [
+                "POST"
+              ],
+              "AllowedHeaders": [
+                "*"
+              ],
+              "ExposedHeaders": [
+                "x-amz-version-id"
+              ],
+              "MaxAge": 600
+            }
+          ]
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "TemporaryImportSources",
+              "Status": "Enabled",
+              "Prefix": "sources/",
+              "ExpirationInDays": 7,
+              "NoncurrentVersionExpiration": {
+                "NoncurrentDays": 7
+              },
+              "AbortIncompleteMultipartUpload": {
+                "DaysAfterInitiation": 1
+              }
+            }
+          ]
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "SourcePolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "Sources"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "DenyInsecureTransport",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "Sources",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${Sources.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "DeadLetters": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "MessageRetentionPeriod": 1209600,
+        "SqsManagedSseEnabled": true
+      }
+    },
+    "ImportQueue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "MessageRetentionPeriod": 345600,
+        "SqsManagedSseEnabled": true,
+        "VisibilityTimeout": 60,
+        "ReceiveMessageWaitTimeSeconds": 20,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "DeadLetters",
+              "Arn"
+            ]
+          },
+          "maxReceiveCount": 5
+        }
+      }
+    },
+    "QueuePolicy": {
+      "Type": "AWS::SQS::QueuePolicy",
+      "Properties": {
+        "Queues": [
+          {
+            "Ref": "ImportQueue"
+          },
+          {
+            "Ref": "DeadLetters"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "sqs:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "ImportQueue",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::GetAtt": [
+                    "DeadLetters",
+                    "Arn"
+                  ]
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "Images": {
+      "Type": "AWS::ECR::Repository",
+      "Properties": {
+        "RepositoryName": "stockchief-imports",
+        "ImageTagMutability": "IMMUTABLE",
+        "ImageScanningConfiguration": {
+          "ScanOnPush": true
+        },
+        "LifecyclePolicy": {
+          "LifecyclePolicyText": "{\"rules\":[{\"rulePriority\":1,\"description\":\"Remove untagged build layers after seven days\",\"selection\":{\"tagStatus\":\"untagged\",\"countType\":\"sinceImagePushed\",\"countUnit\":\"days\",\"countNumber\":7},\"action\":{\"type\":\"expire\"}}]}"
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "Logs": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "RetentionInDays": 14
+      }
+    },
+    "ExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+          }
+        ],
+        "Policies": [
+          {
+            "PolicyName": "OnlySelectedDatabaseSecret",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "secretsmanager:GetSecretValue",
+                  "Resource": {
+                    "Fn::If": [
+                      "Qualification",
+                      {
+                        "Fn::ImportValue": {
+                          "Fn::Sub": "${DatabaseStackName}:QualificationSecretArn"
+                        }
+                      },
+                      {
+                        "Fn::ImportValue": {
+                          "Fn::Sub": "${DatabaseStackName}:ApplicationSecretArn"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "kms:Decrypt",
+                  "Resource": {
+                    "Fn::ImportValue": {
+                      "Fn::Sub": "${DatabaseStackName}:DataKeyArn"
+                    }
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "kms:ViaService": {
+                        "Fn::Sub": "secretsmanager.${AWS::Region}.amazonaws.com"
+                      },
+                      "kms:EncryptionContext:SecretARN": {
+                        "Fn::If": [
+                          "Qualification",
+                          {
+                            "Fn::ImportValue": {
+                              "Fn::Sub": "${DatabaseStackName}:QualificationSecretArn"
+                            }
+                          },
+                          {
+                            "Fn::ImportValue": {
+                              "Fn::Sub": "${DatabaseStackName}:ApplicationSecretArn"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ImportRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ReadFrozenSourcesAndReceiveWakeSignals",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:GetObjectVersion"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${Sources.Arn}/sources/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:ReceiveMessage",
+                    "sqs:DeleteMessage",
+                    "sqs:GetQueueAttributes"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "ImportQueue",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "RenderApplication": {
+      "Type": "AWS::IAM::User",
+      "Properties": {
+        "Policies": [
+          {
+            "PolicyName": "UploadAndSignalOnly",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:PutObject",
+                    "s3:GetObject"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${Sources.Arn}/sources/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "sqs:SendMessage",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "ImportQueue",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "Cluster": {
+      "Type": "AWS::ECS::Cluster",
+      "Properties": {}
+    },
+    "Task": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": "stockchief-imports",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "NetworkMode": "awsvpc",
+        "Cpu": "1024",
+        "Memory": "2048",
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "ExecutionRole",
+            "Arn"
+          ]
+        },
+        "TaskRoleArn": {
+          "Fn::GetAtt": [
+            "ImportRole",
+            "Arn"
+          ]
+        },
+        "RuntimePlatform": {
+          "OperatingSystemFamily": "LINUX",
+          "CpuArchitecture": "X86_64"
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "imports",
+            "Image": {
+              "Ref": "WorkerImage"
+            },
+            "Essential": true,
+            "ReadonlyRootFilesystem": false,
+            "StopTimeout": 120,
+            "LinuxParameters": {
+              "InitProcessEnabled": true
+            },
+            "Environment": [
+              {
+                "Name": "NODE_ENV",
+                "Value": "production"
+              },
+              {
+                "Name": "FOUNDRY_SKIP_LOCAL_ENV",
+                "Value": "1"
+              },
+              {
+                "Name": "STOCKCHIEF_IMPORT_BACKEND",
+                "Value": "aws"
+              },
+              {
+                "Name": "AWS_REGION",
+                "Value": {
+                  "Ref": "AWS::Region"
+                }
+              },
+              {
+                "Name": "STOCKCHIEF_IMPORT_BUCKET",
+                "Value": {
+                  "Ref": "Sources"
+                }
+              },
+              {
+                "Name": "STOCKCHIEF_IMPORT_QUEUE_URL",
+                "Value": {
+                  "Ref": "ImportQueue"
+                }
+              },
+              {
+                "Name": "STOCKCHIEF_IMPORT_COPY",
+                "Value": "true"
+              },
+              {
+                "Name": "STOCKCHIEF_IMPORT_DATABASE_NAME",
+                "Value": {
+                  "Fn::If": [
+                    "Qualification",
+                    {
+                      "Fn::ImportValue": {
+                        "Fn::Sub": "${DatabaseStackName}:QualificationDatabaseName"
+                      }
+                    },
+                    {
+                      "Fn::ImportValue": {
+                        "Fn::Sub": "${DatabaseStackName}:DatabaseName"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "Name": "STOCKCHIEF_IMPORT_DATABASE_ROLE",
+                "Value": {
+                  "Fn::If": [
+                    "Qualification",
+                    "stockchief_qualification",
+                    "stockchief_runtime"
+                  ]
+                }
+              },
+              {
+                "Name": "STOCKCHIEF_IMPORT_DATABASE_HOST",
+                "Value": {
+                  "Fn::ImportValue": {
+                    "Fn::Sub": "${DatabaseStackName}:Host"
+                  }
+                }
+              },
+              {
+                "Name": "FOUNDRY_IMPORT_STOCK_WORKERS",
+                "Value": "4"
+              }
+            ],
+            "Secrets": [
+              {
+                "Name": "STOCKCHIEF_IMPORT_DATABASE_SECRET",
+                "ValueFrom": {
+                  "Fn::If": [
+                    "Qualification",
+                    {
+                      "Fn::ImportValue": {
+                        "Fn::Sub": "${DatabaseStackName}:QualificationSecretArn"
+                      }
+                    },
+                    {
+                      "Fn::ImportValue": {
+                        "Fn::Sub": "${DatabaseStackName}:ApplicationSecretArn"
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "Logs"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "imports",
+                "mode": "non-blocking",
+                "max-buffer-size": "4m"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "Workers": {
+      "Type": "AWS::ECS::Service",
+      "Properties": {
+        "Cluster": {
+          "Ref": "Cluster"
+        },
+        "TaskDefinition": {
+          "Ref": "Task"
+        },
+        "LaunchType": "FARGATE",
+        "DesiredCount": {
+          "Ref": "WorkerCount"
+        },
+        "DeploymentConfiguration": {
+          "MaximumPercent": 100,
+          "MinimumHealthyPercent": 0,
+          "DeploymentCircuitBreaker": {
+            "Enable": true,
+            "Rollback": true
+          }
+        },
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "Subnets": {
+              "Fn::Split": [
+                ",",
+                {
+                  "Fn::ImportValue": {
+                    "Fn::Sub": "${DatabaseStackName}:SubnetIds"
+                  }
+                }
+              ]
+            },
+            "SecurityGroups": [
+              {
+                "Fn::ImportValue": {
+                  "Fn::Sub": "${DatabaseStackName}:ClientSecurityGroupId"
+                }
+              }
+            ]
+          }
+        },
+        "PlatformVersion": "1.4.0"
+      }
+    },
+    "Alerts": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {}
+    },
+    "DeadLetterAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "DeadLetters",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 2,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ]
+      }
+    },
+    "QueueDelayAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateAgeOfOldestMessage",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "ImportQueue",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 2,
+        "Threshold": 300,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "Alerts"
+          }
+        ]
+      }
+    },
+    "Budget": {
+      "Type": "AWS::Budgets::Budget",
+      "Properties": {
+        "Budget": {
+          "BudgetName": {
+            "Fn::Sub": "${AWS::StackName}-monthly"
+          },
+          "BudgetType": "COST",
+          "TimeUnit": "MONTHLY",
+          "BudgetLimit": {
+            "Amount": {
+              "Ref": "MonthlyBudget"
+            },
+            "Unit": "USD"
+          }
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "Bucket": {
+      "Value": {
+        "Ref": "Sources"
+      }
+    },
+    "QueueUrl": {
+      "Value": {
+        "Ref": "ImportQueue"
+      }
+    },
+    "Repository": {
+      "Value": {
+        "Fn::GetAtt": [
+          "Images",
+          "RepositoryUri"
+        ]
+      }
+    },
+    "RenderApplicationIdentity": {
+      "Value": {
+        "Ref": "RenderApplication"
+      }
+    },
+    "Cluster": {
+      "Value": {
+        "Ref": "Cluster"
+      }
+    },
+    "Service": {
+      "Value": {
+        "Fn::GetAtt": [
+          "Workers",
+          "Name"
+        ]
+      }
+    },
+    "DatabaseStack": {
+      "Value": {
+        "Ref": "DatabaseStackName"
+      }
+    }
+  },
+  "Conditions": {
+    "Qualification": {
+      "Fn::Equals": [
+        {
+          "Ref": "DeploymentPhase"
+        },
+        "qualification"
+      ]
+    }
+  },
+  "Metadata": {
+    "AWSToolsMetrics": {
+      "AWSAgentToolkit": "aws-cloudformation@3"
+    },
+    "com.aws.cloudformation.Context": {
+      "ref": [
+        "../aws-database/README.md"
+      ],
+      "must": [
+        "Do not run restored customer jobs during qualification.",
+        "No paid creation or live cutover without the applicable approval."
+      ]
+    }
+  }
+}

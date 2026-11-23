@@ -1,13 +1,13 @@
 'use strict';
 
 const {configuration}=require('./imports/aws-config');
-const {databaseAddress,dedicatedHandlers,listen}=require('./imports/aws-worker');
+const {dedicatedHandlers,listen}=require('./imports/aws-worker');
 
 async function start() {
   const config=configuration();
   if(!config)throw new Error('The AWS import backend must be explicitly enabled.');
-  const connectionString=databaseAddress(process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL);
-  const db=require('./db/postgres').openPostgres(connectionString,{max:5,privateNetwork:false,requireTls:true,applicationName:'stockchief-aws-import-worker'});
+  const {connectionString,ca}=require('./imports/aws-database-connection').connection();
+  const db=require('./db/postgres').openPostgres(connectionString,{max:5,...(ca?{ca}:{}),privateNetwork:false,requireTls:true,applicationName:'stockchief-aws-import-worker'});
   let runtime,receiver,stopping;
   const transport=require('./imports/aws-transport').configured();
   const stop=()=>stopping||=(async()=>{await receiver?.stop();await runtime?.stop();transport.destroy();await db.close();})();

@@ -38,7 +38,8 @@ function listen(transport,worker,{onError=()=>{}}={}) {
 }
 
 function databaseAddress(value,{test=false}={}) {
-  const address=new URL(value);
+  let address;try{address=new URL(value);}catch{throw new Error('The AWS worker needs a valid PostgreSQL database URL.');}
+  if(!['postgres:','postgresql:'].includes(address.protocol)||!address.hostname||!address.pathname.slice(1))throw new Error('The AWS worker needs a valid PostgreSQL database URL.');
   const local=['localhost','127.0.0.1','[::1]'].includes(address.hostname);
   if(!test&&local)throw new Error('The AWS worker needs the approved hosted database endpoint.');
   if(!local&&address.searchParams.get('sslmode')!=='verify-full')throw new Error('The AWS database connection requires sslmode=verify-full.');

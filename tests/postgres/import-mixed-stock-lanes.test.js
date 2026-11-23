@@ -2,9 +2,10 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 
 test('mixed lot and ordinary imports run independent product lanes and resume exact receipts after interruption',{timeout:180000},async t=>{
- const prior=process.env.FOUNDRY_IMPORT_STOCK_WORKERS;process.env.FOUNDRY_IMPORT_STOCK_WORKERS='3';
+ const prior=process.env.FOUNDRY_IMPORT_STOCK_WORKERS;process.env.FOUNDRY_IMPORT_STOCK_WORKERS='4';
  t.after(()=>{if(prior===undefined)delete process.env.FOUNDRY_IMPORT_STOCK_WORKERS;else process.env.FOUNDRY_IMPORT_STOCK_WORKERS=prior;});
- const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f;
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{ctx}=f,db=require('../../src/db/postgres').openPostgres(f.cluster.connectionString,{max:5});
+ t.after(()=>db.close());
  await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,source) VALUES('mixed-lanes',$1,'enterprise','COMP','ISOLATED_TEST')",[f.owner.accountId]);
  const other=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Overflow',kind:'warehouse'});
  const definitions=Array.from({length:500},(_,p)=>({name:'Mixed lane product '+p,trackingMode:p%2?'lot':'quantity',variants:Array.from({length:10},(_,v)=>({code:'MIXED-LANE-'+p+'-'+v,options:[{name:'Flavor',value:String(v)}]}))}));
@@ -21,13 +22,23 @@ test('mixed lot and ordinary imports run independent product lanes and resume ex
   ...(target.withSessionLock?{withSessionLock:(key,fn)=>target.withSessionLock(key,c=>fn(watch(c)))}:{}),
   ...(target.withSharedSession?{withSharedSession:fn=>target.withSharedSession(c=>fn(watch(c)))}:{})});
  let timedOut=false;const gate=new Promise(resolve=>{release=resolve;}),timer=setTimeout(()=>{timedOut=true;release();},10000);
- facts.saveManyInTransaction=async(client,...args)=>{pids.add((await client.query('SELECT pg_backend_pid() pid')).rows[0].pid);if(pids.size>=3)release();await gate;return original(client,...args);};
+ let concurrentReceipt=false;
+ facts.saveManyInTransaction=async(client,...args)=>{
+  pids.add((await client.query('SELECT pg_backend_pid() pid')).rows[0].pid);
+  if(pids.size===4&&!concurrentReceipt){concurrentReceipt=true;
+   await db.transaction(c=>require('../../src/domain/postgres-inventory-engine').receiveManyInTransaction(c,ctx,[{skuId:f.item.skuIds[0],locationId:f.location.id,quantity:1,idempotencyKey:'ordinary-receipt-during-import'}]),{isolation:'READ COMMITTED'});
+   release();
+  }
+  await gate;return original(client,...args);
+ };
  try{
   await assert.rejects(imports.execute(watch(db),ctx,plan.id,{onProgress:p=>{if(p.stage==='processing'&&p.processedRows>0)interrupted=true;},beforeBatchCommit:()=>{if(interrupted&&claims.length>=4)throw new Error('simulated mixed-lane interruption');}}),/simulated mixed-lane interruption/);
  }finally{release();clearTimeout(timer);facts.saveManyInTransaction=original;}
- assert.equal(pids.size,3,'Three database sessions must actually apply independent mixed batches.');
+ assert.equal(pids.size,4,'All four database sessions must actually apply independent mixed batches.');
+ assert.equal(db.poolMetrics().max,5);assert.equal(concurrentReceipt,true,'The fifth connection must support ordinary stock work during the import.');
+ assert.equal(Number((await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[ctx.workspaceId,f.item.skuIds[0],f.location.id])).rows[0].on_hand),5);
  assert.deepEqual(claims.slice(0,4),[0,1,2,3],'Every lane gets a first batch before one lane takes a second turn.');
- assert.equal(timedOut,false,'Both batches must overlap before either transaction commits.');
+ assert.equal(timedOut,false,'All four batches must overlap before any transaction commits.');
  const checkpoint=(await db.query('SELECT apply_checkpoint FROM import_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,plan.id])).rows[0].apply_checkpoint;
  assert.equal(checkpoint.stockLaneVersion,1);assert(checkpoint.savedRows>0&&checkpoint.savedRows<10000);
  // Resuming with concurrency disabled retains the approved lane order and
