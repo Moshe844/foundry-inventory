@@ -12,6 +12,14 @@ test('qualification bootstrap migrates with a non-superuser owner and confines t
  const {bootstrap}=require('../../src/imports/aws-qualification-bootstrap');
  const first=await bootstrap(env,{open});assert(first.isolationVerified);assert(first.migrationsApplied>500);
  const replay=await bootstrap(env,{open});assert.equal(replay.migrationsApplied,0);assert(replay.isolationVerified);
+ // A reset drops only the marked synthetic database, then rebuilds it empty.
+ const marked=open('postgresql://sc_database_owner:'+encodeURIComponent('local-bootstrap-owner-test-only')+'@'+host+':5432/stockchief_qualification');
+ await marked.query('CREATE TABLE reset_probe(id int)');await marked.close();
+ await assert.rejects(bootstrap({...env,STOCKCHIEF_QUALIFICATION_RESET:'drop-synthetic-database',STOCKCHIEF_QUALIFICATION_OWNER:'someone-else'},{open}),/Only the marked synthetic/);
+ const reset=await bootstrap({...env,STOCKCHIEF_QUALIFICATION_RESET:'drop-synthetic-database'},{open});assert(reset.isolationVerified);assert(reset.migrationsApplied>500,'A reset rebuilds the synthetic database from scratch.');
+ const fresh=open('postgresql://sc_database_owner:'+encodeURIComponent('local-bootstrap-owner-test-only')+'@'+host+':5432/stockchief_qualification');
+ assert.equal((await fresh.query("SELECT to_regclass('public.reset_probe') AS probe")).rows[0].probe,null);await fresh.close();
+ assert.equal((await admin.query("SELECT count(*)::int n FROM pg_database WHERE datname='stockchief'")).rows[0].n,1,'The customer restore database is never dropped.');
  const scoped=require('../../src/imports/aws-database-connection').connection(env),runtime=open(scoped.connectionString);t.after(()=>runtime.close());
  const flags=(await runtime.query('SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=current_user')).rows[0];assert.deepEqual(Object.values(flags),[false,false,false,false,false]);
  await assert.rejects(runtime.query("UPDATE stockchief_aws_qualification_marker SET owner_tag='other'"),error=>error.code==='42501');

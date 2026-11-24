@@ -24,6 +24,21 @@ async function bootstrap(env=process.env,{open=openPostgres,migrate=migratePostg
   const main=connect(mainUrl.href);
   const present=(await main.query("SELECT count(*)::int n FROM pg_tables WHERE schemaname IN('public','stockchief_runtime')")).rows[0].n;
   if(present!==0)throw new Error('The customer restore database is not empty; qualification bootstrap will not change its access.');
+  // Optional clean slate between benchmark runs. Only the marked synthetic
+  // database owned by this qualification and endpoint is ever dropped; the
+  // customer restore database is never named here.
+  let reset=false;
+  if(env.STOCKCHIEF_QUALIFICATION_RESET==='drop-synthetic-database'&&(await admin.query('SELECT 1 FROM pg_database WHERE datname=$1',[databaseName])).rowCount){
+   const markedUrl=new URL(s.master);markedUrl.pathname='/'+databaseName;
+   const probe=open(markedUrl.href,{max:1,ca:s.scoped.ca,privateNetwork:false,requireTls:true,applicationName:'stockchief-qualification-reset'});
+   let owned=false;
+   try{const marker=(await probe.query("SELECT to_regclass('public.stockchief_aws_qualification_marker') AS marker")).rows[0].marker;
+    if(marker){const rows=(await probe.query('SELECT owner_tag,db_endpoint FROM stockchief_aws_qualification_marker WHERE singleton')).rows;owned=rows.length===1&&rows[0].owner_tag===s.owner&&rows[0].db_endpoint===s.master.hostname;}}
+   finally{await probe.close();}
+   if(!owned)throw new Error('Only the marked synthetic qualification database can be reset.');
+   await admin.query('DROP DATABASE stockchief_qualification WITH (FORCE)');
+   reset=true;
+  }
   const exists=(await admin.query('SELECT 1 FROM pg_database WHERE datname=$1',[databaseName])).rowCount>0;
   if(!exists)await admin.query('CREATE DATABASE stockchief_qualification TEMPLATE template0');
   const ownerUrl=new URL(s.master);ownerUrl.pathname='/'+databaseName;const owner=connect(ownerUrl.href);
@@ -40,7 +55,7 @@ async function bootstrap(env=process.env,{open=openPostgres,migrate=migratePostg
   }
   await admin.transaction(async c=>{
    const current=(await c.query('SELECT rolcanlogin,rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=$1',[role])).rows[0];
-   if(current){if(!marked||!current.rolcanlogin||current.rolsuper||current.rolcreatedb||current.rolcreaterole||current.rolreplication||current.rolbypassrls)throw new Error('The existing qualification role cannot be adopted safely.');}
+   if(current){if(!marked&&!reset||!current.rolcanlogin||current.rolsuper||current.rolcreatedb||current.rolcreaterole||current.rolreplication||current.rolbypassrls)throw new Error('The existing qualification role cannot be adopted safely.');}
    else{
     // Keep the password in a bound, transaction-local setting. The DDL and
     // errors never interpolate its plaintext into a logged SQL statement.
