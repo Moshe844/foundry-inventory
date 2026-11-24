@@ -39,6 +39,15 @@ async function run(env=process.env,steps=(process.argv[2]||'catalogue,stock150k,
    assert(result.verified);sources.push({planId:plan.id,file});
    log({kind,stage:'executed',analysisMs:analysedMs,savingMs:Date.now()-started-analysedMs,totalMs:Date.now()-started,rows:result.rowsImported,stockLanes:result.stockLanes||0,peakRssMb:Math.round(peakRss/1048576)});
   }
+  if(steps.includes('audit-only')){
+   // Re-audit a finished run without importing again: regenerate its exact
+   // sources (deterministic for the run) and find the plans by source name.
+   for(const [kind,count]of [['catalogue',50000],['stock150k',150000],['stockMillion',1000000]]){
+    const file=source.write(directory,kind,count,{run}),plan=(await db.query("SELECT id FROM import_plans WHERE workspace_id=$1 AND source_name=$2 AND status='SUCCEEDED' ORDER BY created_at DESC LIMIT 1",[ctx.workspaceId,path.basename(file)])).rows[0];
+    if(plan)sources.push({planId:plan.id,file});
+   }
+   if(sources.length!==3)throw new Error('This run does not have three finished imports to audit.');
+  }
   if(steps.includes('catalogue')){
    await execute('catalogue',50000);
    // The last stock source row carries a decimal quantity for this measured SKU.

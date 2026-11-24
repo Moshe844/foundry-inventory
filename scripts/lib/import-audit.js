@@ -25,7 +25,10 @@ async function expected(sources){
  }
  return {positions,stockRows,units,value,rowsByPlan};
 }
-async function audit(db,workspaceId,sources){
+async function audit(database,workspaceId,sources){
+ // Whole-import checks scan a million rows; give each its own generous limit
+ // instead of the application's 30-second statement limit.
+ const db={query:(sql,values)=>database.transaction(c=>c.query(sql,values),{isolation:'READ COMMITTED',statementTimeoutMs:600000})};
  const want=await expected(sources),problems=[],note=text=>{if(problems.length<20)problems.push(text);};
  const same=(a,b)=>exact.canonical(String(a),{signed:true})===exact.canonical(String(b),{signed:true});
  // Every product-and-location, paged in key order.
