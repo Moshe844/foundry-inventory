@@ -59,13 +59,28 @@ function connectionOptions(connectionString, options = {}) {
     ssl };
 }
 
+// The AWS database (Ohio RDS) is verified against AWS's published root certificates,
+// which ship with the app, so the website needs no pasted certificate. A leftover pin
+// for Render's old self-signed database certificate is refused with a clear message.
+const OHIO_RDS=/\.us-east-2\.rds\.amazonaws\.com$/i;
+function tlsFor(connectionString, options = {}, env = process.env) {
+  let host = '';
+  try { host = new URL(connectionString).hostname; } catch { /* connectionOptions reports invalid URLs */ }
+  const pin = options.tlsFingerprint ?? env.FOUNDRY_DATABASE_TLS_FINGERPRINT256;
+  let ca = options.ca ?? env.FOUNDRY_DATABASE_TLS_CA;
+  if (OHIO_RDS.test(host)) {
+    if (pin) throw new Error('Remove FOUNDRY_DATABASE_TLS_FINGERPRINT256 (the old Render database pin) before connecting to the AWS database.');
+    if (!ca) ca = require('node:fs').readFileSync(require('node:path').join(__dirname, 'certificates/aws-rds-us-east-2.pem'), 'utf8');
+  }
+  return { ca, tlsFingerprint: pin };
+}
+
 function openPostgres(connectionString, options = {}) {
   const resolvedOptions = {
     ...options,
     privateNetwork: options.privateNetwork ?? process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK === 'true',
     requireTls: options.requireTls ?? process.env.STOCKCHIEF_RUNTIME_ENV === 'production',
-    ca: options.ca ?? process.env.FOUNDRY_DATABASE_TLS_CA,
-    tlsFingerprint: options.tlsFingerprint ?? process.env.FOUNDRY_DATABASE_TLS_FINGERPRINT256,
+    ...tlsFor(connectionString, options),
   };
   const pool = new Pool(connectionOptions(connectionString, resolvedOptions));
   const subscriptions=new Set(),committedWrites=new Set();
@@ -213,4 +228,4 @@ function openPostgres(connectionString, options = {}) {
     topology: Object.freeze({ engine: 'postgresql', shared: true, multiWriter: true }) };
 }
 
-module.exports = { connectionOptions, openPostgres };
+module.exports = { connectionOptions, openPostgres, tlsFor };
