@@ -30,7 +30,10 @@ test('a Render-style export restores exactly, runs the app as the website login 
 
  // AWS: restore as the owner, grant the website login, fingerprint the copy.
  const login=name=>({username:name,password:crypto.randomBytes(18).toString('base64url')+'%:@/'});
- const env={STOCKCHIEF_RESTORE_MASTER_SECRET:JSON.stringify({username:decodeURIComponent(server.username),password:decodeURIComponent(server.password),host:server.hostname,port:Number(server.port)}),
+ // Like RDS: the master can create databases and roles but is not a superuser.
+ const master={username:'rds_like_master_'+tag,password:crypto.randomBytes(18).toString('hex')};
+ await admin.query(`CREATE ROLE ${master.username} LOGIN CREATEDB CREATEROLE NOSUPERUSER PASSWORD '${master.password}'`);
+ const env={STOCKCHIEF_RESTORE_MASTER_SECRET:JSON.stringify({...master,host:server.hostname,port:Number(server.port)}),
   STOCKCHIEF_RESTORE_OWNER_SECRET:JSON.stringify(login('owner_'+tag)),STOCKCHIEF_RESTORE_RUNTIME_SECRET:JSON.stringify(login('runtime_'+tag)),
   STOCKCHIEF_RESTORE_DATABASE:'stockchief_'+tag,STOCKCHIEF_RESTORE_SOURCE:dump,STOCKCHIEF_PG_BIN:bin,STOCKCHIEF_RESTORE_WORKDIR:dir};
  const restore=require('../../src/db/aws-restore');

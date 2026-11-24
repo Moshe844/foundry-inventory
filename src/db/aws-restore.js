@@ -73,7 +73,9 @@ async function ensureLogin(client,login,{inherit}){
   if(current&&(current.rolsuper||current.rolcreatedb||current.rolcreaterole||current.rolreplication||current.rolbypassrls))throw new Error('The existing '+login.username+' login has more power than it may have.');
   // The password stays in a bound, transaction-local setting, never in logged SQL text.
   await client.query("SELECT set_config('stockchief.restore_password',$1,true)",[login.password]);
-  const attributes='LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS '+(inherit?'INHERIT':'NOINHERIT');
+  // RDS's master is not a true superuser, so it may not restate SUPERUSER, REPLICATION
+  // or BYPASSRLS on an existing login; those were just checked to be off above.
+  const attributes=(current?'LOGIN NOCREATEDB NOCREATEROLE ':'LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS ')+(inherit?'INHERIT':'NOINHERIT');
   await client.query(`DO $r$ BEGIN EXECUTE format('${current?'ALTER':'CREATE'} ROLE %I ${attributes} PASSWORD %L',${"'"+login.username+"'"},current_setting('stockchief.restore_password')); END $r$`);
 }
 
