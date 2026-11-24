@@ -50,8 +50,9 @@ test('the Render restore task alone reads the master, owner and website secrets,
  assert.equal(Object.keys(secrets).length,3);
  const read=t.Resources.RestoreExecutionRole.Properties.Policies[0].PolicyDocument.Statement.find(s=>s.Action==='secretsmanager:GetSecretValue');
  assert.equal(read.Resource.length,3);assert.match(JSON.stringify(read.Resource),/MasterSecretArn.*OwnerSecretArn.*ApplicationSecretArn/);
- const s3=t.Resources.RestoreRole.Properties.Policies[0].PolicyDocument.Statement;assert.equal(s3.length,1);
+ const s3=t.Resources.RestoreRole.Properties.Policies[0].PolicyDocument.Statement;assert.equal(s3.length,2);
  assert.deepEqual(s3[0].Action,['s3:GetObject','s3:GetObjectVersion']);assert.match(JSON.stringify(s3[0].Resource),/MigrationBucket.*\/exports\/\*/);
+ assert.equal(s3[1].Action,'kms:Decrypt');assert.match(JSON.stringify(s3[1].Resource),/DataKeyArn/);assert.match(JSON.stringify(s3[1].Condition),/s3\.\$\{AWS::Region\}/,'decrypt only through S3');
  // The import workers never get the master or owner secrets.
  const worker=JSON.stringify(t.Resources.Task)+JSON.stringify(t.Resources.ExecutionRole)+JSON.stringify(t.Resources.ImportRole);
  assert.doesNotMatch(worker,/MasterSecretArn|OwnerSecretArn/);

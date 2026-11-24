@@ -71,6 +71,8 @@ r.RestoreRole={Type:'AWS::IAM::Role',Properties:{
  AssumeRolePolicyDocument:structuredClone(r.ExecutionRole.Properties.AssumeRolePolicyDocument),
  Policies:[{PolicyName:'ReadRenderExportsOnly',PolicyDocument:{Version:'2012-10-17',Statement:[
   {Effect:'Allow',Action:['s3:GetObject','s3:GetObjectVersion'],Resource:{'Fn::Join':['',['arn:',ref('AWS::Partition'),':s3:::',imported('MigrationBucket'),'/exports/*']]}},
+  // The bucket is encrypted with the project's data key; decrypt only through S3.
+  {Effect:'Allow',Action:'kms:Decrypt',Resource:imported('DataKeyArn'),Condition:{StringEquals:{'kms:ViaService':sub('s3.${AWS::Region}.amazonaws.com')}}},
  ]}}]}};
 const restoreContainer=structuredClone(container);
 restoreContainer.Name='render-restore';
