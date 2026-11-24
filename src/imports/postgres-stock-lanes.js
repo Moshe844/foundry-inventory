@@ -86,9 +86,20 @@ async function execute(database,ctx,plan,executionId,{deps,inputOptions,applyChu
      const applied=await applyChunk(client,checkpoint.apply_checkpoint,chunk,Number(checkpoint.apply_checkpoint.savedRows),token);
      await client.query('SELECT stockchief_flush_import_coverage()');
      await deps.assertOperator(client,ctx);
+     // Run this batch's deferred checks (one per stock position, plus foreign
+     // keys) now, before taking the shared plan row. At COMMIT they ran while the
+     // row was held, so the other lanes queued behind them; on a busy disk that
+     // wait passed the 30-second statement limit and rolled the batch back.
+     // The checks are the same; only their moment inside this transaction moves.
+     await client.query('SET CONSTRAINTS ALL IMMEDIATE');
      // Foreign-key checks hold KEY SHARE on the plan. NO KEY UPDATE serializes
      // checkpoint merges without deadlocking independently verified lanes.
+     // Waiting for another lane's short merge is expected, so this one wait may
+     // take longer than an ordinary statement; the limit is restored after it.
+     const limit=(await client.query("SELECT current_setting('statement_timeout') AS value")).rows[0].value;
+     await client.query("SET LOCAL statement_timeout='180s'");
      const parent=(await client.query('SELECT apply_checkpoint,integrity_hash,approval_status FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR NO KEY UPDATE',[ctx.workspaceId,plan.id])).rows[0];
+     await client.query("SELECT set_config('statement_timeout',$1,true)",[limit]);
      if(!parent||parent.integrity_hash!==plan.integrityHash||parent.approval_status!=='APPROVED'||parent.apply_checkpoint.stockLaneVersion!==1)throw invalid();
      const savedRows=Number(savedLane.saved_rows)+chunk.length,cursorNext=chunk.at(-1).executionCursor,covered=false;
      await client.query(`INSERT INTO import_lane_batch_receipts(workspace_id,import_id,lane,start_offset,end_offset,row_count,approval_hash,source_rows_hash,quantity_delta,cost_records,value_minor,asset_minor)

@@ -3,7 +3,8 @@
 // inside AWS beside the database with the import worker's own task definition.
 // It connects with the scoped qualification role, so it can reach only the
 // separate synthetic database. Synthetic data only; no paid provider calls.
-// Steps (argv[2], comma separated): catalogue, stock150k, stockMillion.
+// Steps (argv[2], comma separated): customer150k, catalogue, stock150k, stockMillion,
+// audit-only. customer150k imports the website-test shape into its own business.
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert/strict');
 const root=path.join(__dirname,'../..');
 
@@ -27,17 +28,29 @@ async function run(env=process.env,steps=(process.argv[2]||'catalogue,stock150k,
    for(const name of source.warehouses)await require('../domain/postgres-location-service').createLocation(db,ctx,{name,kind:'warehouse'});
   }
   let peakRss=0;const sources=[];
-  async function execute(kind,count){
-   const file=source.write(directory,kind,count,{run}),started=Date.now();let last='';
+  async function execute(kind,count,{file=source.write(directory,kind,count,{run}),context=ctx}={}){
+   const started=Date.now();let last='';
    const progress=phase=>async p=>{const rows=Number(p.processedRows||p.preparedRows||0),stamp=phase+':'+p.stage+':'+Math.floor(rows/50000),rss=process.memoryUsage().rss;peakRss=Math.max(peakRss,rss);
     if(stamp!==last){last=stamp;log({kind,phase,stage:p.stage,rows,elapsedMs:Date.now()-started,rssMb:Math.round(rss/1048576)});}};
-   const plan=await imports.analyse(db,ctx,{buffer:fs.readFileSync(file),filename:path.basename(file),importMode:'add',allowModel:false,onProgress:progress('analysis')});
+   const plan=await imports.analyse(db,context,{buffer:fs.readFileSync(file),filename:path.basename(file),importMode:'add',allowModel:false,onProgress:progress('analysis')});
    const analysedMs=Date.now()-started;log({kind,stage:'analysed',ms:analysedMs,valid:plan.recordsValid,invalid:plan.recordsInvalid});
    assert.equal(plan.recordsValid,count);assert.equal(plan.recordsInvalid,0);
-   await imports.approve(db,ctx,plan.id,plan.integrityHash);
-   const result=await imports.execute(db,ctx,plan.id,{onProgress:progress('execution')});
-   assert(result.verified);sources.push({planId:plan.id,file});
+   await imports.approve(db,context,plan.id,plan.integrityHash);
+   const result=await imports.execute(db,context,plan.id,{onProgress:progress('execution')});
+   assert(result.verified);if(context===ctx)sources.push({planId:plan.id,file});
    log({kind,stage:'executed',analysisMs:analysedMs,savingMs:Date.now()-started-analysedMs,totalMs:Date.now()-started,rows:result.rowsImported,stockLanes:result.stockLanes||0,peakRssMb:Math.round(peakRss/1048576)});
+   return plan.id;
+  }
+  if(steps.includes('customer150k')){
+   // The website test's file shape, in a business of its own: 30,000 new
+   // products in five sizes with barcode, category, cost, price and quantity.
+   const owner=await require(path.join(root,'scripts/lib/staging-million-fixture')).provision(db,run+'-c'),customer={workspaceId:owner.workspaceId,actorId:owner.userId};
+   await require('../accounting/postgres-ledger').configure(db,customer,{currency:'USD',startDate:'2026-01-01'});
+   await require('../domain/postgres-location-service').createLocation(db,customer,{name:'NJ-Main',kind:'warehouse'});
+   const file=require(path.join(root,'scripts/lib/customer-file-source')).write(directory,{products:30000});
+   const planId=await execute('customer150k',150000,{file,context:customer});
+   const audit=await require(path.join(root,'scripts/lib/import-audit')).audit(db,customer.workspaceId,[{planId,file}]);
+   log({kind:'customer150k',stage:'audited',...audit});if(!audit.passed)throw new Error('The independent import audit found differences.');
   }
   if(steps.includes('audit-only')){
    // Re-audit a finished run without importing again: regenerate its exact
@@ -65,10 +78,10 @@ async function run(env=process.env,steps=(process.argv[2]||'catalogue,stock150k,
    (SELECT sum(on_hand)::text FROM balances WHERE workspace_id=$1) units,(SELECT sum(total_cost_minor)::text FROM accounting_inventory_cost_balances WHERE workspace_id=$1) value_minor`,[ctx.workspaceId])).rows[0];
   // Independent audit: re-read every source file and compare each product and
   // location, row status, receipts, value and the ledger with the database.
-  const auditStarted=Date.now(),audit=await require(path.join(root,'scripts/lib/import-audit')).audit(db,ctx.workspaceId,sources);
+  if(sources.length){const auditStarted=Date.now(),audit=await require(path.join(root,'scripts/lib/import-audit')).audit(db,ctx.workspaceId,sources);
   log({stage:'audited',ms:Date.now()-auditStarted,...audit});
+  if(!audit.passed)throw new Error('The independent import audit found differences.');}
   log({stage:'done',actual});
-  if(!audit.passed)throw new Error('The independent import audit found differences.');
   return actual;
  }finally{fs.rmSync(directory,{recursive:true,force:true});await db.close();}
 }
