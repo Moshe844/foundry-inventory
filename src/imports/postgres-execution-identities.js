@@ -10,10 +10,14 @@ const hash=value=>createHash('sha256').update(value).digest('hex');
 // lanes could otherwise create the same supplier by name. Lots are scoped to
 // a SKU and every SKU stays in its product's lane, including all locations and
 // source rows. Their ordinary receipt/expiry checks therefore remain local.
+// Measured stock (2.25 m) uses the same exact batch receipt as whole units,
+// and lane receipts add quantities exactly to six decimal places. A decimal
+// row must not send a whole million-row file back to one serial session.
+function lanePositive(value){try{return require('../domain/exact-quantity').safeNumber(value,{precision:6,positive:true})>0;}catch{return false;}}
 function ordinaryStock(row){const p=row.parsed,created=!p.existingSkuId&&!p.existingItemId;
  const tracking=p.trackingMode==='quantity'?!p.lotCode&&!p.expiresAt:p.trackingMode==='lot'&&typeof p.lotCode==='string'&&p.lotCode.length>0;
  return Boolean((p.existingSkuId&&p.existingItemId||created)&&tracking
- &&Number.isSafeInteger(p.quantity)&&p.quantity>0&&Number.isSafeInteger(p.unitCostMinor)&&p.unitCostMinor>0
+ &&lanePositive(p.quantity)&&Number.isSafeInteger(p.unitCostMinor)&&p.unitCostMinor>0
  &&(p.sellingPriceMinor===null||created)&&(!p.barcode||created)&&!p.supplierName&&!p.serial&&!p.catalogueUpdate
  &&(created||Object.keys(p.reorder||{}).length===0&&!p.sourceFacts?.Category));}
 async function stage(client,ctx,plan,deps,onProgress){

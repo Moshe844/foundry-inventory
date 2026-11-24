@@ -26,7 +26,7 @@ async function run(env=process.env,steps=(process.argv[2]||'catalogue,stock150k,
    await require('../accounting/postgres-ledger').configure(db,ctx,{currency:'USD',startDate:'2026-01-01'});
    for(const name of source.warehouses)await require('../domain/postgres-location-service').createLocation(db,ctx,{name,kind:'warehouse'});
   }
-  let peakRss=0;
+  let peakRss=0;const sources=[];
   async function execute(kind,count){
    const file=source.write(directory,kind,count,{run}),started=Date.now();let last='';
    const progress=phase=>async p=>{const rows=Number(p.processedRows||p.preparedRows||0),stamp=phase+':'+p.stage+':'+Math.floor(rows/50000),rss=process.memoryUsage().rss;peakRss=Math.max(peakRss,rss);
@@ -36,7 +36,7 @@ async function run(env=process.env,steps=(process.argv[2]||'catalogue,stock150k,
    assert.equal(plan.recordsValid,count);assert.equal(plan.recordsInvalid,0);
    await imports.approve(db,ctx,plan.id,plan.integrityHash);
    const result=await imports.execute(db,ctx,plan.id,{onProgress:progress('execution')});
-   assert(result.verified);
+   assert(result.verified);sources.push({planId:plan.id,file});
    log({kind,stage:'executed',analysisMs:analysedMs,savingMs:Date.now()-started-analysedMs,totalMs:Date.now()-started,rows:result.rowsImported,stockLanes:result.stockLanes||0,peakRssMb:Math.round(peakRss/1048576)});
   }
   if(steps.includes('catalogue')){
@@ -54,7 +54,12 @@ async function run(env=process.env,steps=(process.argv[2]||'catalogue,stock150k,
   }
   const actual=(await db.query(`SELECT (SELECT count(*)::int FROM skus WHERE workspace_id=$1) skus,(SELECT count(*)::int FROM balances WHERE workspace_id=$1) positions,
    (SELECT sum(on_hand)::text FROM balances WHERE workspace_id=$1) units,(SELECT sum(total_cost_minor)::text FROM accounting_inventory_cost_balances WHERE workspace_id=$1) value_minor`,[ctx.workspaceId])).rows[0];
+  // Independent audit: re-read every source file and compare each product and
+  // location, row status, receipts, value and the ledger with the database.
+  const auditStarted=Date.now(),audit=await require(path.join(root,'scripts/lib/import-audit')).audit(db,ctx.workspaceId,sources);
+  log({stage:'audited',ms:Date.now()-auditStarted,...audit});
   log({stage:'done',actual});
+  if(!audit.passed)throw new Error('The independent import audit found differences.');
   return actual;
  }finally{fs.rmSync(directory,{recursive:true,force:true});await db.close();}
 }
