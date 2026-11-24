@@ -12,3 +12,8 @@
 .page-ask .rm-chat__bar{position:relative;flex:none;top:auto;z-index:1;padding:12px 0;background:#f7f8fc;border-bottom:1px solid var(--sc-line)}.page-ask .rm-chat__new{display:flex!important;align-items:center;gap:8px}.page-ask .rm-chat__new>form{flex:none}.page-ask .rm-chat__new [type=submit]{background:#ede7ff;color:#4832a8;border:1px solid #cec2ee}@media(max-width:760px){.page-ask .rm-chat__bar{align-items:start;gap:10px;flex-wrap:wrap}.page-ask .rm-chat__new>a{font-size:11px}.page-ask .rm-chat__new [type=submit]{font-size:12px}}
 
 @media(max-width:600px){.sc-date-filter{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%}.sc-date-filter label{min-width:0}.sc-date-filter input{box-sizing:border-box;min-height:42px;padding:8px}.sc-date-filter button{grid-column:1/-1;justify-self:start}}
+/* Figures counted a moment ago while a large import is still saving: an ordinary
+   (indigo) notice, never an alarm. A figure still counting keeps its card. */
+.sc-report-asof{margin:0 0 14px;padding:10px 14px;border-left:3px solid var(--d-normal,#3056D3);background:#F5F7FF;border-radius:6px;color:#344054;font-size:13px;line-height:1.5}
+.sc-report-card.is-updating>strong{color:var(--d-normal,#3056D3)}
+.sc-report-card.is-updating>small{color:#667085;font-size:12px}

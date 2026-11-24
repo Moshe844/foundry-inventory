@@ -123,8 +123,8 @@ function createPostgresReportsRouter(database){
     const actor=await actorFor(database,req.ctx);
     const prefs=require('../../reports/manager-presentation');await prefs.notePeriod(database,req.ctx,req.query);
     const managerView=await prefs.personal(database,req.ctx),query=await prefs.dateQuery(database,req.ctx,req.query,managerView);
-    const datasets=registry.list(actor),saved=await reports.list(database,req.ctx,actor),business=require('../../reports/business-reports'),businessContext=await business.context(database,req.ctx,query,{coverage:true}),businessCards=await business.cards(database,req.ctx,actor,query);
-    return res.page('reports/index',{title:'Reports',nav:'accounting',backTo:{href:'/',label:'Home'},datasets,saved,businessContext,businessCards,managerView,
+    const datasets=registry.list(actor),saved=await reports.list(database,req.ctx,actor),business=require('../../reports/business-reports'),businessContext=await business.context(database,req.ctx,query,{coverage:true}),figures=await business.settledCards(database,req.ctx,actor,query),businessCards=figures.cards;
+    return res.page('reports/index',{title:'Reports',nav:'accounting',backTo:{href:'/',label:'Home'},datasets,saved,businessContext,businessCards,businessFiguresAsOf:figures.current?null:figures.asOf,managerView,
       compositions:composed.dimensions(actor)});
   }));
   router.get('/reports/my-preferences',asyncRoute(async(req,res)=>{

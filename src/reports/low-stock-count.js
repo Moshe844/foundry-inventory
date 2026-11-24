@@ -37,8 +37,14 @@ async function compute(db,workspaceId){
 }
 
 // Cached with the business's other figures and refreshed when stock or rules change.
-function summary(db,workspaceId){
+function fresh(db,workspaceId){
   return require('../lib/versioned-read-model').read(db,workspaceId,['low-stock-items'],()=>module.exports.compute(db,workspaceId),{domain:'business'});
 }
+// For a page: while a large import keeps the count busy for more than a moment,
+// the last count is shown with the time it was taken (`asOf`, `current` false).
+async function summary(db,workspaceId){
+  const figure=await require('../lib/versioned-read-model').settled(db,workspaceId,['low-stock-items'],()=>module.exports.compute(db,workspaceId),{domain:'business'});
+  return {...figure.value,asOf:figure.asOf,current:figure.current};
+}
 
-module.exports={summary,compute,QUERY};
+module.exports={summary,fresh,compute,QUERY};

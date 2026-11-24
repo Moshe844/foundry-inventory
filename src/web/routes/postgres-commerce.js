@@ -490,9 +490,9 @@ function createPostgresCommerceRouter(database,options={}){
 
   router.get('/purchasing',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),asyncRoute(async(req,res)=>{
     const reorderOverview=await require('../../purchasing/postgres-shortage-list').read(database,req.ctx.workspaceId,req.query);
-    const lowItems=String(req.query.q||'').trim()?null:await require('../../reports/low-stock-count').summary(database,req.ctx.workspaceId).then((low)=>low.items).catch(()=>null);
+    const low=String(req.query.q||'').trim()?null:await require('../../reports/low-stock-count').summary(database,req.ctx.workspaceId).catch(()=>null),lowItems=low?.items??null;
     const reorder=await require('../buy-view').reorderView(database,req.ctx.workspaceId,reorderOverview,{lowItems});
-    return res.page('buy/reorder',{title:'What to order',nav:'purchasing',room:true,reorder,reorderOverview,draftKey:newId('reorder-drafts'),
+    return res.page('buy/reorder',{title:'What to order',nav:'purchasing',room:true,reorder,reorderOverview,lowAsOf:low&&!low.current?low.asOf:null,draftKey:newId('reorder-drafts'),
       permissions:purchasingPermissions(req),ownSectionTabs:true,suppressBack:true,screenGuide:null});
   }));
 
@@ -542,11 +542,11 @@ function createPostgresCommerceRouter(database,options={}){
     const list=await require('../buy-view').purchaseOrdersList(database,req.ctx.workspaceId,
       await commerce.purchaseOrders(database,req.ctx.workspaceId),{...req.query,pageSize:size},can,dateToday(req));
     // The same items count Reports shows for low stock.
-    const lowCount=await require('../../reports/low-stock-count').summary(database,req.ctx.workspaceId).then((low)=>low.items).catch(()=>0);
+    const low=await require('../../reports/low-stock-count').summary(database,req.ctx.workspaceId).catch(()=>null),lowCount=low?.items||0,lowAsOf=low&&!low.current?low.asOf:null;
     const agentPolicy=require('../../commercial/agent-plan');
     const agentState=await agentPolicy.accountState(database,req.ctx.workspaceId);
     const purchaseRequests=agentPolicy.usesAgentTerms(agentState)?agentPolicy.allowance(agentState.plan,41):null;
-    return res.page('buy/orders',{purchaseRequests,title:'Purchase orders',nav:'purchasing',room:true,list,pager:require('../presentation/pagination').pager(req,{page:list.page,size,total:list.matching,shown:list.rows.length}),lowCount,suppressBack:true,
+    return res.page('buy/orders',{purchaseRequests,title:'Purchase orders',nav:'purchasing',room:true,list,pager:require('../presentation/pagination').pager(req,{page:list.page,size,total:list.matching,shown:list.rows.length}),lowCount,lowAsOf,suppressBack:true,
       ownSectionTabs:true,screenGuide:null,permissions:can});
   }));
   router.get('/purchasing/receive',requirePermission(permissions.RECEIVE_PO,'book in deliveries'),asyncRoute(async(req,res)=>{

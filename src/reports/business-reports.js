@@ -32,33 +32,47 @@ async function hasReorderLevels(db,ctx){return (await db.query(`SELECT 1 FROM re
  LIMIT 1`,[ctx.workspaceId])).rows.length>0;}
 async function run(db,ctx,actor,key,input={}){let d=definitions.find(d=>d.key===key);if(!d)throw new NotFoundError('That report is unavailable.');if(key==='sellers'&&input.view==='items')d={...d,groups:['product','item_code']};permissions.assertCan(actor,registry.get(d.dataset).permission,'read this report');const c=await context(db,ctx,input,{coverage:key==='stock-value'}),longPeriod=d.groups?.[0]===d.date&&d.date&&input.detail!=='1'&&(Date.parse(c.to)-Date.parse(c.from))/86400000>62,[result,summary]=await Promise.all([reports.run(db,ctx,actor,{...spec(d,c,c.currency,{detail:input.detail==='1'}),...(longPeriod?{dateGrain:'month'}:{})},{limit:201}),d.count?{rows:[],columns:[]}:reports.run(db,ctx,actor,spec(d,c,c.currency,{summary:true}),{limit:2})]);const raw=d.count?(await require('./low-stock-count').summary(db,ctx.workspaceId)).items:Number(summary.rows[0]?.total||0);await enrich(db,ctx,key,result);let worst=null;if(d.key==='sellers')worst=await reports.run(db,ctx,actor,{...spec(d,c,c.currency),direction:'asc'},{limit:6});const hierarchy=key==='stock-value'&&input.detail!=='1'&&input.view!=='variants'?await require('./variant-hierarchy').stockValue(db,ctx,actor,c.currency,{afterItem:input.afterItem||null}):null;const needsReorderSetup=key==='low-stock'&&!await hasReorderLevels(db,ctx);return {definition:d,context:c,result,summary,total:raw,needsReorderSetup,hierarchy,view:input.view==='items'?'items':'variants',headline:figure(d,raw,c.currency),worst};}
 async function enrich(db,ctx,key,result){if(key==='stock-value'&&result.config.groups.length===1&&result.config.groups[0]==='sku'&&result.rows.length){const labels=(await db.query("SELECT s.code,i.id,concat_ws(' / ',i.name,nullif(s.variant_label,'')) AS name FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id WHERE s.workspace_id=$1 AND s.code=ANY($2::text[])",[ctx.workspaceId,result.rows.map(r=>r.sku)])).rows,bySku=new Map(labels.map(r=>[r.code,r]));result.columns.unshift('product');result.columnLabels.product='Product';result.columnTypes.product='text';for(let i=0;i<result.rows.length;i++){const label=bySku.get(result.rows[i].sku);result.rows[i].product=label?.name||result.rows[i].sku;result.displayRows[i].product=result.rows[i].product;if(label)result.rows[i].href='/inventory/'+label.id;}}return result;}
-async function cards(db,ctx,actor,input){
+async function cards(db,ctx,actor,input){return (await cardsRead(db,ctx,actor,input,'read')).value;}
+// For the Reports page: last good figures with their time while fresh ones are slow.
+async function settledCards(db,ctx,actor,input){const figure=await cardsRead(db,ctx,actor,input,'settled');return {cards:figure.value,asOf:figure.asOf,current:figure.current};}
+async function cardsRead(db,ctx,actor,input,mode){
  const c=await context(db,ctx,input,{coverage:true}),allowed=definitions.filter(d=>permissions.can(actor,registry.get(d.dataset).permission));
  const required=[...new Set(allowed.map(d=>registry.get(d.dataset).commercialCapability).filter(Boolean))];
  // Check the current subscription before a shared result can be returned.
  // Saved reports remain personal; these cards contain only reviewed business
  // summaries for this exact role and set of readable sources.
  if(required.length){const entitlements=require('../commercial/entitlements'),cache=require('../lib/request-read-cache'),scope=await cache.read(JSON.stringify(['report-owner',ctx.workspaceId]),()=>entitlements.ownerScopeForWorkspace(db,ctx.workspaceId));for(const capability of required)await cache.read(JSON.stringify(['report-permit',ctx.workspaceId,capability]),()=>entitlements.assertCapability(db,scope,capability,{allowReadOnly:true}));}
- return require('../lib/versioned-read-model').read(db,ctx.workspaceId,['business-report-cards',c.from,c.to,c.timeZone,c.currency,actor.role,actor.permissions||null,allowed.map(d=>d.key)],()=>buildCards(db,ctx,actor,c,allowed),{domain:'business'});
+ const model=require('../lib/versioned-read-model'),key=['business-report-cards',c.from,c.to,c.timeZone,c.currency,actor.role,actor.permissions||null,allowed.map(d=>d.key)],build=()=>buildCards(db,ctx,actor,c,allowed);
+ if(mode==='read')return {value:await model.read(db,ctx.workspaceId,key,build,{domain:'business'})};
+ // A bundle with a figure still updating is shown but never kept as the last good one.
+ return model.settled(db,ctx.workspaceId,key,build,{domain:'business',keep:list=>!list.some(card=>card.unavailable)});
 }
 async function buildCards(db,ctx,actor,c,allowed){
  const list=new Array(allowed.length);let next=0;
  // Bound foreground database work instead of launching every chart and total
  // together. Each chart carries its exact whole-population total before LIMIT.
- async function worker(){while(next<allowed.length){const index=next++,d=allowed[index];
+ async function worker(){while(next<allowed.length){const index=next++,d=allowed[index];try{
   // Count low-stock positions by location before formatting product labels.
   // This retains the exact whole-business count and a useful warehouse chart
   // without sorting tens of thousands of named variants for a tiny card.
   // Low stock is the shared items count, with items per warehouse for its chart.
-  const low=d.count?await require('./low-stock-count').summary(db,ctx.workspaceId):null;
+  const low=d.count?await require('./low-stock-count').fresh(db,ctx.workspaceId):null;
   const trend=low?{rows:low.byLocation.slice(0,13).map((r)=>({location:r.location,count:r.items})),overall:{value:low.items}}
     :await reports.run(db,ctx,actor,spec(d,c,c.currency),{limit:13,includeOverall:true});
   const raw=Number(trend.overall.value||0),needsReorderSetup=d.key==='low-stock'&&!await hasReorderLevels(db,ctx);
   const card={needsReorderSetup,key:d.key,title:d.title,question:d.question,current:d.current,chartKind:d.date&&d.groups?.[0]===d.date?'line':'bar',chartLabel:d.count?'Low-stock items by location':'Recorded values',note:d.key==='movement'&&trend.warnings?.length?trend.warnings.join(' '):d.key==='stock-value'&&c.missingCostUnits?'Stock value is incomplete. Add purchase costs for '+require('../domain/stock-totals').missingCostText(c)+'.':d.key==='profit'?'Recorded profit · incomplete until all costs are included.':null,value:figure(d,raw,c.currency),trend:trend.rows.map(r=>Number(r.total??r.count??r.on_hand??0)),hasRecords:trend.rows.length>0};
   if(!d.current&&!d.count){const lead=(await reports.totals(db,ctx,actor,{...reports.normalize(spec(d,c,c.currency,{summary:true}),actor),compare:'previous_period'},{currentResult:trend}))?.metrics?.[0];card.change=lead?.change??null;card.previous=lead?.previousDisplay||null;card.changeGood=lead?.good??null;}
   list[index]=card;
+  }catch(error){
+   // One figure that cannot finish in time (a large import is rewriting the same
+   // records) is shown as still updating; the rest of Reports still opens.
+   if(!slowRead(error))throw error;
+   list[index]={key:d.key,title:d.title,question:d.question,unavailable:true};
+  }
  }}
  await Promise.all(Array.from({length:Math.min(2,allowed.length)},()=>worker()));
  return list;
 }
-module.exports={hasReorderLevels,enrich,definitions,spec,context,run,cards};
+// Statement or lock timeouts: the database was too busy to finish this figure now.
+function slowRead(error){return error?.code==='57014'||error?.code==='55P03';}
+module.exports={hasReorderLevels,enrich,definitions,spec,context,run,cards,settledCards,slowRead};
