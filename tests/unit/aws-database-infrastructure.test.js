@@ -33,8 +33,9 @@ test('bounded hardware and storage remain distinct from customer entitlements an
  assert.equal(Object.values(t.Resources).some(r=>r.Type==='AWS::IAM::AccessKey'),false);
  assert.equal(JSON.stringify(t.Outputs).includes('password'),false);
 });
-test('checkpoints are spaced for bulk imports without weakening commit durability',()=>{
+test('the database keeps engine-default checkpoints and full commit durability',()=>{
+ // Measured on AWS 2026-11-24: 8 GB WAL / 15 min checkpoints saved nothing on a million-row
+ // import (serial saving 21.6 vs 21.4 min) and reserved up to 8 GB of disk, so they stay default.
  const p=require('../../infra/aws-database/build-template').template.Resources.Parameters.Properties.Parameters;
- assert.equal(p.max_wal_size,'8192');assert.equal(p.checkpoint_timeout,'900');
- assert.equal(p.synchronous_commit,undefined,'Every commit stays flushed to disk.');assert.equal(p.fsync,undefined);assert.equal(p.full_page_writes,undefined);
+ for(const name of ['max_wal_size','checkpoint_timeout','synchronous_commit','fsync','full_page_writes'])assert.equal(p[name],undefined,name);
 });
