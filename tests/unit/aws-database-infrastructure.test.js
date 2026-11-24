@@ -33,3 +33,8 @@ test('bounded hardware and storage remain distinct from customer entitlements an
  assert.equal(Object.values(t.Resources).some(r=>r.Type==='AWS::IAM::AccessKey'),false);
  assert.equal(JSON.stringify(t.Outputs).includes('password'),false);
 });
+test('checkpoints are spaced for bulk imports without weakening commit durability',()=>{
+ const p=require('../../infra/aws-database/build-template').template.Resources.Parameters.Properties.Parameters;
+ assert.equal(p.max_wal_size,'8192');assert.equal(p.checkpoint_timeout,'900');
+ assert.equal(p.synchronous_commit,undefined,'Every commit stays flushed to disk.');assert.equal(p.fsync,undefined);assert.equal(p.full_page_writes,undefined);
+});
