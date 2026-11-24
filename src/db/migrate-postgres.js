@@ -29,9 +29,9 @@ async function migratePostgres(database, options = {}) {
         if (![checksum,originalChecksum].includes(prior.rows[0].checksum)) throw new Error(`Applied PostgreSQL migration ${name} has changed.`);
         continue;
       }
-      // Converting existing physical-quantity tables can rewrite several GiB.
-      // Keep this single, bounded migration allowance out of runtime queries.
-      const extendedQuantityMigration=name==='138-measured-stock-quantities.sql';
+      // Converting existing physical-quantity columns can rewrite several GiB.
+      // Keep these bounded migration allowances out of runtime queries.
+      const extendedQuantityMigration=['138-measured-stock-quantities.sql','547-import-row-decimal-quantity.sql'].includes(name);
       if(extendedQuantityMigration)await client.query("SELECT set_config('statement_timeout','600000',true)");
       await client.query(statement);
       if(extendedQuantityMigration)await client.query("SELECT set_config('statement_timeout','120000',true)");
