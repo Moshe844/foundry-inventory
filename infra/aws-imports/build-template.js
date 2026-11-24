@@ -16,7 +16,10 @@ add('Sources','AWS::S3::Bucket',{
 add('SourcePolicy','AWS::S3::BucketPolicy',{Bucket:ref('Sources'),PolicyDocument:{Version:'2012-10-17',Statement:[{Sid:'DenyInsecureTransport',Effect:'Deny',Principal:'*',Action:'s3:*',Resource:[get('Sources','Arn'),sub('${Sources.Arn}/*')],Condition:{Bool:{'aws:SecureTransport':'false'}}}]}});
 add('DeadLetters','AWS::SQS::Queue',{MessageRetentionPeriod:1209600,SqsManagedSseEnabled:true});
 add('ImportQueue','AWS::SQS::Queue',{MessageRetentionPeriod:345600,SqsManagedSseEnabled:true,VisibilityTimeout:60,ReceiveMessageWaitTimeSeconds:20,RedrivePolicy:{deadLetterTargetArn:get('DeadLetters','Arn'),maxReceiveCount:5}});
-add('QueuePolicy','AWS::SQS::QueuePolicy',{Queues:[ref('ImportQueue'),ref('DeadLetters')],PolicyDocument:{Version:'2012-10-17',Statement:[{Effect:'Deny',Principal:'*',Action:'sqs:*',Resource:[get('ImportQueue','Arn'),get('DeadLetters','Arn')],Condition:{Bool:{'aws:SecureTransport':'false'}}}]}});
+// SQS accepts exactly one resource per policy statement, so each queue gets
+// its own TLS-only policy (one shared two-resource statement is rejected).
+for(const [name,queue]of [['QueuePolicy','ImportQueue'],['DeadLetterPolicy','DeadLetters']])
+ add(name,'AWS::SQS::QueuePolicy',{Queues:[ref(queue)],PolicyDocument:{Version:'2012-10-17',Statement:[{Effect:'Deny',Principal:'*',Action:'sqs:*',Resource:get(queue,'Arn'),Condition:{Bool:{'aws:SecureTransport':'false'}}}]}});
 add('Images','AWS::ECR::Repository',{RepositoryName:'stockchief-imports',ImageTagMutability:'IMMUTABLE',ImageScanningConfiguration:{ScanOnPush:true},LifecyclePolicy:{LifecyclePolicyText:JSON.stringify({rules:[{rulePriority:1,description:'Remove untagged build layers after seven days',selection:{tagStatus:'untagged',countType:'sinceImagePushed',countUnit:'days',countNumber:7},action:{type:'expire'}}]})}},{DeletionPolicy:'Retain',UpdateReplacePolicy:'Retain'});
 add('Logs','AWS::Logs::LogGroup',{RetentionInDays:14});
 add('ExecutionRole','AWS::IAM::Role',{AssumeRolePolicyDocument:roleTrust('ecs-tasks.amazonaws.com'),ManagedPolicyArns:[sub('arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy')],Policies:[{PolicyName:'OnlyImportDatabaseSecret',PolicyDocument:{Version:'2012-10-17',Statement:[{Effect:'Allow',Action:'secretsmanager:GetSecretValue',Resource:ref('DatabaseSecretArn')}]}}]});

@@ -38,3 +38,7 @@ test('the worker image builds in CodeBuild from the private bucket and pushes on
  assert.deepEqual(policy.find(s=>s.Action.includes?.('ecr:PutImage')).Resource,{'Fn::GetAtt':['Images','Arn']});
  assert.deepEqual(policy.find(s=>JSON.stringify(s.Action).includes('s3:GetObject')).Resource,{'Fn::Sub':'${Sources.Arn}/builds/*'});
 });
+test('every SQS policy statement names exactly one queue (SQS rejects shared statements)',()=>{
+ const policies=Object.values(t.Resources).filter(r=>r.Type==='AWS::SQS::QueuePolicy');assert.equal(policies.length,2);
+ for(const policy of policies){assert.equal(policy.Properties.Queues.length,1);for(const statement of policy.Properties.PolicyDocument.Statement)assert.equal(Array.isArray(statement.Resource),false);}
+});
