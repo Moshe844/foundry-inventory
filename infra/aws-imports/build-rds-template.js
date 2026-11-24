@@ -54,6 +54,34 @@ bootstrapContainer.Environment=[...bootstrapContainer.Environment.filter(v=>!['S
 bootstrapContainer.LogConfiguration=structuredClone(container.LogConfiguration);bootstrapContainer.LogConfiguration.Options['awslogs-stream-prefix']='qualification-bootstrap';
 r.BootstrapTask={Type:'AWS::ECS::TaskDefinition',Condition:'Qualification',Properties:{...structuredClone(r.Task.Properties),
  Family:'stockchief-imports-qualification-bootstrap',ExecutionRoleArn:get('BootstrapExecutionRole','Arn'),TaskRoleArn:get('ImportRole','Arn'),ContainerDefinitions:[bootstrapContainer]}};
+// The move from Render: a one-off task that restores Render's export from the
+// migration bucket's exports/ folder into the database customers will use, as an
+// unswitched copy (src/db/aws-restore.js). It reads the master, owner and website
+// login secrets; the import workers never get the master or owner secret. Never run
+// it after the switch except to inspect: a database marked live is never replaced.
+const ownerSecret=imported('OwnerSecretArn'),applicationSecret=imported('ApplicationSecretArn'),restoreSecrets=[master,ownerSecret,applicationSecret];
+r.RestoreExecutionRole={Type:'AWS::IAM::Role',Properties:{
+ AssumeRolePolicyDocument:structuredClone(r.ExecutionRole.Properties.AssumeRolePolicyDocument),
+ ManagedPolicyArns:structuredClone(r.ExecutionRole.Properties.ManagedPolicyArns),
+ Policies:[{PolicyName:'RestoreSecrets',PolicyDocument:{Version:'2012-10-17',Statement:[
+  {Effect:'Allow',Action:'secretsmanager:GetSecretValue',Resource:restoreSecrets},
+  {Effect:'Allow',Action:'kms:Decrypt',Resource:imported('DataKeyArn'),Condition:{StringEquals:{'kms:ViaService':sub('secretsmanager.${AWS::Region}.amazonaws.com')},'ForAnyValue:StringEquals':{'kms:EncryptionContext:SecretARN':restoreSecrets}}},
+ ]}}]}};
+r.RestoreRole={Type:'AWS::IAM::Role',Properties:{
+ AssumeRolePolicyDocument:structuredClone(r.ExecutionRole.Properties.AssumeRolePolicyDocument),
+ Policies:[{PolicyName:'ReadRenderExportsOnly',PolicyDocument:{Version:'2012-10-17',Statement:[
+  {Effect:'Allow',Action:['s3:GetObject','s3:GetObjectVersion'],Resource:{'Fn::Join':['',['arn:',ref('AWS::Partition'),':s3:::',imported('MigrationBucket'),'/exports/*']]}},
+ ]}}]}};
+const restoreContainer=structuredClone(container);
+restoreContainer.Name='render-restore';
+restoreContainer.Command=['node','src/db/aws-restore.js'];
+restoreContainer.Secrets=[{Name:'STOCKCHIEF_RESTORE_MASTER_SECRET',ValueFrom:master},{Name:'STOCKCHIEF_RESTORE_OWNER_SECRET',ValueFrom:ownerSecret},{Name:'STOCKCHIEF_RESTORE_RUNTIME_SECRET',ValueFrom:applicationSecret}];
+restoreContainer.Environment=[{Name:'NODE_ENV',Value:'production'},{Name:'STOCKCHIEF_RESTORE_HOST',Value:imported('Host')},{Name:'STOCKCHIEF_RESTORE_DATABASE',Value:imported('DatabaseName')},{Name:'STOCKCHIEF_RESTORE_WORKDIR',Value:'/tmp'}];
+restoreContainer.LogConfiguration=structuredClone(container.LogConfiguration);restoreContainer.LogConfiguration.Options['awslogs-stream-prefix']='render-restore';
+r.RestoreTask={Type:'AWS::ECS::TaskDefinition',Properties:{...structuredClone(r.Task.Properties),
+ Family:'stockchief-render-restore',Cpu:'1024',Memory:'4096',EphemeralStorage:{SizeInGiB:60},
+ ExecutionRoleArn:get('RestoreExecutionRole','Arn'),TaskRoleArn:get('RestoreRole','Arn'),ContainerDefinitions:[restoreContainer]}};
+template.Outputs.RestoreTask={Value:ref('RestoreTask')};
 // Builds infra/aws-imports/Dockerfile from a source archive uploaded to
 // builds/ in the private bucket and pushes it to this stack's repository
 // under an immutable tag. No local Docker is required. Billed per build minute.

@@ -39,3 +39,10 @@ test('the database keeps engine-default checkpoints and full commit durability',
  const p=require('../../infra/aws-database/build-template').template.Resources.Parameters.Properties.Parameters;
  for(const name of ['max_wal_size','checkpoint_timeout','synchronous_commit','fsync','full_page_writes'])assert.equal(p[name],undefined,name);
 });
+test('the owner login secret is generated, encrypted, retained and exported for the restore only',()=>{
+ const t=require('../../infra/aws-database/build-template').template,secret=t.Resources.OwnerSecret;
+ assert.equal(secret.Type,'AWS::SecretsManager::Secret');assert.deepEqual(JSON.parse(secret.Properties.GenerateSecretString.SecretStringTemplate),{username:'stockchief_owner'});
+ assert.equal(secret.Properties.GenerateSecretString.PasswordLength,40);assert.equal(secret.Properties.SecretString,undefined,'never a plaintext password');
+ assert.deepEqual(secret.Properties.KmsKeyId,{'Fn::GetAtt':['DataKey','Arn']});assert.equal(secret.DeletionPolicy,'Retain');
+ assert.deepEqual(t.Outputs.OwnerSecretArn.Value,{Ref:'OwnerSecret'});
+});

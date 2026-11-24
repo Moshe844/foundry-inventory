@@ -42,3 +42,18 @@ test('every SQS policy statement names exactly one queue (SQS rejects shared sta
  const policies=Object.values(t.Resources).filter(r=>r.Type==='AWS::SQS::QueuePolicy');assert.equal(policies.length,2);
  for(const policy of policies){assert.equal(policy.Properties.Queues.length,1);for(const statement of policy.Properties.PolicyDocument.Statement)assert.equal(Array.isArray(statement.Resource),false);}
 });
+test('the Render restore task alone reads the master, owner and website secrets, and only the exports folder',()=>{
+ const task=t.Resources.RestoreTask.Properties,container=task.ContainerDefinitions[0];
+ assert.deepEqual(container.Command,['node','src/db/aws-restore.js']);
+ const secrets=Object.fromEntries(container.Secrets.map(s=>[s.Name,JSON.stringify(s.ValueFrom)]));
+ assert.match(secrets.STOCKCHIEF_RESTORE_MASTER_SECRET,/MasterSecretArn/);assert.match(secrets.STOCKCHIEF_RESTORE_OWNER_SECRET,/OwnerSecretArn/);assert.match(secrets.STOCKCHIEF_RESTORE_RUNTIME_SECRET,/ApplicationSecretArn/);
+ assert.equal(Object.keys(secrets).length,3);
+ const read=t.Resources.RestoreExecutionRole.Properties.Policies[0].PolicyDocument.Statement.find(s=>s.Action==='secretsmanager:GetSecretValue');
+ assert.equal(read.Resource.length,3);assert.match(JSON.stringify(read.Resource),/MasterSecretArn.*OwnerSecretArn.*ApplicationSecretArn/);
+ const s3=t.Resources.RestoreRole.Properties.Policies[0].PolicyDocument.Statement;assert.equal(s3.length,1);
+ assert.deepEqual(s3[0].Action,['s3:GetObject','s3:GetObjectVersion']);assert.match(JSON.stringify(s3[0].Resource),/MigrationBucket.*\/exports\/\*/);
+ // The import workers never get the master or owner secrets.
+ const worker=JSON.stringify(t.Resources.Task)+JSON.stringify(t.Resources.ExecutionRole)+JSON.stringify(t.Resources.ImportRole);
+ assert.doesNotMatch(worker,/MasterSecretArn|OwnerSecretArn/);
+ assert.equal(task.EphemeralStorage.SizeInGiB,60);
+});

@@ -1074,6 +1074,34 @@
       "DeletionPolicy": "Retain",
       "UpdateReplacePolicy": "Retain"
     },
+    "OwnerSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Properties": {
+        "KmsKeyId": {
+          "Fn::GetAtt": [
+            "DataKey",
+            "Arn"
+          ]
+        },
+        "Description": "StockChief database owner login: migrations and the restore only, never the running website",
+        "GenerateSecretString": {
+          "SecretStringTemplate": "{\"username\":\"stockchief_owner\"}",
+          "GenerateStringKey": "password",
+          "PasswordLength": 40,
+          "ExcludePunctuation": true
+        }
+      },
+      "Metadata": {
+        "com.aws.cloudformation.Context": {
+          "why": "The restore and every publish run migrations as this owner; the website and worker connect as stockchief_runtime, which cannot change structure.",
+          "must": [
+            "No plaintext credentials in parameters, repository, outputs or logs."
+          ]
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
     "ApplicationSecretAttachment": {
       "Type": "AWS::SecretsManager::SecretTargetAttachment",
       "Properties": {
@@ -1257,6 +1285,17 @@
       "Export": {
         "Name": {
           "Fn::Sub": "${AWS::StackName}:ApplicationSecretArn"
+        }
+      }
+    },
+    "OwnerSecretArn": {
+      "Description": "Owner login for migrations and the restore only.",
+      "Value": {
+        "Ref": "OwnerSecret"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}:OwnerSecretArn"
         }
       }
     },

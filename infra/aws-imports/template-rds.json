@@ -986,6 +986,285 @@
         ]
       }
     },
+    "RestoreExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+          }
+        ],
+        "Policies": [
+          {
+            "PolicyName": "RestoreSecrets",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "secretsmanager:GetSecretValue",
+                  "Resource": [
+                    {
+                      "Fn::ImportValue": {
+                        "Fn::Sub": "${DatabaseStackName}:MasterSecretArn"
+                      }
+                    },
+                    {
+                      "Fn::ImportValue": {
+                        "Fn::Sub": "${DatabaseStackName}:OwnerSecretArn"
+                      }
+                    },
+                    {
+                      "Fn::ImportValue": {
+                        "Fn::Sub": "${DatabaseStackName}:ApplicationSecretArn"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "kms:Decrypt",
+                  "Resource": {
+                    "Fn::ImportValue": {
+                      "Fn::Sub": "${DatabaseStackName}:DataKeyArn"
+                    }
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "kms:ViaService": {
+                        "Fn::Sub": "secretsmanager.${AWS::Region}.amazonaws.com"
+                      }
+                    },
+                    "ForAnyValue:StringEquals": {
+                      "kms:EncryptionContext:SecretARN": [
+                        {
+                          "Fn::ImportValue": {
+                            "Fn::Sub": "${DatabaseStackName}:MasterSecretArn"
+                          }
+                        },
+                        {
+                          "Fn::ImportValue": {
+                            "Fn::Sub": "${DatabaseStackName}:OwnerSecretArn"
+                          }
+                        },
+                        {
+                          "Fn::ImportValue": {
+                            "Fn::Sub": "${DatabaseStackName}:ApplicationSecretArn"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "RestoreRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ReadRenderExportsOnly",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:GetObjectVersion"
+                  ],
+                  "Resource": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:",
+                        {
+                          "Ref": "AWS::Partition"
+                        },
+                        ":s3:::",
+                        {
+                          "Fn::ImportValue": {
+                            "Fn::Sub": "${DatabaseStackName}:MigrationBucket"
+                          }
+                        },
+                        "/exports/*"
+                      ]
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "RestoreTask": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": "stockchief-render-restore",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "NetworkMode": "awsvpc",
+        "Cpu": "1024",
+        "Memory": "4096",
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "RestoreExecutionRole",
+            "Arn"
+          ]
+        },
+        "TaskRoleArn": {
+          "Fn::GetAtt": [
+            "RestoreRole",
+            "Arn"
+          ]
+        },
+        "RuntimePlatform": {
+          "OperatingSystemFamily": "LINUX",
+          "CpuArchitecture": "X86_64"
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "render-restore",
+            "Image": {
+              "Ref": "WorkerImage"
+            },
+            "Essential": true,
+            "ReadonlyRootFilesystem": false,
+            "StopTimeout": 120,
+            "LinuxParameters": {
+              "InitProcessEnabled": true
+            },
+            "Environment": [
+              {
+                "Name": "NODE_ENV",
+                "Value": "production"
+              },
+              {
+                "Name": "STOCKCHIEF_RESTORE_HOST",
+                "Value": {
+                  "Fn::ImportValue": {
+                    "Fn::Sub": "${DatabaseStackName}:Host"
+                  }
+                }
+              },
+              {
+                "Name": "STOCKCHIEF_RESTORE_DATABASE",
+                "Value": {
+                  "Fn::ImportValue": {
+                    "Fn::Sub": "${DatabaseStackName}:DatabaseName"
+                  }
+                }
+              },
+              {
+                "Name": "STOCKCHIEF_RESTORE_WORKDIR",
+                "Value": "/tmp"
+              }
+            ],
+            "Secrets": [
+              {
+                "Name": "STOCKCHIEF_RESTORE_MASTER_SECRET",
+                "ValueFrom": {
+                  "Fn::ImportValue": {
+                    "Fn::Sub": "${DatabaseStackName}:MasterSecretArn"
+                  }
+                }
+              },
+              {
+                "Name": "STOCKCHIEF_RESTORE_OWNER_SECRET",
+                "ValueFrom": {
+                  "Fn::ImportValue": {
+                    "Fn::Sub": "${DatabaseStackName}:OwnerSecretArn"
+                  }
+                }
+              },
+              {
+                "Name": "STOCKCHIEF_RESTORE_RUNTIME_SECRET",
+                "ValueFrom": {
+                  "Fn::ImportValue": {
+                    "Fn::Sub": "${DatabaseStackName}:ApplicationSecretArn"
+                  }
+                }
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "Logs"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "render-restore",
+                "mode": "non-blocking",
+                "max-buffer-size": "4m"
+              }
+            },
+            "Command": [
+              "node",
+              "src/db/aws-restore.js"
+            ]
+          }
+        ],
+        "EphemeralStorage": {
+          "SizeInGiB": 60
+        }
+      }
+    },
     "ImageBuildRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
@@ -1154,6 +1433,11 @@
     "DatabaseStack": {
       "Value": {
         "Ref": "DatabaseStackName"
+      }
+    },
+    "RestoreTask": {
+      "Value": {
+        "Ref": "RestoreTask"
       }
     },
     "ImageBuild": {
