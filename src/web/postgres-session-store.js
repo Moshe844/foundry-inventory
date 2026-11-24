@@ -10,6 +10,12 @@ class PostgresSessionStore extends session.Store {
     this.database = database;
     this.options = options;
     this.ready = database.transaction(async (client) => {
+      // Migration 003 owns this table. Create it here only when it is missing: PostgreSQL
+      // checks the database-level CREATE right before IF NOT EXISTS, so a least-privilege
+      // runtime role could never sign anyone in if this always ran.
+      const present = (await client.query(`SELECT to_regclass('stockchief_runtime.sessions') IS NOT NULL
+        AND to_regclass('stockchief_runtime.sessions_expiry') IS NOT NULL AS ready`)).rows[0].ready;
+      if (present) return;
       await client.query('SELECT pg_advisory_xact_lock(741923608)');
       await client.query('CREATE SCHEMA IF NOT EXISTS stockchief_runtime');
       await client.query(`CREATE TABLE IF NOT EXISTS stockchief_runtime.sessions (

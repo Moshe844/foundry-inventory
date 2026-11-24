@@ -18,6 +18,7 @@ async function main(env=process.env){
  const {connectionString,ca}=local?{connectionString:local}:require('./aws-database-connection').connection(env),open=(name,max)=>require('../db/postgres').openPostgres(connectionString,{max,...(ca?{ca}:{}),privateNetwork:false,requireTls:true,applicationName:name});
  const db=open('stockchief-qualification-pages',4),web=open('stockchief-qualification-web',10);
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'pages-'));
+ let server=null,child=null;
  try{
   // Business B: a different, already-stocked business (50,000 SKUs, 150,000 positions).
   const fixture=require(path.join(root,'scripts/lib/staging-million-fixture')),source=require(path.join(root,'scripts/lib/staging-million-source')),imports=require('./postgres-service');
@@ -30,7 +31,7 @@ async function main(env=process.env){
   log({stage:'business-b-ready'});
   // The real web app, with the real CSRF and password sign-in.
   const app=require('../postgres-app').createPostgresApp({database:web,env:'test',sessionSecret:crypto.randomBytes(32).toString('hex')});
-  const server=await new Promise(r=>{const s=app.listen(0,'127.0.0.1',()=>r(s));}),base='http://127.0.0.1:'+server.address().port;
+  server=await new Promise(r=>{const s=app.listen(0,'127.0.0.1',()=>r(s));});const base='http://127.0.0.1:'+server.address().port;
   const password=crypto.randomBytes(24).toString('base64url')+'!Aa7',hash=require('../domain/auth-service').hashPassword(password);
   async function signIn(email){
    await db.query("UPDATE accounts SET password_hash=$2 WHERE email=$1 AND email LIKE '%@example.test'",[email,hash]);
@@ -50,7 +51,7 @@ async function main(env=process.env){
   await measure('B');await measure('B');log({stage:'baseline-b',rows:results.length});
   // Business A: the million-row qualification in its own process.
   const steps=local?'none':'catalogue,stock150k,stockMillion';
-  const child=steps==='none'?null:fork(path.join(__dirname,'aws-qualification-million.js'),[steps],{env:{...process.env,STOCKCHIEF_QUALIFICATION_RUN:run},stdio:['ignore','pipe','inherit','ipc']});
+  child=steps==='none'?null:fork(path.join(__dirname,'aws-qualification-million.js'),[steps],{env:{...process.env,STOCKCHIEF_QUALIFICATION_RUN:run},stdio:['ignore','pipe','inherit','ipc']});
   let exited=child?null:0,line='';child?.on('exit',code=>{exited=code;});
   child?.stdout.on('data',chunk=>{line+=chunk;let i;while((i=line.indexOf('\n'))>=0){const text=line.slice(0,i);line=line.slice(i+1);process.stdout.write(text+'\n');
    try{const o=JSON.parse(text);if(o.kind==='stockMillion'&&o.phase)phase='million-'+(o.phase==='analysis'?'preview':'saving');else if(o.kind==='stockMillion'&&o.stage==='executed')phase='million-audit';else if(o.kind&&o.phase)phase='a-'+o.kind;}catch{}}});
@@ -61,13 +62,13 @@ async function main(env=process.env){
    await measure('B');await measure('A');await new Promise(r=>setTimeout(r,5000));
   }
   phase='after-import';await measure('A');await measure('B');await measure('A');await measure('B');
-  server.close();
+  server.close();server=null;
   const summary={};for(const r of results){const key=r.business+' '+r.phase+' '+r.page;const s=summary[key]??={business:r.business,phase:r.phase,page:r.page,n:0,max:0,ms:[],errors:0,first:null};
    s.n++;s.ms.push(r.ms);s.max=Math.max(s.max,r.ms);if(r.status!==200)s.errors++;if(r.first)s.first=r.ms;}
   for(const s of Object.values(summary)){s.ms.sort((x,y)=>x-y);s.median=s.ms[Math.floor(s.ms.length/2)];delete s.ms;}
   log({stage:'summary',importExit:exited,pages:Object.values(summary)});
   if(exited!==0)process.exitCode=1;
- }finally{fs.rmSync(directory,{recursive:true,force:true});await db.close();await web.close();}
+ }finally{if(child&&child.exitCode===null)child.kill();server?.close();fs.rmSync(directory,{recursive:true,force:true});await db.close();await web.close();}
 }
-if(require.main===module)main().catch(error=>{log({stage:'failed',code:error.code||error.name,message:String(error.message).slice(0,500)});process.exitCode=1;});
+if(require.main===module)main().catch(error=>{log({stage:'failed',code:error.code||error.name,message:String(error.message).slice(0,500)});process.exitCode=1;}).finally(()=>setTimeout(()=>process.exit(),2000)); // open app timers must not keep a finished task running
 module.exports={main};
