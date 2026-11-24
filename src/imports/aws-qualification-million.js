@@ -1,0 +1,62 @@
+'use strict';
+// Qualification only: the million-row import benchmark, run as a one-off task
+// inside AWS beside the database with the import worker's own task definition.
+// It connects with the scoped qualification role, so it can reach only the
+// separate synthetic database. Synthetic data only; no paid provider calls.
+// Steps (argv[2], comma separated): catalogue, stock150k, stockMillion.
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert/strict');
+const root=path.join(__dirname,'../..');
+
+function log(value){console.log(JSON.stringify({event:'qualification_million',at:new Date().toISOString(),...value}));}
+
+async function run(env=process.env,steps=(process.argv[2]||'catalogue,stock150k,stockMillion').split(',')){
+ if(env.STOCKCHIEF_IMPORT_DATABASE_ROLE!=='stockchief_qualification')throw new Error('The million-row benchmark runs only with the synthetic qualification role.');
+ const {connectionString,ca}=require('./aws-database-connection').connection(env);
+ const db=require('../db/postgres').openPostgres(connectionString,{max:6,...(ca?{ca}:{}),privateNetwork:false,requireTls:true,applicationName:'stockchief-qualification-million'});
+ const imports=require('./postgres-service'),source=require(path.join(root,'scripts/lib/staging-million-source'));
+ const run=String(env.STOCKCHIEF_QUALIFICATION_RUN||'').trim();
+ if(!/^[a-z0-9-]{6,60}$/.test(run))throw new Error('Set STOCKCHIEF_QUALIFICATION_RUN to a new lower-case run id.');
+ const directory=fs.mkdtempSync(path.join(os.tmpdir(),'million-'));
+ try{
+  const where=(await db.query('SELECT current_user AS role,current_database() AS database,version() AS version')).rows[0];
+  if(where.role!=='stockchief_qualification'||where.database!=='stockchief_qualification')throw new Error('Refusing to run outside the synthetic qualification database.');
+  log({stage:'connected',database:where.database,postgres:where.version.split(' ').slice(0,2).join(' '),cpus:os.cpus().length,memoryMb:Math.round(os.totalmem()/1048576),stockWorkers:Number(env.FOUNDRY_IMPORT_STOCK_WORKERS||0),copy:env.STOCKCHIEF_IMPORT_COPY==='true'});
+  const owner=await require(path.join(root,'scripts/lib/staging-million-fixture')).provision(db,run),ctx={workspaceId:owner.workspaceId,actorId:owner.userId};
+  if(!(await db.query('SELECT 1 FROM locations WHERE workspace_id=$1 LIMIT 1',[ctx.workspaceId])).rowCount){
+   await require('../accounting/postgres-ledger').configure(db,ctx,{currency:'USD',startDate:'2026-01-01'});
+   for(const name of source.warehouses)await require('../domain/postgres-location-service').createLocation(db,ctx,{name,kind:'warehouse'});
+  }
+  let peakRss=0;
+  async function execute(kind,count){
+   const file=source.write(directory,kind,count,{run}),started=Date.now();let last='';
+   const progress=phase=>async p=>{const rows=Number(p.processedRows||p.preparedRows||0),stamp=phase+':'+p.stage+':'+Math.floor(rows/50000),rss=process.memoryUsage().rss;peakRss=Math.max(peakRss,rss);
+    if(stamp!==last){last=stamp;log({kind,phase,stage:p.stage,rows,elapsedMs:Date.now()-started,rssMb:Math.round(rss/1048576)});}};
+   const plan=await imports.analyse(db,ctx,{buffer:fs.readFileSync(file),filename:path.basename(file),importMode:'add',allowModel:false,onProgress:progress('analysis')});
+   const analysedMs=Date.now()-started;log({kind,stage:'analysed',ms:analysedMs,valid:plan.recordsValid,invalid:plan.recordsInvalid});
+   assert.equal(plan.recordsValid,count);assert.equal(plan.recordsInvalid,0);
+   await imports.approve(db,ctx,plan.id,plan.integrityHash);
+   const result=await imports.execute(db,ctx,plan.id,{onProgress:progress('execution')});
+   assert(result.verified);
+   log({kind,stage:'executed',analysisMs:analysedMs,savingMs:Date.now()-started-analysedMs,totalMs:Date.now()-started,rows:result.rowsImported,stockLanes:result.stockLanes||0,peakRssMb:Math.round(peakRss/1048576)});
+  }
+  if(steps.includes('catalogue')){
+   await execute('catalogue',50000);
+   // The last stock source row carries a decimal quantity for this measured SKU.
+   const measured=(await db.query("SELECT item_id FROM skus WHERE workspace_id=$1 AND code='MILLION-4999-9'",[ctx.workspaceId])).rows[0];
+   await db.transaction(c=>require('../domain/stock-quantity').save(c,ctx,measured.item_id,{unitLabel:'m',quantityPrecision:3,quantityIncrement:'0.001'}));
+  }
+  if(steps.includes('stock150k'))await execute('stock150k',150000);
+  if(steps.includes('stockMillion')){
+   for(const bin of source.bins){if((await db.query('SELECT 1 FROM locations WHERE workspace_id=$1 AND name=$2',[ctx.workspaceId,bin.name])).rowCount)continue;
+    const parent=(await db.query('SELECT id FROM locations WHERE workspace_id=$1 AND name=$2 AND parent_location_id IS NULL',[ctx.workspaceId,bin.warehouse])).rows[0];
+    await require('../domain/postgres-location-service').createLocation(db,ctx,{name:bin.name,kind:'bin',parentLocationId:parent.id});}
+   await execute('stockMillion',1000000);
+  }
+  const actual=(await db.query(`SELECT (SELECT count(*)::int FROM skus WHERE workspace_id=$1) skus,(SELECT count(*)::int FROM balances WHERE workspace_id=$1) positions,
+   (SELECT sum(on_hand)::text FROM balances WHERE workspace_id=$1) units,(SELECT sum(total_cost_minor)::text FROM accounting_inventory_cost_balances WHERE workspace_id=$1) value_minor`,[ctx.workspaceId])).rows[0];
+  log({stage:'done',actual});
+  return actual;
+ }finally{fs.rmSync(directory,{recursive:true,force:true});await db.close();}
+}
+if(require.main===module)run().catch(error=>{log({stage:'failed',code:error.code||error.name,message:String(error.message).slice(0,500)});process.exitCode=1;});
+module.exports={run};

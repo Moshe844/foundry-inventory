@@ -727,6 +727,371 @@
           }
         }
       }
+    },
+    "BootstrapExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Condition": "Qualification",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "ArnLike": {
+                  "aws:SourceArn": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+          }
+        ],
+        "Policies": [
+          {
+            "PolicyName": "OwnerAndQualificationSecrets",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "secretsmanager:GetSecretValue",
+                  "Resource": [
+                    {
+                      "Fn::ImportValue": {
+                        "Fn::Sub": "${DatabaseStackName}:MasterSecretArn"
+                      }
+                    },
+                    {
+                      "Fn::ImportValue": {
+                        "Fn::Sub": "${DatabaseStackName}:QualificationSecretArn"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "kms:Decrypt",
+                  "Resource": {
+                    "Fn::ImportValue": {
+                      "Fn::Sub": "${DatabaseStackName}:DataKeyArn"
+                    }
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "kms:ViaService": {
+                        "Fn::Sub": "secretsmanager.${AWS::Region}.amazonaws.com"
+                      }
+                    },
+                    "ForAnyValue:StringEquals": {
+                      "kms:EncryptionContext:SecretARN": [
+                        {
+                          "Fn::ImportValue": {
+                            "Fn::Sub": "${DatabaseStackName}:MasterSecretArn"
+                          }
+                        },
+                        {
+                          "Fn::ImportValue": {
+                            "Fn::Sub": "${DatabaseStackName}:QualificationSecretArn"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "BootstrapTask": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Condition": "Qualification",
+      "Properties": {
+        "Family": "stockchief-imports-qualification-bootstrap",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "NetworkMode": "awsvpc",
+        "Cpu": "1024",
+        "Memory": "2048",
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "BootstrapExecutionRole",
+            "Arn"
+          ]
+        },
+        "TaskRoleArn": {
+          "Fn::GetAtt": [
+            "ImportRole",
+            "Arn"
+          ]
+        },
+        "RuntimePlatform": {
+          "OperatingSystemFamily": "LINUX",
+          "CpuArchitecture": "X86_64"
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "qualification-bootstrap",
+            "Image": {
+              "Ref": "WorkerImage"
+            },
+            "Essential": true,
+            "ReadonlyRootFilesystem": false,
+            "StopTimeout": 120,
+            "LinuxParameters": {
+              "InitProcessEnabled": true
+            },
+            "Environment": [
+              {
+                "Name": "NODE_ENV",
+                "Value": "production"
+              },
+              {
+                "Name": "FOUNDRY_SKIP_LOCAL_ENV",
+                "Value": "1"
+              },
+              {
+                "Name": "STOCKCHIEF_IMPORT_BACKEND",
+                "Value": "aws"
+              },
+              {
+                "Name": "AWS_REGION",
+                "Value": {
+                  "Ref": "AWS::Region"
+                }
+              },
+              {
+                "Name": "STOCKCHIEF_IMPORT_BUCKET",
+                "Value": {
+                  "Ref": "Sources"
+                }
+              },
+              {
+                "Name": "STOCKCHIEF_IMPORT_QUEUE_URL",
+                "Value": {
+                  "Ref": "ImportQueue"
+                }
+              },
+              {
+                "Name": "STOCKCHIEF_IMPORT_COPY",
+                "Value": "true"
+              },
+              {
+                "Name": "STOCKCHIEF_IMPORT_DATABASE_HOST",
+                "Value": {
+                  "Fn::ImportValue": {
+                    "Fn::Sub": "${DatabaseStackName}:Host"
+                  }
+                }
+              },
+              {
+                "Name": "FOUNDRY_IMPORT_STOCK_WORKERS",
+                "Value": "4"
+              },
+              {
+                "Name": "STOCKCHIEF_IMPORT_DATABASE_NAME",
+                "Value": {
+                  "Fn::ImportValue": {
+                    "Fn::Sub": "${DatabaseStackName}:QualificationDatabaseName"
+                  }
+                }
+              },
+              {
+                "Name": "STOCKCHIEF_IMPORT_DATABASE_ROLE",
+                "Value": "stockchief_qualification"
+              },
+              {
+                "Name": "STOCKCHIEF_MIGRATION_DATABASE_NAME",
+                "Value": {
+                  "Fn::ImportValue": {
+                    "Fn::Sub": "${DatabaseStackName}:DatabaseName"
+                  }
+                }
+              }
+            ],
+            "Secrets": [
+              {
+                "Name": "STOCKCHIEF_IMPORT_DATABASE_SECRET",
+                "ValueFrom": {
+                  "Fn::ImportValue": {
+                    "Fn::Sub": "${DatabaseStackName}:QualificationSecretArn"
+                  }
+                }
+              },
+              {
+                "Name": "STOCKCHIEF_QUALIFICATION_MASTER_SECRET",
+                "ValueFrom": {
+                  "Fn::ImportValue": {
+                    "Fn::Sub": "${DatabaseStackName}:MasterSecretArn"
+                  }
+                }
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "Logs"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "qualification-bootstrap",
+                "mode": "non-blocking",
+                "max-buffer-size": "4m"
+              }
+            },
+            "Command": [
+              "node",
+              "src/imports/aws-qualification-bootstrap.js"
+            ]
+          }
+        ]
+      }
+    },
+    "ImageBuildRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "codebuild.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "BuildAndPushWorkerImage",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:GetObjectVersion"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${Sources.Arn}/builds/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "ecr:GetAuthorizationToken",
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:BatchCheckLayerAvailability",
+                    "ecr:InitiateLayerUpload",
+                    "ecr:UploadLayerPart",
+                    "ecr:CompleteLayerUpload",
+                    "ecr:PutImage",
+                    "ecr:BatchGetImage",
+                    "ecr:GetDownloadUrlForLayer",
+                    "ecr:DescribeImages"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "Images",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${Logs.Arn}:*"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ImageBuild": {
+      "Type": "AWS::CodeBuild::Project",
+      "Properties": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}-worker-image"
+        },
+        "ServiceRole": {
+          "Fn::GetAtt": [
+            "ImageBuildRole",
+            "Arn"
+          ]
+        },
+        "TimeoutInMinutes": 30,
+        "QueuedTimeoutInMinutes": 30,
+        "Source": {
+          "Type": "S3",
+          "Location": {
+            "Fn::Sub": "${Sources}/builds/stockchief-imports.zip"
+          },
+          "BuildSpec": "version: 0.2\nphases:\n  pre_build:\n    commands:\n      - test -n \"$IMAGE_TAG\"\n      - aws ecr get-login-password --region \"$AWS_REGION\" | docker login --username AWS --password-stdin \"${REPOSITORY_URI%%/*}\"\n  build:\n    commands:\n      - docker build -f infra/aws-imports/Dockerfile --build-arg BASE=public.ecr.aws/docker/library/node:22.23.4-bookworm-slim -t \"$REPOSITORY_URI:$IMAGE_TAG\" .\n      - docker push \"$REPOSITORY_URI:$IMAGE_TAG\"\n  post_build:\n    commands:\n      - aws ecr describe-images --region \"$AWS_REGION\" --repository-name stockchief-imports --image-ids imageTag=\"$IMAGE_TAG\" --query \"imageDetails[0].imageDigest\" --output text"
+        },
+        "Artifacts": {
+          "Type": "NO_ARTIFACTS"
+        },
+        "Environment": {
+          "Type": "LINUX_CONTAINER",
+          "ComputeType": "BUILD_GENERAL1_MEDIUM",
+          "Image": "aws/codebuild/amazonlinux-x86_64-standard:5.0",
+          "PrivilegedMode": true,
+          "EnvironmentVariables": [
+            {
+              "Name": "REPOSITORY_URI",
+              "Value": {
+                "Fn::Sub": "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${Images}"
+              }
+            }
+          ]
+        },
+        "LogsConfig": {
+          "CloudWatchLogs": {
+            "Status": "ENABLED",
+            "GroupName": {
+              "Ref": "Logs"
+            },
+            "StreamName": "image-build"
+          }
+        }
+      }
     }
   },
   "Outputs": {
@@ -769,6 +1134,36 @@
     "DatabaseStack": {
       "Value": {
         "Ref": "DatabaseStackName"
+      }
+    },
+    "ImageBuild": {
+      "Value": {
+        "Ref": "ImageBuild"
+      }
+    },
+    "WorkerTask": {
+      "Value": {
+        "Ref": "Task"
+      }
+    },
+    "BootstrapTask": {
+      "Condition": "Qualification",
+      "Value": {
+        "Ref": "BootstrapTask"
+      }
+    },
+    "Subnets": {
+      "Value": {
+        "Fn::ImportValue": {
+          "Fn::Sub": "${DatabaseStackName}:SubnetIds"
+        }
+      }
+    },
+    "ClientSecurityGroup": {
+      "Value": {
+        "Fn::ImportValue": {
+          "Fn::Sub": "${DatabaseStackName}:ClientSecurityGroupId"
+        }
       }
     }
   },
