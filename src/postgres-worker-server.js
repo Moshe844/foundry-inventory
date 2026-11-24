@@ -40,6 +40,15 @@ async function shutdown(signal, exitCode = 0) {
 
 async function start() {
   const applied = await migratePostgres(database);
+  // A worker created ahead of a database switch stays paused until the switch: it runs
+  // no jobs, schedules or imports, so a copied queue is never processed twice.
+  if (process.env.FOUNDRY_WORKER_PAUSED === 'true') {
+    console.log(`[stockchief] PostgreSQL worker paused (FOUNDRY_WORKER_PAUSED); no jobs will run. Migrations applied: ${applied.length}.`);
+    // Stay running (Render would otherwise restart it) until the setting is removed.
+    const idle = setInterval(() => {}, 60000);
+    runtime = { owner: 'paused', stop: async () => clearInterval(idle) };
+    return;
+  }
   const handlers={...businessHandlers.create(),...runtimeHandlers.create()},businessAgentHandler=handlers['assistant.run-goal'];
   delete handlers['assistant.run-goal'];
   if(require('./imports/aws-config').configuration()){

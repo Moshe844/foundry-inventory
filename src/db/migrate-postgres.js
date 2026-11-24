@@ -11,7 +11,11 @@ async function migratePostgres(database, options = {}) {
   if(options?.through){const last=files.indexOf(options.through);if(last<0)throw new Error('Unknown migration cutoff: '+options.through);files=files.slice(0,last+1);}
   const applied = await database.transaction(async (client) => {
     await client.query('SELECT pg_advisory_xact_lock(741923609)');
-    await client.query(`CREATE TABLE IF NOT EXISTS stockchief_postgres_migrations (
+    // The website and worker check migrations on start as a login that cannot change
+    // structure (the AWS database); PostgreSQL checks CREATE before IF NOT EXISTS, so
+    // the table is created only when it is really missing.
+    const tracked=(await client.query("SELECT to_regclass('stockchief_postgres_migrations') IS NOT NULL AS ready")).rows[0]?.ready===true;
+    if(!tracked)await client.query(`CREATE TABLE IF NOT EXISTS stockchief_postgres_migrations (
       name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
     const applied = [];
     for (const name of files) {

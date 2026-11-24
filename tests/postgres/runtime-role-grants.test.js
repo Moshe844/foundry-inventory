@@ -20,6 +20,8 @@ test('a website login granted after owner migrations runs the app, refreshes sta
  assert.equal(process.exitCode,undefined,'migrations and grants succeed as a non-superuser owner');
 
  const db=openPostgres(at(runtime,runtimePw),{max:6});t.after(()=>db.close());
+ // The website and worker check migrations on start with this login; nothing is pending, so nothing is created.
+ assert.deepEqual(await require('../../src/db/migrate-postgres').migratePostgres(db),[]);
  await assert.rejects(db.query('CREATE TABLE structure_change(x int)'),/permission denied/,'the website login cannot change structure');
  const store=new(require('../../src/web/postgres-session-store').PostgresSessionStore)(db);await store.ready;t.after(()=>store.close());
  await new Promise((r,j)=>store.set('grants-session',{cookie:{maxAge:60000,originalMaxAge:60000},accountId:'a'},e=>e?j(e):r()));
