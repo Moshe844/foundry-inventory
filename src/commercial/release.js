@@ -64,18 +64,19 @@ async function isOpen(database){const release=await state(database);
      AND c.config::jsonb#>>'{accountingPilotEvidence,clientId}'=$13::jsonb->>c.provider_type
      AND $13::jsonb->>c.provider_type<>''),false)
     OR COALESCE((c.provider_type='xero' AND $14::text<>''
-     AND c.config::jsonb#>>'{xeroCustomerEvidence,source}'=$15
+     AND ((c.config::jsonb#>>'{xeroCustomerEvidence,source}'=$15 AND c.config::jsonb#>>'{xeroCustomerEvidence,readOnly}'='true')
+      OR (c.config::jsonb#>>'{xeroCustomerEvidence,source}'=$16 AND c.config::jsonb#>>'{xeroCustomerEvidence,readOnly}'='false'
+       AND c.config::jsonb#>>'{xeroCustomerEvidence,ownerPostingConsent}'='true' AND c.config::jsonb#>>'{xeroCustomerEvidence,postingScopesVerified}'='true'))
      AND c.config::jsonb#>>'{xeroCustomerEvidence,clientId}'=$14
      AND c.config::jsonb#>>'{xeroCustomerEvidence,workspaceId}'=c.workspace_id
      AND c.config::jsonb#>>'{xeroCustomerEvidence,providerAccountId}'=c.provider_account_id
      AND c.config::jsonb#>>'{xeroCustomerEvidence,approvedByUserId}'=c.authorized_by_user_id
-     AND c.config::jsonb#>>'{xeroCustomerEvidence,readOnly}'='true'
      AND c.config::jsonb#>>'{xeroCustomerEvidence,providerPlan}'='starter'
      AND c.config::jsonb#>>'{xeroCustomerEvidence,maxOrganizations}'='5'),false))
    UNION ALL SELECT 1 FROM payment_connect_accounts p LEFT JOIN workspace_connectors c ON c.id=p.connector_id
      WHERE p.charges_enabled=1 AND NOT COALESCE((${certifiedStripe}),false)
    LIMIT 1`,
-  [[...Object.keys(launchPolicy.EXCLUDED),'stripe','supplier_email'],launchPolicy.productionOutlookWorkspaces(),JSON.stringify(launchPolicy.productionShopifyPilots()),config.commercial.stripeAccountId,require('../payments/stripe-live-qualification').SOURCE,process.env.SHOPIFY_PUBLIC_CLIENT_ID||'',publicAppId,launchPolicy.publicShopifyEnabled(),JSON.stringify(require('../connections/clover-review-pilot').pilots()),process.env.CLOVER_CLIENT_ID||'',JSON.stringify(require('../connections/accounting-review-pilot').pilots()),require('../connections/accounting-review-pilot').SOURCE,JSON.stringify(require('../connections/accounting-review-pilot').clientIds()),require('../connections/xero-customer-rollout').approvedClientId(),require('../connections/xero-customer-rollout').SOURCE])).rows.length;
+  [[...Object.keys(launchPolicy.EXCLUDED),'stripe','supplier_email'],launchPolicy.productionOutlookWorkspaces(),JSON.stringify(launchPolicy.productionShopifyPilots()),config.commercial.stripeAccountId,require('../payments/stripe-live-qualification').SOURCE,process.env.SHOPIFY_PUBLIC_CLIENT_ID||'',publicAppId,launchPolicy.publicShopifyEnabled(),JSON.stringify(require('../connections/clover-review-pilot').pilots()),process.env.CLOVER_CLIENT_ID||'',JSON.stringify(require('../connections/accounting-review-pilot').pilots()),require('../connections/accounting-review-pilot').SOURCE,JSON.stringify(require('../connections/accounting-review-pilot').clientIds()),require('../connections/xero-customer-rollout').approvedClientId(),require('../connections/xero-customer-rollout').SOURCE,require('../connections/xero-customer-rollout').WRITE_SOURCE])).rows.length;
  return unqualified===0;}
 async function assertCheckoutOpen(database,options={}){
   // Only isolated tests may exercise provider contracts while the live release is closed.

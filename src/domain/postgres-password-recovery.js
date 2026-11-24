@@ -53,6 +53,7 @@ async function consume(database,token,password,options={}){
     if(!row||row.used_at||Number(row.expires_at)<=now)throw new ValidationError('That reset link is invalid or has expired.');
     const passwordHash=auth.hashPassword(auth.checkPasswordStrength(password));const used=options.nowIso||nowIso();
     await client.query('UPDATE accounts SET password_hash=$2 WHERE id=$1',[row.account_id,passwordHash]);
+    await require('./postgres-sign-in-codes').forgetDevices(scopedDatabase(client),row.account_id);
     await client.query('UPDATE password_reset_tokens SET used_at=$2 WHERE id=$1 AND used_at IS NULL',[row.id,used]);
     await client.query(`DELETE FROM stockchief_runtime.sessions WHERE data->>'accountId'=$1`,[row.account_id]);
     return {accountId:row.account_id,email:row.email};

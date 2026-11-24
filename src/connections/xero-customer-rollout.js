@@ -2,6 +2,7 @@
 const config=require('../config');
 const {ValidationError,AuthenticationError}=require('../domain/errors');
 const SOURCE='XERO_STARTER_CUSTOMERS_V1',MAX_ORGANIZATIONS=5,HOLD_MS=10*60_000;
+const WRITE_SOURCE='XERO_CUSTOMER_GOVERNED_WRITES_V1';
 const READ_CAPABILITIES=new Set(['connections.accounting','accounting.sync']);
 const parse=value=>{if(value&&typeof value==='object')return value;try{return JSON.parse(value||'{}');}catch{return {};}};
 function approvedClientId(){
@@ -9,13 +10,21 @@ function approvedClientId(){
  return process.env.STOCKCHIEF_RUNTIME_ENV==='production'&&id&&id===config.connections.xero.clientId&&config.connections.xero.configured?id:'';
 }
 function enabled(){return Boolean(approvedClientId()&&process.env.STOCKCHIEF_XERO_STARTER_CUSTOMERS_APPROVED==='1');}
+function writesEnabled(){return Boolean(approvedClientId()&&process.env.STOCKCHIEF_XERO_GOVERNED_WRITES_APPROVED==='1');}
 function eligible(subscription){return Boolean(subscription&&['starter','growth','pro','enterprise'].includes(subscription.plan_id));}
 function certified(connection){const proof=parse(connection?.config).xeroCustomerEvidence;return Boolean(approvedClientId()&&connection?.provider_type==='xero'&&
- proof?.source===SOURCE&&proof.clientId===approvedClientId()&&proof.workspaceId===connection.workspace_id&&
+ ((proof?.source===SOURCE&&proof.readOnly===true)||(proof?.source===WRITE_SOURCE&&proof.readOnly===false&&proof.ownerPostingConsent===true&&proof.postingScopesVerified===true))&&proof.clientId===approvedClientId()&&proof.workspaceId===connection.workspace_id&&
  proof.providerAccountId===connection.provider_account_id&&proof.approvedByUserId===connection.authorized_by_user_id&&
- proof.readOnly===true&&proof.providerPlan==='starter'&&proof.maxOrganizations===MAX_ORGANIZATIONS);}
-function readOnly(connection){return certified(connection)||Boolean(enabled()&&connection?.provider_type==='xero'&&!require('./accounting-review-pilot').allowed('xero',connection.workspace_id));}
-function assertNoPosting(connection){if(readOnly(connection))throw new ValidationError('This Xero connection is read-only. No changes can be sent to Xero.');}
+ proof.providerPlan==='starter'&&proof.maxOrganizations===MAX_ORGANIZATIONS);}
+function customer(connection){return connection?.provider_type==='xero'&&!require('./accounting-review-pilot').allowed('xero',connection.workspace_id);}
+function readOnly(connection){return customer(connection)&&(certified(connection)||enabled())&&!(writesEnabled()&&certified(connection));}
+function postingCertified(connection){const capabilities=parse(connection?.capabilities),proof=parse(connection?.config).xeroCustomerEvidence;
+ return certified(connection)&&proof.source===WRITE_SOURCE&&Array.isArray(capabilities)&&capabilities.includes('accounting:post');}
+function assertNoPosting(connection,options={}){
+ if(readOnly(connection))throw new ValidationError('This Xero connection is read-only. No changes can be sent to Xero.');
+ if(customer(connection)&&writesEnabled()&&(!certified(connection)||!options.configure&&!postingCertified(connection)))
+  throw new ValidationError('Grant Xero posting permission for this company before sending entries. Your existing read access is preserved.');
+}
 async function permitsCapability(database,scope,subscription,capability){
  if(!READ_CAPABILITIES.has(capability)||!eligible(subscription)||!scope.workspaceId||!approvedClientId())return false;
  if(enabled())return true;
@@ -25,9 +34,15 @@ async function permitsCapability(database,scope,subscription,capability){
 }
 function evidence(connection,actorId,result){
  if(!enabled()||!actorId||!result.accountId||result.credentials?.tenantId!==result.accountId||result.verifiedFact?.externalId!==result.accountId||
-  result.capabilities?.includes('accounting:post'))throw new AuthenticationError('Xero did not confirm this read-only company connection. Your saved connections are preserved.');
- return {source:SOURCE,clientId:approvedClientId(),workspaceId:connection.workspace_id,providerAccountId:result.accountId,
-  approvedByUserId:actorId,readOnly:true,providerPlan:'starter',maxOrganizations:MAX_ORGANIZATIONS};
+  !Array.isArray(result.capabilities))throw new AuthenticationError('Xero did not confirm this company connection. Your saved connections are preserved.');
+ const posting=result.capabilities.includes('accounting:post');
+ if(posting){
+  let scopes=[];try{const claims=JSON.parse(Buffer.from(result.credentials.accessToken.split('.')[1],'base64url').toString('utf8'));scopes=Array.isArray(claims.scope)?claims.scope:String(claims.scope||'').split(/\s+/);}catch{}
+  if(!writesEnabled()||!scopes.includes('accounting.manualjournals')||!scopes.includes('accounting.invoices'))
+   throw new AuthenticationError('Xero did not confirm the approved posting permissions. Your saved connection is preserved.');
+ }
+ return {source:posting?WRITE_SOURCE:SOURCE,clientId:approvedClientId(),workspaceId:connection.workspace_id,providerAccountId:result.accountId,
+  approvedByUserId:actorId,readOnly:!posting,...(posting?{ownerPostingConsent:true,postingScopesVerified:true}:{}),providerPlan:'starter',maxOrganizations:MAX_ORGANIZATIONS};
 }
 function capacityError(){return new ValidationError('Xero connections are currently at capacity. Contact StockChief support for availability. Your subscription and existing connections are unchanged.',{kind:'xero_customer_capacity'});}
 async function lock(database){await database.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['xero-starter-capacity:'+approvedClientId()]);}
@@ -60,6 +75,6 @@ async function release(database,stateId){
 }
 async function availability(database){
  if(!enabled())return null;
- const state=await population(database);return {maximum:MAX_ORGANIZATIONS,remaining:Math.max(0,MAX_ORGANIZATIONS-state.organizations.size-state.pending)};
+ const state=await population(database);return {maximum:MAX_ORGANIZATIONS,remaining:Math.max(0,MAX_ORGANIZATIONS-state.organizations.size-state.pending),governedWritesAvailable:writesEnabled()};
 }
-module.exports={SOURCE,MAX_ORGANIZATIONS,HOLD_MS,READ_CAPABILITIES,approvedClientId,enabled,eligible,certified,readOnly,assertNoPosting,permitsCapability,evidence,reserve,admit,release,availability,capacityError};
+module.exports={SOURCE,WRITE_SOURCE,MAX_ORGANIZATIONS,HOLD_MS,READ_CAPABILITIES,approvedClientId,enabled,writesEnabled,eligible,certified,postingCertified,customer,readOnly,assertNoPosting,permitsCapability,evidence,reserve,admit,release,availability,capacityError};
