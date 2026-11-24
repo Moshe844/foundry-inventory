@@ -14,7 +14,7 @@ async function start() {
   try{
     // Only the controlled release process applies migrations. A worker cannot
     // launch a concurrent schema upgrade while customers are using the site.
-    const applied=await db.query("SELECT 1 FROM stockchief_postgres_migrations WHERE name='539-aws-import-transport.sql'");
+    const applied=await db.query("SELECT 1 FROM stockchief_postgres_migrations WHERE name='546-aws-import-transport.sql'");
     if(!applied.rowCount)throw new Error('Apply the reviewed AWS import migration before enabling the dedicated worker.');
     const handlers=dedicatedHandlers(require('./operations/postgres-runtime-handlers').create());
     const log=error=>console.error(JSON.stringify({event:'import_worker_error',code:error.code||error.name}));
