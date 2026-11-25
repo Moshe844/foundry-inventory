@@ -115,7 +115,7 @@ test('real Chromium qualifies signed WooCommerce create, snapshot fulfillment an
     [ctx.workspaceId,cancelledOrder.id])).rows[0].count,'0');
 
     await page.goto(`${base}/sales/orders/${salesOrder.id}`);
-    const main=await page.locator('main').innerText();assert.match(main,/WEB-9001/);assert.match(main,/Fulfilled/i);
+    const main=await page.locator('main').innerText();assert.match(main,/WEB-9001/);assert.match(main,/Shipped/i);
 
     // Retain the original signed body before a missing dependency. A fresh
     // worker process must resume it, without replaying successful effects.
