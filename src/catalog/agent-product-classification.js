@@ -155,10 +155,18 @@ async function peerIndex(db,workspaceId,{exclude=new Set()}={}){
   return index;
 }
 
+// How many categorized products one product is compared with. Peers come from its
+// rarest brand, name word or supplier first, which says most about what it is. A word
+// on thousands of products says little: every product of a 200,000-product catalogue
+// named "Customer ..." was compared with all 200,000 others, which held the worker's
+// processor for three hours and stalled its emails, schedules and other businesses' jobs.
+// Below this many peers the comparison is unchanged.
+const MAX_PEERS=500;
 function similar(p,index){
+  const sources=[p.brand?index.brand.get(p.brand.toLowerCase()):null,...p.words.map(w=>index.word.get(w)),
+    ...p.suppliers.map(s=>index.supplier.get(s))].filter(Boolean).sort((a,b)=>a.length-b.length);
   const candidates=new Map();
-  for(const q of [...(p.brand?index.brand.get(p.brand.toLowerCase())||[]:[]),...p.words.flatMap(w=>index.word.get(w)||[]),
-    ...p.suppliers.flatMap(s=>index.supplier.get(s)||[])])if(q.id!==p.id)candidates.set(q.id,q);
+  gather:for(const list of sources)for(const q of list){if(candidates.size>=MAX_PEERS)break gather;if(q.id!==p.id)candidates.set(q.id,q);}
   const out=[];
   for(const q of [...candidates.values()].sort((a,b)=>a.id.localeCompare(b.id))){
     const shared=p.words.filter(w=>q.words.includes(w)).length;
@@ -627,5 +635,5 @@ async function notes(db,workspaceId,itemId){
 
 const definition={id:JOB,key:'product-categories',label:'Suggest categories and tags for new products',readPage:review};
 
-module.exports={JOB,ACTION,kind,path,NEW_DAYS,DEFAULT_DAILY,nameWords,profile,similar,propose,run,schedule,afterImport,afterCreate,check,
+module.exports={JOB,ACTION,kind,path,NEW_DAYS,DEFAULT_DAILY,MAX_PEERS,nameWords,profile,similar,propose,run,schedule,afterImport,afterCreate,check,
   approve,approveMany,dismiss,undo,configure,page,inbox,review,notes,load,definition};
