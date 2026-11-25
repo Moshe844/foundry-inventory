@@ -213,14 +213,9 @@ async function listItemsUncached(database, workspaceId, input = {}) {
     anchor?0:(page - 1) * pageSize,group,anchor?.id||null,anchor?.name||null,anchor?.created_at||null,trimOrNull(input.category),trimOrNull(input.supplier),trimOrNull(input.size),trimOrNull(input.color),input.lowStock===true,JSON.stringify(Object.fromEntries(optionFilters))];
   // Fetch low-SKU metadata through one indexed key batch, then look up only
   // the matching parent IDs. Keep both boundaries valid before statistics catch up.
-  const result = await database.query(`WITH ${input.lowStock===true?`low_skus AS MATERIALIZED(${require('../reports/postgres-low-stock-badges').filterSource()}), low_sku_metadata AS MATERIALIZED(SELECT s.item_id,s.workspace_id,s.is_active FROM skus s WHERE s.id=ANY(ARRAY(SELECT sku_id FROM low_skus))), low_items AS MATERIALIZED(SELECT DISTINCT item_id FROM low_sku_metadata WHERE workspace_id=$1 AND is_active=1),`:''}matching_items AS NOT MATERIALIZED (
-      SELECT i.* FROM ${input.lowStock===true?'low_items low CROSS JOIN LATERAL(SELECT i.* FROM items i WHERE i.id=low.item_id LIMIT 1)i':'items i'}
-      WHERE i.workspace_id=$1 AND ($5 OR i.is_active=1) AND (NOT $6 OR i.is_active=0)
+  const lowSource=input.lowStock===true?`low_skus AS MATERIALIZED(${require('../reports/postgres-low-stock-badges').filterSource()}), low_sku_metadata AS MATERIALIZED(SELECT s.item_id,s.workspace_id,s.is_active FROM skus s WHERE s.id=ANY(ARRAY(SELECT sku_id FROM low_skus))), low_items AS MATERIALIZED(SELECT DISTINCT item_id FROM low_sku_metadata WHERE workspace_id=$1 AND is_active=1),`:'';
+  const itemFilters=`i.workspace_id=$1 AND ($5 OR i.is_active=1) AND (NOT $6 OR i.is_active=0)
         AND ($3::text IS NULL OR i.tracking_mode=$3)
-        AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR COALESCE(i.base_code,'') ILIKE '%'||$2||'%'
-          OR EXISTS(SELECT 1 FROM skus search_sku WHERE search_sku.workspace_id=$1 AND search_sku.item_id=i.id AND ($5 OR search_sku.is_active=1) AND (search_sku.code ILIKE '%'||$2||'%' OR lower(search_sku.barcode)=lower($2) OR search_sku.variant_label ILIKE '%'||$2||'%'))
-          OR EXISTS(SELECT 1 FROM serial_units unit JOIN skus s ON s.id=unit.sku_id AND s.workspace_id=unit.workspace_id WHERE unit.workspace_id=$1 AND s.item_id=i.id AND unit.serial ILIKE '%'||$2||'%')
-          OR EXISTS(SELECT 1 FROM lots lot JOIN skus s ON s.id=lot.sku_id AND s.workspace_id=lot.workspace_id WHERE lot.workspace_id=$1 AND s.item_id=i.id AND lot.code ILIKE '%'||$2||'%'))
         AND ($4::text IS NULL OR EXISTS(SELECT 1 FROM item_location_balances b WHERE b.workspace_id=$1 AND b.item_id=i.id AND b.location_id=$4 AND b.on_hand<>0))
         AND ($13::text IS NULL OR EXISTS(SELECT 1 FROM catalogue_item_facts f WHERE f.workspace_id=$1 AND f.item_id=i.id AND f.category ILIKE '%'||$13||'%'))
         AND ($14::text IS NULL OR EXISTS(SELECT 1 FROM skus s JOIN supplier_items si ON si.workspace_id=s.workspace_id AND si.sku_id=s.id JOIN suppliers supplier ON supplier.workspace_id=si.workspace_id AND supplier.id=si.supplier_id WHERE s.workspace_id=$1 AND s.item_id=i.id AND si.is_active=1 AND supplier.name ILIKE '%'||$14||'%'))
@@ -230,12 +225,49 @@ async function listItemsUncached(database, workspaceId, input = {}) {
         AND (NOT $17::boolean ${input.lowStock===true?'OR i.is_active=1':''})
         AND ($18::jsonb='{}'::jsonb OR EXISTS(SELECT 1 FROM skus candidate WHERE candidate.workspace_id=$1 AND candidate.item_id=i.id AND candidate.is_active=1
           AND NOT EXISTS(SELECT 1 FROM jsonb_each_text($18::jsonb) wanted WHERE NOT EXISTS(
-            SELECT 1 FROM sku_option_values value JOIN item_options axis ON axis.id=value.option_id AND axis.workspace_id=candidate.workspace_id WHERE value.sku_id=candidate.id AND lower(axis.name)=lower(wanted.key) AND lower(value.value)=lower(wanted.value)))))
+            SELECT 1 FROM sku_option_values value JOIN item_options axis ON axis.id=value.option_id AND axis.workspace_id=candidate.workspace_id WHERE value.sku_id=candidate.id AND lower(axis.name)=lower(wanted.key) AND lower(value.value)=lower(wanted.value)))))`;
+  // Search: one condition joined by OR across products, variants, serials and lots
+  // cannot use any trigram index, and checked every product's variants (seconds per
+  // search at a million SKUs). Products whose name or code matches are read straight
+  // from the products table (by index, or in one pass when most match); products that
+  // match only through a SKU code, barcode, variant, serial or lot are collected by
+  // index first and read one by one. Trigrams need three characters, so a shorter
+  // term keeps the single condition.
+  const nameMatch="(i.name ILIKE '%'||$2||'%' OR COALESCE(i.base_code,'') ILIKE '%'||$2||'%')";
+  const indexedSearch=q.length>=3;
+  const searchSource=indexedSearch?`search_sku_hits AS MATERIALIZED(
+      SELECT s.item_id FROM skus s WHERE s.workspace_id=$1 AND ($5 OR s.is_active=1) AND s.code ILIKE '%'||$2||'%'
+      UNION SELECT s.item_id FROM skus s WHERE s.workspace_id=$1 AND ($5 OR s.is_active=1) AND lower(s.barcode)=lower($2)
+      UNION SELECT s.item_id FROM skus s WHERE s.workspace_id=$1 AND ($5 OR s.is_active=1) AND s.variant_label ILIKE '%'||$2||'%'
+      UNION SELECT s.item_id FROM serial_units unit JOIN skus s ON s.id=unit.sku_id AND s.workspace_id=unit.workspace_id WHERE unit.workspace_id=$1 AND unit.serial ILIKE '%'||$2||'%'
+      UNION SELECT s.item_id FROM lots lot JOIN skus s ON s.id=lot.sku_id AND s.workspace_id=lot.workspace_id WHERE lot.workspace_id=$1 AND lot.code ILIKE '%'||$2||'%'),`:'';
+  const singleCondition=`(i.name ILIKE '%'||$2||'%' OR COALESCE(i.base_code,'') ILIKE '%'||$2||'%'
+          OR EXISTS(SELECT 1 FROM skus search_sku WHERE search_sku.workspace_id=$1 AND search_sku.item_id=i.id AND ($5 OR search_sku.is_active=1) AND (search_sku.code ILIKE '%'||$2||'%' OR lower(search_sku.barcode)=lower($2) OR search_sku.variant_label ILIKE '%'||$2||'%'))
+          OR EXISTS(SELECT 1 FROM serial_units unit JOIN skus s ON s.id=unit.sku_id AND s.workspace_id=unit.workspace_id WHERE unit.workspace_id=$1 AND s.item_id=i.id AND unit.serial ILIKE '%'||$2||'%')
+          OR EXISTS(SELECT 1 FROM lots lot JOIN skus s ON s.id=lot.sku_id AND s.workspace_id=lot.workspace_id WHERE lot.workspace_id=$1 AND s.item_id=i.id AND lot.code ILIKE '%'||$2||'%'))`;
+  const lowItems='low_items low CROSS JOIN LATERAL(SELECT i.* FROM items i WHERE i.id=low.item_id LIMIT 1)i';
+  const nameBranch=`SELECT i.* FROM items i WHERE ${itemFilters} AND (i.name ILIKE '%'||$2||'%' OR i.base_code ILIKE '%'||$2||'%')`;
+  const skuBranch=`SELECT i.* FROM search_sku_hits hit CROSS JOIN LATERAL(SELECT i.* FROM items i WHERE i.id=hit.item_id LIMIT 1)i
+      WHERE ${itemFilters} AND NOT ${nameMatch}`;
+  const splitSearch=indexedSearch&&input.lowStock!==true;
+  const matchingItems=!q?`SELECT i.* FROM ${input.lowStock===true?lowItems:'items i'} WHERE ${itemFilters} AND $2::text IS NULL`
+    :!indexedSearch?`SELECT i.* FROM ${input.lowStock===true?lowItems:'items i'} WHERE ${itemFilters} AND ${singleCondition}`
+    :input.lowStock===true?`SELECT i.* FROM ${lowItems} WHERE ${itemFilters} AND (${nameMatch} OR i.id IN (SELECT item_id FROM search_sku_hits))`
+    :`${nameBranch}
+      UNION ALL ${skuBranch}`;
+  // A page of a search is the first rows of each branch merged, so a word that matches
+  // most product names still reads them in name order and stops after one page.
+  const pageCondition=`($10::text IS NULL OR ${input.sort==='newest'?'(i.created_at<$12::text OR (i.created_at=$12::text AND i.id>$10))':'(i.name COLLATE stockchief_natural,i.id)>($11::text COLLATE stockchief_natural,$10::text)'})
+        AND ($11::text IS NULL OR TRUE) AND ($12::text IS NULL OR TRUE)`;
+  const result = await database.query(`WITH ${lowSource}${searchSource}matching_items AS NOT MATERIALIZED (
+      ${matchingItems}
     ), selected_items AS MATERIALIZED (
-      SELECT i.* FROM matching_items i WHERE TRUE
-        AND ($10::text IS NULL OR ${input.sort==='newest'?'(i.created_at<$12::text OR (i.created_at=$12::text AND i.id>$10))':'(i.name COLLATE stockchief_natural,i.id)>($11::text COLLATE stockchief_natural,$10::text)'} )
-        AND ($11::text IS NULL OR TRUE) AND ($12::text IS NULL OR TRUE)
-      ${pageFirst?`ORDER BY ${listOrder(input.sort)} LIMIT $7::bigint OFFSET $8::bigint`:''}
+      ${pageFirst&&splitSearch?`SELECT i.* FROM (
+        (SELECT i.* FROM (${nameBranch}) i WHERE ${pageCondition} ORDER BY ${listOrder(input.sort)} LIMIT $7::bigint+$8::bigint)
+        UNION ALL (SELECT i.* FROM (${skuBranch}) i WHERE ${pageCondition} ORDER BY ${listOrder(input.sort)} LIMIT $7::bigint+$8::bigint)) i
+      ORDER BY ${listOrder(input.sort)} LIMIT $7::bigint OFFSET $8::bigint`
+      :`SELECT i.* FROM matching_items i WHERE ${pageCondition}
+      ${pageFirst?`ORDER BY ${listOrder(input.sort)} LIMIT $7::bigint OFFSET $8::bigint`:''}`}
     )
     SELECT i.*,${pageFirst?'(SELECT count(*) FROM matching_items)':'count(*) OVER()'} AS matching_total,COALESCE(r.sku_count,0) AS sku_count,r.first_sku_code,
       COALESCE(stock.on_hand,0) AS on_hand,COALESCE(committed_item.quantity,0) AS committed,

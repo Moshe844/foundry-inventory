@@ -1,5 +1,7 @@
 'use strict';
 
+// More candidate SKUs than this read the catalogue in one pass rather than one by one.
+const BROAD_PRODUCT_MATCH=2000;
 const TYPE_LABEL={item:'Product',sku:'Product',variant:'Variant',serial:'Unit',lot:'Batch',location:'Location',
   supplier:'Supplier',purchase_order:'Purchase order',customer:'Customer',sales_order:'Sales order'};
 
@@ -15,20 +17,42 @@ async function search(database,workspaceId,rawTerm,{limit=25,groupLimit=null}={}
     COALESCE((SELECT SUM(b.on_hand) FROM balances b WHERE b.workspace_id=$1 AND b.sku_id=s.id),0)::text||' on hand' AS meta,
     '/inventory/'||i.id||'#sku-'||s.id AS href,120 AS score
     FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
-    WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND (lower(s.code)=lower($2) OR lower(s.barcode)=lower($2))
+    WHERE s.id=ANY(ARRAY(SELECT id FROM skus WHERE workspace_id=$1 AND is_active=1 AND lower(code)=lower($2)
+      UNION SELECT id FROM skus WHERE workspace_id=$1 AND is_active=1 AND lower(barcode)=lower($2)))
+      AND s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND (lower(s.code)=lower($2) OR lower(s.barcode)=lower($2))
     ORDER BY s.id LIMIT $3`,[workspaceId,term,Math.max(2,boundedLimit)])).rows;
   if(exactRows.length){const results=exactRows.slice(0,boundedLimit).map(row=>({...row,typeLabel:TYPE_LABEL[row.type]}));
     return {term,results,total:results.length,exactSku:exactRows.length===1};}
-  const result=await database.query(`WITH matches AS (
-    SELECT CASE WHEN sku.variant_label IS NULL OR sku.variant_label='' THEN 'sku' ELSE 'variant' END AS type,
+  // Product matches: a specific term starts from index lookups on SKU code, variant and
+  // product name and reads only those SKUs (one OR across the joined tables read every
+  // SKU). A term matching thousands of SKUs reads them in one pass instead and keeps only
+  // the best rows of each kind, which are all that can be shown. A capped count picks the
+  // path. Stock on hand is summed only for the rows shown, not for every match.
+  const candidates=(join)=>`SELECT s.id FROM skus s WHERE s.workspace_id=$1 AND s.is_active=1 AND s.code ILIKE '%'||$2||'%'
+    ${join} SELECT s.id FROM skus s WHERE s.workspace_id=$1 AND s.is_active=1 AND s.variant_label ILIKE '%'||$2||'%'
+    ${join} SELECT s.id FROM items i JOIN skus s ON s.workspace_id=i.workspace_id AND s.item_id=i.id
+     WHERE i.workspace_id=$1 AND i.is_active=1 AND s.is_active=1 AND i.name ILIKE '%'||$2||'%'`;
+  const productColumns=`CASE WHEN sku.variant_label IS NULL OR sku.variant_label='' THEN 'sku' ELSE 'variant' END AS type,
       sku.id,CASE WHEN sku.variant_label IS NULL OR sku.variant_label='' THEN item.name ELSE item.name||' / '||sku.variant_label END AS title,
       CASE WHEN sku.variant_label IS NULL OR sku.variant_label='' THEN 'Product · '||sku.code ELSE 'Variant · '||sku.code END AS subtitle,
-      COALESCE((SELECT SUM(balance.on_hand) FROM balances balance WHERE balance.workspace_id=$1 AND balance.sku_id=sku.id),0)::text||' on hand' AS meta,
+      NULL::text AS meta,
       '/inventory/'||item.id||'#sku-'||sku.id AS href,
       CASE WHEN lower(sku.code)=lower($2) THEN 120 WHEN lower(item.name)=lower($2) THEN 110
-        WHEN lower(COALESCE(sku.variant_label,''))=lower($2) THEN 105 WHEN sku.code ILIKE $2||'%' THEN 90 ELSE 60 END AS score
-    FROM skus sku JOIN items item ON item.id=sku.item_id WHERE sku.workspace_id=$1 AND sku.is_active=1 AND item.is_active=1
-      AND (sku.code ILIKE '%'||$2||'%' OR item.name ILIKE '%'||$2||'%' OR COALESCE(sku.variant_label,'') ILIKE '%'||$2||'%')
+        WHEN lower(COALESCE(sku.variant_label,''))=lower($2) THEN 105 WHEN sku.code ILIKE $2||'%' THEN 90 ELSE 60 END AS score`;
+  const productCondition=`sku.workspace_id=$1 AND sku.is_active=1 AND item.is_active=1
+      AND (sku.code ILIKE '%'||$2||'%' OR item.name ILIKE '%'||$2||'%' OR COALESCE(sku.variant_label,'') ILIKE '%'||$2||'%')`;
+  const broad=Number((await database.query(`WITH any_match AS MATERIALIZED (${candidates('UNION')})
+    SELECT count(*)::int AS n FROM (SELECT 1 FROM any_match LIMIT ${BROAD_PRODUCT_MATCH+1}) capped`,[workspaceId,term])).rows[0].n)>BROAD_PRODUCT_MATCH;
+  const bestOfKind=kind=>`(SELECT ${productColumns} FROM skus sku JOIN items item ON item.id=sku.item_id
+      WHERE ${productCondition} AND ${kind} ORDER BY score DESC,title,id LIMIT $3)`;
+  const productMatches=broad?`${bestOfKind("COALESCE(sku.variant_label,'')=''")}
+    UNION ALL ${bestOfKind("COALESCE(sku.variant_label,'')<>''")}`
+    :`SELECT ${productColumns}
+    FROM product_candidates candidate CROSS JOIN LATERAL(SELECT * FROM skus s WHERE s.id=candidate.id LIMIT 1) sku
+      CROSS JOIN LATERAL(SELECT * FROM items i WHERE i.id=sku.item_id LIMIT 1) item
+    WHERE ${productCondition}`;
+  const result=await database.query(`WITH ${broad?'':`product_candidates AS MATERIALIZED (${candidates('UNION')}), `}matches AS (
+    ${productMatches}
     UNION ALL
     SELECT 'serial',unit.id,unit.serial,item.name||' · '||sku.code,
       CASE WHEN unit.status='in_stock' THEN COALESCE(location.name,'Location missing') ELSE replace(unit.status,'_',' ') END,
@@ -67,7 +91,11 @@ async function search(database,workspaceId,rawTerm,{limit=25,groupLimit=null}={}
       '/sales/orders/'||sales.id,CASE WHEN lower(sales.order_number)=lower($2) THEN 125 ELSE 65 END
     FROM sales_orders sales JOIN customers customer ON customer.id=sales.customer_id
     WHERE sales.workspace_id=$1 AND (sales.order_number ILIKE '%'||$2||'%' OR lower(regexp_replace(sales.order_number,'(^[A-Za-z]+[- ]*)0+','\\1'))=lower($4) OR customer.name ILIKE '%'||$2||'%')
-  ), ranked AS (SELECT matches.*,row_number() OVER (PARTITION BY type ORDER BY score DESC,title,id) AS group_position FROM matches) SELECT * FROM ranked WHERE ($5::int IS NULL OR group_position<=$5) ORDER BY score DESC,title,id LIMIT $3`,[workspaceId,term,Math.min(100,Math.max(1,Number(limit)||25)),short,groupLimit==null?null:Math.min(100,Math.max(1,Number(groupLimit)||8))]);
+  ), ranked AS (SELECT matches.*,row_number() OVER (PARTITION BY type ORDER BY score DESC,title,id) AS group_position FROM matches), shown AS MATERIALIZED (
+    SELECT * FROM ranked WHERE ($5::int IS NULL OR group_position<=$5) ORDER BY score DESC,title,id LIMIT $3)
+  SELECT shown.type,shown.id,shown.title,shown.subtitle,
+    CASE WHEN shown.type IN ('sku','variant') THEN COALESCE((SELECT SUM(balance.on_hand) FROM balances balance WHERE balance.workspace_id=$1 AND balance.sku_id=shown.id),0)::text||' on hand' ELSE shown.meta END AS meta,
+    shown.href,shown.score,shown.group_position FROM shown ORDER BY score DESC,title,id`,[workspaceId,term,Math.min(100,Math.max(1,Number(limit)||25)),short,groupLimit==null?null:Math.min(100,Math.max(1,Number(groupLimit)||8))]);
   if(result.rows.length<limit&&term.length>=4){const near=(await database.query(`WITH item_matches AS MATERIALIZED (
  SELECT id,GREATEST(similarity(name,$2),word_similarity($2,name)) AS relevance FROM items
  WHERE workspace_id=$1 AND is_active=1 AND (name % $2 OR $2 <% name)
