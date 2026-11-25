@@ -1,20 +1,22 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sign in · StockChief</title>
+<% if(locals.reviewerSignIn){ %><meta name="referrer" content="no-referrer"><% } %>
 <link rel="stylesheet" href="/design.css?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>">
 <link rel="stylesheet" href="/commercial.css?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>"><link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
 <link rel="stylesheet" href="/public-experience.css?v=<%= locals.assetVersion||'current' %>"><script src="/public-experience.js?v=<%= locals.assetVersion||'current' %>" defer></script></head>
 <body class="commercial-auth"><main class="auth-split"><section class="auth-form">
 <a class="pub-brand" href="/"><span class="pub-brand__mark" aria-hidden="true"><%- include('../components/brand-symbol') %></span><span>StockChief</span></a>
-<div class="auth-form__body"><span class="pub-eyebrow">Welcome back</span><h1>Your business, ready for the day.</h1>
-<p>Sign in to manage stock, orders, purchasing and Money from one connected workspace.</p>
+<div class="auth-form__body"><span class="pub-eyebrow"><%= locals.reviewerSignIn?'Private review':'Welcome back' %></span><h1><%= locals.reviewerSignIn?'Sign in to the review inventory.':'Your business, ready for the day.' %></h1>
+<p><%= locals.reviewerSignIn?'Use the review link and the account password supplied for this review. Access expires with the review period.':'Sign in to manage stock, orders, purchasing and Money from one connected workspace.' %></p>
 <% if(flash&&flash.length){ %><div class="auth-messages"><% flash.forEach(function(message){ %><div class="auth-message auth-message--<%= message.type %>" role="alert"><%= message.message %></div><% }); %></div><% } %>
-<form method="post" action="/login" data-loading><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="next" value="<%= next %>">
+<form method="post" action="<%= locals.reviewerSignIn?'/reviewer-login':'/login' %>" data-loading><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="next" value="<%= next %>">
+<% if(locals.reviewerSignIn){ %><input type="hidden" id="review-token" name="reviewToken" value="<%= locals.reviewerToken||'' %>"><script src="/reviewer-login.js?v=<%= locals.assetVersion||'current' %>" defer></script><% } %>
 <label class="auth-field"><span>Work email</span><input id="email" name="email" type="email" value="<%= email %>" required autocomplete="username" autofocus></label>
 <label class="auth-field"><span>Password</span><span class="password-field"><input id="password" name="password" type="password" required autocomplete="current-password"><button type="button" data-password-toggle="password" aria-pressed="false">Show</button></span></label>
-<div class="auth-between"><%- include('remember-device',{remember:0}) %><a href="/forgot-password">Forgot password?</a></div><% if(locals.signInCode){ %><p class="auth-remember-help">We email you a code each time you sign in. On your own device, remember it to skip the code and stay signed in.</p><% } %>
+<% if(!locals.reviewerSignIn){ %><div class="auth-between"><%- include('remember-device',{remember:0}) %><a href="/forgot-password">Forgot password?</a></div><% if(locals.signInCode){ %><p class="auth-remember-help">We email you a code each time you sign in. On your own device, remember it to skip the code and stay signed in.</p><% } %><% } %>
 <button class="pub-btn pub-btn--block" type="submit" data-loading-label="Signing in…">Sign in</button></form>
-<p><a class="pub-btn pub-btn--secondary pub-btn--block" href="/auth/company">Sign in with your company</a></p>
-<div class="auth-create"><span>New to StockChief?</span><a class="pub-btn pub-btn--secondary pub-btn--block" href="<%= locals.pilotAccessLink?.href || '/register' %>"><%= locals.pilotAccessLink?.label || 'Create account' %></a><p><a href="/demo">See it in action</a> or <a href="/pricing">compare plans</a>.</p></div></div></section>
+<% if(!locals.reviewerSignIn){ %><p><a class="pub-btn pub-btn--secondary pub-btn--block" href="/auth/company">Sign in with your company</a></p>
+<div class="auth-create"><span>New to StockChief?</span><a class="pub-btn pub-btn--secondary pub-btn--block" href="<%= locals.pilotAccessLink?.href || '/register' %>"><%= locals.pilotAccessLink?.label || 'Create account' %></a><p><a href="/demo">See it in action</a> or <a href="/pricing">compare plans</a>.</p></div><% } %></div></section>
 <%- include('sign-in-aside') %>
 </main><script src="/commercial.js?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>" defer></script></body></html>
