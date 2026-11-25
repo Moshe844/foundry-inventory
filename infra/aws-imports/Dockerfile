@@ -23,5 +23,8 @@ COPY package.json ./
 COPY src ./src
 # Synthetic qualification sources only (src/imports/aws-qualification-million.js).
 COPY scripts/lib ./scripts/lib
+# Operator command for adding private-pilot businesses to the live AWS database,
+# run as a one-off task beside it (Render's web shell does not take pasted commands reliably).
+COPY scripts/provision-private-production-pilot.js ./scripts/
 USER node
 CMD ["node", "src/aws-import-worker-server.js"]
