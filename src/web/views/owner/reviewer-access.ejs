@@ -1,0 +1,24 @@
+<section class="card">
+  <h1>Private reviewer access</h1>
+  <p>Give an app reviewer access to a separate test inventory using a private link and the account's password. Normal customer sign-in and owner MFA stay unchanged.</p>
+  <% if(review){ %>
+    <h2>Review access is ready</h2>
+    <p>Account: <strong><%= review.email %></strong></p>
+    <p>Inventory: Google Workspace Review. Expires: <%= review.expiresAt %>.</p>
+    <label>Private review link<input type="text" readonly value="<%= review.link %>" aria-label="Private review link"></label>
+    <p>Copy this link into the private verification reply with the review account's password. Keep both out of public videos, screenshots and documents.</p>
+    <p>Ending or changing the trial, changing the password, disabling the account, or signing it out through the owner account-access controls invalidates this link. Review access cannot open another inventory.</p>
+  <% }else if(!freshMfa){ %>
+    <p>Confirm your owner password and authenticator code before creating a private review link.</p>
+    <a class="btn" href="/login?return=%2Freviewer-access">Verify owner sign-in</a>
+  <% }else{ %>
+    <p>First grant the separate, email-verified account a time-limited admin trial. This form creates an empty synthetic inventory if setup is unfinished. It does not copy any business, provider connection or billing data.</p>
+    <form method="post" action="/reviewer-access" data-owner-action>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label>Review account email<input type="email" name="email" required autocomplete="off"></label>
+      <label>Purpose<input name="reason" required minlength="8" maxlength="500" value="Google Workspace OAuth verification"></label>
+      <label><input type="checkbox" name="confirmed" value="yes" required> This is a separate review account for fake test records only.</label>
+      <button type="submit">Create private review access</button>
+    </form>
+  <% } %>
+</section>

@@ -55,6 +55,19 @@ function createOwnerConsole({database:db,store,sessionSecret,env='production',bi
  app.get('/customers/:id',asyncRoute(async(req,res)=>{const tabs=['overview','businesses','billing','usage','connections','support'],customerTab=tabs.includes(req.query.tab)?req.query.tab:'overview';if(['billing','usage'].includes(customerTab))data.allow(req.owner,['OWNER','BILLING']);if(['connections','support'].includes(customerTab))data.allow(req.owner,['OWNER','SUPPORT']);res.owner('customer',{title:'Customer account',customer:await data.customer(db,req.owner,req.params.id),customerTab});}));
  const access=require('../domain/postgres-account-access'),removal=require('../domain/postgres-developer-accounts');
  const fresh=req=>Date.now()-req.session.owner.authenticatedAt<=15*60000;
+ app.get('/reviewer-access',asyncRoute(async(req,res)=>{data.allow(req.owner,['OWNER']);res.owner('reviewer-access',{title:'Private reviewer access',review:null,freshMfa:fresh(req)});}));
+ app.post('/reviewer-access',asyncRoute(async(req,res)=>{
+  data.allow(req.owner,['OWNER']);
+  if(!fresh(req))throw new AuthorizationError('Sign in with a fresh MFA code before issuing reviewer access.');
+  const publicOrigin=customerOrigin||require('../config').connections.publicOrigin;
+  if(!publicOrigin)throw new ValidationError('The public StockChief origin must be configured.');
+  const link=new URL('/reviewer-login',publicOrigin);
+  if(link.protocol!=='https:'&&!(env==='test'&&link.hostname==='127.0.0.1'))throw new ValidationError('Reviewer access needs the configured HTTPS application origin.');
+  const review=await require('../domain/postgres-reviewer-access').issue(db,req.owner.id,req.body);
+  link.hash=new URLSearchParams({access:review.token}).toString();
+  res.owner('reviewer-access',{title:'Private reviewer access',review:{email:review.email,workspaceId:review.workspaceId,
+    expiresAt:new Date(review.claims.e).toISOString(),link:link.href}});
+ }));
  async function accessPage(req,res,errorMessage=null){data.allow(req.owner,['OWNER']);const accessReview=await access.review(db,req.owner.id,req.params.id),requested=req.method==='POST'?req.body.action:req.query.action,accountAction=['disable','restore','sign_out'].includes(requested)?requested:accessReview.target.disabled_at?'restore':'disable';return res.owner('account-access',{title:'Review account access',accessReview,accountAction,freshMfa:fresh(req),errorMessage,formValues:req.method==='POST'?{reason:req.body.reason,confirmEmail:req.body.confirmEmail}:null,actionKey:newId('accountaction')});}
  app.get('/customers/:id/access',asyncRoute(async(req,res)=>accessPage(req,res)));
  app.post('/customers/:id/access',asyncRoute(async(req,res)=>{data.allow(req.owner,['OWNER']);try{if(!fresh(req))throw new AuthorizationError('Sign in with a fresh MFA code before changing account access.');const result=await access.change(db,req.owner.id,req.params.id,req.body);req.flash('success',req.body.action==='restore'?'Account access restored. Existing billing and records are unchanged.':req.body.action==='sign_out'?'Current sign-in sessions ended. The customer can sign in again.':'Account access disabled. Existing sessions ended and future business jobs are paused. Billing remains separate.');return res.redirect(303,'/customers/'+req.params.id);}catch(error){if(![400,403,422].includes(error.status))throw error;res.status(error.status);return accessPage(req,res,error.message);}}));
