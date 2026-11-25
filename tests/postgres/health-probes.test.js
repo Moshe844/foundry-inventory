@@ -6,6 +6,21 @@ const request=require('supertest');
 const session=require('express-session');
 const { createPostgresApp }=require('../../src/postgres-app');
 
+test('Microsoft domain proof is public JSON while customer data is unavailable',async t=>{
+ const previous=process.env.MICROSOFT365_CLIENT_ID;
+ t.after(()=>{if(previous===undefined)delete process.env.MICROSOFT365_CLIENT_ID;else process.env.MICROSOFT365_CLIENT_ID=previous;});
+ process.env.MICROSOFT365_CLIENT_ID='0fc580b5-a363-4378-a458-97c334ae2188';
+ let reads=0;
+ const database={query:async()=>{reads++;throw Error('Customer data is unavailable');}};
+ const resourceDatabase={query:async()=>({rows:[]})};
+ const app=createPostgresApp({database,resourceDatabase,probeDatabase:database,sessionStore:new session.MemoryStore(),env:'test',sessionSecret:'isolated-domain-proof'});
+ const proof=await request(app).get('/.well-known/microsoft-identity-association.json').expect(200).expect('Content-Type',/application\/json/);
+ assert.deepEqual(proof.body,{associatedApplications:[{applicationId:process.env.MICROSOFT365_CLIENT_ID}]});
+ assert.equal(reads,0,'Microsoft must not need customer authentication or a tenant database read');
+ process.env.MICROSOFT365_CLIENT_ID='invalid-registration';
+ await request(app).get('/.well-known/microsoft-identity-association.json').expect(404);
+});
+
 test('health and readiness remain reachable while the customer request pool is saturated',async()=>{
  let probes=0;const database={query:async()=>{throw Error('Customer pool is busy');}},probeDatabase={query:async sql=>{probes++;return {rows:[sql.includes('stale_jobs')?{migrations:155,dead_jobs:0,stale_jobs:0}:{count:155}]};}};
  const app=createPostgresApp({database,probeDatabase,sessionStore:new session.MemoryStore(),env:'test',sessionSecret:'isolated-probes'});
