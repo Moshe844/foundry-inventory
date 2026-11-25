@@ -8,8 +8,13 @@ test('an Ohio AWS database address uses the bundled AWS certificates with full v
  const ssl=connectionOptions(rds,{requireTls:true,privateNetwork:false,...tls}).ssl;
  assert.equal(ssl.rejectUnauthorized,true);assert.equal(ssl.ca,tls.ca);assert.equal(ssl.checkServerIdentity,undefined,'standard hostname checks, no pin');
 });
-test('a leftover Render certificate pin is refused for the AWS database',()=>{
- assert.throws(()=>tlsFor(rds,{},{FOUNDRY_DATABASE_TLS_FINGERPRINT256:'a'.repeat(64)}),/Remove FOUNDRY_DATABASE_TLS_FINGERPRINT256/);
+test("Render's database certificate settings from the shared group never apply to the AWS database",()=>{
+ // Production keeps these in the settings group the Ohio services share with Virginia.
+ const tls=tlsFor(rds,{},{FOUNDRY_DATABASE_TLS_CA:'-----BEGIN CERTIFICATE-----\nrender\n-----END CERTIFICATE-----',FOUNDRY_DATABASE_TLS_FINGERPRINT256:'a'.repeat(64)});
+ assert.equal(tls.tlsFingerprint,undefined);assert.doesNotMatch(tls.ca,/render/);assert.match(tls.ca,/BEGIN CERTIFICATE/);
+ const ssl=connectionOptions(rds,{requireTls:true,privateNetwork:false,...tls}).ssl;
+ assert.equal(ssl.rejectUnauthorized,true);assert.equal(ssl.checkServerIdentity,undefined);
+ assert.throws(()=>tlsFor(rds,{tlsFingerprint:'a'.repeat(64)},{}),/certificate chain, not a pin/);
 });
 test('other databases are unchanged: an explicit certificate wins and Render pins still apply',()=>{
  assert.equal(tlsFor(rds,{ca:'explicit'},{}).ca,'explicit');

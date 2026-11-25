@@ -7,9 +7,10 @@
 #   ending in ?sslmode=verify-full. The AWS certificates ship with the app.
 # - FOUNDRY_DATABASE_MIGRATION_URL: the owner login (stockchief_owner), same endpoint;
 #   used only when publishing runs migrations.
-# - Copy every other variable that is set on the Virginia service itself (email, payment,
-#   connection and AI keys); the shared group below carries the session and encryption keys.
-# - Do not copy FOUNDRY_DATABASE_TLS_FINGERPRINT256; it pins Render's old database.
+# - RESEND_API_KEY and FOUNDRY_FROM_EMAIL: the same values as the Virginia service.
+# Everything else (session and encryption keys, payment, email, connection and AI keys)
+# comes from the shared stockchief-production-runtime group. Its Render database
+# certificate settings are ignored for the AWS address (src/db/postgres.js tlsFor).
 # The worker starts paused (FOUNDRY_WORKER_PAUSED) so it cannot run jobs before the switch.
 services:
   - type: web
@@ -35,6 +36,9 @@ services:
         value: stockchief_runtime
       - key: FOUNDRY_PROCESS_ROLE
         value: web
+      # The AWS database's disk, for disk-space alerts (Render's was 15 GB).
+      - key: FOUNDRY_POSTGRES_DISK_GB
+        value: "50"
       - key: RESEND_API_KEY
         sync: false
       - key: FOUNDRY_FROM_EMAIL
@@ -61,6 +65,9 @@ services:
         value: stockchief_runtime
       - key: FOUNDRY_PROCESS_ROLE
         value: worker
+      # The AWS database's disk, for disk-space alerts (Render's was 15 GB).
+      - key: FOUNDRY_POSTGRES_DISK_GB
+        value: "50"
       # Runs no jobs until the switch; remove this setting at the switch, then publish.
       - key: FOUNDRY_WORKER_PAUSED
         value: "true"

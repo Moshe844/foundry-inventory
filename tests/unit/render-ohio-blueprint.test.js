@@ -23,3 +23,7 @@ test('the Ohio worker starts paused so it cannot run jobs before the switch',()=
  assert.match(yaml,/name: stockchief-production-worker-ohio[\s\S]*key: FOUNDRY_WORKER_PAUSED\n\s+value: "true"/);
  assert.equal((yaml.match(/FOUNDRY_WORKER_PAUSED/g)||[]).length,2,'mentioned once in a comment and set once, on the worker only');
 });
+test("the Ohio services report the AWS database's disk size for alerts",()=>{
+ const yaml=read('render.production-ohio.yaml');
+ assert.equal((yaml.match(/key: FOUNDRY_POSTGRES_DISK_GB\n\s+value: "50"/g)||[]).length,2);
+});
