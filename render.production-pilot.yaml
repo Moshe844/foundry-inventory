@@ -94,3 +94,74 @@ projects:
                 sync: false
               - key: FOUNDRY_FROM_EMAIL
                 sync: false
+          # Ohio, next to the AWS database (us-east-2). Same branch, plans, commands and shared
+          # group as the Virginia services above; no Render database. Set by hand before use:
+          # FOUNDRY_DATABASE_URL (website login stockchief_runtime, ?sslmode=verify-full),
+          # FOUNDRY_DATABASE_MIGRATION_URL (owner login stockchief_owner), RESEND_API_KEY and
+          # FOUNDRY_FROM_EMAIL (as Virginia). The group's Render certificate settings are ignored
+          # for the AWS address. The worker starts paused until the switch.
+          - type: web
+            name: stockchief-production-web-ohio
+            runtime: node
+            repo: https://github.com/Moshe844/foundry-inventory
+            branch: codex/production-pilot
+            region: ohio
+            plan: 1c-2g
+            autoDeployTrigger: off
+            buildCommand: npm ci --omit=dev
+            preDeployCommand: npm run db:apply:postgres
+            startCommand: exec node src/postgres-web-server.js
+            healthCheckPath: /healthz
+            maxShutdownDelaySeconds: 120
+            envVars:
+              - fromGroup: stockchief-production-runtime
+              - key: FOUNDRY_DATABASE_URL
+                sync: false
+              - key: FOUNDRY_DATABASE_MIGRATION_URL
+                sync: false
+              - key: FOUNDRY_DATABASE_RUNTIME_ROLE
+                value: stockchief_runtime
+              - key: FOUNDRY_PROCESS_ROLE
+                value: web
+              # The AWS database's disk, for disk-space alerts (Render's was 15 GB).
+              - key: FOUNDRY_POSTGRES_DISK_GB
+                value: "50"
+              - key: RESEND_API_KEY
+                sync: false
+              - key: FOUNDRY_FROM_EMAIL
+                sync: false
+          - type: worker
+            name: stockchief-production-worker-ohio
+            runtime: node
+            repo: https://github.com/Moshe844/foundry-inventory
+            branch: codex/production-pilot
+            region: ohio
+            plan: 1c-2g
+            autoDeployTrigger: off
+            buildCommand: npm ci --omit=dev
+            preDeployCommand: npm run db:apply:postgres
+            startCommand: exec node src/postgres-worker-server.js
+            maxShutdownDelaySeconds: 120
+            envVars:
+              - fromGroup: stockchief-production-runtime
+              - key: FOUNDRY_DATABASE_URL
+                sync: false
+              - key: FOUNDRY_DATABASE_MIGRATION_URL
+                sync: false
+              - key: FOUNDRY_DATABASE_RUNTIME_ROLE
+                value: stockchief_runtime
+              - key: FOUNDRY_PROCESS_ROLE
+                value: worker
+              # The AWS database's disk, for disk-space alerts (Render's was 15 GB).
+              - key: FOUNDRY_POSTGRES_DISK_GB
+                value: "50"
+              # Runs no jobs until the switch; remove this setting at the switch, then publish.
+              - key: FOUNDRY_WORKER_PAUSED
+                value: "true"
+              # Large imports save stock in four parallel lanes (measured on AWS).
+              - key: FOUNDRY_IMPORT_STOCK_WORKERS
+                value: "4"
+              - key: RESEND_API_KEY
+                sync: false
+              - key: FOUNDRY_FROM_EMAIL
+                sync: false
