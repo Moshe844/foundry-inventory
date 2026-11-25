@@ -2,13 +2,14 @@
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 
-test('Clover, Xero and QuickBooks consent and refresh preserve billing and isolate every supported plan',{timeout:360000},async t=>{
+test('Clover, Xero, QuickBooks and Microsoft consent and refresh preserve billing and isolate every supported plan',{timeout:360000},async t=>{
  const environment={...process.env},oldFetch=global.fetch;
  const cluster=await require('../helpers/postgres-cluster').startCluster();
  const db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
  try{
   await require('../../src/db/migrate-postgres').migratePostgres(db);
-  Object.assign(process.env,{STOCKCHIEF_RUNTIME_ENV:'staging',STOCKCHIEF_STAGING_CONNECTION_PROVIDERS:'clover,xero,quickbooks',
+  Object.assign(process.env,{STOCKCHIEF_RUNTIME_ENV:'staging',STOCKCHIEF_STAGING_CONNECTION_PROVIDERS:'clover,xero,quickbooks,microsoft365',
+   MICROSOFT365_CLIENT_ID:'offline-ms',MICROSOFT365_CLIENT_SECRET:'offline-ms-secret',MICROSOFT365_TENANT:'common',
    CLOVER_CLIENT_ID:'offline-clover',CLOVER_CLIENT_SECRET:'offline-clover-secret',CLOVER_WEBHOOK_AUTH_CODE:'offline-webhook',CLOVER_ENVIRONMENT:'sandbox',
    QUICKBOOKS_CLIENT_ID:'offline-qb',QUICKBOOKS_CLIENT_SECRET:'offline-qb-secret',QUICKBOOKS_ENVIRONMENT:'sandbox',XERO_CLIENT_ID:'offline-xero',XERO_CLIENT_SECRET:'offline-xero-secret'});
   const auth=require('../../src/domain/postgres-auth-service'),service=require('../../src/connections/postgres-provider-service');
@@ -16,7 +17,7 @@ test('Clover, Xero and QuickBooks consent and refresh preserve billing and isola
   let incomplete=false,externalCalls=0;
   global.fetch=async(value,options={})=>{
    externalCalls++;const url=new URL(value);
-   assert(['apisandbox.dev.clover.com','oauth.platform.intuit.com','sandbox-quickbooks.api.intuit.com','identity.xero.com','api.xero.com'].includes(url.hostname),'Only isolated provider fixtures may be contacted');
+   assert(['apisandbox.dev.clover.com','oauth.platform.intuit.com','sandbox-quickbooks.api.intuit.com','identity.xero.com','api.xero.com','login.microsoftonline.com','graph.microsoft.com'].includes(url.hostname),'Only isolated provider fixtures may be contacted');
    if(url.pathname.endsWith('/token')||url.pathname.endsWith('/refresh')||url.pathname.endsWith('/tokens/bearer')){
     if(incomplete)return Response.json({access_token:'incomplete-fixture'});
     return Response.json({access_token:'offline-access',refresh_token:'offline-refresh',expires_in:1800,
@@ -24,18 +25,20 @@ test('Clover, Xero and QuickBooks consent and refresh preserve billing and isola
    }
    if(url.hostname==='apisandbox.dev.clover.com')return Response.json({id:'offline-merchant',name:'Offline Clover merchant'});
    if(url.hostname==='sandbox-quickbooks.api.intuit.com')return Response.json({CompanyInfo:{Id:'1',CompanyName:'Offline QuickBooks company'}});
+   if(url.hostname==='graph.microsoft.com'&&url.pathname==='/v1.0/me')return Response.json({id:'offline-mailbox',mail:'mailbox@example.test'});
+   if(url.hostname==='graph.microsoft.com'&&url.pathname==='/v1.0/subscriptions')return Response.json({id:'offline-subscription',expirationDateTime:new Date(Date.now()+86400000).toISOString()});
    if(url.pathname==='/connections')return Response.json([{tenantId:'offline-tenant',tenantType:'ORGANISATION'}]);
    if(url.pathname.endsWith('/Organisation'))return Response.json({Organisations:[{OrganisationID:'offline-tenant',Name:'Offline Xero organization'}]});
    throw Error('Unexpected isolated provider request');
   };
-  for(const plan of ['starter','growth','pro'])for(const type of ['clover','xero','quickbooks'])await t.test(plan+' / '+type,async()=>{
+  for(const plan of ['starter','growth','pro'])for(const type of ['clover','xero','quickbooks','microsoft365'])await t.test(plan+' / '+type,async()=>{
    incomplete=false;
    const owner=await auth.createBusiness(db,{name:'Connection Owner',businessName:plan+' '+type,email:randomUUID()+'@example.test',password:'Connection!'+randomUUID()});
    await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,current_period_start,current_period_end) VALUES($1,$2,$3,(SELECT id FROM commercial_plan_versions WHERE plan_id=$3 AND status='ACTIVE' ORDER BY version_number DESC LIMIT 1),'ACTIVE',now(),now()+interval '1 month')",[randomUUID(),owner.accountId,plan]);
    process.env.STOCKCHIEF_STAGING_CONNECTION_WORKSPACES=owner.workspaceId;
    const ctx={workspaceId:owner.workspaceId,actorId:owner.userId,accountId:owner.accountId};
    const before=(await db.query('SELECT to_jsonb(s) state FROM account_subscriptions s WHERE account_id=$1',[owner.accountId])).rows;
-   const capability=await require('../../src/commercial/entitlements').capabilityState(db,{accountId:owner.accountId,workspaceId:owner.workspaceId},type==='clover'?'connection.commerce':'connection.accounting');
+   const capability=await require('../../src/commercial/entitlements').capabilityState(db,{accountId:owner.accountId,workspaceId:owner.workspaceId},type==='microsoft365'?'communications.email_ingestion':type==='clover'?'connection.commerce':'connection.accounting');
    if(!capability.enabled){
     const calls=externalCalls;
     await assert.rejects(()=>service.beginAuthorization(db,ctx,{providerType:type},'https://app.example.test'),error=>error.code==='entitlement_required');

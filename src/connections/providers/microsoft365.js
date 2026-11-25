@@ -31,30 +31,48 @@ async function token(body) {
     headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(body).toString() })).body;
 }
 
+const usableToken = value => typeof value === 'string' && value.trim().length > 0;
+
+function confirmedGrant(result, previous = {}) {
+  const duration = result?.expires_in;
+  const expiresAt = Date.now() + Number(duration) * 1000;
+  const refreshToken = result?.refresh_token === undefined ? previous.refreshToken : result.refresh_token;
+  if (!usableToken(result?.access_token) || !usableToken(refreshToken)
+      || !['number','string'].includes(typeof duration) || Number(duration) <= 0
+      || !Number.isFinite(expiresAt) || !Number.isFinite(new Date(expiresAt).getTime())
+      || (result.token_type !== undefined && String(result.token_type).toLowerCase() !== 'bearer')) {
+    // A partial 200 response is not a revoked grant. Fail before the encrypted
+    // credential store replaces the saved authorization or asks for a new login.
+    throw Object.assign(new Error('Microsoft did not confirm complete mailbox authorization. Try this check again.'),
+      {code:'PROVIDER_REFRESH_UNCONFIRMED',status:503,transient:true});
+  }
+  return {...previous,accessToken:result.access_token,refreshToken,expiresAt};
+}
+
 async function exchangeAuthorization({ query, metadata: auth = {} }) {
   if (query.error) throw new ValidationError(query.error_description || 'Microsoft authorization was not completed.');
   if (!query.code) throw new ValidationError('Microsoft did not return an authorization code.');
   const result = await token({ client_id: config.connections.microsoft365.clientId,
     client_secret: config.connections.microsoft365.clientSecret, code: query.code,
     redirect_uri: auth.redirectUri, grant_type: 'authorization_code', scope: SCOPES.join(' ') });
-  const credentials = { accessToken: result.access_token, refreshToken: result.refresh_token,
-    expiresAt: Date.now() + Number(result.expires_in || 3600) * 1000 };
-  if (!credentials.accessToken) throw new ValidationError('Microsoft did not return a usable access token.');
+  const credentials = confirmedGrant(result);
   const profile = (await graph(credentials, '/me?$select=id,displayName,mail,userPrincipalName')).body;
-  credentials.mailbox = profile.mail || profile.userPrincipalName;
+  const mailbox = profile?.mail || profile?.userPrincipalName;
+  if (!usableToken(profile?.id) || !usableToken(mailbox))
+    throw new ValidationError('Microsoft did not confirm the connected mailbox identity. Try connecting again.');
+  credentials.mailbox = mailbox;
   return { credentials, accountId: profile.id, accountName: credentials.mailbox || profile.displayName,
     capabilities: ['MAIL_READ', 'MAIL_SEND', 'MAILBOX_WATCH'], expiresAt: new Date(credentials.expiresAt).toISOString() };
 }
 
 async function refreshCredentials(credentials, options = {}) {
-  if (!options.force && Number(credentials.expiresAt || 0) > Date.now() + 5 * 60_000) return { credentials, refreshed: false,
+  if (!options.force && usableToken(credentials.accessToken) && Number(credentials.expiresAt || 0) > Date.now() + 5 * 60_000) return { credentials, refreshed: false,
     expiresAt: new Date(credentials.expiresAt).toISOString() };
   if (!credentials.refreshToken) throw new ValidationError('Microsoft 365 access expired. Reconnect this mailbox.');
   const result = await token({ client_id: config.connections.microsoft365.clientId,
     client_secret: config.connections.microsoft365.clientSecret, refresh_token: credentials.refreshToken,
     grant_type: 'refresh_token', scope: SCOPES.join(' ') });
-  const next = { ...credentials, accessToken: result.access_token, refreshToken: result.refresh_token || credentials.refreshToken,
-    expiresAt: Date.now() + Number(result.expires_in || 3600) * 1000 };
+  const next = confirmedGrant(result, credentials);
   return { credentials: next, refreshed: true, expiresAt: new Date(next.expiresAt).toISOString() };
 }
 
