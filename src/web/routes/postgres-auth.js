@@ -53,7 +53,7 @@ function createPostgresAuthRouter(database,options={}) {
   // 0 when the box is not ticked, otherwise 30 or 60 days.
   const rememberFor=(body)=>body.rememberMe==='1'?signInCodes.rememberDays(body.rememberDays):0;
   // Signs the account in on a fresh session: straight after the password, or after the emailed code.
-  async function completeSignIn(req,res,account,{remember,next:destination,weakPassword}){
+  async function completeSignIn(req,res,account,{remember,next:destination,weakPassword,reviewerAccess}){
     const shopifyInstallReturn=req.session.shopifyInstallReturn==='/integrations/shopify/connect';
     await sessionCall(req,'regenerate');
     if(shopifyInstallReturn)req.session.shopifyInstallReturn='/integrations/shopify/connect';
@@ -62,11 +62,26 @@ function createPostgresAuthRouter(database,options={}) {
     req.session.cookie.maxAge=remember?remember*86400000:null;
     const workspaceId=await auth.defaultWorkspaceFor(database,account.id);
     if(workspaceId)req.session.workspaceId=workspaceId;
+    if(reviewerAccess){req.session.reviewerAccess=reviewerAccess;req.session.workspaceId=reviewerAccess.w;
+      req.session.cookie.maxAge=Math.min(86400000,reviewerAccess.e-Date.now());}
     await sessionCall(req,'save');
     if(account.plan==='commercial_pending')return res.redirect(account.email_verified_at?'/complete-signup':'/verify-email/pending');
     return res.redirect(workspaceId?safeNext(destination):'/inventories');
   }
   const weakPasswordOf=(password)=>{try{require('../../domain/auth-service').checkPasswordStrength(password);return false;}catch{return true;}};
+  const reviewerPage=(req,res,status=200,message=null)=>{
+    res.set({'Cache-Control':'private, no-store','Referrer-Policy':'no-referrer'});
+    return res.status(status).render('auth/login',{title:'Private review sign-in',csrfToken:res.locals.csrfToken,
+      flash:message?[{type:'error',message}]:res.locals.flash,next:'/',email:req.body?.email||'',
+      appName:res.locals.appName,origin:res.locals.origin,reviewerSignIn:true,reviewerToken:req.body?.reviewToken||''});
+  };
+  router.get('/reviewer-login',(req,res)=>reviewerPage(req,res));
+  router.post('/reviewer-login',require('../middleware').rateLimit({max:20,windowMs:15*60000}),async(req,res,next)=>{try{
+    const account=await auth.authenticate(database,req.body.email,req.body.password,{ip:req.ip||req.socket.remoteAddress});
+    if(!account)return reviewerPage(req,res,401,'That email, password and private review link could not be verified.');
+    const reviewerAccess=await require('../../domain/postgres-reviewer-access').verify(database,req.body.reviewToken,account.id);
+    return completeSignIn(req,res,account,{remember:0,next:'/',weakPassword:weakPasswordOf(req.body.password),reviewerAccess});
+  }catch(error){if([400,401,403,422,429].includes(error.status))return reviewerPage(req,res,error.status,'That email, password and private review link could not be verified.');return next(error);}});
   // The account that passed its password and still owes the emailed code (for 20 minutes).
   const pendingSignIn=(req)=>{const pending=req.session?.pendingSignIn;
     return pending&&Date.now()-Number(pending.at||0)<20*60*1000?pending:null;};

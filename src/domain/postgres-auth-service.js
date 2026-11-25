@@ -136,7 +136,7 @@ async function provisionFirstWorkspace(database,accountId,input={}){
   await client.query('SELECT id FROM accounts WHERE id=$1 FOR UPDATE',[accountId]);
   const scoped={query:client.query.bind(client),transaction:fn=>fn(client)},account=await getAccount(scoped,accountId);if(!account)throw new NotFoundError('That account could not be found.');
   const existing=(await client.query('SELECT id FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL ORDER BY created_at,id LIMIT 1',[accountId])).rows[0]?.id;
-  const created=existing?{workspaceId:existing,created:false}:await createWorkspace(scoped,accountId,{name:input.businessName||account.pending_business_name||account.name+"'s inventory"});
+  const created=existing?{workspaceId:existing,created:false}:await createWorkspace(scoped,accountId,{name:input.businessName||account.pending_business_name||account.name+"'s inventory",dataMode:input.dataMode});
   await client.query("UPDATE accounts SET pending_business_name=NULL,pending_commercial_plan_id=NULL,pending_billing_interval=NULL,pending_promo_code=NULL,plan='paid',last_workspace_id=$2 WHERE id=$1",[accountId,created.workspaceId]);
   await client.query('INSERT INTO account_inventory_onboarding(account_id,first_inventory_created_at) VALUES($1,$2) ON CONFLICT(account_id) DO NOTHING',[accountId,new Date().toISOString()]);
   return {...created,created:!existing};
