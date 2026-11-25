@@ -71,6 +71,18 @@ function knownPurchaseCostSql(skuId,workspaceId,secondaryUnit){
       ELSE EXISTS(${recorded} AND c.secondary_quantity_units>0) END)`;
 }
 
+// The same rule as knownPurchaseCostSql, for checks that read every SKU at once:
+// one row per SKU with a known cost, saying whether it counts for ordinary stock
+// (plain) and for measured stock (measured). A lookup per SKU took minutes on a
+// million SKUs; this reads each cost source once.
+function knownPurchaseCostRowsSql(workspaceId){
+  return `SELECT sku_id,bool_or(plain) AS plain,bool_or(measured) AS measured FROM (
+    SELECT p.sku_id,true AS plain,true AS measured FROM sku_purchase_costs p WHERE p.workspace_id=${workspaceId}
+    UNION ALL SELECT s.sku_id,true,true FROM supplier_items s WHERE s.workspace_id=${workspaceId} AND s.is_active=1 AND s.last_unit_cost IS NOT NULL
+    UNION ALL SELECT c.sku_id,true,coalesce(c.secondary_quantity_units>0,false) FROM accounting_inventory_cost_balances c
+      WHERE c.workspace_id=${workspaceId} AND c.quantity_units>0) known GROUP BY sku_id`;
+}
+
 // The average recorded cost of the stock on hand for these SKUs, the third
 // source purchaseCost() falls back to. One row per SKU that has costed stock.
 async function recordedStockCosts(queryable,workspaceId,skuIds){
@@ -332,7 +344,7 @@ async function cancelPurchaseCostProposal(database,workspaceId,id){
   return getPurchaseCostProposal(database,workspaceId,id);
 }
 
-module.exports={normaliseCurrency,toMinor,formatMinor,requireSku,currentPrice,purchaseCost,knownPurchaseCostSql,recordedStockCosts,listForSkus,catalogueOnlyPrice,
+module.exports={normaliseCurrency,toMinor,formatMinor,requireSku,currentPrice,purchaseCost,knownPurchaseCostSql,knownPurchaseCostRowsSql,recordedStockCosts,listForSkus,catalogueOnlyPrice,
   setPrice,setPriceInTransaction,setPricesInTransaction,setPurchaseCost,setPurchaseCostInTransaction,setPurchaseCostsInTransaction,createPriceProposal,getPriceProposal,
   approvePriceProposal,cancelPriceProposal,createPurchaseCostProposal,getPurchaseCostProposal,
   approvePurchaseCostProposal,cancelPurchaseCostProposal};
