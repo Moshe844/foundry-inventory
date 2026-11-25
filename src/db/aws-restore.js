@@ -137,9 +137,19 @@ async function restore(env=process.env){
 }
 
 // After the switch: the copy becomes the live database and can never be replaced again.
+// Running it again on the live database only re-applies the read access below.
 async function markLive(env=process.env){
   const s=settings({STOCKCHIEF_RESTORE_SOURCE:'-',...env}),master=open(s,s.master,s.database,'stockchief-restore-live');
-  try{const r=await master.query("UPDATE stockchief_restore.marker SET mode='live' WHERE mode='copy' RETURNING restored_at");if(r.rowCount!==1)throw new Error('There is no unswitched copy to mark live.');log({stage:'marked-live',database:s.database});}
+  try{const r=await master.query("UPDATE stockchief_restore.marker SET mode='live' WHERE mode='copy' RETURNING restored_at");
+    const already=r.rowCount!==1;
+    if(already&&!(await master.query("SELECT 1 FROM stockchief_restore.marker WHERE mode='live'")).rowCount)throw new Error('There is no unswitched copy to mark live.');
+    // The app's logins may read (never change) the marker, so operator commands such as
+    // pilot provisioning can tell they are on the live database.
+    for(const login of [s.owner.username,s.runtime.username]){
+      await master.query(`GRANT USAGE ON SCHEMA stockchief_restore TO ${quote(login)}`);
+      await master.query(`GRANT SELECT ON stockchief_restore.marker TO ${quote(login)}`);
+    }
+    log({stage:'marked-live',database:s.database,already});}
   finally{await master.close();}
 }
 

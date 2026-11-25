@@ -55,14 +55,25 @@ async function provision(db, input) {
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
+// The live database is Render's stockchief_production or, since the move to AWS, the
+// database the move marked live (its marker is readable by the app's logins).
+async function liveDatabase(db) {
+  const { name } = (await db.query('SELECT current_database() AS name')).rows[0];
+  if (name === 'stockchief_production') return true;
+  const readable = (await db.query(`SELECT has_schema_privilege(current_user,n.oid,'USAGE')
+      AND has_table_privilege(current_user,c.oid,'SELECT') AS ok
+    FROM pg_namespace n JOIN pg_class c ON c.relnamespace=n.oid AND c.relname='marker'
+    WHERE n.nspname='stockchief_restore'`)).rows[0]?.ok === true;
+  return readable && (await db.query("SELECT 1 FROM stockchief_restore.marker WHERE mode='live' LIMIT 1")).rowCount === 1;
+}
+
 async function main() {
   assertPilot();
   const options=Object.fromEntries(['name','business','email','plan','expires','timezone','reason'].map(key=>[key,{type:'string'}]));
   const { values } = parseArgs({ options });
   const db = require('../src/db/postgres').openPostgres(process.env.FOUNDRY_DATABASE_URL,{max:1});
   try {
-    const target=(await db.query('SELECT current_database() AS name')).rows[0];
-    if (target.name !== 'stockchief_production') throw new Error('Use the stockchief_production database from the production Blueprint.');
+    if (!(await liveDatabase(db))) throw new Error('Use the live production database: Render\'s stockchief_production, or the AWS database marked live after the move.');
     console.log(JSON.stringify(await provision(db,values)));
   } finally {
     await db.close();
@@ -74,4 +85,4 @@ if (require.main === module) main().catch(error=>{
   process.exitCode=1;
 });
 
-module.exports = { provision };
+module.exports = { provision, liveDatabase };

@@ -48,6 +48,8 @@ test('a Render-style export restores exactly, runs the app as the website login 
  assert.equal((await new Promise((r,j)=>store.get('restore-session',(e,v)=>e?j(e):r(v)))).accountId,'x','sessions carry over, so nobody is signed out');
  await assert.rejects(app.query('CREATE TABLE structure_change(x int)'),/permission denied/);
  await assert.rejects(app.query('SELECT * FROM stockchief_restore.marker'),/permission denied/);
+ const pilot=require('../../scripts/provision-private-production-pilot');
+ assert.equal(await pilot.liveDatabase(app),false,'an unswitched copy is not the live database');
 
  // Safety: never over an unswitched copy without the explicit flag, never over a live one.
  await assert.rejects(restore.restore(env),/already here/);
@@ -55,6 +57,12 @@ test('a Render-style export restores exactly, runs the app as the website login 
  await restore.restore({...env,STOCKCHIEF_RESTORE_REPLACE:'replace-unswitched-copy'});
  await restore.markLive(env);
  await assert.rejects(restore.restore({...env,STOCKCHIEF_RESTORE_REPLACE:'replace-unswitched-copy'}),/live/);
+ // Pilot provisioning recognises the live database through the website login, which can read but never change the mark.
+ const live=openPostgres(at(env.STOCKCHIEF_RESTORE_DATABASE,runtime.username,runtime.password),{max:1});
+ try{assert.equal(await pilot.liveDatabase(live),true);
+  await assert.rejects(live.query("UPDATE stockchief_restore.marker SET mode='copy'"),/permission denied/);}finally{await live.close();}
+ await restore.markLive(env);
+ await assert.rejects(restore.restore({...env,STOCKCHIEF_RESTORE_REPLACE:'replace-unswitched-copy'}),/live/,'marking live again changes nothing');
  await admin.query(`CREATE DATABASE other_${tag}`);const other=openPostgres(at('other_'+tag),{max:1});
  try{await other.query('CREATE TABLE someone_elses(x int)');}finally{await other.close();}
  await assert.rejects(restore.restore({...env,STOCKCHIEF_RESTORE_DATABASE:'other_'+tag}),/did not create/);
