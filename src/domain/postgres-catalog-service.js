@@ -3,6 +3,7 @@
 const { ValidationError, NotFoundError } = require('./errors');
 const { TRACKING_MODE_IDS } = require('./constants');
 const { newId, nowIso, trimOrNull, requireText, requireOneOf } = require('../lib/util');
+const { newAppendId } = require('../lib/append-id');
 const { parseOptions, codeSlug } = require('./item-service');
 const identity=require('./catalog-identity');
 
@@ -127,7 +128,10 @@ async function createImportedItemsInTransaction(client,ctx,inputs,{variantImport
   const existing=new Set((await client.query('SELECT lower(btrim(code)) AS code FROM skus WHERE workspace_id=$1 AND lower(btrim(code))=ANY($2::text[])',[ctx.workspaceId,[...new Set(candidates.map(identity.codeKey))]])).rows.map(r=>r.code));
   const taken=new Set(),itemRows=[],optionRows=[],skuRows=[],valueRows=[],created=[],at=nowIso();let ci=0;
   for(const input of normalized){
-    const itemId=input.appendToItemId||newId('item'),options=new Map(),result={itemId,skus:[]};
+    // Bulk-created records take time-ordered IDs so each batch lands at the end of the
+    // product, SKU and price indexes; random IDs made every new SKU read a random index
+    // page from disk once a catalogue outgrew memory (preparing slowed 5x at a million).
+    const itemId=input.appendToItemId||newAppendId('item'),options=new Map(),result={itemId,skus:[]};
     let measurement=require('./stock-quantity').profile(input);
     let optionPosition=0,skuPosition=0;
     if(input.appendToItemId){
@@ -144,14 +148,14 @@ async function createImportedItemsInTransaction(client,ctx,inputs,{variantImport
       skuPosition=Number((await client.query('SELECT position+1 AS next FROM skus WHERE workspace_id=$1 AND item_id=$2 ORDER BY position DESC,id DESC LIMIT 1',[ctx.workspaceId,itemId])).rows[0]?.next||0);
     }
     const optionNames=[...new Set(input.variants.flatMap(v=>(v.options||[]).map(p=>requireText(p.name,'Option name',{max:120}))))];
-    for(const name of optionNames){if(options.has(name))continue;const id=newId('opt');options.set(name,id);optionRows.push({id,item_id:itemId,name,position:optionPosition++});}
+    for(const name of optionNames){if(options.has(name))continue;const id=newAppendId('opt');options.set(name,id);optionRows.push({id,item_id:itemId,name,position:optionPosition++});}
     for(const [position,v]of input.variants.entries()){
       const parts=(v.options||[]).map(p=>({name:p.name,value:requireText(p.value,'Option value',{max:120})}));
       let candidate=requireText(candidates[ci++],'SKU code',{max:240});
       if(exact&&!trimOrNull(v.code))throw new ValidationError('Every imported variant needs its exact source SKU.');
       if(trimOrNull(v.code)&&(taken.has(identity.codeKey(candidate))||existing.has(identity.codeKey(candidate))))throw new ValidationError('The SKU code '+candidate+' already exists or repeats in this source. Recheck the preview; an explicit code will not be silently renamed.');
       const code=taken.has(candidate.toLowerCase())||existing.has(candidate.toLowerCase())?await uniqueCode(client,ctx.workspaceId,candidate,taken):candidate;
-      taken.add(code.toLowerCase());const skuId=newId('sku'),label=parts.length?parts.map(p=>p.value).join(' / '):trimOrNull(v.label);
+      taken.add(code.toLowerCase());const skuId=newAppendId('sku'),label=parts.length?parts.map(p=>p.value).join(' / '):trimOrNull(v.label);
       skuRows.push({id:skuId,item_id:itemId,code,barcode:trimOrNull(v.barcode),variant_label:label,is_default:parts.length||input.appendToItemId||position>0?0:1,position:skuPosition+position});
       for(const p of parts)valueRows.push({sku_id:skuId,option_id:options.get(p.name),value:p.value});
       result.skus.push({key:v.key,skuId,code});

@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto=require('node:crypto');
-const {newId,nowIso,trimOrNull}=require('../lib/util');
+const {newId,nowIso,trimOrNull}=require('../lib/util'),{newAppendId}=require('../lib/append-id');
 const {ValidationError,NotFoundError}=require('../domain/errors');
 const money=require('../domain/currency');
 
@@ -163,7 +163,7 @@ async function setPricesInTransaction(client,ctx,inputs,{initialize=false}={}){
     if(Object.prototype.hasOwnProperty.call(input,'expectedCurrentId')&&(before?.id||null)!==(input.expectedCurrentId||null))throw new ValidationError('The current selling price changed after this preview was prepared. Start again from the latest price.');
     if(before&&before.currency===currency&&catalogueOnlyPrice(before)===catalogueOnlyPrice(input)&&
       (before.amount_minor===null?amountMinor===null:Number(before.amount_minor)===amountMinor)){unchanged.add(input.skuId);continue;}
-    rows.push({id:newId('prc'),sku_id:input.skuId,amount_minor:amountMinor,currency,source:trimOrNull(input.source)||'owner',source_detail:input.sourceDetail||{}});
+    rows.push({id:newAppendId('prc'),sku_id:input.skuId,amount_minor:amountMinor,currency,source:trimOrNull(input.source)||'owner',source_detail:input.sourceDetail||{}});
   }
   if(rows.length){
     if(ctx.actorId){const actor=(await client.query('SELECT id,name FROM users WHERE id=$1 AND workspace_id=$2',[ctx.actorId,ctx.workspaceId])).rows[0];if(!actor)throw new NotFoundError('The acting user does not belong to this inventory.');actorName=actor.name;}
