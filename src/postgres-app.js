@@ -87,6 +87,7 @@ function createPostgresApp({database,requestTracker=null,resourceDatabase=databa
   app.use(require('./commercial/resource-metrics').middleware(resourceDatabase));
   app.get('/app-system.css',(req,res)=>res.type('text/css').set('Cache-Control','public, max-age=86400').send(require('./web/presentation/stylesheets').stylesheet()));
   app.get('/og.png',(_req,res)=>res.redirect(302,'/stockchief-share-v1.png'));
+  app.get('/.well-known/microsoft-identity-association.json',require('./web/microsoft-domain-proof'));
   app.use(express.static(path.join(__dirname,'web','public'),{maxAge:env==='production'?'7d':0}));
   // Dynamic pages and APIs can contain connected accounting data. Browsers
   // and shared proxies must not retain those responses after sign-out.
