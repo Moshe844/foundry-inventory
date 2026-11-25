@@ -121,4 +121,12 @@ async function execute(database,ctx,plan,executionId,{deps,inputOptions,applyChu
  await Promise.all(jobs);await delivery;if(failure)throw failure;
  return (await database.query('SELECT apply_checkpoint FROM import_plans WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,plan.id])).rows[0].apply_checkpoint;
 }
-module.exports={prepare,progress,execute,additive,enabled:()=>workers()>0,totals:(client,ctx,plan)=>progress(client,ctx,plan,{complete:true})};
+// The business worker shares one pool between import saving and its other loops (jobs,
+// schedules, capacity, reading). Lanes take up to their configured count on top of the
+// import's own session, so the pool must hold that many more than the loops need.
+function workerPoolSize(env=process.env){
+ const set=Number(env.FOUNDRY_WORKER_DB_POOL_SIZE);if(Number.isInteger(set)&&set>0)return set;
+ const value=Number(env.FOUNDRY_IMPORT_STOCK_WORKERS||0),lanes=Number.isInteger(value)&&value>=1&&value<=4?value:0;
+ return 5+lanes;
+}
+module.exports={prepare,progress,execute,additive,enabled:()=>workers()>0,workerPoolSize,totals:(client,ctx,plan)=>progress(client,ctx,plan,{complete:true})};

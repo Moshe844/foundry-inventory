@@ -14,7 +14,9 @@ validateProductionEnvironment({ requireSession: false });
 
 const database = openPostgres(connectionString, {
   applicationName: process.env.FOUNDRY_WORKER_NAME || 'stockchief-business-worker',
-  max: Number(process.env.FOUNDRY_WORKER_DB_POOL_SIZE || 5),
+  // Room for parallel import saving on top of the job loop, scheduler and other runtimes;
+  // with four lanes in five connections, emails and other jobs waited until imports ended.
+  max: require('./imports/postgres-stock-lanes').workerPoolSize(),
 });
 
 let runtime = null;
