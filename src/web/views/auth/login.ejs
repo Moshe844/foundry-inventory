@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sign in · StockChief</title>
+<% if(locals.reviewerSignIn){ %><meta name="referrer" content="no-referrer"><% } %>
 <link rel="stylesheet" href="/design.css?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>">
 <link rel="stylesheet" href="/commercial.css?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>"><link rel="stylesheet" href="/professional-system.css?v=<%= locals.assetVersion||'current' %>">
 <link rel="stylesheet" href="/public-experience.css?v=<%= locals.assetVersion||'current' %>"><script src="/public-experience.js?v=<%= locals.assetVersion||'current' %>" defer></script></head>

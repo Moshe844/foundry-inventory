@@ -54,6 +54,7 @@ test('private review access requires a password, isolated synthetic inventory an
   const reviewer=request.agent(app),reviewPage=await reviewer.get('/reviewer-login').expect(200);
   assert.equal(reviewPage.headers['referrer-policy'],'no-referrer');assert.equal(reviewPage.headers['cache-control'],'private, no-store');
   assert.match(reviewPage.text,/reviewer-login\.js/);
+  assert.match(reviewPage.text,/<meta name="referrer" content="no-referrer">/,'private page protects referrers even when an edge proxy replaces its HTTP header');
   await reviewer.post('/reviewer-login').type('form').send({_csrf:csrf(reviewPage.text),email,password:'WrongFixturePassword!',reviewToken:issued.token}).expect(401);
   const retryPage=await reviewer.get('/reviewer-login');
   await reviewer.post('/reviewer-login').type('form').send({_csrf:csrf(retryPage.text),email,password,reviewToken:issued.token}).expect(302).expect('location','/');
