@@ -60,7 +60,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   router.get('/capabilities',asyncRoute(async(req,res)=>renderPublic(req,res,'public/capabilities',{
     title:'Capabilities',nav:'capabilities',description:'Explore the inventory, purchasing, order, communication, shipping, payment and accounting work StockChief handles today.'})));
   router.get('/integrations/bigcommerce',asyncRoute(async(req,res)=>renderPublic(req,res,'public/bigcommerce-guide',{
-    title:'Connect BigCommerce',nav:'integrations',description:'Install, verify and safely configure your approved BigCommerce connection.'})));
+    title:'BigCommerce — Coming soon',nav:'integrations',description:'The BigCommerce connection is not available for new customer installations yet.'})));
   router.get('/integrations',asyncRoute(async(req,res)=>renderPublic(req,res,'public/integrations',{
     groups:require('../presentation/public-integrations').groups(),title:'Integrations',nav:'integrations',description:'See how StockChief connects commerce, email, shipping, payments, accounting and custom systems—and the qualification status of each.'})));
   router.get('/switching',asyncRoute(async(req,res)=>renderPublic(req,res,'public/switching',{
