@@ -73,7 +73,7 @@ function groups(){
     what:p.description,provides:p.provides||[],steps:stepsFor(p,group.title),
     // Built, and switched on per business while the provider's partner approval
     // finishes (connections/launch-policy.js); its internal reason is never shown publicly.
-    earlyAccess:p.available===false}))}));
+    comingSoon:p.type==='bigcommerce',earlyAccess:p.available===false&&p.type!=='bigcommerce'}))}));
   return [...catalogued,
     {title:'Payments',description:'Your customers pay your own merchant account.',providers:PAYMENTS},
     {title:'Shipping',description:'Your own provider account pays for postage.',providers:SHIPPING.map(p=>({what:SHIPPING_WHAT,provides:['live rates on each order','labels bought from your own account','tracking on the order'],...p}))}
