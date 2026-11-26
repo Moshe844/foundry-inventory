@@ -23,7 +23,7 @@ test('phone owner reviews a contract, prepares a manual native PO, teaches only 
  const teach=first.getByRole('button',{name:'Teach from this approved release',exact:true});
  await teach.waitFor({state:'visible'});
  assert.equal(await teach.isDisabled(),true);
- const native=await s.release(db,ctx,slots[0].id),contractUrl=page.url();await first.getByRole('link',{name:/Open PO/}).click();assert.match(await page.locator('main').innerText(),/Vendor-Case-Sensitive-01/);assert.match(await page.locator('main').innerText(),/\$20\.00/);
+ const native=await s.release(db,ctx,slots[0].id),contractUrl=page.url();await Promise.all([page.waitForNavigation({waitUntil:'domcontentloaded'}),first.getByRole('link',{name:/Open PO/}).click()]);assert.match(await page.locator('main').innerText(),/Vendor-Case-Sensitive-01/);assert.match(await page.locator('main').innerText(),/\$20\.00/);
  await f.workflows.approvePurchaseOrder(db,ctx,native.purchase_order_id,{idempotencyKey:randomUUID()});await page.goto(contractUrl);await showDates();await first.getByLabel(/Use this individually reviewed, approved purchase release/).check();await teach.click();
  assert.equal(await page.getByRole('button',{name:'Run the release schedule',exact:true}).isDisabled(),false);await page.getByLabel(/Run this agreement’s release schedule/).check();await page.getByRole('button',{name:'Run the release schedule',exact:true}).click();
  const handlers=require('../../src/operations/postgres-runtime-handlers').create(),run=await require('../../src/operations/postgres-job-queue').processOne(db,{[s.kind]:handlers[s.kind]},{owner:'phone-contract-worker'});assert.equal(run.status,'COMPLETED');assert(run.result.purchaseOrderId);
