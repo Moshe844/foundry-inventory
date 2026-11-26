@@ -11,7 +11,7 @@ const EXCLUDED=Object.freeze({
   shopify:'Shopify needs distribution and billing-term qualification before new self-service connections.',
   clover:'Clover needs App Market and developer-term qualification before new self-service connections.',
   microsoft365:'Microsoft 365 needs final live connector qualification before new self-service connections.',
-  bigcommerce:'BigCommerce is undergoing test-store certification before new customer activation.',
+  bigcommerce:'BigCommerce is coming soon. New connections are not available yet.',
   erp_future:'Custom ERP connections require a qualified contract and are not included in initial self-service launch.'
 });
 
