@@ -39,18 +39,30 @@ async function queue(db,actorAccountId,input,options={}){
  await require('../operations/postgres-job-queue').enqueue({query:c.query.bind(c),transaction:fn=>fn(c)},{kind:'developer.account-delete',idempotencyKey:id,payload:{requestId:id},priority:70,maxAttempts:8});
  return {requestId:id,queued:true};},{isolation:'SERIALIZABLE',retrySafe:true});
 }
-async function removeAccountRows(c,accountId){
+// Removes the rows a predicate selects from one table, after first removing every
+// row that still refers to them through a foreign key that would block it. The
+// links are read from the catalogue, so a table added later that refers to the
+// account or to its jobs (an email delivery receipt, for example) is covered too.
+// With onlyUnscopedReferences, a referring row that belongs to a business (has a
+// workspace_id) stops the removal instead: the removed inventories are already
+// gone, so such a row would be another business's record.
+async function removeLinkedRows(c,table,predicate,value,{onlyUnscopedReferences=false}={}){
  const edges=(await c.query(`SELECT con.conrelid::text child,con.confrelid::text parent,con.confdeltype action,n.nspname schema,t.relname name,
  array_agg(a.attname::text ORDER BY k.i) columns,array_agg(p.attname::text ORDER BY k.i) parent_columns
  FROM pg_constraint con JOIN pg_class t ON t.oid=con.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace
  CROSS JOIN LATERAL generate_subscripts(con.conkey,1) k(i) JOIN pg_attribute a ON a.attrelid=con.conrelid AND a.attnum=con.conkey[k.i]
  JOIN pg_attribute p ON p.attrelid=con.confrelid AND p.attnum=con.confkey[k.i] WHERE con.contype='f' AND n.nspname IN ('public','stockchief_runtime') GROUP BY con.oid,n.nspname,t.relname`)).rows;
- const oid=(await c.query("SELECT 'accounts'::regclass::oid::text oid")).rows[0].oid,known=new Map([[oid,{schema:'public',name:'accounts',predicate:'id=$1'}]]);
+ const root=(await c.query('SELECT r.oid::text oid,n.nspname schema,r.relname name FROM pg_class r JOIN pg_namespace n ON n.oid=r.relnamespace WHERE r.oid=$1::regclass',[table])).rows[0];
+ const known=new Map([[root.oid,{schema:root.schema,name:root.name,predicate}]]),accountId=value;
  let changed=true;while(changed){changed=false;for(const e of edges)if(known.has(e.parent)&&!known.has(e.child)&&!['n','d'].includes(e.action)){
   const p=known.get(e.parent);known.set(e.child,{schema:e.schema,name:e.name,predicate:'('+e.columns.map(quote).join(',')+') IN (SELECT '+e.parent_columns.map(quote).join(',')+' FROM '+quote(p.schema)+'.'+quote(p.name)+' WHERE '+p.predicate+')'});changed=true;}}
  const active=new Map();for(const[k,v]of known)if((await c.query('SELECT 1 FROM '+quote(v.schema)+'.'+quote(v.name)+' WHERE '+v.predicate+' LIMIT 1',[accountId])).rows.length)active.set(k,v);
+ if(onlyUnscopedReferences)for(const[k,v]of active)if(k!==root.oid&&(await c.query("SELECT 1 FROM pg_attribute WHERE attrelid=$1::oid AND attname='workspace_id' AND NOT attisdropped",[k])).rows.length
+  &&(await c.query('SELECT 1 FROM '+quote(v.schema)+'.'+quote(v.name)+' WHERE workspace_id IS NOT NULL AND '+v.predicate+' LIMIT 1',[accountId])).rows.length)
+  throw new ValidationError('A record in another business still refers to this account’s work. No account data was removed.');
  while(active.size){const ready=[...active].filter(([id])=>!edges.some(e=>active.has(e.child)&&e.parent===id&&e.child!==id&&!['n','d'].includes(e.action)));if(!ready.length)throw new ValidationError('A linked account record needs review. No account data was removed.');for(const[id,v]of ready){await c.query('DELETE FROM '+quote(v.schema)+'.'+quote(v.name)+' WHERE '+v.predicate,[accountId]);active.delete(id);}}
 }
+const removeAccountRows=(c,accountId)=>removeLinkedRows(c,'public.accounts','id=$1',accountId);
 // The request row carries the authority between steps. Its approval is checked
 // once, when removal starts (status EXECUTING, execution_started_at); a retry
 // after an interruption resumes from that state instead of re-reviewing an
@@ -89,7 +101,7 @@ async function execute(db,requestId,options={}){
  const ids=d.workspace_ids;
  for(const workspaceId of ids){if(!(await c.query('SELECT id FROM workspaces WHERE id=$1 FOR UPDATE',[workspaceId])).rows.length)continue;await purgeAuthority(c,d,workspaceId);await purge.purgeWorkspace(c,workspaceId);}
  await c.query("DELETE FROM stockchief_runtime.sessions WHERE data->>'accountId'=$1",[d.target_account_id]);
- await c.query("DELETE FROM stockchief_runtime.jobs WHERE payload->>'accountId'=$1 AND status<>'RUNNING'",[d.target_account_id]);
+ await removeLinkedRows(c,'stockchief_runtime.jobs',"payload->>'accountId'=$1 AND status<>'RUNNING'",d.target_account_id,{onlyUnscopedReferences:true});
  await removeAccountRows(c,d.target_account_id);await c.query("UPDATE developer_account_deletions SET status='COMPLETED',completed_at=now() WHERE id=$1",[requestId]);return {completed:true,workspacesRemoved:ids.length,signInAccountRemoved:true,spendingReceiptsRetained:true};
  },settings);}
 module.exports={assertAdmin:admin,review,queue,execute};

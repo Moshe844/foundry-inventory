@@ -20,7 +20,7 @@ async function operator(db,id){const account=(await db.query(`SELECT a.id,a.emai
  if(account.active===false)return null;
  const configured=require('../config').commercial.adminEmails.includes(account.email.toLowerCase());
  if(!account.role&&!account.legacy_admin&&!configured)return null;
- return {...account,role:account.role||'OWNER'};
+ return {...account,role:account.role||'OWNER',storedRole:Boolean(account.role)};
 }
 async function start(db,input){const account=await accountAuth.authenticate(db,input.email,input.password,{ip:input.ip});
  const actor=account&&await operator(db,account.id);
@@ -49,6 +49,13 @@ async function verify(db,id,code,passwordVersion){return db.transaction(async c=
  else await c.query('INSERT INTO platform_console_mfa(account_id,sealed_secret,last_counter) VALUES($1,$2,$3)',[actor.id,pending.sealed_secret,counter]);
  await c.query('UPDATE platform_console_challenges SET consumed_at=now(),sealed_secret=NULL WHERE id=$1',[id]);
  await audit(c,{actorAccountId:actor.id,subjectType:'platform_console',subjectId:actor.id,action:stored?'mfa_sign_in':'mfa_enrolled',reason:'Separate private console session. Customer inventory session is unchanged.'});
+ // The console admits a configured or legacy administrator as Owner, but account
+ // access, deletion and the database's removal guard rely on the stored operator
+ // record. Store that admission once, after a verified authenticator code, so the
+ // Owner the console shows is the Owner those checks see. An explicitly disabled
+ // operator never reaches this point (operator() refuses it) and is never re-enabled.
+ if(!actor.storedRole){const added=await c.query("INSERT INTO platform_console_operators(account_id,role,granted_by) VALUES($1,'OWNER',$2) ON CONFLICT DO NOTHING",[actor.id,actor.legacy_admin?'Existing explicit platform administrator':'Configured platform administrator']);
+  if(added.rowCount)await audit(c,{actorAccountId:actor.id,subjectType:'platform_console_operator',subjectId:actor.id,action:'owner_record_stored',afterState:{role:'OWNER',active:true},reason:'Admitted as Owner by the console after MFA; account access and deletion use the stored record.'});}
  return {accountId:actor.id,passwordVersion:version(actor),enrolledAt:Date.now()};
  },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function sessionActor(db,session,{touch=true}={}){if(!session?.owner)return null;const signed=session.owner,now=Date.now();

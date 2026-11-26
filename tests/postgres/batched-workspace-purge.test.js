@@ -4,16 +4,27 @@ const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID
 // the real owner-console deletion with tiny batches, stops it part way, proves the
 // guard is re-checked on every batch, then resumes it after its approval window.
 test('owner-console deletion removes an inventory in committed batches, resumes after an interruption and never touches another owner',{timeout:300000},async t=>{
- const oldEnvironment=process.env.STOCKCHIEF_RUNTIME_ENV;process.env.STOCKCHIEF_RUNTIME_ENV='staging';
+ const oldEnvironment=process.env.STOCKCHIEF_RUNTIME_ENV,oldAdmins=process.env.STOCKCHIEF_COMMERCIAL_ADMIN_EMAILS;process.env.STOCKCHIEF_RUNTIME_ENV='staging';
  const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
- t.after(async()=>{process.env.STOCKCHIEF_RUNTIME_ENV=oldEnvironment;await db.close();await cluster.stop();});
+ t.after(async()=>{process.env.STOCKCHIEF_RUNTIME_ENV=oldEnvironment;if(oldAdmins===undefined)delete process.env.STOCKCHIEF_COMMERCIAL_ADMIN_EMAILS;else process.env.STOCKCHIEF_COMMERCIAL_ADMIN_EMAILS=oldAdmins;await db.close();await cluster.stop();});
  await require('../../src/db/migrate-postgres').migratePostgres(db);
  const auth=require('../../src/domain/postgres-auth-service'),access=require('../../src/domain/postgres-account-access'),deletion=require('../../src/domain/postgres-developer-accounts'),queue=require('../../src/operations/postgres-job-queue'),mfa=require('../../src/platform-owner/auth');
  const catalog=require('../../src/domain/postgres-catalog-service'),engine=require('../../src/domain/postgres-inventory-engine'),places=require('../../src/domain/postgres-location-service');
  const password='OwnerAccess!'+randomUUID(),actors={};
- for(const name of ['owner','customer','other']){const actor=await auth.createBusiness(db,{name,businessName:name+' business',email:randomUUID()+'@example.test',password,timeZone:'America/New_York'});actors[name]=actor;await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,billing_interval,source) VALUES($1,$2,'growth','COMP','CUSTOM','OFFLINE_TEST')",[randomUUID(),actor.accountId]);}
- await db.query("INSERT INTO platform_console_operators(account_id,role,granted_by) VALUES($1,'OWNER','ISOLATED_TEST')",[actors.owner.accountId]);
+ for(const name of ['owner','customer','other','disabled']){const actor=await auth.createBusiness(db,{name,businessName:name+' business',email:randomUUID()+'@example.test',password,timeZone:'America/New_York'});actors[name]=actor;await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,billing_interval,source) VALUES($1,$2,'growth','COMP','CUSTOM','OFFLINE_TEST')",[randomUUID(),actor.accountId]);}
+ // The owner is admitted by the configured administrator list only, as on the live
+ // service. Their first MFA sign-in stores the Owner record that account access,
+ // deletion and the database guard rely on.
+ process.env.STOCKCHIEF_COMMERCIAL_ADMIN_EMAILS=[actors.owner.email,actors.disabled.email].join(',');
+ await assert.rejects(access.assertOwner(db,actors.owner.accountId),/platform owner/,'No stored Owner record before the MFA sign-in');
  const pending=await mfa.start(db,{email:actors.owner.email,password,ip:'isolated-test'}),challenge=await mfa.challenge(db,pending.challenge);assert((await mfa.verify(db,pending.challenge,mfa.codeAt(mfa.unseal(challenge.sealed_secret),Math.floor(Date.now()/30000)),pending.passwordVersion)).accountId);
+ assert.deepEqual((await db.query('SELECT role,active FROM platform_console_operators WHERE account_id=$1',[actors.owner.accountId])).rows,[{role:'OWNER',active:true}]);
+ assert.equal((await db.query("SELECT count(*)::int n FROM commercial_change_audit WHERE subject_type='platform_console_operator' AND subject_id=$1 AND action='owner_record_stored'",[actors.owner.accountId])).rows[0].n,1);
+ await access.assertOwner(db,actors.owner.accountId);
+ // An explicitly disabled operator stays disabled even when listed as an administrator.
+ await db.query("INSERT INTO platform_console_operators(account_id,role,active,granted_by) VALUES($1,'OWNER',false,'ISOLATED_TEST')",[actors.disabled.accountId]);
+ await assert.rejects(mfa.start(db,{email:actors.disabled.email,password,ip:'isolated-test'}),/Unable to sign in/);
+ assert.equal((await db.query('SELECT active FROM platform_console_operators WHERE account_id=$1',[actors.disabled.accountId])).rows[0].active,false);
  // Two businesses with the same kind of records: products, SKUs, stock and history.
  const stocked=async(actor,count)=>{const ctx={workspaceId:actor.workspaceId,actorId:actor.userId},place=await places.createLocation(db,ctx,{name:'Shelf',kind:'warehouse'});
   for(let i=0;i<count;i++){const item=await catalog.createItem(db,ctx,{name:'Product '+i,baseCode:'P'+i+'-'+randomUUID().slice(0,6),trackingMode:'quantity'});await engine.receive(db,ctx,{skuId:item.skuIds[0],locationId:place.id,quantity:i+1,idempotencyKey:'stock-'+i});}};
@@ -51,14 +62,30 @@ test('owner-console deletion removes an inventory in committed batches, resumes 
  await db.query('UPDATE platform_account_access SET disabled_at=now() WHERE account_id=$1',[actors.customer.accountId]);
 
  // 3. Resume after the approval window: a removal started in time may finish.
+ // Emails sent to the account leave delivery receipts that refer to its jobs; they
+ // must not block removing those jobs. Another account's receipt is kept.
+ const mailed=async actor=>{const job=(await queue.enqueue(db,{kind:'test.account-email',idempotencyKey:'mail-'+actor.accountId,payload:{accountId:actor.accountId}})).job;
+  await db.query("INSERT INTO commercial_email_deliveries(job_id,payload_sha256,provider_id,accepted_attempt,accepted_at) VALUES($1,'isolated',$2,1,now())",[job.id,'provider-'+job.id]);return job.id;};
+ const customerMail=await mailed(actors.customer),otherMail=await mailed(actors.other);
  await db.query("UPDATE developer_account_deletions SET execution_started_at=now()-interval '3 hours',expires_at=now()-interval '2 hours' WHERE id=$1",[requested.requestId]);
- const done=[],handlers=require('../../src/operations/postgres-runtime-handlers').create();
- const result=await deletion.execute(db,requested.requestId,{purge:{batchRows:3,onBatch:b=>{if(b.done)done.push(b);}}});
+ const done=[],handlers=require('../../src/operations/postgres-runtime-handlers').create(),resume={purge:{batchRows:3,onBatch:b=>{if(b.done)done.push(b);}}};
+ // A business record that refers to the account's work stops the final step, which
+ // keeps the account; links are read from the catalogue, so a new table counts too.
+ await db.query('CREATE TABLE public.isolated_job_reference(id text PRIMARY KEY,workspace_id text,job_id text NOT NULL REFERENCES stockchief_runtime.jobs(id))');
+ await db.query("INSERT INTO public.isolated_job_reference VALUES('reference',$1,$2)",[actors.other.workspaceId,customerMail]);
+ await assert.rejects(deletion.execute(db,requested.requestId,resume),/another business/);
+ assert.equal((await db.query('SELECT count(*)::int n FROM accounts WHERE id=$1',[actors.customer.accountId])).rows[0].n,1,'The account is kept while another business refers to its work');
+ assert.equal((await db.query('SELECT count(*)::int n FROM public.isolated_job_reference')).rows[0].n,1,'Another business keeps its record');
+ await db.query('DROP TABLE public.isolated_job_reference');
+ const result=await deletion.execute(db,requested.requestId,resume);
  assert.equal(result.signInAccountRemoved,true);assert(done.some(b=>b.batches>1),'Larger tables were removed in more than one batch');
  assert.deepEqual(await counts(actors.customer.workspaceId),{items:0,skus:0,movements:0,units:0});
  assert.equal((await db.query('SELECT 1 FROM workspaces WHERE id=$1',[actors.customer.workspaceId])).rows.length,0);
  assert.equal((await db.query('SELECT 1 FROM accounts WHERE id=$1',[actors.customer.accountId])).rows.length,0);
  assert.deepEqual(await counts(actors.other.workspaceId),otherBefore,'Another owner keeps every record');
+ assert.equal((await db.query('SELECT count(*)::int n FROM stockchief_runtime.jobs WHERE id=$1',[customerMail])).rows[0].n,0,'The removed account’s email job is gone');
+ assert.equal((await db.query('SELECT count(*)::int n FROM commercial_email_deliveries WHERE job_id=$1',[customerMail])).rows[0].n,0,'…with its delivery receipt');
+ assert.equal((await db.query('SELECT count(*)::int n FROM commercial_email_deliveries WHERE job_id=$1',[otherMail])).rows[0].n,1,'Another account keeps its delivery receipt');
  assert.equal((await deletion.execute(db,requested.requestId)).replayed,true);
  const replay=await queue.processOne(db,{'developer.account-delete':handlers['developer.account-delete']},{owner:'replay-worker',leaseMs:60000});assert.equal(replay.status,'COMPLETED');assert.equal(replay.result.replayed,true);
 
