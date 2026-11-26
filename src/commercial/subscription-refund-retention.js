@@ -33,13 +33,19 @@ async function cancel(db,job,options={}){
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 const quote=s=>'"'+String(s).replaceAll('"','""')+'"';
-async function purgeWorkspace(c,workspaceId){
+// Every refusal is taken here, before any business row is removed: retained
+// ledgers, unfinished work, the database guard, links into another inventory and
+// dependency cycles. It returns the tables to empty, children before parents.
+async function preparePurge(c,workspaceId){
  // Explicit test ledgers are retained until independently reconciled. Deleting
  // one must never reset an already authorized certification ceiling.
  if((await c.query("SELECT 1 FROM stockchief_runtime.codex_pilots WHERE workspace_id=$1 AND coalesce(admission_kind,'PILOT')<>'COMMERCIAL'",[workspaceId])).rows.length)throw new ValidationError('This inventory has an explicit certification spending ledger that must be retained and reconciled before deletion.');
  const busy=(await c.query(`SELECT EXISTS(SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND status='RUNNING') OR EXISTS(SELECT 1 FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND status IN ('RUNNING','AMBIGUOUS')) OR EXISTS(SELECT 1 FROM commercial_model_cost_holds WHERE workspace_id=$1 AND status IN ('RESERVED','UNKNOWN')) AS blocked`,[workspaceId])).rows[0];if(busy.blocked)throw new ValidationError('Unfinished external work must reconcile before this inventory can be deleted.');
  const allowed=(await c.query('SELECT stockchief_workspace_purge_allowed($1) AS allowed',[workspaceId])).rows[0].allowed;if(!allowed)throw new ValidationError('The verified refund retention period has not ended.');
  await c.query(`INSERT INTO commercial_retained_model_receipts(hold_id,account_id,provider,model,maximum_minor,actual_minor,status,created_at) SELECT id,account_id,provider,model,maximum_minor,actual_minor,status,created_at FROM commercial_model_cost_holds WHERE workspace_id=$1 ON CONFLICT(hold_id) DO NOTHING`,[workspaceId]);
+ // A large removal commits in many steps. Close the inventory first, so its
+ // scheduled work cannot be claimed against partly removed records.
+ await c.query('UPDATE workspaces SET deletion_requested_at=coalesce(deletion_requested_at,$2) WHERE id=$1',[workspaceId,new Date().toISOString()]);
  // Discover tenant tables and non-tenant children from actual foreign keys.
  // Keep account-level payment/refund receipts; remove the workspace's content.
  const tables=(await c.query(`SELECT c.oid::text AS oid,n.nspname AS schema,c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind='r' AND n.nspname IN ('public','stockchief_runtime') AND EXISTS(SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='workspace_id' AND NOT a.attisdropped)`)).rows;
@@ -82,18 +88,80 @@ async function purgeWorkspace(c,workspaceId){
  const storageCounter=r=>r.schema==='public'&&r.name==='commercial_storage_usage';
  // Keep byte counters until canonical deletes (including SKU-capacity updates)
  // have finished. They are maintained by triggers rather than foreign keys.
- const deletionOrder=[...order.filter(r=>!capacityCounter(r)&&!storageCounter(r)),...order.filter(capacityCounter),...order.filter(storageCounter)];
- // Immutable audit history is removed by the workspace cascade; sealed ERP
- // source records are removed by their package cascade after its header is
- // gone. Keep both guards active, including all cross-tenant purge checks.
- const parentCascadeOnly=r=>r.schema==='public'&&['catalogue_change_history','security_event_history','migration_records'].includes(r.name);
- for(const r of deletionOrder)if(!parentCascadeOnly(r))await c.query('DELETE FROM '+quote(r.schema)+'.'+quote(r.name)+' WHERE '+r.predicate,[workspaceId]);
+ return [...order.filter(r=>!capacityCounter(r)&&!storageCounter(r)),...order.filter(capacityCounter),...order.filter(storageCounter)];
+}
+// Immutable audit history is removed by the workspace cascade; sealed ERP
+// source records are removed by their package cascade after its header is
+// gone. Keep both guards active, including all cross-tenant purge checks.
+const parentCascadeOnly=r=>r.schema==='public'&&['catalogue_change_history','security_event_history','migration_records'].includes(r.name);
+async function purgeWorkspace(c,workspaceId){
+ for(const r of await preparePurge(c,workspaceId))if(!parentCascadeOnly(r))await c.query('DELETE FROM '+quote(r.schema)+'.'+quote(r.name)+' WHERE '+r.predicate,[workspaceId]);
  await c.query('UPDATE accounts SET last_workspace_id=NULL WHERE last_workspace_id=$1',[workspaceId]);
  await c.query('DELETE FROM workspaces WHERE id=$1',[workspaceId]);return {deleted:true};
 }
-async function remove(db,job){return db.transaction(async c=>{
+// Removes the rows of a prepared purge in short, separately committed
+// transactions, so a very large inventory never needs one transaction holding
+// millions of row locks and an hour of undo. Each batch sets its own purge
+// authority with `authorize` and re-checks the database guard, so a batch can
+// remove only rows the same approval covers; every immutable-history trigger
+// stays enabled and checks each row. A table with at most `batchRows` matching
+// rows is emptied in one batch. A larger one is walked once, by ranges of its
+// physical pages, and the range size follows how long each batch actually took.
+// Anything left over (rows moved or added meanwhile) is removed by the caller's
+// final purgeWorkspace transaction.
+async function purgeRowsInBatches(db,workspaceId,order,{authorize,batchRows=5000,targetMs=2000,onBatch}={}){
+ if(typeof authorize!=='function')throw new TypeError('A batched purge needs its authority for each transaction.');
+ const batch=fn=>db.transaction(async c=>{await authorize(c);
+  if(!(await c.query('SELECT stockchief_workspace_purge_allowed($1) AS allowed',[workspaceId])).rows[0].allowed)throw new ValidationError('This inventory is no longer authorized for permanent deletion. Its remaining records were kept.');
+  return fn(c);},{statementTimeoutMs:120000});
+ let removed=0;
+ for(const r of order){
+  if(parentCascadeOnly(r))continue;
+  const table=quote(r.schema)+'.'+quote(r.name),started=Date.now();let rows=0,ranges=0;
+  const shape=(await db.query("SELECT c.relkind,(pg_relation_size(c.oid)/current_setting('block_size')::int)::bigint AS pages FROM pg_class c WHERE c.oid=$1::regclass",[table])).rows[0];
+  const many=async()=>(await db.query('SELECT count(*)::int AS n FROM (SELECT 1 FROM '+table+' WHERE '+r.predicate+' LIMIT $2) x',[workspaceId,batchRows+1])).rows[0].n>batchRows;
+  if(shape.relkind==='r'&&await many()){
+   // A just-imported table can still have reltuples=-1. Start conservatively
+   // even then; measured batch duration can grow the next page range safely.
+   let pages=Number(shape.pages),from=0,step=Math.max(1,Math.min(64,Math.ceil(pages*batchRows/Math.max(batchRows,await estimatedRows(db,table)))));
+   while(from<pages){
+    const at=Date.now();let n;
+    try{n=await batch(async c=>(await c.query('DELETE FROM '+table+' WHERE ctid>=$2::tid AND ctid<$3::tid AND '+r.predicate,[workspaceId,`(${from},0)`,`(${from+step},0)`])).rowCount);}
+    catch(error){if(error.code==='57014'&&step>1){step=Math.max(1,step>>1);continue;}throw error;}
+    rows+=n;ranges++;from+=step;const ms=Date.now()-at;
+    if(ms<targetMs/2)step=Math.min(step*2,1<<20);else if(ms>targetMs*2)step=Math.max(1,step>>1);
+    if(from>=pages)pages=Number((await db.query("SELECT (pg_relation_size($1::regclass)/current_setting('block_size')::int)::bigint AS pages",[table])).rows[0].pages);
+    if(onBatch)await onBatch({table:r.schema+'.'+r.name,rows:n,ms});
+   }
+  }
+  // A row address is unique only inside one plain table, so anything else is
+  // removed by its scoped filter alone, in one batch.
+  if(shape.relkind!=='r'){rows+=await batch(async c=>(await c.query('DELETE FROM '+table+' WHERE '+r.predicate,[workspaceId])).rowCount);ranges++;}
+  // Small tables, and stragglers after a page walk: the addresses are read and
+  // removed by the same statement, under one snapshot.
+  else for(;;){const n=await batch(async c=>(await c.query('DELETE FROM '+table+' WHERE ctid=ANY(ARRAY(SELECT ctid FROM '+table+' WHERE '+r.predicate+' LIMIT $2))',[workspaceId,batchRows])).rowCount);rows+=n;ranges++;if(onBatch&&n)await onBatch({table:r.schema+'.'+r.name,rows:n});if(n<batchRows)break;}
+  removed+=rows;if(onBatch)await onBatch({table:r.schema+'.'+r.name,done:true,rows,batches:ranges,ms:Date.now()-started});
+ }
+ return {removed};
+}
+async function estimatedRows(db,table){return Math.max(1,Number((await db.query('SELECT greatest(reltuples,0)::bigint AS n FROM pg_class WHERE oid=$1::regclass',[table])).rows[0].n));}
+async function retained(c,job){
  const r=(await c.query('SELECT r.*,f.status AS refund_status FROM commercial_subscription_refund_retention r JOIN commercial_stripe_refunds f ON f.id=r.refund_id WHERE r.refund_id=$1 AND r.account_id=$2 FOR UPDATE OF r',[job.payload.refundId,job.payload.accountId])).rows[0];if(!r)throw new ValidationError('This refund retention record is unavailable.');if(r.status==='PURGED')return {replayed:true};if(r.status!=='READ_ONLY'||r.refund_status!=='succeeded'||new Date(r.delete_after)>new Date()||new Date(r.refunded_at).getTime()+30*86400000>Date.now())throw new ValidationError('The refund and 30-day retention period must be confirmed before deletion.');
- for(const workspaceId of r.workspace_ids){const w=(await c.query('SELECT owner_account_id FROM workspaces WHERE id=$1 FOR UPDATE',[workspaceId])).rows[0];if(!w)continue;if(w.owner_account_id!==r.account_id)throw new ValidationError('An inventory owner changed before deletion.');await c.query("SELECT set_config('stockchief.purge_workspace',$1,true)",[workspaceId]);await purgeWorkspace(c,workspaceId);}
- await c.query("UPDATE commercial_subscription_refund_retention SET status='PURGED',purged_at=now() WHERE refund_id=$1",[r.refund_id]);return {deleted:r.workspace_ids.length};
- },{isolation:'SERIALIZABLE',statementTimeoutMs:120000,retrySafe:true});}
-module.exports={observe,cancel,remove,purgeWorkspace};
+ return r;
+}
+async function ownedForPurge(c,r,workspaceId){const w=(await c.query('SELECT owner_account_id FROM workspaces WHERE id=$1 FOR UPDATE',[workspaceId])).rows[0];if(!w)return false;if(w.owner_account_id!==r.account_id)throw new ValidationError('An inventory owner changed before deletion.');await c.query("SELECT set_config('stockchief.purge_workspace',$1,true)",[workspaceId]);return true;}
+// Verify and plan in one transaction, remove rows in short batches, then finish
+// and record PURGED in one transaction. A retry repeats all three; the retained
+// refund state, not the batches, carries the authority between them.
+async function remove(db,job,options={}){
+ const settings={isolation:'SERIALIZABLE',statementTimeoutMs:120000,retrySafe:true};
+ const started=await db.transaction(async c=>{const r=await retained(c,job);if(r.replayed)return r;const plans=[];
+  for(const workspaceId of r.workspace_ids)if(await ownedForPurge(c,r,workspaceId))plans.push([workspaceId,await preparePurge(c,workspaceId)]);
+  return {plans};},settings);
+ if(started.replayed)return started;
+ for(const [workspaceId,order] of started.plans)await purgeRowsInBatches(db,workspaceId,order,{...options.purge,authorize:c=>c.query("SELECT set_config('stockchief.purge_workspace',$1,true)",[workspaceId])});
+ return db.transaction(async c=>{const r=await retained(c,job);if(r.replayed)return r;
+  for(const workspaceId of r.workspace_ids)if(await ownedForPurge(c,r,workspaceId))await purgeWorkspace(c,workspaceId);
+  await c.query("UPDATE commercial_subscription_refund_retention SET status='PURGED',purged_at=now() WHERE refund_id=$1",[r.refund_id]);return {deleted:r.workspace_ids.length};
+ },settings);}
+module.exports={observe,cancel,remove,purgeWorkspace,preparePurge,purgeRowsInBatches};

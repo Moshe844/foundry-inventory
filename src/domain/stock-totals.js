@@ -9,7 +9,10 @@
 //
 // The totals read the per-product, per-location rollup that a trigger keeps
 // equal to the stock positions, so a business-wide total reads one row per
-// product and location instead of every variant.
+// product and location instead of every variant. Each row's product is read by
+// its own key and its business checked on that row: as a join, a business that
+// PostgreSQL had not sampled yet (one being imported) was estimated at one
+// product and every product was read once per row (30 s on the home page).
 const MEASURED='coalesce(i.quantity_precision,0)>0';
 
 // A JSON value {units, measured:[{unit, quantity}]} for one business, or for one
@@ -19,8 +22,8 @@ function totalsSql(workspace,location=null){
   return `(SELECT jsonb_build_object('units',coalesce(sum(t.quantity) FILTER(WHERE NOT t.measured),0),
       'measured',coalesce(jsonb_agg(jsonb_build_object('unit',t.unit,'quantity',t.quantity) ORDER BY t.unit) FILTER(WHERE t.measured AND t.quantity<>0),'[]'::jsonb))
     FROM (SELECT ${MEASURED} AS measured,CASE WHEN ${MEASURED} THEN coalesce(nullif(i.unit_label,''),'measured') END AS unit,sum(r.on_hand) AS quantity
-      FROM item_location_balances r JOIN items i ON i.workspace_id=r.workspace_id AND i.id=r.item_id
-      WHERE ${where} GROUP BY 1,2) t)`;
+      FROM item_location_balances r CROSS JOIN LATERAL(SELECT i.workspace_id,i.quantity_precision,i.unit_label FROM items i WHERE i.id=r.item_id OFFSET 0) i
+      WHERE ${where} AND i.workspace_id=r.workspace_id GROUP BY 1,2) t)`;
 }
 
 function read(value){

@@ -13,6 +13,15 @@ async function additive(client,ctx,plan){
  return !(await client.query('SELECT EXISTS(SELECT 1 FROM import_execution_identities WHERE workspace_id=$1 AND import_id=$2 AND existing_sku_id IS NOT NULL) touches',[ctx.workspaceId,plan.id])).rows[0].touches;
 }
 function workers(){const value=Number(process.env.FOUNDRY_IMPORT_STOCK_WORKERS||0);return Number.isInteger(value)&&value>=1&&value<=4?value:0;}
+async function unsafeCatalogue(client,workspaceId,importId){
+ return (await client.query(`SELECT EXISTS(SELECT 1 FROM
+  (SELECT DISTINCT coalesce(i.existing_sku_id,(SELECT b.sku_id FROM import_catalogue_bindings b WHERE b.workspace_id=i.workspace_id AND b.import_id=i.import_id AND b.product_key=i.product_key AND b.variant_key=i.variant_key)) sku_id
+   FROM import_execution_identities i WHERE i.workspace_id=$1 AND i.import_id=$2)e
+  LEFT JOIN LATERAL (SELECT s.id,s.workspace_id,s.is_active,s.item_id FROM skus s WHERE s.id=e.sku_id OFFSET 0) s ON true
+  LEFT JOIN LATERAL (SELECT p.workspace_id,p.is_active,p.tracking_mode,p.secondary_unit_label FROM items p WHERE p.id=s.item_id OFFSET 0) i ON true
+  WHERE s.id IS NULL OR s.workspace_id<>$1 OR s.is_active<>1
+   OR i.workspace_id IS DISTINCT FROM $1 OR i.is_active<>1 OR i.tracking_mode NOT IN('quantity','lot') OR i.secondary_unit_label IS NOT NULL) unsafe`,[workspaceId,importId])).rows[0].unsafe;
+}
 async function prepare(client,ctx,plan,saved){
  if(saved.stockLaneVersion===1)return saved;
  if(!workers()||Number(saved.savedRows)||saved.version!==3||saved.executionOrder!=='item'||plan.recordsValid<5000||!await additive(client,ctx,plan))return saved;
@@ -22,14 +31,14 @@ async function prepare(client,ctx,plan,saved){
  // Freeze execution only for ordinary or lot receipts. Recheck live metadata;
  // the protected catalogue lease prevents it changing beneath these lanes.
  // A SKU this import created is checked through its own catalogue binding.
- const unsafe=(await client.query(`SELECT EXISTS(SELECT 1 FROM
-  (SELECT DISTINCT coalesce(i.existing_sku_id,b.sku_id) sku_id FROM import_execution_identities i
-   LEFT JOIN import_catalogue_bindings b ON i.existing_sku_id IS NULL AND b.workspace_id=i.workspace_id AND b.import_id=i.import_id AND b.product_key=i.product_key AND b.variant_key=i.variant_key
-   WHERE i.workspace_id=$1 AND i.import_id=$2)e
-  LEFT JOIN skus s ON s.id=e.sku_id AND s.workspace_id=$1
-  LEFT JOIN items i ON i.id=s.item_id AND i.workspace_id=$1
-  WHERE s.id IS NULL OR s.is_active<>1 OR i.is_active<>1 OR i.tracking_mode NOT IN('quantity','lot') OR i.secondary_unit_label IS NOT NULL) unsafe`,[ctx.workspaceId,plan.id])).rows[0].unsafe;
- if(unsafe)return saved;
+ // Every binding, SKU and product is read by its own unique key, one row per
+ // staged SKU, and the business is checked on that row, so the plan cannot
+ // depend on statistics (a business-scoped lookup still read thousands of SKUs
+ // per SKU under the import's generic plan). Preparing has just created this
+ // catalogue: before PostgreSQL samples it, a planner choosing joins took the
+ // three tables as empty and compared every SKU with every product (over 90 s
+ // for 150,000 rows, then the import's statement limit).
+ if(await unsafeCatalogue(client,ctx.workspaceId,plan.id))return saved;
  const counts=(await client.query(`SELECT execution_lane lane,count(*)::int rows FROM import_execution_identities
   WHERE workspace_id=$1 AND import_id=$2 GROUP BY execution_lane ORDER BY execution_lane`,[ctx.workspaceId,plan.id])).rows;
  const batches=counts.reduce((n,r)=>n+Math.ceil(r.rows/SIZE),0);
@@ -129,4 +138,4 @@ function workerPoolSize(env=process.env){
  const value=Number(env.FOUNDRY_IMPORT_STOCK_WORKERS||0),lanes=Number.isInteger(value)&&value>=1&&value<=4?value:0;
  return 5+lanes;
 }
-module.exports={prepare,progress,execute,additive,enabled:()=>workers()>0,workerPoolSize,totals:(client,ctx,plan)=>progress(client,ctx,plan,{complete:true})};
+module.exports={prepare,unsafeCatalogue,progress,execute,additive,enabled:()=>workers()>0,workerPoolSize,totals:(client,ctx,plan)=>progress(client,ctx,plan,{complete:true})};
