@@ -101,6 +101,12 @@ async function normalizeWebhook({body,credentials}){const prefix=facts.effectKey
  // financial refunds remain observations and never imply physical returns.
  if(body.scope==='store/order/refund/created')return [{eventId:prefix,type:'return.reported',version,occurredAt,aggregateId:String(body.data.order_id||body.data.id),data:{externalOrderId:String(body.data.order_id||body.data.id),refundId:String(body.data.refund_id||body.hash),reason:'BigCommerce reported a refund. Physical receipt and posted accounting require their canonical review.'}}];
  if(body.scope?.startsWith('store/order/')){const orderId=id(body.data?.id),order=(await api(credentials,'/v2/orders/'+orderId)).body;if(String(order.id)!==orderId)throw new ValidationError('BigCommerce did not confirm this order in the authorized store.');
+  const status=count(order.status_id,'order status');if(status>14)throw new ValidationError('This BigCommerce order status needs explicit review.');
+  // Incomplete (0) and Pending (1) are unfinished checkouts, including the
+  // temporary records created by the control-panel manual-order flow. Retain
+  // the webhook receipt without creating a sale or reserving physical stock.
+  // A later statusUpdated notification re-fetches the completed order normally.
+  if(status===0||status===1)return [];
   const products=await v2Pages(credentials,'/v2/orders/'+orderId+'/products'),amounts=orderFacts(order,products),billing=order.billing_address||{},addresses=await v2Pages(credentials,'/v2/orders/'+orderId+'/shipping_addresses'),address=addresses.length===1?addresses[0]:null;
   if(addresses.length>1)throw new ValidationError('A BigCommerce order with several destinations needs explicit shipment mapping before processing.');
   const data={externalOrderId:orderId,orderNumber:String(order.id),sourceSnapshotComplete:true,customer:{externalId:order.customer_id?String(order.customer_id):undefined,name:[billing.first_name,billing.last_name].filter(Boolean).join(' ')||billing.email||'BigCommerce customer'},customerEmail:billing.email,
