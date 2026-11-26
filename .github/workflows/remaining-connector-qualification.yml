@@ -5,6 +5,11 @@ on:
       - src/connections/providers/clover.js
       - src/connections/clover-review-pilot.js
       - src/connections/launch-policy.js
+      - src/connections/bigcommerce-customer-rollout.js
+      - tests/unit/bigcommerce-customer-rollout.test.js
+      - tests/unit/commerce-synchronization-form.test.js
+      - tests/postgres/bigcommerce-customer-rollout.test.js
+      - src/web/proposal-presentation.js
       - src/connections/accounting-review-pilot.js
       - src/connections/xero-customer-rollout.js
       - tests/unit/xero-customer-write-authority.test.js
@@ -102,6 +107,12 @@ jobs:
           if ! node -e 'require("playwright").chromium.launch().then(b=>b.close()).catch(()=>process.exit(1))'; then
             npx playwright install-deps chromium
           fi
+      - name: BigCommerce customer admission and reviewed synchronization
+        run: |
+          set -euo pipefail
+          mkdir -p output/remaining-connectors
+          node --test tests/unit/bigcommerce-adapter.test.js tests/unit/bigcommerce-order-facts.test.js tests/unit/bigcommerce-callbacks.test.js tests/unit/bigcommerce-review-pilot.test.js tests/unit/bigcommerce-customer-rollout.test.js tests/unit/commerce-synchronization-form.test.js 2>&1 | tee output/remaining-connectors/bigcommerce-unit.log
+          node --test --test-force-exit --test-concurrency=1 tests/postgres/bigcommerce-customer-rollout.test.js tests/postgres/bigcommerce-review-pilot.test.js tests/postgres/bigcommerce-webhooks.test.js tests/postgres/commerce-position-sync.test.js 2>&1 | tee output/remaining-connectors/bigcommerce-postgres.log
       - name: Provider contracts, company selection and refresh response validation
         run: |
           set -euo pipefail
