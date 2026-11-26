@@ -63,6 +63,8 @@ function productionShopifyPilots(){
 }
 function pilotAllowed(providerType,ctx={}){
  const type=String(providerType).toLowerCase();
+ if(type==='bigcommerce'&&process.env.STOCKCHIEF_RUNTIME_ENV==='production')
+  return require('./bigcommerce-review-pilot').allowed(ctx.workspaceId);
  if(['xero','quickbooks'].includes(type)&&process.env.STOCKCHIEF_RUNTIME_ENV==='production')
   return require('./accounting-review-pilot').allowed(type,ctx.workspaceId);
  if(type==='clover'&&process.env.STOCKCHIEF_RUNTIME_ENV==='production')
@@ -85,12 +87,18 @@ function assertCallbackProvider(providerType){
  if(process.env.STOCKCHIEF_RUNTIME_ENV==='staging'||(providerType==='xero'&&require('./xero-customer-rollout').enabled())||(providerType==='microsoft365'&&productionOutlookWorkspaces().length)||
   require('./accounting-review-pilot').workspaces(providerType).length||
   (providerType==='clover'&&Object.keys(require('./clover-review-pilot').pilots()).length)||
+  (providerType==='bigcommerce'&&Object.keys(require('./bigcommerce-review-pilot').pilots()).length)||
   (providerType==='shopify'&&(Object.keys(productionShopifyPilots()).length||publicShopifyEnabled())))return;
  assertNewConnection(providerType);
 }
 async function assertWorkspaceConnection(database,providerType,ctx,input={}){
  if(!EXCLUDED[String(providerType||'').toLowerCase()])return;
  ctx=await resolveWorkspaceContext(database,ctx);assertNewConnection(providerType,ctx);
+ if(providerType==='bigcommerce'&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'){
+  require('./bigcommerce-review-pilot').expected(ctx.workspaceId,input);
+  const inventory=await database.query('SELECT id FROM workspaces WHERE id=$1 AND deletion_requested_at IS NULL FOR SHARE',[ctx.workspaceId]);
+  if(!inventory.rows.length)throw new ValidationError('The approved BigCommerce test inventory is no longer available.');
+ }
  if(['xero','quickbooks'].includes(providerType)&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'){
   const inventory=await database.query('SELECT id FROM workspaces WHERE id=$1 AND deletion_requested_at IS NULL FOR SHARE',[ctx.workspaceId]);
   if(!inventory.rows.length)throw new ValidationError('The approved accounting test inventory is no longer available.');

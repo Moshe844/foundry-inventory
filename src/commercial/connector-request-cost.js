@@ -23,6 +23,21 @@ function classify(def, url, method='GET'){
  const {origin,pathname}=new URL(url);
  const verb=String(method).toUpperCase();
  const target=new URL(url);
+ // Only the explicitly approved owned test store is qualified here. This is
+ // included trial-store API usage, not approval of Marketplace/distribution
+ // fees, a paid store plan, payment processing or public customer activation.
+ if(def.provider==='bigcommerce'){
+  const stores=Object.values(require('../connections/bigcommerce-review-pilot').pilots()).flat();
+  const evidence={basis:'BIGCOMMERCE_OWNED_TEST_STORE_API_INCLUDED',source:'https://docs.bigcommerce.com/developer/docs/overview/quick-start; https://www.bigcommerce.com/pricing/faq/; owner-approved existing free test store only; store subscriptions, Marketplace and payment fees remain separate'};
+  if(stores.length&&def.version==='unversioned'&&origin==='https://login.bigcommerce.com'&&pathname==='/oauth2/token'&&verb==='POST')return evidence;
+  const scoped=/^\/stores\/([a-z0-9]+)(\/v[23]\/.*)$/.exec(pathname);
+  if(origin==='https://api.bigcommerce.com'&&scoped&&stores.includes(scoped[1])&&scoped[2].startsWith('/'+def.version+'/')){
+   const path=scoped[2];
+   if(verb==='GET'&&(/^\/v2\/(?:store|orders\/[1-9]\d*(?:\/(?:products|shipping_addresses))?)$/.test(path)||
+    /^\/v3\/(?:catalog\/products(?:\/[1-9]\d*\/variants(?:\/[1-9]\d*)?)?|inventory\/(?:locations(?:\/[1-9]\d*\/items)?|items)|hooks(?:\/[1-9]\d*)?)$/.test(path)))return evidence;
+   if(verb==='POST'&&path==='/v3/hooks'||verb==='PUT'&&(/^\/v3\/(?:hooks\/[1-9]\d*|catalog\/products\/[1-9]\d*\/variants\/[1-9]\d*|inventory\/adjustments\/absolute)$/.test(path)))return evidence;
+  }
+ }
  if(def.provider==='stripe'){
   if(def.version==='unversioned'&&origin==='https://connect.stripe.com'&&verb==='POST'&&/^\/oauth\/(token|deauthorize)$/.test(pathname))return stripe;
   if(def.version==='v1'&&origin==='https://api.stripe.com'){

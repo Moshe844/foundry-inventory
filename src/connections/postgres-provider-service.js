@@ -115,7 +115,11 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
   return database.transaction(async(client)=>{
     const authorizer=(await client.query("SELECT role FROM users WHERE workspace_id=$1 AND id=$2 AND revoked_at IS NULL FOR UPDATE",[connection.workspace_id,actorId])).rows[0];
     if(authorizer?.role!=='owner')throw new AuthenticationError('The owner who started this connection no longer has permission to authorize it. Start again with a current owner.');
-    let accountingPilotEvidence=null,xeroCustomerEvidence=null;
+    let accountingPilotEvidence=null,xeroCustomerEvidence=null,bigcommerceTestEvidence=null;
+    if(options.enforceLaunchPolicy&&connection.provider_type==='bigcommerce'&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'){
+      await launchPolicy.assertWorkspaceConnection(client,'bigcommerce',{workspaceId:connection.workspace_id},{storeHash:result.accountId});
+      bigcommerceTestEvidence=require('./bigcommerce-review-pilot').evidence(result,connection.workspace_id,actorId);
+    }
     if(options.enforceLaunchPolicy&&['xero','quickbooks'].includes(connection.provider_type)&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'){
       // Recheck after provider traffic: a revoked inventory grant must not
       // commit credentials even if it was valid when consent began.
@@ -183,6 +187,7 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
     }
     await credentials.put(client,target.workspace_id,target.id,'provider',providerCredentials,result.expiresAt||null);
     const safeConfig={...currentConfig};
+    if(bigcommerceTestEvidence)safeConfig.bigcommerceTestEvidence=bigcommerceTestEvidence;
     if(accountingPilotEvidence)safeConfig.accountingPilotEvidence=accountingPilotEvidence;
     if(xeroCustomerEvidence){safeConfig.xeroCustomerEvidence=xeroCustomerEvidence;delete safeConfig.accountingPilotEvidence;}
     if(connection.provider_type==='clover'&&result.credentials?.environment==='production'&&
