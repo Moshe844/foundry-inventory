@@ -115,17 +115,25 @@ async function readDarkTable(canvas,worker){
     for(const field of integerFields){const index=columnFields.indexOf(field);if(index<0)continue;
       for(let i=0;i<grid.length;i++){
         const initial=String(grid[i][index]).trim(),original=String(rows[i].originalValues[index]).trim(),number=/^[-+]?\d+(?:[.,]\d+)?$/;
+        const confidence=evidence=>evidence.length?Math.min(...evidence.map(w=>Number(w.confidence)||0)):0;
+        const originalEvidence=rows[i].words.filter(w=>columnAt(w)===index),columnEvidence=rows[i].columnEvidence?.[index]||[];
+        let bestConfidence=confidence(columnEvidence.length?columnEvidence:originalEvidence);
         const disagreement=number.test(initial)&&number.test(original)&&initial!==original;
-        if(number.test(initial)&&!disagreement)continue;
+        const lowConfidence=number.test(initial)&&bestConfidence<60;
+        if(number.test(initial)&&!disagreement&&!lowConfidence)continue;
         // A narrow column can turn a digit into punctuation. Re-read that
         // actual cell with surrounding whitespace; never infer it from other
         // rows or replace an unreadable/empty source with zero.
         const left=Math.max(0,Math.floor(boundaries[index])),right=Math.min(body.width,Math.ceil(boundaries[index+1])),top=Math.max(0,Math.floor(rows[i].y-typical*.85)),height=Math.min(body.height-top,Math.ceil(typical*1.7)),cell=createCanvas((right-left)*2,height*2),cx=cell.getContext('2d');
         cx.fillStyle='#fff';cx.fillRect(0,0,cell.width,cell.height);cx.drawImage(body,left,top,right-left,height,0,0,cell.width,cell.height);
         await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_LINE,tessedit_char_whitelist:'0123456789,.-+'});
-        const reading=words(await worker.recognize(cell.toBuffer('image/png'),{}, {blocks:true})).map(w=>w.text).join(' ');
-        if(/^[-+]?\d+(?:[.,]\d+)?$/.test(reading))grid[i][index]=reading;
-        if(disagreement||!initial&&number.test(reading))(rows[i].readingProblems||=[]).push({code:'image_quantity_uncertain',field,readings:[original,initial,reading].filter(Boolean),message:'The image has uncertain numeric readings. Confirm this value against the original before approving.'});
+        const cellEvidence=words(await worker.recognize(cell.toBuffer('image/png'),{}, {blocks:true})),reading=cellEvidence.map(w=>w.text).join(' ');
+        // Enlarging a JPEG can reduce recognition confidence. Keep the
+        // strongest observed numeric candidate, not simply the last reread;
+        // conflicting, recovered and low-confidence values still need review.
+        if(number.test(original)&&confidence(originalEvidence)>bestConfidence){grid[i][index]=original;bestConfidence=confidence(originalEvidence);}
+        if(number.test(reading)&&(!number.test(grid[i][index])||confidence(cellEvidence)>=Math.max(60,bestConfidence)))grid[i][index]=reading;
+        if(disagreement||lowConfidence||!initial&&number.test(reading))(rows[i].readingProblems||=[]).push({code:'image_quantity_uncertain',field,readings:[original,initial,reading].filter(Boolean),message:'The image has uncertain numeric readings. Confirm this value against the original before approving.'});
       }
     }
     const numeric=v=>require('./source-money').clean(v).replace(/[$¥,\s]/g,''),valid=v=>/^\d+(?:\.\d+)?$/.test(numeric(v));
