@@ -1,0 +1,32 @@
+'use strict';
+process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict');
+test('unsampled purge starts with a partial committed batch and import validation rejects foreign or absent products',{timeout:180000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
+ t.after(async()=>{await db.close();await cluster.stop();});
+ await db.query(`CREATE FUNCTION stockchief_workspace_purge_allowed(wanted text) RETURNS boolean LANGUAGE sql AS $$ SELECT wanted='target' AND current_setting('stockchief.purge_workspace',true)=wanted $$`);
+ await db.query('CREATE TABLE purge_fixture(id integer,workspace_id text,padding text) WITH (autovacuum_enabled=false)');
+ await db.query("INSERT INTO purge_fixture SELECT n,'target',repeat('x',1000) FROM generate_series(1,20000)n");
+ await db.query("INSERT INTO purge_fixture VALUES(20001,'other','must remain')");
+ assert.equal(Number((await db.query("SELECT reltuples FROM pg_class WHERE oid='purge_fixture'::regclass")).rows[0].reltuples),-1);
+ const purge=require('../../src/commercial/subscription-refund-retention'),order=[{schema:'public',name:'purge_fixture',predicate:'workspace_id=$1'}];
+ const authorize=c=>c.query("SELECT set_config('stockchief.purge_workspace','target',true)");
+ let firstRows=0;
+ await assert.rejects(purge.purgeRowsInBatches(db,'target',order,{authorize,onBatch:batch=>{if(!batch.done){firstRows=batch.rows;throw new Error('intentional interruption');}}}),/intentional interruption/);
+ assert(firstRows>0&&firstRows<20000,'An unsampled table must not be emptied in its first transaction');
+ assert.equal(Number((await db.query("SELECT count(*) n FROM purge_fixture WHERE workspace_id='target'")).rows[0].n),20000-firstRows,'First batch committed before interruption');
+ await purge.purgeRowsInBatches(db,'target',order,{authorize});
+ assert.deepEqual((await db.query('SELECT workspace_id,padding FROM purge_fixture')).rows,[{workspace_id:'other',padding:'must remain'}]);
+ await db.transaction(async c=>{
+  await c.query('CREATE TEMP TABLE items(id text PRIMARY KEY,workspace_id text,is_active integer,tracking_mode text,secondary_unit_label text) ON COMMIT DROP');
+  await c.query('CREATE TEMP TABLE skus(id text PRIMARY KEY,workspace_id text,is_active integer,item_id text) ON COMMIT DROP');
+  await c.query('CREATE TEMP TABLE import_execution_identities(workspace_id text,import_id text,existing_sku_id text,product_key text,variant_key text) ON COMMIT DROP');
+  await c.query('CREATE TEMP TABLE import_catalogue_bindings(workspace_id text,import_id text,product_key text,variant_key text,sku_id text) ON COMMIT DROP');
+  await c.query("INSERT INTO items VALUES('product','target',1,'quantity',NULL);INSERT INTO skus VALUES('sku','target',1,'product');INSERT INTO import_execution_identities VALUES('target','import','sku','p','v')");
+  const unsafe=()=>require('../../src/imports/postgres-stock-lanes').unsafeCatalogue(c,'target','import');
+  assert.equal(await unsafe(),false);
+  await c.query("UPDATE items SET workspace_id='other'");assert.equal(await unsafe(),true,'Foreign parent is never eligible for parallel stock writes');
+  await c.query('DELETE FROM items');assert.equal(await unsafe(),true,'Absent parent fails closed');
+ });
+ t.diagnostic(JSON.stringify({unsampledRows:20000,firstCommittedBatchRows:firstRows,resumePreservesOtherOwner:true,invalidImportParentsRejected:true}));
+});

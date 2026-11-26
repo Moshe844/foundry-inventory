@@ -30,8 +30,11 @@ async function search(database,workspaceId,rawTerm,{limit=25,groupLimit=null}={}
   // path. Stock on hand is summed only for the rows shown, not for every match.
   const candidates=(join)=>`SELECT s.id FROM skus s WHERE s.workspace_id=$1 AND s.is_active=1 AND s.code ILIKE '%'||$2||'%'
     ${join} SELECT s.id FROM skus s WHERE s.workspace_id=$1 AND s.is_active=1 AND s.variant_label ILIKE '%'||$2||'%'
-    ${join} SELECT s.id FROM items i JOIN skus s ON s.workspace_id=i.workspace_id AND s.item_id=i.id
-     WHERE i.workspace_id=$1 AND i.is_active=1 AND s.is_active=1 AND i.name ILIKE '%'||$2||'%'`;
+    ${join} SELECT s.id FROM items i CROSS JOIN LATERAL(SELECT s.id,s.workspace_id,s.is_active FROM skus s WHERE s.item_id=i.id OFFSET 0) s
+     WHERE i.workspace_id=$1 AND i.is_active=1 AND i.name ILIKE '%'||$2||'%' AND s.workspace_id=$1 AND s.is_active=1`;
+  // Products named like the term are found first, then each one's SKUs by product key.
+  // As a plain join, a business PostgreSQL had not sampled yet (one being
+  // imported) was estimated at one SKU, and every product was read once per SKU.
   const productColumns=`CASE WHEN sku.variant_label IS NULL OR sku.variant_label='' THEN 'sku' ELSE 'variant' END AS type,
       sku.id,CASE WHEN sku.variant_label IS NULL OR sku.variant_label='' THEN item.name ELSE item.name||' / '||sku.variant_label END AS title,
       CASE WHEN sku.variant_label IS NULL OR sku.variant_label='' THEN 'Product · '||sku.code ELSE 'Variant · '||sku.code END AS subtitle,

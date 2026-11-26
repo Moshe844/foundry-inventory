@@ -36,7 +36,7 @@ async function queue(db,actorAccountId,input,options={}){
  return db.transaction(async c=>{if(requestKey){await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['platform-deletion:'+actorAccountId+':'+requestKey]);const prior=(await c.query('SELECT id,email_digest,review_hash,reason FROM developer_account_deletions WHERE actor_account_id=$1 AND request_key=$2',[actorAccountId,requestKey])).rows[0];if(prior){if(prior.email_digest!==hash(String(input.email||'').trim().toLowerCase())||prior.review_hash!==input.reviewHash||prior.reason!==reason)throw new ValidationError('That deletion reference was used for a different review.');return {requestId:prior.id,queued:true,replayed:true};}}const r=await review(c,actorAccountId,input.email,options);if(!r.canDelete)throw new ValidationError(r.blockers.join(' '));if(r.reviewHash!==input.reviewHash)throw new ValidationError('The account changed. Review its current inventories before confirming removal.');
  const id=newId('accountdelete');await c.query(`INSERT INTO developer_account_deletions(id,actor_account_id,target_account_id,email_digest,review_hash,workspace_ids,environment,status,expires_at,authority,reason,request_key) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,'QUEUED',now()+interval '1 hour',$8,$9,$10)`,[id,actorAccountId,r.target.id,hash(r.target.email),r.reviewHash,JSON.stringify(r.workspaces.map(w=>w.id)),options.platformOwner?(process.env.STOCKCHIEF_RUNTIME_ENV||'production'):'staging',options.platformOwner?'PLATFORM_OWNER':'DEVELOPER_TEST',reason,requestKey]);
  if(options.platformOwner)await require('../commercial/control-service').audit(c,{actorAccountId,subjectType:'platform_account_deletion',subjectId:r.target.id,action:'explicitly_approve_deletion',afterState:{requestId:id,workspaces:r.workspaces.length},reason});
- await require('../operations/postgres-job-queue').enqueue({query:c.query.bind(c),transaction:fn=>fn(c)},{kind:'developer.account-delete',idempotencyKey:id,payload:{requestId:id},priority:70,maxAttempts:1});
+ await require('../operations/postgres-job-queue').enqueue({query:c.query.bind(c),transaction:fn=>fn(c)},{kind:'developer.account-delete',idempotencyKey:id,payload:{requestId:id},priority:70,maxAttempts:8});
  return {requestId:id,queued:true};},{isolation:'SERIALIZABLE',retrySafe:true});
 }
 async function removeAccountRows(c,accountId){
@@ -51,17 +51,45 @@ async function removeAccountRows(c,accountId){
  const active=new Map();for(const[k,v]of known)if((await c.query('SELECT 1 FROM '+quote(v.schema)+'.'+quote(v.name)+' WHERE '+v.predicate+' LIMIT 1',[accountId])).rows.length)active.set(k,v);
  while(active.size){const ready=[...active].filter(([id])=>!edges.some(e=>active.has(e.child)&&e.parent===id&&e.child!==id&&!['n','d'].includes(e.action)));if(!ready.length)throw new ValidationError('A linked account record needs review. No account data was removed.');for(const[id,v]of ready){await c.query('DELETE FROM '+quote(v.schema)+'.'+quote(v.name)+' WHERE '+v.predicate,[accountId]);active.delete(id);}}
 }
-async function execute(db,requestId){return db.transaction(async c=>{
- const d=(await c.query('SELECT * FROM developer_account_deletions WHERE id=$1 FOR UPDATE',[requestId])).rows[0];if(!d)throw new NotFoundError('That account-removal request is unavailable.');if(d.status==='COMPLETED')return {completed:true,replayed:true};await admin(c,d.actor_account_id,{platformOwner:d.authority==='PLATFORM_OWNER'});if(d.environment!==(process.env.STOCKCHIEF_RUNTIME_ENV||'production'))throw new AuthorizationError('This deletion belongs to a different environment.');if(new Date(d.expires_at)<=new Date())throw new ValidationError('This account-removal confirmation expired. Review it again.');
+// The request row carries the authority between steps. Its approval is checked
+// once, when removal starts (status EXECUTING, execution_started_at); a retry
+// after an interruption resumes from that state instead of re-reviewing an
+// account whose records are already partly removed. The database guard still
+// re-checks the operator, MFA, disabled access and the named inventories on
+// every batch.
+async function request(c,requestId){const d=(await c.query('SELECT * FROM developer_account_deletions WHERE id=$1 FOR UPDATE',[requestId])).rows[0];if(!d)throw new NotFoundError('That account-removal request is unavailable.');if(d.status==='COMPLETED')return d;await admin(c,d.actor_account_id,{platformOwner:d.authority==='PLATFORM_OWNER'});if(d.environment!==(process.env.STOCKCHIEF_RUNTIME_ENV||'production'))throw new AuthorizationError('This deletion belongs to a different environment.');return d;}
+const purgeAuthority=(c,d,workspaceId)=>c.query("SELECT set_config('stockchief.runtime_environment',$2,true),set_config('stockchief.developer_purge_request',$1,true),set_config('stockchief.purge_workspace',$3,true)",[d.id,d.environment,workspaceId]);
+async function execute(db,requestId,options={}){
+ const purge=require('../commercial/subscription-refund-retention'),settings={isolation:'SERIALIZABLE',statementTimeoutMs:120000,retrySafe:true};
+ // 1. Verify the reviewed approval and take every refusal before any row is removed.
+ const started=await db.transaction(async c=>{
+ const d=await request(c,requestId);if(d.status==='COMPLETED')return {completed:true,replayed:true};
+ if(d.status==='EXECUTING'&&d.execution_started_at)return {d,plans:[]};
+ if(new Date(d.expires_at)<=new Date())throw new ValidationError('This account-removal confirmation expired. Review it again.');
  const target=(await c.query('SELECT email FROM accounts WHERE id=$1 FOR UPDATE',[d.target_account_id])).rows[0];if(!target)throw new ValidationError('The account no longer matches its reviewed state.');const r=await review(c,d.actor_account_id,target.email,{platformOwner:d.authority==='PLATFORM_OWNER'});if(!r.canDelete||r.reviewHash!==d.review_hash)throw new ValidationError('The account changed or work is still active. Review it again; nothing was removed.');
- const ids=d.workspace_ids;await c.query("UPDATE developer_account_deletions SET status='EXECUTING' WHERE id=$1",[requestId]);await c.query("SELECT set_config('stockchief.runtime_environment',$2,true),set_config('stockchief.developer_purge_request',$1,true)",[requestId,d.environment]);
+ const ids=d.workspace_ids,begun=(await c.query("UPDATE developer_account_deletions SET status='EXECUTING',execution_started_at=now() WHERE id=$1 RETURNING *",[requestId])).rows[0];
  await c.query(`INSERT INTO commercial_deleted_ai_receipts(receipt_kind,receipt_id,funding_workspace_id,charged_micro_usd)
  SELECT 'native',id,coalesce(detail->>'certificationFundingWorkspaceId',funding_workspace_id),charged FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=ANY($1::text[]) AND state='SETTLED' ON CONFLICT DO NOTHING`,[ids]);
  await c.query(`INSERT INTO commercial_deleted_ai_receipts(receipt_kind,receipt_id,funding_workspace_id,charged_micro_usd)
  SELECT 'model_hold',id,detail->>'certificationFundingWorkspaceId',(coalesce(actual_minor,0)*10000)::bigint FROM commercial_model_cost_holds WHERE account_id=$1 AND status='SETTLED' AND detail->>'certificationFundingWorkspaceId' IS NOT NULL ON CONFLICT DO NOTHING`,[d.target_account_id]);
- for(const workspaceId of ids){await c.query('SELECT id FROM workspaces WHERE id=$1 FOR UPDATE',[workspaceId]);await c.query("SELECT set_config('stockchief.purge_workspace',$1,true)",[workspaceId]);await require('../commercial/subscription-refund-retention').purgeWorkspace(c,workspaceId);}
+ const plans=[];for(const workspaceId of ids){await c.query('SELECT id FROM workspaces WHERE id=$1 FOR UPDATE',[workspaceId]);await purgeAuthority(c,begun,workspaceId);plans.push([workspaceId,await purge.preparePurge(c,workspaceId)]);}
+ return {d:begun,plans};
+ },settings);
+ if(started.completed)return started;
+ // 2. Remove rows in short committed batches. A resumed removal plans again
+ // under the same authority; its earlier batches are already gone.
+ const d=started.d,plans=new Map(started.plans);
+ for(const workspaceId of d.workspace_ids){
+  const order=plans.get(workspaceId)||await db.transaction(async c=>{if(!(await c.query('SELECT id FROM workspaces WHERE id=$1 FOR UPDATE',[workspaceId])).rows.length)return null;await purgeAuthority(c,d,workspaceId);return purge.preparePurge(c,workspaceId);},settings);
+  if(order)await purge.purgeRowsInBatches(db,workspaceId,order,{...options.purge,authorize:c=>purgeAuthority(c,d,workspaceId)});
+ }
+ // 3. Remove what is left, the inventories themselves and the sign-in account together.
+ return db.transaction(async c=>{
+ const d=await request(c,requestId);if(d.status==='COMPLETED')return {completed:true,replayed:true};if(d.status!=='EXECUTING'||!d.execution_started_at)throw new ValidationError('This account removal has not started. Review it again; nothing was removed.');
+ const ids=d.workspace_ids;
+ for(const workspaceId of ids){if(!(await c.query('SELECT id FROM workspaces WHERE id=$1 FOR UPDATE',[workspaceId])).rows.length)continue;await purgeAuthority(c,d,workspaceId);await purge.purgeWorkspace(c,workspaceId);}
  await c.query("DELETE FROM stockchief_runtime.sessions WHERE data->>'accountId'=$1",[d.target_account_id]);
  await c.query("DELETE FROM stockchief_runtime.jobs WHERE payload->>'accountId'=$1 AND status<>'RUNNING'",[d.target_account_id]);
  await removeAccountRows(c,d.target_account_id);await c.query("UPDATE developer_account_deletions SET status='COMPLETED',completed_at=now() WHERE id=$1",[requestId]);return {completed:true,workspacesRemoved:ids.length,signInAccountRemoved:true,spendingReceiptsRetained:true};
- },{isolation:'SERIALIZABLE',statementTimeoutMs:120000,retrySafe:true});}
+ },settings);}
 module.exports={assertAdmin:admin,review,queue,execute};
