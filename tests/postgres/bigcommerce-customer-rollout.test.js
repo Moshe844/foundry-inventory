@@ -69,7 +69,7 @@ test('BigCommerce customer cohort preserves plans, grants and checkout and reche
   assert.equal(await release.isOpen(db),false,'An unevidenced store must remain unqualified');
   await db.query('UPDATE workspace_connectors SET config=$2 WHERE id=$1',[id,JSON.stringify(saved.config)]);
   delete permits.stores[ctx.workspaceId];process.env.STOCKCHIEF_BIGCOMMERCE_CUSTOMER_COHORT=JSON.stringify(permits);
-  await assert.rejects(service.finishAuthorization(db,saved,ctx.actorId,result,null,{enforceLaunchPolicy:true}),/certification/);
+  await assert.rejects(service.finishAuthorization(db,saved,ctx.actorId,result,null,{enforceLaunchPolicy:true}),/coming soon/);
   assert.deepEqual(await vault.get(db,ctx.workspaceId,id,'provider'),grant);
   permits.stores[ctx.workspaceId]=[storeHash];process.env.STOCKCHIEF_BIGCOMMERCE_CUSTOMER_COHORT=JSON.stringify(permits);
   await db.query("UPDATE workspace_connectors SET status='disconnected',paused_at=now() WHERE id=$1",[id]);
