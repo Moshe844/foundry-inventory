@@ -25,6 +25,16 @@ function fields(payload){
 }
 function summary(proposal){if(proposal.action_type==='settings.ask_preferences'){let p=proposal.payload||{};if(p.answerPreferences){try{p={...p,...JSON.parse(p.answerPreferences)};}catch{}}if(p.value&&typeof p.value==='object')p={...p,...p.value};return 'Update Ask preferences'+(p.answerStyle?': '+p.answerStyle:'.')+(p.answerLanguage?' · Language: '+p.answerLanguage:'')+(p.timeZone?' · Time zone: '+p.timeZone:'');}return proposal.summary;}
 function present(proposal){
+ if(proposal.action_type==='connection.commerce_sync'){
+  const p=proposal.payload||{},directions={off:'Off',inbound:'Provider to StockChief',outbound:'StockChief to provider',two_way:'Both directions'},sources={require_equal:'Only if values match',stockchief:'StockChief',provider:'Provider'};
+  const value=(position,side)=>{const v=position[side]?.value;return v==null?'Not checked':position.field==='price'?require('../domain/currency').format(v.amount,v.currency):String(v)+' units';};
+  const rows=[{label:'Product SKU',value:p.sku},{label:'Location',value:p.location},{label:'Starting source',value:sources[p.source]||'Review required'}];
+  for(const position of p.positions||[]){const name=position.field==='price'?'Price':'Stock';rows.push({label:name+' direction',value:directions[position.mode]||'Review required'},
+   {label:name+' in StockChief',value:value(position,'local')},{label:name+' at provider',value:value(position,'remote')});
+   if(position.field==='quantity')rows.push({label:'Physical stock',value:String(position.local?.physical??0)+' units'},{label:'Costed stock',value:String(position.local?.costed??0)+' units'});
+  }
+  return {summary:'Review synchronization for '+p.sku+' at '+p.location,impact:'Authorizes ongoing changes only for this mapped product and location. Outgoing stock uses costed, uncommitted sellable units. Incoming count differences require physical confirmation. Conflicts are held for review; delivery is verified by reading values back from the provider.',fields:rows};
+ }
  if(proposal.action_type==='communication.send_email'){
   return {summary:proposal.summary,impact:'Sends a business email',email:proposal.payload||{},fields:[]};
  }
