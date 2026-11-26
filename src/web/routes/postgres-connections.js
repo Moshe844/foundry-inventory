@@ -177,7 +177,7 @@ function createPostgresConnectionsRouter(database,options={}){
     const claims=registry.get('bigcommerce').verifySignedCallback(req.query.signed_payload_jwt);res.set('Cache-Control','no-store');res.set('Referrer-Policy','no-referrer');
     if(req.params.callback!=='load')return res.json(await require('../../connections/postgres-install-callbacks').revokeBigCommerce(database,claims,req.params.callback));
     res.removeHeader('X-Frame-Options');res.set('Content-Security-Policy',"default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors https://*.mybigcommerce.com https://login.bigcommerce.com");
-    return res.page('connections/provider-handoff',{title:'Open StockChief',layout:false,continueUrl:'/settings/connections'});
+    return res.page('connections/provider-handoff',{title:'Open StockChief',layout:false,installed:true,continueUrl:'/settings/connections'});
   }));
 
   router.get('/connections',requireAuth,(req,res)=>res.redirect(303,'/settings/connections'));
@@ -389,6 +389,7 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.page('connections/postgres-detail',{
       title:'Connection',nav:'connections',room:true,backTo:{href:'/settings/connections',label:'Connections'},
       connection,newConnectionToken,provider:adapter?.metadata?.()||{name:connection.display_name},
+      canManageCommerce:req.user.role==='owner',
       commercePositions:await require('../../connections/postgres-commerce-sync').list(database,req.ctx.workspaceId,connection.id),
       canDiscover:Boolean(adapter?.discover)&&!isMailbox,isMailbox,mailboxLastPollAt,pendingWebhooks,catalogueReview,connectionProof,connectionIssues,
       catalogueExpanded:req.query.reviewProducts==='1'||req.query.refresh==='queued'||Object.keys(req.query).some(key=>key.startsWith('catalogue')||['matchQ','afterType','afterExternalId'].includes(key)),
@@ -458,6 +459,19 @@ function createPostgresConnectionsRouter(database,options={}){
       {minutes:req.body.minutes},{providers:registry});
     req.flash('success',`Mailbox checks now run every ${minutes} minute${minutes===1?'':'s'}.`);
     return res.redirect(303,`/settings/connections/${connection.id}`);
+  }));
+  router.post('/settings/connections/:id/commerce-synchronization',requireOwner,asyncRoute(async(req,res)=>{
+    // Use the canonical proposal/approval path. This form does not authorize
+    // provider writes, and ignores client-supplied connection/workspace IDs.
+    const connection=await connections.get(database,req.ctx.workspaceId,req.params.id);
+    if(!['shopify','square','clover','woocommerce','bigcommerce'].includes(connection.provider_type))throw new ValidationError('Choose a commerce connection.');
+    const args={recordReference:connection.id,sku:req.body.sku,location:req.body.location,initialSyncSource:req.body.initialSyncSource};
+    for(const key of ['quantitySyncMode','priceSyncMode'])if(req.body[key])args[key]=req.body[key];
+    const result=await require('../../assistant/postgres-workflow-capabilities').prepare(database,req.ctx,
+      'Review stock and price synchronization for '+connection.display_name,'connection.commerce_sync',args,
+      require('../../assistant/postgres-service').createProposal);
+    if(!result?.proposal?.id)throw new ValidationError(result?.answer||'Choose one exact mapped product and location.');
+    return res.redirect(303,'/actions/'+result.proposal.id);
   }));
   router.post('/settings/connections/:id/synchronization',requireOwner,asyncRoute(async(req,res)=>{
     const changed=await require('../../connections/postgres-synchronization').configure(database,req.ctx,req.params.id,
