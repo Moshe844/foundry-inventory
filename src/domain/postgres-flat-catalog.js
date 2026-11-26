@@ -20,11 +20,14 @@ async function listUncached(db,workspaceId,input={}){
  values.push(limit+1,input.afterItemId&&keyset?0:(page-1)*limit);const order=sort==='newest'?'s.created_at DESC,s.id':sort.startsWith('stock_')?stock+(sort==='stock_desc'?' DESC':' ASC')+',i.name COLLATE stockchief_natural,s.position,s.id':'i.name COLLATE stockchief_natural,s.position,s.id';
  const pageOrder=sort==='newest'?'m.created_at DESC,m.id':sort.startsWith('stock_')?'m.stock_total'+(sort==='stock_desc'?' DESC':' ASC')+',m.item_name COLLATE stockchief_natural,m.position,m.id':'m.item_name COLLATE stockchief_natural,m.position,m.id';
  // Read the matching SKU keys as one indexed batch before parent lookups.
+ // Each SKU's product is read by its own key; its business is checked by the
+ // outer filter. As a join, a business PostgreSQL had not sampled yet (one being
+ // imported) was estimated at one product and every product was read per SKU.
  // This preserves bounded metadata access with stale statistics, without
  // pricing tens of thousands of independent SKU probes into a generic plan.
  const rows=(await db.query(`WITH ${input.lowStock?`low_skus AS MATERIALIZED(${badges.filterSource()}), low_sku_details AS MATERIALIZED(
  SELECT s.* FROM skus s WHERE s.workspace_id=$1 AND s.id=ANY(ARRAY(SELECT sku_id FROM low_skus))),`:''} matching AS MATERIALIZED(
- SELECT s.id,i.name AS item_name,s.position,s.created_at${sort.startsWith('stock_')?','+stock+' AS stock_total':''} FROM ${input.lowStock?'low_sku_details s CROSS JOIN LATERAL(SELECT i.* FROM items i WHERE i.id=s.item_id AND i.workspace_id=s.workspace_id LIMIT 1)i':'skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id'} WHERE i.workspace_id=s.workspace_id AND ${where.join(' AND ')}), selected AS MATERIALIZED(
+ SELECT s.id,i.name AS item_name,s.position,s.created_at${sort.startsWith('stock_')?','+stock+' AS stock_total':''} FROM ${input.lowStock?'low_sku_details s CROSS JOIN LATERAL(SELECT i.* FROM items i WHERE i.id=s.item_id OFFSET 0)i':'skus s CROSS JOIN LATERAL(SELECT i.* FROM items i WHERE i.id=s.item_id OFFSET 0)i'} WHERE i.workspace_id=s.workspace_id AND ${where.join(' AND ')}), selected AS MATERIALIZED(
  SELECT m.id FROM matching m WHERE true ${after} ORDER BY ${pageOrder} LIMIT $${values.length-1} OFFSET $${values.length})
  SELECT i.*,s.id AS sku_id,s.code,s.variant_label,s.is_active AS sku_active,EXISTS(SELECT 1 FROM movements m WHERE m.workspace_id=s.workspace_id AND m.sku_id=s.id) AS has_history,(SELECT count(*) FROM matching) AS matching_total
  FROM selected chosen CROSS JOIN LATERAL(SELECT s.* FROM skus s WHERE s.id=chosen.id LIMIT 1)s CROSS JOIN LATERAL(SELECT i.* FROM items i WHERE i.id=s.item_id LIMIT 1)i
