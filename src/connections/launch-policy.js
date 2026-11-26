@@ -79,7 +79,7 @@ function pilotAllowed(providerType,ctx={}){
  return approved&&configured('STOCKCHIEF_STAGING_CONNECTION_PROVIDERS').includes(type)&&['shopify','clover','quickbooks','xero','microsoft365','bigcommerce'].includes(type);
 }
 function reviewAllowed(ctx){const grant=ctx?.[shopifyReview];return grant?.workspaceId===ctx?.workspaceId&&grant?.appId===publicAppId()&&grant?.clientId===process.env.SHOPIFY_PUBLIC_CLIENT_ID;}
-function reason(providerType,ctx){const type=String(providerType||'').toLowerCase();return type==='xero'&&require('./xero-customer-rollout').enabled()?null:type==='shopify'&&(publicShopifyEnabled()||reviewAllowed(ctx))?null:pilotAllowed(type,ctx)?null:EXCLUDED[type]||null;}
+function reason(providerType,ctx){const type=String(providerType||'').toLowerCase();return type==='bigcommerce'&&require('./bigcommerce-customer-rollout').allowed(ctx?.workspaceId)?null:type==='xero'&&require('./xero-customer-rollout').enabled()?null:type==='shopify'&&(publicShopifyEnabled()||reviewAllowed(ctx))?null:pilotAllowed(type,ctx)?null:EXCLUDED[type]||null;}
 function assertNewConnection(providerType,ctx){const denied=reason(providerType,ctx);
  if(denied)throw new ValidationError(denied);}
 function assertCallbackProvider(providerType){
@@ -87,7 +87,7 @@ function assertCallbackProvider(providerType){
  if(process.env.STOCKCHIEF_RUNTIME_ENV==='staging'||(providerType==='xero'&&require('./xero-customer-rollout').enabled())||(providerType==='microsoft365'&&productionOutlookWorkspaces().length)||
   require('./accounting-review-pilot').workspaces(providerType).length||
   (providerType==='clover'&&Object.keys(require('./clover-review-pilot').pilots()).length)||
-  (providerType==='bigcommerce'&&Object.keys(require('./bigcommerce-review-pilot').pilots()).length)||
+  (providerType==='bigcommerce'&&(Object.keys(require('./bigcommerce-review-pilot').pilots()).length||require('./bigcommerce-customer-rollout').cohort()))||
   (providerType==='shopify'&&(Object.keys(productionShopifyPilots()).length||publicShopifyEnabled())))return;
  assertNewConnection(providerType);
 }
@@ -95,9 +95,9 @@ async function assertWorkspaceConnection(database,providerType,ctx,input={}){
  if(!EXCLUDED[String(providerType||'').toLowerCase()])return;
  ctx=await resolveWorkspaceContext(database,ctx);assertNewConnection(providerType,ctx);
  if(providerType==='bigcommerce'&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'){
-  require('./bigcommerce-review-pilot').expected(ctx.workspaceId,input);
+  (require('./bigcommerce-customer-rollout').allowed(ctx.workspaceId)?require('./bigcommerce-customer-rollout'):require('./bigcommerce-review-pilot')).expected(ctx.workspaceId,input);
   const inventory=await database.query('SELECT id FROM workspaces WHERE id=$1 AND deletion_requested_at IS NULL FOR SHARE',[ctx.workspaceId]);
-  if(!inventory.rows.length)throw new ValidationError('The approved BigCommerce test inventory is no longer available.');
+  if(!inventory.rows.length)throw new ValidationError('The approved BigCommerce inventory is no longer available.');
  }
  if(['xero','quickbooks'].includes(providerType)&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'){
   const inventory=await database.query('SELECT id FROM workspaces WHERE id=$1 AND deletion_requested_at IS NULL FOR SHARE',[ctx.workspaceId]);

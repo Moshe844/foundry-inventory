@@ -46,6 +46,14 @@ async function isOpen(database){const release=await state(database);
      AND c.config::jsonb#>>'{bigcommerceTestEvidence,storeHash}'=c.provider_account_id
      AND c.config::jsonb#>>'{bigcommerceTestEvidence,approvedByUserId}'=c.authorized_by_user_id
      AND c.config::jsonb#>>'{bigcommerceTestEvidence,qualificationOnly}'='true'),false)
+    OR COALESCE((c.provider_type='bigcommerce' AND $18::text<>'' AND COALESCE(($20::jsonb->c.workspace_id) ? c.provider_account_id,false)
+     AND c.config::jsonb#>>'{bigcommerceCustomerEvidence,source}'=$21
+     AND c.config::jsonb#>>'{bigcommerceCustomerEvidence,appId}'=$18
+     AND c.config::jsonb#>>'{bigcommerceCustomerEvidence,workspaceId}'=c.workspace_id
+     AND c.config::jsonb#>>'{bigcommerceCustomerEvidence,storeHash}'=c.provider_account_id
+     AND c.config::jsonb#>>'{bigcommerceCustomerEvidence,approvedByUserId}'=c.authorized_by_user_id
+     AND c.config::jsonb#>>'{bigcommerceCustomerEvidence,approvalReference}'=$22
+     AND c.config::jsonb#>>'{bigcommerceCustomerEvidence,qualificationOnly}'='false'),false)
     OR (c.provider_type='shopify' AND (COALESCE(($3::jsonb->c.workspace_id) ? c.provider_account_id,false)
       OR COALESCE((c.config::jsonb->>'shopifyProfile'='public' AND $6::text<>'' AND c.config::jsonb->>'shopifyClientId'=$6
        AND ($8::boolean OR EXISTS(SELECT 1 FROM workspaces w JOIN commercial_shopify_subscriptions b ON b.account_id=w.owner_account_id
@@ -83,7 +91,7 @@ async function isOpen(database){const release=await state(database);
    UNION ALL SELECT 1 FROM payment_connect_accounts p LEFT JOIN workspace_connectors c ON c.id=p.connector_id
      WHERE p.charges_enabled=1 AND NOT COALESCE((${certifiedStripe}),false)
    LIMIT 1`,
-  [[...Object.keys(launchPolicy.EXCLUDED),'stripe','supplier_email'],launchPolicy.productionOutlookWorkspaces(),JSON.stringify(launchPolicy.productionShopifyPilots()),config.commercial.stripeAccountId,require('../payments/stripe-live-qualification').SOURCE,process.env.SHOPIFY_PUBLIC_CLIENT_ID||'',publicAppId,launchPolicy.publicShopifyEnabled(),JSON.stringify(require('../connections/clover-review-pilot').pilots()),process.env.CLOVER_CLIENT_ID||'',JSON.stringify(require('../connections/accounting-review-pilot').pilots()),require('../connections/accounting-review-pilot').SOURCE,JSON.stringify(require('../connections/accounting-review-pilot').clientIds()),require('../connections/xero-customer-rollout').approvedClientId(),require('../connections/xero-customer-rollout').SOURCE,require('../connections/xero-customer-rollout').WRITE_SOURCE,JSON.stringify(require('../connections/bigcommerce-review-pilot').pilots()),require('../connections/bigcommerce-review-pilot').appId(),require('../connections/bigcommerce-review-pilot').SOURCE])).rows.length;
+  [[...Object.keys(launchPolicy.EXCLUDED),'stripe','supplier_email'],launchPolicy.productionOutlookWorkspaces(),JSON.stringify(launchPolicy.productionShopifyPilots()),config.commercial.stripeAccountId,require('../payments/stripe-live-qualification').SOURCE,process.env.SHOPIFY_PUBLIC_CLIENT_ID||'',publicAppId,launchPolicy.publicShopifyEnabled(),JSON.stringify(require('../connections/clover-review-pilot').pilots()),process.env.CLOVER_CLIENT_ID||'',JSON.stringify(require('../connections/accounting-review-pilot').pilots()),require('../connections/accounting-review-pilot').SOURCE,JSON.stringify(require('../connections/accounting-review-pilot').clientIds()),require('../connections/xero-customer-rollout').approvedClientId(),require('../connections/xero-customer-rollout').SOURCE,require('../connections/xero-customer-rollout').WRITE_SOURCE,JSON.stringify(require('../connections/bigcommerce-review-pilot').pilots()),require('../connections/bigcommerce-review-pilot').appId(),require('../connections/bigcommerce-review-pilot').SOURCE,JSON.stringify(require('../connections/bigcommerce-customer-rollout').cohort()?.stores||{}),require('../connections/bigcommerce-customer-rollout').SOURCE,require('../connections/bigcommerce-customer-rollout').cohort()?.approvalReference||''])).rows.length;
  return unqualified===0;}
 async function assertCheckoutOpen(database,options={}){
   // Only isolated tests may exercise provider contracts while the live release is closed.

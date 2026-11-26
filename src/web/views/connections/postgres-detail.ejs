@@ -148,6 +148,16 @@
 <% if(['shopify','square','clover','woocommerce','bigcommerce'].includes(connection.provider_type)){ %>
 <section class="card section" aria-label="Stock and price synchronization"><div class="card-head"><h2>Stock and price synchronization</h2></div><div class="card-body">
 <p>Outgoing stock is costed, uncommitted stock available to sell. Incoming count differences need physical confirmation. Conflicts are held for review; a queued delivery is complete only after provider read-back.</p>
+<% if(locals.canManageCommerce){ %><details><summary>Set up stock and price synchronization</summary>
+<form method="post" action="/settings/connections/<%= connection.id %>/commerce-synchronization" class="section">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<div class="form-grid"><label>Product SKU<input name="sku" maxlength="200" required placeholder="Exact mapped SKU"></label>
+<label>Location<input name="location" maxlength="200" required placeholder="Exact mapped location name"></label>
+<% for(const field of [['quantitySyncMode','Stock direction'],['priceSyncMode','Price direction']]){ %>
+<label><%= field[1] %><select name="<%= field[0] %>"><option value="">Leave unchanged</option><option value="off">Off</option><option value="outbound">StockChief to provider</option><option value="inbound">Provider to StockChief</option><option value="two_way">Both directions</option></select></label><% } %>
+<label class="field--full">If the starting values differ<select name="initialSyncSource" required><option value="require_equal">Stop and ask me</option><option value="stockchief">Use StockChief's value</option><option value="provider">Use the provider's value</option></select></label></div>
+<p>You will review the exact matches and current values before approving. This step does not turn on synchronization.</p>
+<button type="submit" class="btn btn--primary">Review synchronization</button></form></details><% } %>
   <% if(!locals.commercePositions?.length){ %><p>No stock or price write-back has been authorized yet. Ask StockChief to prepare the direction and starting source for the products and locations you want to synchronize.</p><% }else{ %>
   <div class="table-scroll"><table class="table"><thead><tr><th>SKU</th><th>Location</th><th>Field</th><th>Direction</th><th>Last verified values</th><th>Delivery</th></tr></thead><tbody>
   <% commercePositions.forEach(function(p){ const show=function(v){return v===null?'Unknown':typeof v==='object'?helpers.money(v.amount,v.currency):v;}; %>

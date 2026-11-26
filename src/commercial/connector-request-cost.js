@@ -27,8 +27,12 @@ function classify(def, url, method='GET'){
  // included trial-store API usage, not approval of Marketplace/distribution
  // fees, a paid store plan, payment processing or public customer activation.
  if(def.provider==='bigcommerce'){
-  const stores=Object.values(require('../connections/bigcommerce-review-pilot').pilots()).flat();
-  const evidence={basis:'BIGCOMMERCE_OWNED_TEST_STORE_API_INCLUDED',source:'https://docs.bigcommerce.com/developer/docs/overview/quick-start; https://www.bigcommerce.com/pricing/faq/; owner-approved existing free test store only; store subscriptions, Marketplace and payment fees remain separate'};
+  const cohort=require('../connections/bigcommerce-customer-rollout').cohort();
+  const pilotStores=Object.values(require('../connections/bigcommerce-review-pilot').pilots()).flat();
+  const stores=[...pilotStores,...Object.values(cohort?.stores||{}).flat()];
+  const isCustomer=cohort&&(!pathname.startsWith('/stores/')||Object.values(cohort.stores).flat().includes(pathname.split('/')[2]));
+  const evidence=isCustomer?{basis:'BIGCOMMERCE_APPROVED_CUSTOMER_API_INCLUDED',source:cohort.approvalReference+'; approved cohort API requests only; subscriptions, distribution and payment fees remain separate'}:
+   {basis:'BIGCOMMERCE_OWNED_TEST_STORE_API_INCLUDED',source:'https://docs.bigcommerce.com/developer/docs/overview/quick-start; https://www.bigcommerce.com/pricing/faq/; owner-approved existing free test store only; store subscriptions, Marketplace and payment fees remain separate'};
   if(stores.length&&def.version==='unversioned'&&origin==='https://login.bigcommerce.com'&&pathname==='/oauth2/token'&&verb==='POST')return evidence;
   const scoped=/^\/stores\/([a-z0-9]+)(\/v[23]\/.*)$/.exec(pathname);
   if(origin==='https://api.bigcommerce.com'&&scoped&&stores.includes(scoped[1])&&scoped[2].startsWith('/'+def.version+'/')){

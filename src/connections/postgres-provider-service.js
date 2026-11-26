@@ -115,10 +115,12 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
   return database.transaction(async(client)=>{
     const authorizer=(await client.query("SELECT role FROM users WHERE workspace_id=$1 AND id=$2 AND revoked_at IS NULL FOR UPDATE",[connection.workspace_id,actorId])).rows[0];
     if(authorizer?.role!=='owner')throw new AuthenticationError('The owner who started this connection no longer has permission to authorize it. Start again with a current owner.');
-    let accountingPilotEvidence=null,xeroCustomerEvidence=null,bigcommerceTestEvidence=null;
+    let accountingPilotEvidence=null,xeroCustomerEvidence=null,bigcommerceTestEvidence=null,bigcommerceCustomerEvidence=null;
     if(options.enforceLaunchPolicy&&connection.provider_type==='bigcommerce'&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'){
       await launchPolicy.assertWorkspaceConnection(client,'bigcommerce',{workspaceId:connection.workspace_id},{storeHash:result.accountId});
-      bigcommerceTestEvidence=require('./bigcommerce-review-pilot').evidence(result,connection.workspace_id,actorId);
+      const customers=require('./bigcommerce-customer-rollout');
+      if(customers.allowed(connection.workspace_id))bigcommerceCustomerEvidence=customers.evidence(result,connection.workspace_id,actorId);
+      else bigcommerceTestEvidence=require('./bigcommerce-review-pilot').evidence(result,connection.workspace_id,actorId);
     }
     if(options.enforceLaunchPolicy&&['xero','quickbooks'].includes(connection.provider_type)&&process.env.STOCKCHIEF_RUNTIME_ENV==='production'){
       // Recheck after provider traffic: a revoked inventory grant must not
@@ -151,6 +153,11 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
     if(connection.provider_type==='xero')await xeroCustomers.admit(client,connection,result,authorizationStateId);
     let target=connection;
     if(result.accountId){
+      if(connection.provider_type==='bigcommerce'){
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['bigcommerce-store:'+result.accountId]);
+        const foreign=await client.query("SELECT 1 FROM workspace_connectors WHERE provider_type='bigcommerce' AND provider_account_id=$1 AND workspace_id<>$2 AND status<>'disconnected' LIMIT 1",[result.accountId,connection.workspace_id]);
+        if(foreign.rows.length)throw new AuthorizationError('This BigCommerce store is already connected to another inventory. Disconnect it there before assigning a new inventory.');
+      }
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
         [`connection:${connection.workspace_id}:${connection.provider_type}:${result.accountId}`]);
       const established=await client.query(`SELECT * FROM workspace_connectors
@@ -187,7 +194,8 @@ async function finishAuthorization(database,connection,actorId,result,authorizat
     }
     await credentials.put(client,target.workspace_id,target.id,'provider',providerCredentials,result.expiresAt||null);
     const safeConfig={...currentConfig};
-    if(bigcommerceTestEvidence)safeConfig.bigcommerceTestEvidence=bigcommerceTestEvidence;
+    if(bigcommerceTestEvidence){safeConfig.bigcommerceTestEvidence=bigcommerceTestEvidence;delete safeConfig.bigcommerceCustomerEvidence;}
+    if(bigcommerceCustomerEvidence){safeConfig.bigcommerceCustomerEvidence=bigcommerceCustomerEvidence;delete safeConfig.bigcommerceTestEvidence;}
     if(accountingPilotEvidence)safeConfig.accountingPilotEvidence=accountingPilotEvidence;
     if(xeroCustomerEvidence){safeConfig.xeroCustomerEvidence=xeroCustomerEvidence;delete safeConfig.accountingPilotEvidence;}
     if(connection.provider_type==='clover'&&result.credentials?.environment==='production'&&
