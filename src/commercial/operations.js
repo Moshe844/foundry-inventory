@@ -10,6 +10,7 @@ const LOGICAL_WRAPPERS=new Map([
  ['square',new Set(['authorization_exchange','catalog_sync','webhook_registration'])],
  ['shopify',new Set(['authorization_exchange','catalog_sync','webhook_registration','commerce_webhook_verify'])],
  ['clover',new Set(['authorization_exchange','catalog_sync','webhook_registration','commerce_webhook_verify'])],
+ ['bigcommerce',new Set(['authorization_exchange','catalog_sync','webhook_registration','commerce_webhook_verify'])],
  ['stripe',new Set(['connect_authorization','connect_account_read','connect_deauthorize','customer_create','invoice_create','refund_create','verify_original_invoice_payment'])],
 ]);
 async function modelUsage(database,scope,usage,key,detail={}){
