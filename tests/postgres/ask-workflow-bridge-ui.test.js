@@ -56,8 +56,12 @@ async function prepareAndApprove(page,base,database,workspaceId,message,capabili
   return saved;
 }
 
+// This one test walks a whole order, payment and return through a real browser.
+// It needs 190-260 s on an ordinary Windows workstation (230 s for release
+// 617c0ea5 as well), so a 240 s limit failed browser certification there
+// without any fault. The limit only guards against a hang.
 test('Ask browser controls a real customer order, payment, and return through the canonical PostgreSQL engines',
-  {timeout:240000},async(context)=>{
+  {timeout:480000},async(context)=>{
     const previousPublicUrl=process.env.FOUNDRY_PUBLIC_URL;process.env.FOUNDRY_PUBLIC_URL='https://stockchief.example.test';
     context.after(()=>{if(previousPublicUrl===undefined)delete process.env.FOUNDRY_PUBLIC_URL;else process.env.FOUNDRY_PUBLIC_URL=previousPublicUrl;});
     const cluster=await startCluster();
