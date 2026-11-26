@@ -116,7 +116,7 @@ async function readDarkTable(canvas,worker){
       for(let i=0;i<grid.length;i++){
         const initial=String(grid[i][index]).trim(),original=String(rows[i].originalValues[index]).trim(),number=/^[-+]?\d+(?:[.,]\d+)?$/;
         const disagreement=number.test(initial)&&number.test(original)&&initial!==original;
-        if(!initial||number.test(initial)&&!disagreement)continue;
+        if(number.test(initial)&&!disagreement)continue;
         // A narrow column can turn a digit into punctuation. Re-read that
         // actual cell with surrounding whitespace; never infer it from other
         // rows or replace an unreadable/empty source with zero.
@@ -125,7 +125,7 @@ async function readDarkTable(canvas,worker){
         await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_LINE,tessedit_char_whitelist:'0123456789,.-+'});
         const reading=words(await worker.recognize(cell.toBuffer('image/png'),{}, {blocks:true})).map(w=>w.text).join(' ');
         if(/^[-+]?\d+(?:[.,]\d+)?$/.test(reading))grid[i][index]=reading;
-        if(disagreement)(rows[i].readingProblems||=[]).push({code:'image_quantity_uncertain',field,readings:[original,initial,reading].filter(Boolean),message:'The image has conflicting numeric readings. Confirm this value against the original before approving.'});
+        if(disagreement||!initial&&number.test(reading))(rows[i].readingProblems||=[]).push({code:'image_quantity_uncertain',field,readings:[original,initial,reading].filter(Boolean),message:'The image has uncertain numeric readings. Confirm this value against the original before approving.'});
       }
     }
     const numeric=v=>require('./source-money').clean(v).replace(/[$¥,\s]/g,''),valid=v=>/^\d+(?:\.\d+)?$/.test(numeric(v));
