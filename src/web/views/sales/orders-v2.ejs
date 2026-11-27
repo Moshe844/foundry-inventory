@@ -82,7 +82,7 @@
           <% L.rows.forEach(function (row) { %>
             <tr class="ox-row<%= row.attention ? ' is-attention' : '' %><%= row.muted ? ' is-muted' : '' %>" data-href="/orders/<%= row.id %>">
               <td><a class="ox-order" href="/orders/<%= row.id %>"><%= row.number %></a><span class="ox-show-sm ox-cell-sub"><%= row.customer %></span></td>
-              <td class="ox-hide-sm"><span class="ox-cust"><span class="ox-avatar" aria-hidden="true"><%= row.initials %></span><span><%= row.customer %></span></span></td>
+              <td class="ox-hide-sm"><span class="ox-cust"><span class="ox-avatar" aria-hidden="true"><%= row.initials %></span><span><%= row.customer %></span></span><% if(row.customerTerms){ %><span class="ox-cell-sub">Customer terms: <%= row.customerTerms %> · Credit limit: <%= row.customerCreditLimit %></span><% } %></td>
               <td class="ox-hide-sm ox-muted"><%= row.date %></td>
               <td><span class="ox-badge ox-badge--<%= row.badge.tone %>"><%= row.badge.text %></span></td>
               <td class="ox-hide-sm"><% if (row.payment) { %><span class="ox-badge ox-badge--<%= row.payment.tone %>"><%= row.payment.text %></span><% } else { %><span class="ox-muted">—</span><% } %></td>

@@ -40,6 +40,7 @@
     <% for(const [kind,label] of [['ON_ACCOUNT','On account'],['DEPOSIT','Deposit before fulfillment'],['BEFORE_FULFILMENT','Pay before fulfillment']]){ %>
     <option value="<%= kind %>" <%= (own?.kind||'ON_ACCOUNT')===kind?'selected':'' %>><%= label %></option><% } %>
   </select></label>
+  <label>Credit limit (<%= currency %>) <input name="creditLimit" inputmode="decimal" value="<%= creditLimitInput %>" placeholder="No saved limit"></label>
   <label>Net days <input name="netDays" type="number" min="0" step="1" value="<%= own?.net_days??'' %>"></label>
   <label>Deposit percentage <input name="depositPercent" type="number" min="0.01" max="100" step="0.01" value="<%= own?.deposit_percent??'' %>"></label>
   <label>Or fixed deposit <input name="depositAmount" inputmode="decimal" value="<%= own?depositInput:'' %>"></label>

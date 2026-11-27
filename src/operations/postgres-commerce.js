@@ -125,7 +125,13 @@ async function createCustomerInTransaction(client,ctx,input){
   [id,ctx.workspaceId,name,trimOrNull(input.company),trimOrNull(input.email),trimOrNull(input.phone),
     trimOrNull(input.shippingAddress),trimOrNull(input.notes),ctx.actorId,at]);
   await client.query('UPDATE customers SET shipping_address=$3,shipping_address_fields=$4::jsonb,tax_exempt=$5,tax_exempt_reference=$6 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,address.text,address.fields?JSON.stringify(address.fields):null,taxExempt?1:0,trimOrNull(input.taxExemptReference)]);
-  if(input.termsKind)await require('../sales/postgres-payment-terms').saveInTransaction(client,ctx,{customerId:id,kind:input.termsKind,netDays:input.netDays,depositPercent:input.depositPercent,holdShipping:input.holdShipping==='1'||input.termsKind==='BEFORE_FULFILMENT',creditApproved:input.termsKind==='ON_ACCOUNT'});
+  const hasLimit=String(input.creditLimit??'').trim()!=='';
+  let limit=null;
+  if(hasLimit){if((await actor(client,ctx.workspaceId,ctx.actorId)).role!=='owner')throw new ValidationError('Only the inventory owner can set a customer credit limit.');
+   const currency=(await client.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[ctx.workspaceId])).rows[0]?.base_currency||'USD';
+   limit=require('../domain/currency').userToMinor(input.creditLimit,currency);
+  }
+  if(input.termsKind||hasLimit)await require('../sales/postgres-payment-terms').saveInTransaction(client,ctx,{customerId:id,kind:input.termsKind||'ON_ACCOUNT',creditLimitMinor:limit,netDays:input.netDays,depositPercent:input.depositPercent,holdShipping:input.holdShipping==='1'||input.termsKind==='BEFORE_FULFILMENT',creditApproved:input.termsKind==='ON_ACCOUNT'});
   return {id,name};
 }
 
@@ -152,12 +158,14 @@ async function suppliers(database, workspaceId) {
 async function customers(database, workspaceId) {
   const result=await database.query(`SELECT c.*,
       COALESCE(so.order_count,0)::integer AS order_count,
-      COALESCE(i.balance_minor,0)::bigint AS balance_minor
+      COALESCE(i.balance_minor,0)::bigint AS balance_minor,terms.kind AS terms_kind,terms.net_days,terms.credit_limit_minor,books.base_currency AS credit_currency
     FROM customers c
     LEFT JOIN LATERAL (SELECT COUNT(*) AS order_count FROM sales_orders so
       WHERE so.workspace_id=c.workspace_id AND so.customer_id=c.id) so ON true
     LEFT JOIN LATERAL (SELECT SUM(balance_minor) AS balance_minor FROM accounting_customer_invoices i
       WHERE i.workspace_id=c.workspace_id AND i.customer_id=c.id AND i.status IN ('OPEN','PARTIALLY_PAID')) i ON true
+    LEFT JOIN LATERAL (SELECT kind,net_days,credit_limit_minor FROM customer_payment_terms t WHERE t.workspace_id=c.workspace_id AND (t.customer_id=c.id OR t.customer_id IS NULL) ORDER BY (t.customer_id IS NULL),t.updated_at DESC,t.id DESC LIMIT 1) terms ON true
+    LEFT JOIN accounting_settings books ON books.workspace_id=c.workspace_id
     WHERE c.workspace_id=$1 AND c.record_state='ACTIVE'
     ORDER BY lower(c.name)`,[workspaceId]);
   return result.rows.map((row)=>({...row,order_count:Number(row.order_count),balance_minor:Number(row.balance_minor)}));

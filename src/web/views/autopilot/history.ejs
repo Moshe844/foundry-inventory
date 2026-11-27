@@ -6,12 +6,13 @@
     { key: 'prepared', label: 'Approved by you, then handled', icon: 'check' }
   ];
   var anything = operations.length || evaluations.length || sections.some(function (section) { return groups[section.key].length; });
-  var handledCount = groups.automatic.length + groups.prepared.length;
+  var handledCount = locals.historySummary ? historySummary.alone + historySummary.approved : groups.automatic.length + groups.prepared.length;
   var waitingCount = groups.needsYou.length + groups.blocked.length;
 %>
 
 <p class="rm-stamp">StockChief's work</p>
 <h1 class="rm-figure"><%= waitingCount ? waitingCount + (waitingCount === 1 ? ' thing needs a closer look.' : ' things need a closer look.') : handledCount ? handledCount + (handledCount === 1 ? ' outcome recorded.' : ' outcomes recorded.') : anything ? 'Work is recorded below.' : 'Nothing to report yet.' %></h1>
+<% if(locals.historyDays===7){ %><p>Past 7 days · <%= historySummary.alone %> handled on its own; <%= historySummary.approved %> resolved after approval. <%= historySummary.proposed+historySummary.found %> issues found includes work proposals and recorded findings; <a href="/needs-you">review open decisions</a>. The latest work records are listed below. <a href="/autopilot/history">Show all available history</a></p><% } %>
 <p class="rm-sub">Completed work and anything StockChief could not finish are here. Routine checks are kept below; <a href="/activity">Activity</a> holds the underlying business record.</p>
 <p class="rm-choices"><a class="rm-btn rm-btn--ghost" href="/ask?from=%2Fautopilot%2Fhistory">Ask about this work</a><a class="rm-btn rm-btn--ghost" href="/needs-you">Open decisions</a></p>
 
@@ -28,7 +29,7 @@
         <% groups[section.key].forEach(function (item) { var described = describe(item); %>
           <a href="/autopilot/work/<%= item.id %>" class="owner-outcomes__row">
             <span class="owner-outcomes__icon <%= section.key === 'needsYou' || section.key === 'blocked' ? 'is-attention' : '' %>"><%- helpers.icon(section.icon, { size: 16 }) %></span>
-            <span class="owner-outcomes__copy"><strong><%= described.headline %></strong><% if (described.detail) { %><small><%= described.detail %></small><% } %><% if (item.errorMessage) { %><small class="is-warn"><%= item.errorMessage %></small><% } %></span>
+            <span class="owner-outcomes__copy"><strong><%= helpers.ownerCardText(described.headline) %></strong><% if (described.detail) { %><small><%= helpers.ownerCardText(described.detail) %></small><% } %><% if (item.errorMessage) { %><small class="is-warn"><%= helpers.ownerCardText(item.errorMessage) %></small><% } %></span>
             <span class="owner-outcomes__when"><%= helpers.timeAgo(item.completedAt || item.createdAt) %></span>
             <%- helpers.icon('arrowRight', { size: 15 }) %>
           </a>
@@ -38,7 +39,7 @@
   <% } %>
 <% }) %>
 
-<% if(locals.next){ %><a class="btn" href="/autopilot/history?after=<%= next %>">Older work</a><% } %>
+<% if(locals.next){ %><a class="btn" href="/autopilot/history?<%= locals.historyDays===7?'days=7&':'' %>after=<%= next %>">Older work</a><% } %>
 <% if (operations.length) { %>
   <%
     var outcomeLines = function (value) {

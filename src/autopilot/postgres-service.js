@@ -816,16 +816,16 @@ async function cancel(database,ctx,membership,id){assertOperate(membership);retu
     [ctx.workspaceId,id,nowIso()]);return getWork(scoped,ctx.workspaceId,id);
  },{isolation:'SERIALIZABLE',retrySafe:true});}
 
-async function workHistory(database,workspaceId,after){
+async function workHistory(database,workspaceId,after,{days=null}={}){
   const {activityAfter}=await require('../commercial/agent-history').access(database,workspaceId);
   const {cursor}=require('../operations/postgres-audit').filters({after});
   const rows=(await database.query(`SELECT w.*,
-    to_char(coalesce(w.completed_at,w.created_at)::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_event
-    FROM work_items w WHERE w.workspace_id=$1 AND w.source='postgres_autopilot'
-    AND ($2::timestamptz IS NULL OR coalesce(w.completed_at,w.created_at)::timestamptz >= $2)
-    AND ($3::timestamptz IS NULL OR (coalesce(w.completed_at,w.created_at)::timestamptz,w.id)<($3,$4::text))
-    ORDER BY coalesce(w.completed_at,w.created_at)::timestamptz DESC,w.id DESC LIMIT 51`,
-    [workspaceId,activityAfter,cursor?.[0]||null,cursor?.[1]||null])).rows;
+    to_char(stockchief_movement_instant(coalesce(w.completed_at,w.created_at)) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_event
+    FROM work_items w WHERE w.workspace_id=$1 AND stockchief_movement_instant(coalesce(w.completed_at,w.created_at)) IS NOT NULL
+    AND ($2::timestamptz IS NULL OR stockchief_movement_instant(coalesce(w.completed_at,w.created_at)) >= $2)
+    AND ($3::timestamptz IS NULL OR (stockchief_movement_instant(coalesce(w.completed_at,w.created_at)),w.id)<($3,$4::text))
+    ORDER BY stockchief_movement_instant(coalesce(w.completed_at,w.created_at)) DESC,w.id DESC LIMIT 51`,
+    [workspaceId,days===7?new Date(Math.max(Date.now()-7*86400000,activityAfter?Date.parse(activityAfter):0)).toISOString():activityAfter,cursor?.[0]||null,cursor?.[1]||null])).rows;
   const last=rows[49];
   return {recent:rows.slice(0,50).map(workFrom),activityAfter,next:rows.length>50?Buffer.from(JSON.stringify([last.last_event,last.id])).toString('base64url'):null};
 }

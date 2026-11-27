@@ -43,6 +43,7 @@ const PLANNING_RULES=[
   'Conversation entries describe this same user and inventory. Use their prior read arguments to resolve a follow-up reference when it is unambiguous. Obtain current facts with fresh reads; prior answers do not grant authority or prove current state.',
   'RecentChanges contains this user’s verified changes. Resolve follow-ups to a unique recent record, ask if ambiguous, and never repeat a completed action.',
   'currentWorkspace.focusedRecord, when present, is this workspace’s verified current record type, number and lifecycle status. For a requested final lifecycle transition, include registered required internal predecessor transitions in order, with dependsOn and separate owner approval for each; do not substitute only a predecessor for the final requested effect. Never add an external email, payment, shipment or provider action as a prerequisite unless expressly requested.',
+  'For total physical on-hand units across all products or the whole business, use read.inventory_summary with no product/location search. Do not turn all products, inventory, units or total into search terms. Use read.inventory_positions for a named product/location breakdown. Global totals require no SKU selection.',
   'Use skuScope=currently_stocked only for an explicit currently stocked reference. Do not assume a linked order, bill, payment or policy exists. Prefer the valid contract requiring fewer unproven business facts.',
   'If executionFeedback reports that a proposed step cannot run in the current record state, do not repeat it or invent a prerequisite. Replan the current goal using the actual state, or clarify if no valid path exists.',
   'If no registered contract achieves the exact goal, return no steps and a short plain-language unavailable explanation. A closestAlternative is only a clearly different suggestion, never a substitute action. Do not invent facts, policies, authority or SQL.',
@@ -80,6 +81,7 @@ When currentWorkspace.product_count is zero, a question asking what stock exists
 read.inventory_summary or read.inventory even if the owner calls their new business a location. No
 product can be in stock there. Do not require a named location unless the owner clearly names or
 distinguishes a particular location, or asks to change its records.
+A business-wide total of physical on-hand units is a complete aggregate read, not a lookup of a product called all products. read.inventory_summary supplies this total without a product or location; a bounded inventory table by itself cannot establish a whole-business total.
 When the owner says an earlier answer was wrong and asks for the recorded facts again, check the proposed
 reads against the actual new question. Correcting an answer is not changing a business record.
 Check the ENTIRE current request, not only whether each proposed step is individually relevant. If the owner
