@@ -21,7 +21,12 @@ test('SKU searches cover the full tenant catalogue and customer credit terms per
  await db.query("UPDATE items SET is_active=0 WHERE workspace_id=$1 AND id='picker-item-520'",[ctx.workspaceId]);
  const edit=await browser.get('/sales/pricing/rules/'+proposal.rule_id+'/edit');assert.equal(edit.status,200);assert(edit.text.includes('<option value="picker-sku-520">'),'An archived saved selection must not disappear and broaden the rule to every product');
  const supplier=await browser.get('/suppliers/fixture-supplier');assert.equal(supplier.status,200);assert(supplier.text.includes('data-async-sku'));assert(!supplier.text.includes('PICKER-520'));
- const commerce=require('../../src/operations/postgres-commerce'),created=await commerce.createCustomer(db,ctx,{name:'Credit buyer',termsKind:'ON_ACCOUNT',netDays:'45',creditLimit:'1234.56'});
+ const commerce=require('../../src/operations/postgres-commerce');
+ const firstPage=await browser.get('/sales/customers/fixture-customer');assert.equal(firstPage.status,200);
+ const firstSave=await browser.post('/sales/customers/fixture-customer/payment-terms').type('form').send({_csrf:csrf(firstPage.text),kind:'ON_ACCOUNT',netDays:'30',creditLimit:'1234.56',expectedUpdatedAt:''});assert.equal(firstSave.status,303,firstSave.text);
+ const firstTerms=await require('../../src/sales/customer-commercial-terms').current(db,ctx.workspaceId,'fixture-customer');assert.equal(Number(firstTerms.credit_limit_minor),123456);assert.equal(Number(firstTerms.net_days),30);
+ const firstAudit=(await db.query("SELECT before_state,after_state FROM security_event_history WHERE workspace_id=$1 AND action='Saved customer payment terms' AND reference='fixture-customer'",[ctx.workspaceId])).rows;assert.equal(firstAudit.length,1);assert.deepEqual(firstAudit[0].before_state,{});assert.equal(Number(firstAudit[0].after_state.credit_limit_minor),123456);
+ const created=await commerce.createCustomer(db,ctx,{name:'Credit buyer',termsKind:'ON_ACCOUNT',netDays:'45',creditLimit:'1234.56'});
  let terms=await require('../../src/sales/customer-commercial-terms').current(db,ctx.workspaceId,created.id);assert.equal(Number(terms.credit_limit_minor),123456);assert.equal(Number(terms.net_days),45);
  let page=await browser.get('/sales/customers/'+created.id);assert.equal(page.status,200);assert.match(page.text,/name="creditLimit"[^>]*value="1234.56"/);
  const saved=await browser.post('/sales/customers/'+created.id+'/payment-terms').type('form').send({_csrf:csrf(page.text),kind:'ON_ACCOUNT',netDays:'60',creditLimit:'0',creditApproved:'1',expectedUpdatedAt:terms.updated_at});assert.equal(saved.status,303,saved.text);
