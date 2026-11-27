@@ -30,7 +30,7 @@ test('canonical page aliases preserve filters and direct each old destination to
 });
 test('section navigation has the requested five sections, separate footer destinations and no More item',()=>{
  const nav=require('../../src/web/presentation/navigation');assert.deepEqual(nav.sections.map(x=>x.label),['Home','Orders','Stock','Buy','Money']);assert.deepEqual(nav.footer.map(x=>x.label),['Reports','Settings']);
- assert.deepEqual(nav.sections.find(x=>x.label==='Orders').tabs.map(x=>x.label),['Orders','Returns','Customers','Customer quotes']);
+ assert.deepEqual(nav.sections.find(x=>x.label==='Orders').tabs.map(x=>x.label),['Orders','Returns','Customers','Pricing','Customer quotes']);
  assert.deepEqual(nav.sections.find(x=>x.label==='Stock').tabs.map(x=>x.label),['Products','Locations','Transfers','Counts']);
  assert(!JSON.stringify(nav.sections).includes('More'));
 });
