@@ -155,7 +155,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     const row=readingCells(sourceRow,input.imageCellOverrides);
     const problems=proposal.problemsIndex===undefined?[...(row.problems||[])]:json(textCell(row,proposal.problemsIndex),[]);
     const imageRowConfirmed=input.imageReadingConfirmed===true||Boolean(input.imageReviewedRows?.has(Number(row.sourceRow)));
-    if(imageRowConfirmed)for(let i=problems.length-1;i>=0;i--)if(['image_identity_uncertain','image_money_uncertain'].includes(problems[i].code))problems.splice(i,1);
+    if(imageRowConfirmed)for(let i=problems.length-1;i>=0;i--)if(['image_identity_uncertain','image_money_uncertain','image_quantity_uncertain'].includes(problems[i].code))problems.splice(i,1);
     const sourceCode=trimOrNull(Object.hasOwn(input.codeOverrides||{},row.sourceRow)?input.codeOverrides[row.sourceRow]:textCell(row,mappings.code));
     const variants=sourceIdentity.options(row,mappings,proposal);
     const code=sourceCode&&variantBases.has(sourceCode.toLowerCase())&&!context.skuByCode.has(sourceCode.toLowerCase())?sourceIdentity.derived(sourceCode,variants):sourceCode;
@@ -911,7 +911,7 @@ async function revise(database,ctx,id,input={},options={}){
     for(;;){
       const current=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND (row_number,id)>($3::bigint,$4::text) ORDER BY row_number,id LIMIT 500 FOR UPDATE`,[ctx.workspaceId,id,lastRow,lastId])).rows.map(hydrateRow);
       if(!current.length)break;
-      const sourceRows=current.map(row=>readingCells({cells:row.raw,sourceRow:row.rowNumber,problems:visualSource(plan)&&!imageReadingConfirmed?row.problems.filter(p=>['image_identity_uncertain','image_money_uncertain'].includes(p.code)):[]},imageCellOverrides));
+      const sourceRows=current.map(row=>readingCells({cells:row.raw,sourceRow:row.rowNumber,problems:visualSource(plan)&&!imageReadingConfirmed?row.problems.filter(p=>['image_identity_uncertain','image_money_uncertain','image_quantity_uncertain'].includes(p.code)):[]},imageCellOverrides));
       const rowProposal={detectedType,axisNames,variantBases,variantColumns:plan.transformations.variantColumns,provenanceIndex:plan.transformations.provenanceIndex,problemsIndex:plan.transformations.problemsIndex,locationComponents:Boolean(plan.transformations.workbook?.contract?.stock?.locations?.length),trackingReview};
       const batchContext=await workspaceContext(client,ctx.workspaceId,{sourceHash:plan.sourceHash,includePositions:revised.transformations.importMode!=='add',rowNumbers:sourceRows.map(r=>r.sourceRow),
         supplierNames:sourceRows.map(r=>textCell(r,fieldMappings.supplierName).toLowerCase()).filter(Boolean),
