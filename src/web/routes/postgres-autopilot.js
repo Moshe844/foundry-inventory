@@ -2574,7 +2574,7 @@ function createPostgresAutopilotRouter(database,options={}){
     title:'What StockChief does',nav:'autopilot',backTo:{href:'/settings',label:'Settings'},
     ...(await autonomy.dashboard(database,req.ctx.workspaceId))})));
   router.get('/autopilot/daily',requireAuth,(req,res)=>res.redirect(302,'/needs-you'));
-  router.get('/autopilot/history',requireAuth,asyncRoute(async(req,res)=>{const {recent,activityAfter,next}=await autonomy.workHistory(database,req.ctx.workspaceId,req.query.after,{days:req.query.days==='7'?7:null});
+  router.get('/autopilot/history',requireAuth,asyncRoute(async(req,res)=>{const {recent,activityAfter,next}=await autonomy.workHistory(database,req.ctx.workspaceId,req.query.after,{days:req.query.days==='7'?7:null,includeAll:req.user.role==='owner'});
     const groups={automatic:[],prepared:[],needsYou:[],blocked:[]};
     for(const item of recent){item.executionStatus=item.execution_status;item.approvalRequirement=item.approval_requirement;
       item.errorMessage=item.error_message;item.createdAt=item.created_at;item.completedAt=item.completed_at;

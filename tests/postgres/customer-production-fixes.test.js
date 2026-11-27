@@ -27,6 +27,9 @@ test('SKU searches cover the full tenant catalogue and customer credit terms per
  const orders=await browser.get('/orders');assert.equal(orders.status,200);assert(orders.text.includes('Customer terms: Net 60 days'));
  await db.query(`INSERT INTO work_items(id,workspace_id,category,source,recommended_action,execution_status,approval_requirement,idempotency_key,created_at,completed_at) VALUES('shared-history',$1,'customer_order','postgres_workflow_owner','{"type":"customer_order","displayName":"Customer order review"}','COMPLETED','REQUIRED','shared-history',$2,$2)`,[ctx.workspaceId,new Date().toISOString()]);
  const history=await browser.get('/autopilot/history?days=7');assert.equal(history.status,200,history.text.slice(0,300));assert(history.text.includes('Completed Customer order review'));assert(history.text.includes('1 resolved after approval'));
+ const historyService=require('../../src/autopilot/postgres-service');
+ assert(!(await historyService.workHistory(db,ctx.workspaceId,null,{days:7})).recent.some(row=>row.id==='shared-history'),'Existing staff history does not gain unrelated workflow details');
+ assert((await historyService.workHistory(db,ctx.workspaceId,null,{days:7,includeAll:true})).recent.some(row=>row.id==='shared-history'),'Owner history includes the work counted on Home');
  await assert.rejects(()=>commerce.createCustomer(db,ctx,{name:'Negative limit',creditLimit:'-1'}),/non-negative|negative/);
  const summary=await require('../../src/assistant/postgres-service').lookup(db,ctx,{view:'inventory_summary'},{question:'What are the total on-hand units across all products?'});assert(summary.answer.includes('units on hand'));assert.equal(summary.rows[0].onHand,4);
 });
