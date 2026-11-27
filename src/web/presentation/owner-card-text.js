@@ -1,6 +1,7 @@
 'use strict';
 // Presentation only. Source records, audit evidence and navigation IDs stay intact.
 function ownerCardText(value){return String(value??'')
+ .replace(/\b((?:External|Square|Clover|Shopify|Stripe) refund)\s+[A-Za-z0-9_:/.-]+\s+is financial evidence only/gi,'$1 is financial evidence only')
  .replace(/gid:\/\/shopify\/[A-Za-z]+\/[A-Za-z0-9/?=&_-]+/gi,'Shopify record')
  .replace(/\b(?:re|pi|ch|evt|gid)_[A-Za-z0-9]{8,}\b/g,'payment record')
  .replace(/\b(?:Shopify\s+)?refund(?:\s+(?:ID|reference))?\s*[:#]?\s*\d{8,}\b/gi,'Refund requiring review')
