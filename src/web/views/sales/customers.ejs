@@ -17,12 +17,14 @@
     </div>
   <% } else { %>
     <table class="table table--tight">
-      <thead><tr><th>Customer</th><th>Contact</th><th class="num">Orders</th><th class="num"><span class="sr-only">Actions</span></th></tr></thead>
+      <thead><tr><th>Customer</th><th>Contact</th><th>Payment terms</th><th class="num">Credit limit</th><th class="num">Orders</th><th class="num"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         <% customers.forEach(function (customer) { %>
           <tr>
             <td><a href="/sales/customers/<%= customer.id %>"><%= customer.name %></a><% if (customer.company) { %><span class="cell-sub"><%= customer.company %></span><% } %></td>
             <td class="muted"><%= customer.email || customer.phone || '—' %></td>
+            <td><%= customer.terms_kind==='ON_ACCOUNT'?'Net '+(customer.net_days??30)+' days':customer.terms_kind==='DEPOSIT'?'Deposit before fulfillment':customer.terms_kind==='BEFORE_FULFILMENT'?'Payment before fulfillment':'Due when invoiced' %></td>
+            <td class="num"><%= customer.credit_limit_minor==null?'No saved limit':helpers.money(customer.credit_limit_minor,customer.credit_currency||'USD') %></td>
             <td class="num"><%= customer.order_count %></td>
             <td class="num"><% if (canAddCustomer) { %><a class="btn btn--ghost btn--sm" href="/orders/new?customer=<%= customer.id %>" aria-label="New order for <%= customer.name %>">New order</a> <% } %><a href="/sales/customers/<%= customer.id %>">Open</a></td>
           </tr>

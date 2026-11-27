@@ -5,7 +5,7 @@ const {ValidationError}=require('../domain/errors');
 
 async function current(db,workspaceId,customerId){
   return (await db.query(`SELECT t.id,t.customer_id,t.kind,t.net_days,t.deposit_percent,t.deposit_minor,t.hold_shipping,
-    t.credit_approved,t.updated_at,
+    t.credit_approved,t.credit_limit_minor,t.updated_at,
     CASE WHEN t.deposit_minor IS NOT NULL THEN coalesce(to_jsonb(t)->>'deposit_currency',a.base_currency) END AS deposit_currency,
     EXISTS(SELECT 1 FROM users u JOIN workspaces w ON w.id=u.workspace_id AND w.owner_account_id=u.account_id
       WHERE u.workspace_id=t.workspace_id AND u.id=t.agreed_by_user_id AND u.role='owner') AS owner_agreed

@@ -225,6 +225,7 @@ function columnLabel(key) {
 }
 
 module.exports = {
+  ownerCardText:require('./presentation/owner-card-text').ownerCardText,
   orderedTimeZones: require('./presentation/time-zones').ordered,
   businessDay,
   displayName,

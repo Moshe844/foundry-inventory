@@ -77,6 +77,9 @@ jobs:
             probe_browsers
           fi
           mkdir -p output/customer-navigation-ci
+      - name: SKU searches, saved credit terms and pricing UI
+        if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && matrix.group == 'core' }}
+        run: node --test --test-concurrency=1 tests/postgres/customer-production-fixes.test.js tests/postgres/pricing-promotions-browser.test.js
       - name: Agent plan permissions and operational workflows
         if: ${{ !cancelled() && steps.test_ready.outcome == 'success' && startsWith(matrix.group, 'agent-plans-') }}
         env:

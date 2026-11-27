@@ -130,11 +130,13 @@ function normaliseInput(input={}) {
     throw new ValidationError('Payment terms are a whole number of days.');
   }
 
+  const creditLimit=input.creditLimitMinor==null||input.creditLimitMinor===''?null:Number(input.creditLimitMinor);
+  if(creditLimit!==null&&(!Number.isSafeInteger(creditLimit)||creditLimit<0))throw new ValidationError('Credit limit must be a non-negative monetary amount.');
   const customerId = trimOrNull(input.customerId);
   const values = [kind, kind === 'DEPOSIT' ? percent : null, kind === 'DEPOSIT' ? flat : null,
     kind === 'ON_ACCOUNT' ? netDays : null,
     input.holdShipping ? 1 : 0, input.creditApproved ? 1 : 0,
-    input.creditLimitMinor ? Math.round(Number(input.creditLimitMinor)) : null,
+    creditLimit,
     trimOrNull(input.note),
     input.autoRequestEnabled ? 1 : 0,
     input.autoRequestLimitMinor ? Math.round(Number(input.autoRequestLimitMinor)) : null];

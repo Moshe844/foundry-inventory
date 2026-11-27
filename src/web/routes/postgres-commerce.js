@@ -197,6 +197,9 @@ async function salesOrderPage(database,workspaceId,id){
   const invoiceTotal=detail.invoices.reduce((sum,invoice)=>sum+Number(invoice.total_minor),0);
   const invoiceOutstanding=detail.invoices.reduce((sum,invoice)=>sum+Number(invoice.balance_minor),0);
   const refunds=(await database.query("SELECT coalesce(sum(r.revenue_minor+r.tax_minor),0)::bigint refunded_minor,coalesce(sum(r.revenue_minor+r.tax_minor) FILTER(WHERE r.destination='CASH'),0)::bigint cash_minor FROM accounting_sale_refunds r JOIN accounting_journal_entries e ON e.workspace_id=r.workspace_id AND e.id=r.journal_entry_id JOIN customer_returns c ON c.workspace_id=e.workspace_id AND c.id=e.source_record_id WHERE r.workspace_id=$1 AND e.source_record_type='customer_return' AND c.sales_order_id=$2 AND e.status='POSTED' AND r.recognition_stage='ON_REFUND'",[workspaceId,id])).rows[0];const credits=(await database.query('SELECT coalesce(sum(c.revenue_minor+c.tax_minor),0)::bigint credited,coalesce(sum(c.cash_refunded_minor),0)::bigint repaid FROM accounting_return_receipt_credits c JOIN customer_returns r ON r.workspace_id=c.workspace_id AND r.id=c.customer_return_id WHERE c.workspace_id=$1 AND r.sales_order_id=$2',[workspaceId,id])).rows[0];const creditedMinor=Number(refunds.refunded_minor)+Number(credits.credited),refundedMinor=Number(refunds.cash_minor)+Number(credits.repaid),paidMinor=receipts.rows.reduce((sum,payment)=>sum+Number(payment.order_amount_minor||payment.amount_minor),0)-Number(refunds.cash_minor)-Number(credits.repaid);if(order.status==='CANCELLED'){order.pricing.originalTotalMinor=order.pricing.totalMinor;order.pricing.totalMinor=invoiceTotal;order.pricing.cancelledRemainder=true;order.pricing.cancelledUnbilledMinor=Math.max(0,order.pricing.originalTotalMinor-invoiceTotal-creditedMinor);order.pricing.creditedMinor=creditedMinor;}
+  const currentCustomerTerms=await require('../../sales/customer-commercial-terms').current(database,workspaceId,detail.order.customer_id);
+  order.customer.creditLimitMinor=currentCustomerTerms?.credit_limit_minor??null;
+  order.customer.creditCurrency=(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[workspaceId])).rows[0]?.base_currency||'USD';
   const terms=detail.paymentTerms;
   const termsText=require('../../sales/customer-commercial-terms').describe(terms,detail.order.currency);
   const held=detail.pickDueMinor>0,shippingHeld=detail.shipDueMinor>0;
@@ -308,6 +311,19 @@ function createPostgresCommerceRouter(database,options={}){
 
   router.get('/suppliers/new',requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'add suppliers'),asyncRoute(async(req,res)=>res.page('purchasing/supplier-new',{title:'Add supplier',nav:'purchasing',prefill:{},formOrigin:'/suppliers/new'})));
 
+  router.get('/suppliers/:id/catalogue/search',requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'link supplier products'),asyncRoute(async(req,res)=>{
+    const supplier=(await database.query('SELECT currency,default_lead_time_days FROM suppliers WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,req.params.id])).rows[0];
+    if(!supplier)throw new ValidationError('That supplier is not available in this inventory.');
+    const found=await (async()=>{      return database.query(`SELECT s.id,s.code,s.variant_label,i.name AS item_name,i.unit_label,
+        (SELECT si.last_unit_cost FROM supplier_items si WHERE si.workspace_id=s.workspace_id AND si.sku_id=s.id AND si.supplier_id=$2 AND si.is_active=1) AS supplier_unit_cost,
+        (SELECT si.lead_time_days FROM supplier_items si WHERE si.workspace_id=s.workspace_id AND si.sku_id=s.id AND si.supplier_id=$2 AND si.is_active=1) AS supplier_lead_days,
+        (SELECT pc.amount_minor FROM sku_purchase_costs pc WHERE pc.workspace_id=s.workspace_id AND pc.sku_id=s.id AND pc.currency=COALESCE((SELECT currency FROM suppliers WHERE workspace_id=s.workspace_id AND id=$2),(SELECT base_currency FROM accounting_settings WHERE workspace_id=s.workspace_id),'USD') ORDER BY pc.created_at DESC,pc.id DESC LIMIT 1) AS purchase_cost_minor,
+        (SELECT CASE WHEN SUM(c.quantity_units)>0 THEN ROUND(SUM(c.total_cost_minor)::numeric/SUM(c.quantity_units)) END FROM accounting_inventory_cost_balances c WHERE c.workspace_id=s.workspace_id AND c.sku_id=s.id AND COALESCE((SELECT currency FROM suppliers WHERE workspace_id=s.workspace_id AND id=$2),(SELECT base_currency FROM accounting_settings WHERE workspace_id=s.workspace_id))=(SELECT base_currency FROM accounting_settings WHERE workspace_id=s.workspace_id)) AS inventory_unit_cost_minor
+        FROM skus s
+        JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+        WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND ($3='' OR position(lower($3) in lower(s.code||' '||i.name||' '||coalesce(s.variant_label,'')))>0 OR lower(s.barcode)=lower($3)) ORDER BY lower(i.name),s.position,s.id LIMIT 50`,[req.ctx.workspaceId,req.params.id,String(req.query.q||'').trim().slice(0,120)]);})();
+    res.set('Cache-Control','no-store');return res.json({products:found.rows.map(s=>({...s,purchaseCost:s.supplier_unit_cost!=null?String(s.supplier_unit_cost):(s.purchase_cost_minor??s.inventory_unit_cost_minor)==null?'':require('../../domain/currency').fromMinor(Number(s.purchase_cost_minor??s.inventory_unit_cost_minor),supplier.currency||'USD'),leadDays:s.supplier_lead_days??supplier.default_lead_time_days??''}))});
+  }));
   router.get('/suppliers/:id',requireAuth,requirePermission(permissions.VIEW_PURCHASING,'see suppliers'),asyncRoute(async(req,res)=>{
     const [supplierRows,itemRows,orderRows,mailboxRows,senderRows,priceRows,catalogueRows,usageRows]=await Promise.all([
       database.query('SELECT * FROM suppliers WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,req.params.id]),
@@ -325,14 +341,7 @@ function createPostgresCommerceRouter(database,options={}){
       database.query(`SELECT h.*,s.code AS sku_code,i.name AS item_name FROM supplier_price_history h
         JOIN skus s ON s.id=h.sku_id JOIN items i ON i.id=s.item_id
         WHERE h.workspace_id=$1 AND h.supplier_id=$2 ORDER BY h.observed_at DESC LIMIT 20`,[req.ctx.workspaceId,req.params.id]),
-      database.query(`SELECT s.id,s.code,s.variant_label,i.name AS item_name,i.unit_label,
-        (SELECT si.last_unit_cost FROM supplier_items si WHERE si.workspace_id=s.workspace_id AND si.sku_id=s.id AND si.supplier_id=$2 AND si.is_active=1) AS supplier_unit_cost,
-        (SELECT si.lead_time_days FROM supplier_items si WHERE si.workspace_id=s.workspace_id AND si.sku_id=s.id AND si.supplier_id=$2 AND si.is_active=1) AS supplier_lead_days,
-        (SELECT pc.amount_minor FROM sku_purchase_costs pc WHERE pc.workspace_id=s.workspace_id AND pc.sku_id=s.id AND pc.currency=COALESCE((SELECT currency FROM suppliers WHERE workspace_id=s.workspace_id AND id=$2),(SELECT base_currency FROM accounting_settings WHERE workspace_id=s.workspace_id),'USD') ORDER BY pc.created_at DESC,pc.id DESC LIMIT 1) AS purchase_cost_minor,
-        (SELECT CASE WHEN SUM(c.quantity_units)>0 THEN ROUND(SUM(c.total_cost_minor)::numeric/SUM(c.quantity_units)) END FROM accounting_inventory_cost_balances c WHERE c.workspace_id=s.workspace_id AND c.sku_id=s.id AND COALESCE((SELECT currency FROM suppliers WHERE workspace_id=s.workspace_id AND id=$2),(SELECT base_currency FROM accounting_settings WHERE workspace_id=s.workspace_id))=(SELECT base_currency FROM accounting_settings WHERE workspace_id=s.workspace_id)) AS inventory_unit_cost_minor
-        FROM skus s
-        JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
-        WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 ORDER BY lower(i.name),s.position LIMIT 500`,[req.ctx.workspaceId,req.params.id]),
+      Promise.resolve({rows:[]}),
       database.query(`SELECT
         (SELECT COUNT(*) FROM purchase_orders WHERE workspace_id=$1 AND supplier_id=$2)::integer AS orders,
         (SELECT COUNT(*) FROM accounting_supplier_bills WHERE workspace_id=$1 AND supplier_id=$2)::integer AS bills,
@@ -964,6 +973,10 @@ function createPostgresCommerceRouter(database,options={}){
   const renderOrders=async(req,res)=>{
     const result=await presenters.sales(database,req.ctx.workspaceId);
     const size=require('../presentation/pagination').pageSize(req),list=await require('../orders-view').ordersList(database,req.ctx.workspaceId,result,{...req.query,pageSize:size});
+    const customerTerms=(await database.query(`SELECT o.id,t.kind,t.net_days,t.credit_limit_minor,a.base_currency FROM sales_orders o
+      LEFT JOIN LATERAL(SELECT kind,net_days,credit_limit_minor FROM customer_payment_terms t WHERE t.workspace_id=o.workspace_id AND (t.customer_id=o.customer_id OR t.customer_id IS NULL) ORDER BY (t.customer_id IS NULL),t.updated_at DESC,t.id DESC LIMIT 1)t ON true
+      LEFT JOIN accounting_settings a ON a.workspace_id=o.workspace_id WHERE o.workspace_id=$1 AND o.id=ANY($2::text[])`,[req.ctx.workspaceId,list.rows.map(row=>row.id)])).rows;
+    for(const row of list.rows){const saved=customerTerms.find(t=>t.id===row.id);row.customerTerms= saved?.kind==='ON_ACCOUNT'?'Net '+(saved.net_days??30)+' days':saved?.kind==='DEPOSIT'?'Deposit before fulfillment':saved?.kind==='BEFORE_FULFILMENT'?'Payment before fulfillment':'Due when invoiced';row.customerCreditLimit=saved?.credit_limit_minor==null?'No saved limit':require('../../domain/currency').format(saved.credit_limit_minor,saved.base_currency||list.currency);}
     return res.page('sales/orders-v2',{title:'Orders',nav:'sales',room:true,list,pager:require('../presentation/pagination').pager(req,{page:list.page,size,total:list.matching,shown:list.rows.length}),suppressBack:true,screenGuide:null,
       sellingConnectionCount:result.sellingConnectionCount,canCreate:permissions.can(req.user,permissions.OPERATE)});
   };
@@ -1099,7 +1112,7 @@ function createPostgresCommerceRouter(database,options={}){
     catch(error){if(!(error instanceof ValidationError))throw error;return renderEntry(req,res,{form:req.body,formError:error.message,editOrder:{id:req.params.id,version:req.body.expectedVersion},status:400});}
   }));
 
-  function customerEntry(req,res,form={},formError=null,status=200){return res.status(status).page('sales/customer-new',{title:'New customer',nav:'sales',form,formError,screenGuide:null,postgresCustomer:true,canSetTaxExemption:permissions.can(req.user,permissions.MANAGE_ACCOUNTING)});}
+  function customerEntry(req,res,form={},formError=null,status=200){return res.status(status).page('sales/customer-new',{title:'New customer',nav:'sales',form,formError,screenGuide:null,postgresCustomer:true,canSetCreditLimit:req.user.role==='owner',canSetTaxExemption:permissions.can(req.user,permissions.MANAGE_ACCOUNTING)});}
   // City and state for a ZIP or postal code, for the address boxes.
   router.get('/address/postal',requirePermission(permissions.VIEW_SALES,'look up an address'),asyncRoute(async(req,res)=>{
     res.set('Cache-Control','private, max-age=86400');
@@ -1137,7 +1150,7 @@ function createPostgresCommerceRouter(database,options={}){
     const habits=await require('../../autopilot/partner-habits').panel(database,req.ctx,'customer',customer.id);
     return res.page('sales/postgres-customer',{title:customer.name,nav:'sales',customer,habits,
       orders:orders.rows,balanceMinor:Number(balance.rows[0].minor),currency:settings.rows[0]?.base_currency||'USD',
-      terms,depositInput:terms?.deposit_minor==null?'':require('../../domain/currency').fromMinor(terms.deposit_minor,terms.deposit_currency||settings.rows[0]?.base_currency||'USD'),
+      terms,creditLimitInput:terms?.credit_limit_minor!=null?require('../../domain/currency').fromMinor(terms.credit_limit_minor,settings.rows[0]?.base_currency||'USD'):'',depositInput:terms?.deposit_minor==null?'':require('../../domain/currency').fromMinor(terms.deposit_minor,terms.deposit_currency||settings.rows[0]?.base_currency||'USD'),
       canEditPrivacy:req.user?.role==='owner',canEditTerms:req.user?.role==='owner'&&customer.record_state==='ACTIVE'});
   }));
   router.post('/sales/customers/:id/decision-preference',requirePermission(permissions.ADMIN,'manage customer privacy choices'),asyncRoute(async(req,res)=>{
@@ -1160,9 +1173,8 @@ function createPostgresCommerceRouter(database,options={}){
         depositMinor:fixed?require('../../domain/currency').userToMinor(fixed,currency):null,depositCurrency:currency,
         holdShipping:req.body.holdShipping==='1',creditApproved:req.body.creditApproved==='1',
         expectedUpdatedAt:String(req.body.expectedUpdatedAt||''),
-        // This form edits the commercial payment agreement. Keep the existing
-        // independently granted credit limit and payment-link authority.
-        creditLimitMinor:controls?.credit_limit_minor==null?null:String(controls.credit_limit_minor),
+        // Save the owner-entered credit limit; preserve payment-link authority.
+        creditLimitMinor:Object.hasOwn(req.body,'creditLimit')?(String(req.body.creditLimit).trim()===''?null:require('../../domain/currency').userToMinor(req.body.creditLimit,(await c.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD')):controls?.credit_limit_minor==null?null:String(controls.credit_limit_minor),
         autoRequestEnabled:Boolean(Number(controls?.auto_request_enabled)),autoRequestLimitMinor:controls?.auto_request_limit_minor,note:controls?.note});
       await require('../../operations/postgres-security-audit').record(c,req.ctx,{action:'Saved customer payment terms',
         reference:req.params.id,before,after:await terms.current(c,req.ctx.workspaceId,req.params.id)});

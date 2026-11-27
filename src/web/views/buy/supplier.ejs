@@ -171,10 +171,8 @@
         <div class="ox-drawer__h"><h2 id="link-product-h">Link a product</h2><button class="ox-drawer__x" type="button" data-modal-close aria-label="Close">✕</button></div>
         <div class="ox-drawer__b">
           <div class="ox-field"><span>Product</span>
-            <div class="ox-combo" data-ox-select-combo>
-              <input class="ox-input" type="search" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="ox-link-products" aria-label="Search products to link" placeholder="Search your products" autocomplete="off" data-ox-select-input>
-              <ul class="ox-pop" id="ox-link-products" role="listbox" aria-label="Products" hidden></ul>
-              <select class="ox-native" name="skuId" data-supplier-product required tabindex="-1" aria-label="Product">
+            <div class="ox-combo">
+              <select class="ox-input" name="skuId" data-supplier-product data-async-sku data-endpoint="/suppliers/<%= supplier.id %>/catalogue/search" required aria-label="Product"><option value="">Choose a product</option>
                 <% catalogue.forEach(function (sku) { %><option value="<%= sku.id %>" data-cost="<%= sku.purchaseCost %>" data-lead="<%= sku.leadDays %>"><%= sku.variant_label ? sku.item_name + ' / ' + sku.variant_label : sku.item_name %></option><% }) %>
               </select>
             </div>
@@ -226,3 +224,5 @@
 <script src="/orders-ui.js?v=<%= assetVersion %>" defer></script>
 <script src="/buy-ui.js?v=<%= assetVersion %>" defer></script>
 <script src="/supplier-entry.js?v=<%= assetVersion %>" defer></script>
+
+<script src="/sku-picker.js?v=<%= assetVersion %>" defer></script>
