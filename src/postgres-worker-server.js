@@ -12,11 +12,15 @@ const connectionString = process.env.FOUNDRY_DATABASE_URL || process.env.DATABAS
 if (!connectionString) throw new Error('FOUNDRY_DATABASE_URL is required for the PostgreSQL worker.');
 validateProductionEnvironment({ requireSession: false });
 
+// Helper slots let routine work continue while a long job holds its lane.
+const workerHelpers = worker.helperSettings(process.env);
+
 const database = openPostgres(connectionString, {
   applicationName: process.env.FOUNDRY_WORKER_NAME || 'stockchief-business-worker',
   // Room for parallel import saving on top of the job loop, scheduler and other runtimes;
   // with four lanes in five connections, emails and other jobs waited until imports ended.
-  max: require('./imports/postgres-stock-lanes').workerPoolSize(),
+  // Each helper slot gets its own connection as well.
+  max: require('./imports/postgres-stock-lanes').workerPoolSize(process.env, workerHelpers.slots),
 });
 
 let runtime = null;
@@ -62,6 +66,7 @@ async function start() {
   }
   runtime = worker.start(database, {
     handlers,
+    helpers: workerHelpers,
     intervalMs: Number(process.env.FOUNDRY_WORKER_INTERVAL_MS || 500),
     leaseMs: Number(process.env.FOUNDRY_WORKER_LEASE_MS || 60000),
     isolation: 'SERIALIZABLE',

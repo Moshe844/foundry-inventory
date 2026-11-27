@@ -133,9 +133,12 @@ async function execute(database,ctx,plan,executionId,{deps,inputOptions,applyChu
 // The business worker shares one pool between import saving and its other loops (jobs,
 // schedules, capacity, reading). Lanes take up to their configured count on top of the
 // import's own session, so the pool must hold that many more than the loops need.
-function workerPoolSize(env=process.env){
+// `helperSlots` adds one connection per worker helper slot, so a helper that opens
+// while a long job holds its lane never waits for a connection.
+function workerPoolSize(env=process.env,helperSlots=0){
  const set=Number(env.FOUNDRY_WORKER_DB_POOL_SIZE);if(Number.isInteger(set)&&set>0)return set;
  const value=Number(env.FOUNDRY_IMPORT_STOCK_WORKERS||0),lanes=Number.isInteger(value)&&value>=1&&value<=4?value:0;
- return 5+lanes;
+ const helpers=Number.isSafeInteger(helperSlots)&&helperSlots>0?helperSlots:0;
+ return 5+lanes+helpers;
 }
 module.exports={prepare,unsafeCatalogue,progress,execute,additive,enabled:()=>workers()>0,workerPoolSize,totals:(client,ctx,plan)=>progress(client,ctx,plan,{complete:true})};

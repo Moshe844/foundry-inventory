@@ -126,7 +126,16 @@ function recoverExpired(database, options = {}) {
 const claimClock = `SELECT now_ms, EXISTS(SELECT 1 FROM stockchief_runtime.jobs
   WHERE status = 'RUNNING' AND lease_expires_at <= now_ms) AS expired FROM job_clock`;
 
-function selectCandidate(ordering, availableBefore) {
+// With `serial`, a job waits while the same business already has a job of the same
+// kind running, so a worker that runs several jobs at once never runs two of one
+// business's jobs of the same kind side by side (one slot never could).
+const SERIAL_PER_BUSINESS_KIND = `
+    AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs running WHERE running.status='RUNNING'
+      AND running.kind=jobs.kind AND running.workspace_id=jobs.workspace_id)
+    AND (jobs.workspace_id IS NOT NULL OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs running
+      WHERE running.status='RUNNING' AND running.kind=jobs.kind AND running.workspace_id IS NULL))`;
+
+function selectCandidate(ordering, availableBefore, serial = false) {
   return `SELECT id,kind,workspace_id FROM stockchief_runtime.jobs
     WHERE status IN ('PENDING','RETRY') AND available_at <= ${availableBefore}
     AND (workspace_id IS NULL OR EXISTS(SELECT 1 FROM public.workspaces w WHERE w.id=jobs.workspace_id AND w.deletion_requested_at IS NULL
@@ -138,7 +147,7 @@ function selectCandidate(ordering, availableBefore) {
       WHERE active.workspace_id=jobs.workspace_id AND (active.kind=jobs.kind OR
        jobs.kind IN('assistant.run-codex-goal','assistant.run-codex-read') AND active.kind IN('assistant.run-codex-goal','assistant.run-codex-read')) AND active.status='RUNNING'))
     AND (NOT(kind=ANY($3::text[])) OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
-      WHERE active.workspace_id=jobs.workspace_id AND active.kind=ANY($3::text[]) AND active.status='RUNNING'))
+      WHERE active.workspace_id=jobs.workspace_id AND active.kind=ANY($3::text[]) AND active.status='RUNNING'))${serial ? SERIAL_PER_BUSINESS_KIND : ''}
     ORDER BY ${ordering}
     LIMIT 1 FOR UPDATE SKIP LOCKED`;
 }
@@ -167,7 +176,7 @@ async function claimOrdinary(database, options, { ordering, suppliedNow, kinds, 
   ), recovery_clock AS MATERIALIZED (
     ${claimClock}
   ), candidate AS MATERIALIZED (
-    ${selectCandidate(ordering, '(SELECT now_ms FROM recovery_clock WHERE NOT expired)')}
+    ${selectCandidate(ordering, '(SELECT now_ms FROM recovery_clock WHERE NOT expired)', options.serialPerBusinessKind === true)}
   ), claim_input AS MATERIALIZED (
     SELECT candidate.id AS job_id, $4::text AS owner, $5::text AS token, recovery_clock.now_ms,
       $6::bigint AS lease_ms, $7::text AS event_id, $8::jsonb AS event_owner
@@ -205,7 +214,7 @@ async function claim(database, options = {}) {
     ) ${claimClock}`, [suppliedNow])).rows[0];
     const now = Number(clock.now_ms);
     if (clock.expired) await recover(client, now);
-    const candidate = await client.query(selectCandidate(ordering, '$1'), [now, kinds, MAINTENANCE_KINDS]);
+    const candidate = await client.query(selectCandidate(ordering, '$1', options.serialPerBusinessKind === true), [now, kinds, MAINTENANCE_KINDS]);
     if (!candidate.rows.length) return null;
     const selected=candidate.rows[0];
     if(selected.kind.startsWith('import.')||['assistant.run-goal','assistant.run-codex-goal','assistant.run-codex-read'].includes(selected.kind)){
