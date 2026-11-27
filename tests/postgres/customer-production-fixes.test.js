@@ -15,6 +15,11 @@ test('SKU searches cover the full tenant catalogue and customer credit terms per
   assert.equal((await browser.get(path).query({q:'FOREIGN'})).body.products.length,0);
  }
  const pricing=await browser.get('/sales/pricing/rules/new');assert.equal(pricing.status,200);assert.equal((pricing.text.match(/data-async-sku/g)||[]).length,14);assert(!pricing.text.includes('PICKER-520'),'No full catalogue repeated in HTML');
+ const promotions=require('../../src/pricing/postgres-promotions');
+ const proposal=await promotions.propose(db,ctx,{kind:'promotion',name:'Saved product scope',currency:'USD',scope:{skuIds:['picker-sku-520']},discount:{type:'percent',value:1000}});
+ await promotions.decide(db,ctx,proposal.id,proposal.integrity_hash,true);
+ await db.query("UPDATE items SET is_active=0 WHERE workspace_id=$1 AND id='picker-item-520'",[ctx.workspaceId]);
+ const edit=await browser.get('/sales/pricing/rules/'+proposal.rule_id+'/edit');assert.equal(edit.status,200);assert(edit.text.includes('<option value="picker-sku-520">'),'An archived saved selection must not disappear and broaden the rule to every product');
  const supplier=await browser.get('/suppliers/fixture-supplier');assert.equal(supplier.status,200);assert(supplier.text.includes('data-async-sku'));assert(!supplier.text.includes('PICKER-520'));
  const commerce=require('../../src/operations/postgres-commerce'),created=await commerce.createCustomer(db,ctx,{name:'Credit buyer',termsKind:'ON_ACCOUNT',netDays:'45',creditLimit:'1234.56'});
  let terms=await require('../../src/sales/customer-commercial-terms').current(db,ctx.workspaceId,created.id);assert.equal(Number(terms.credit_limit_minor),123456);assert.equal(Number(terms.net_days),45);

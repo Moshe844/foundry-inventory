@@ -17,7 +17,7 @@ function definition(body){
  }else if(rule.kind==='guard')for(const[key,input]of [['minimumMarginBps','minimumMargin'],['maximumDiscountBps','maximumDiscount']])if(body[input]!==''&&body[input]!=null)rule[key]=prices.toMinor(body[input]);
  return rule;
 }
-async function choices(db,ctx,ids=[]){const products=(await db.query(`SELECT s.id,s.code,i.name FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND s.id=ANY($2::text[]) ORDER BY i.name,s.code`,[ctx.workspaceId,ids])).rows;
+async function choices(db,ctx,ids=[]){const products=(await db.query(`SELECT s.id,s.code,i.name FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) ORDER BY i.name,s.code`,[ctx.workspaceId,ids])).rows;
  const customers=(await db.query("SELECT id,name FROM customers WHERE workspace_id=$1 AND record_state='ACTIVE' ORDER BY name",[ctx.workspaceId])).rows;
  const categories=(await db.query('SELECT DISTINCT category FROM catalogue_item_facts WHERE workspace_id=$1 AND category IS NOT NULL ORDER BY category',[ctx.workspaceId])).rows.map(r=>r.category);return {products,customers,categories};}
 const {describe}=require('../../pricing/presentation');
