@@ -1177,7 +1177,7 @@ function createPostgresCommerceRouter(database,options={}){
         creditLimitMinor:Object.hasOwn(req.body,'creditLimit')?(String(req.body.creditLimit).trim()===''?null:require('../../domain/currency').userToMinor(req.body.creditLimit,(await c.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD')):controls?.credit_limit_minor==null?null:String(controls.credit_limit_minor),
         autoRequestEnabled:Boolean(Number(controls?.auto_request_enabled)),autoRequestLimitMinor:controls?.auto_request_limit_minor,note:controls?.note});
       await require('../../operations/postgres-security-audit').record(c,req.ctx,{action:'Saved customer payment terms',
-        reference:req.params.id,before,after:await terms.current(c,req.ctx.workspaceId,req.params.id)});
+        reference:req.params.id,before:before??{},after:await terms.current(c,req.ctx.workspaceId,req.params.id)});
     },{isolation:'SERIALIZABLE',retrySafe:true});
     req.flash('success','Agreed payment terms saved for new quotes and orders.');
     return res.redirect(303,`/sales/customers/${req.params.id}`);
